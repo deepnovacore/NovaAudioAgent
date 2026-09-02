@@ -5,6 +5,7 @@ export * from './clock.js'
 export * from './codex-app-server-schema.js'
 export * from './codex-app-server-transport.js'
 export * from './codex-contract.js'
+export * from './codex-version.js'
 export {
   CODEX_CREDENTIAL_MARKER,
   CODEX_SAVED_LOGIN_FILES,

@@ -45,6 +45,8 @@ export {
   type ManagedWorkspaceScope,
 } from './managed-workspace-maintenance.js'
 
+export {admitCodexCliVersion} from './codex-version.js'
+
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
 export const MAX_DESKTOP_OUTBOUND_BINARY_BYTES = 8 * 1024 * 1024
@@ -160,6 +162,11 @@ const ordinaryDesktopControlSchema = z.discriminatedUnion('type', [
     type: z.literal('project.confirmation_decision'),
     proposal_id: identifierSchema.refine(value => codePointLengthLikePython(value) <= 128),
     confirmed: z.boolean(),
+  }).strict(),
+  z.object({
+    type: z.literal('codex.approval_decision'),
+    approval_id: identifierSchema.refine(value => codePointLengthLikePython(value) <= 128),
+    approved: z.boolean(),
   }).strict(),
   z.object({
     type: z.literal('clock.pong'),

@@ -168,13 +168,43 @@ const CONFIRM_PROJECT_ACTION: OpSpec = {
   sync_result: true,
 }
 
+const CONFIRM_CODEX_APPROVAL: OpSpec = {
+  name: 'confirm_codex_approval',
+  description: [
+    '当前待处理 Codex 权限请求时，只有用户本轮明确同意或明确拒绝才调用；',
+    '同意传 approved=true，拒绝传 approved=false；',
+    '明确决定时只调用一次本工具，同一 response 不得输出普通音频或文本，也不得调用其他工具；',
+    '表达含糊、询问信息或尚未决定时不得调用，也不得输出普通音频或文本，等待宿主澄清',
+  ].join(''),
+  params: {
+    type: 'object',
+    properties: {
+      approval_id: {type: 'string', minLength: 1, maxLength: 128},
+      approved: {type: 'boolean'},
+    },
+    required: ['approval_id', 'approved'],
+    additionalProperties: false,
+  },
+  readonly: false,
+  confirm: false,
+  deadline_budget: 10,
+  verifies: [],
+  sensitive_params: [],
+  sync_result: true,
+}
+
 function manifest(ops: readonly OpSpec[]): ExecutorManifest {
   return deepFreeze(executorManifestSchema.parse({name: 'codex', ops, policy: CODEX_POLICY}))
 }
 
 export const CODEX_BASE_MANIFEST = manifest([RUN, STATUS])
 export const CODEX_LIVE_MANIFEST = manifest([RUN, STEER, STATUS])
-export const CODEX_PROJECT_MANIFEST = manifest([PROJECT, CONFIRM_PROJECT_ACTION, STEER, STATUS])
+export const CODEX_PROJECT_MANIFEST = manifest([
+  PROJECT, CONFIRM_PROJECT_ACTION, STEER, STATUS,
+])
+export const CODEX_PROJECT_APPROVAL_MANIFEST = manifest([
+  PROJECT, CONFIRM_PROJECT_ACTION, CONFIRM_CODEX_APPROVAL, STEER, STATUS,
+])
 
 export type CodexVariant = 'base' | 'live' | 'project'
 export type CodexRequestValidation =
@@ -202,7 +232,9 @@ function validateCodexRequestChecked(
     ? new Set(['run', 'status'])
     : variant === 'live'
       ? new Set(['run', 'steer', 'status'])
-      : new Set(['project', 'confirm_project_action', 'steer', 'status'])
+      : new Set([
+          'project', 'confirm_project_action', 'confirm_codex_approval', 'steer', 'status',
+        ])
   if (!operations.has(op)) return failure('unknown_op', op)
   const requestSnapshot = snapshotJsonRecord(request)
   if (op === 'status') {
@@ -223,6 +255,7 @@ function validateCodexRequestChecked(
       : success({work_order: workOrder})
   }
   if (op === 'confirm_project_action') return validateProjectConfirmation(requestSnapshot)
+  if (op === 'confirm_codex_approval') return validateCodexApproval(requestSnapshot)
   return validateProjectOperation(requestSnapshot)
 }
 
@@ -232,6 +265,14 @@ function validateProjectConfirmation(request: Record<string, unknown>): CodexReq
     return failure('invalid_params', 'confirm_project_action')
   }
   return success({proposal_id: proposalId, confirmed: request.confirmed})
+}
+
+function validateCodexApproval(request: Record<string, unknown>): CodexRequestValidation {
+  const approvalId = normalizedString(request.approval_id, 128)
+  if (approvalId === null || Object.keys(request).length !== 2 || typeof request.approved !== 'boolean') {
+    return failure('invalid_params', 'confirm_codex_approval')
+  }
+  return success({approval_id: approvalId, approved: request.approved})
 }
 
 function validateProjectOperation(request: Record<string, unknown>): CodexRequestValidation {
@@ -669,7 +710,7 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value)
 }
 
-const CODEX_VERSION = /^(?:codex-cli )?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/u
+const CODEX_VERSION = /^(?:codex-cli )?\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?(?:\+[A-Za-z0-9._-]+)?$/u
 const EVENT_TYPES = new Set([
   'thread.started', 'turn.started', 'turn.completed', 'turn.failed', 'error',
 ])

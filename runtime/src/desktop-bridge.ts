@@ -20,6 +20,7 @@
 import {
   DesktopProtocolError,
   captionMessage,
+  codexApprovalMessage,
   codexProjectMessage,
   codexStateMessage,
   decodeAudioFrame,
@@ -40,6 +41,7 @@ import {
 import type { PlaybackFrame } from './playback.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
+import type {CodexApprovalView} from './realtime/codex-approval.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 
@@ -55,6 +57,7 @@ export interface DesktopCommand {
     | 'playback_done'
     | 'playback_cleared'
     | 'project_confirmation_decision'
+    | 'codex_approval_decision'
     | 'playback_telemetry'
     | 'playback_telemetry_rejected'
     | 'clock_pong'
@@ -77,6 +80,7 @@ export interface BridgeService {
   playbackDisconnected(options?: {readonly resumeDelivery?: boolean}): Promise<boolean>
   playbackCleared(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean
   projectConfirmationDecision(proposalId: string, confirmed: boolean): Promise<void>
+  codexApprovalDecision(approvalId: string, approved: boolean): boolean
 }
 
 export interface DesktopBridgeOptions {
@@ -88,6 +92,7 @@ export interface DesktopBridgeOptions {
   readonly clock?: Clock
   readonly telemetry?: RealtimeTelemetry
   readonly projectView?: PublicProjectView
+  readonly approvalView?: CodexApprovalView
   /** Wake the composition-owned sender after, and only after, work becomes available. */
   readonly onOutboundAvailable?: () => void
 }
@@ -118,6 +123,7 @@ export class DesktopSocketBridge {
   /** Single-slot: only the latest state matters, and a backlog of stale ones is worse than none. */
   #codexOutbound: CodexState | null = null
   #projectOutbound: PublicProjectView | null = null
+  #approvalOutbound: CodexApprovalView | null = null
 
   /**
    * The highest generation the renderer has been told to clear.
@@ -138,6 +144,8 @@ export class DesktopSocketBridge {
   #lastCodexStateSent: CodexState | null = null
   #projectView: PublicProjectView | null
   #lastProjectViewSent: PublicProjectView | null = null
+  #approvalView: CodexApprovalView | null
+  #lastApprovalViewSent: CodexApprovalView | null = null
   #uplinkFrames = 0
   #uplinkBytes = 0
   #uplinkFlushedAt: number
@@ -161,6 +169,7 @@ export class DesktopSocketBridge {
     this.#onOutboundAvailable = options.onOutboundAvailable
     this.#codexState = options.service.codexState
     this.#projectView = options.projectView ?? null
+    this.#approvalView = options.approvalView ?? null
     this.#uplinkFlushedAt = options.clock?.now() ?? 0
   }
 
@@ -262,6 +271,13 @@ export class DesktopSocketBridge {
     this.#syncProjectDelivery()
   }
 
+  onCodexApproval(view: CodexApprovalView): void {
+    codexApprovalMessage(view, this.#clock?.now() ?? 0)
+    if (sameApprovalView(view, this.#approvalView)) return
+    this.#approvalView = view
+    this.#syncApprovalDelivery()
+  }
+
   /**
    * Transcript text, speculative or final.
    *
@@ -303,8 +319,10 @@ export class DesktopSocketBridge {
     // receive the current state, having "already been sent" it.
     this.#lastCodexStateSent = null
     this.#lastProjectViewSent = null
+    this.#lastApprovalViewSent = null
     this.#codexOutbound = null
     this.#projectOutbound = null
+    this.#approvalOutbound = null
   }
 
   /** Mark the connection authenticated, which is what unblocks the single-slot queues. */
@@ -316,6 +334,7 @@ export class DesktopSocketBridge {
     this.#everAuthenticated = true
     this.#syncCodexStateDelivery()
     this.#syncProjectDelivery()
+    this.#syncApprovalDelivery()
   }
 
   #fencePlaybackForConnectionBoundary(
@@ -436,6 +455,12 @@ export class DesktopSocketBridge {
         )
         return
       }
+      case 'codex_approval_decision': {
+        const approvalId = command.payload.approval_id
+        if (typeof approvalId !== 'string') return
+        this.#service.codexApprovalDecision(approvalId, command.payload.approved === true)
+        return
+      }
       default:
         return
     }
@@ -481,6 +506,15 @@ export class DesktopSocketBridge {
         this.#lastProjectViewSent = view
         this.#syncProjectDelivery()
         return {frame: codexProjectMessage(view), policy: 'latest'}
+      }
+    }
+    if (this.#approvalOutbound !== null) {
+      const view = this.#approvalOutbound
+      this.#approvalOutbound = null
+      if (!sameApprovalView(view, this.#lastApprovalViewSent)) {
+        this.#lastApprovalViewSent = view
+        this.#syncApprovalDelivery()
+        return {frame: codexApprovalMessage(view, this.#clock?.now() ?? 0), policy: 'latest'}
       }
     }
     return null
@@ -572,6 +606,17 @@ export class DesktopSocketBridge {
     if (next !== null) this.#onOutboundAvailable?.()
   }
 
+  #syncApprovalDelivery(): void {
+    const next = (
+      this.#authenticated
+      && this.#approvalView !== null
+      && !sameApprovalView(this.#approvalView, this.#lastApprovalViewSent)
+    ) ? this.#approvalView : null
+    if (sameApprovalView(next, this.#approvalOutbound)) return
+    this.#approvalOutbound = next
+    if (next !== null) this.#onOutboundAvailable?.()
+  }
+
   // -----------------------------------------------------------------------------------------------
   // Clock synchronisation and uplink accounting.
   // -----------------------------------------------------------------------------------------------
@@ -638,12 +683,14 @@ export class DesktopSocketBridge {
     readonly preempt: number
     readonly codex: boolean
     readonly project: boolean
+    readonly approval: boolean
   } {
     return {
       outbound: this.#outbound.length,
       preempt: this.#preemptOutbound.length,
       codex: this.#codexOutbound !== null,
       project: this.#projectOutbound !== null,
+      approval: this.#approvalOutbound !== null,
     }
   }
 
@@ -809,6 +856,22 @@ export function parseClientMessage(
       payload: {proposal_id: proposalId, confirmed: value.confirmed},
     }
   }
+  if (kind === 'codex.approval_decision') {
+    if (Object.keys(value).sort().join(',') !== 'approval_id,approved,type') {
+      throw new DesktopProtocolError('desktop control frame type is unsupported')
+    }
+    if (typeof value.approved !== 'boolean') {
+      throw new DesktopProtocolError('desktop Codex approval decision is invalid')
+    }
+    const approvalId = readIdentifier(value, 'approval_id')
+    if (codePointLengthLikePython(approvalId) > 128) {
+      throw new DesktopProtocolError('desktop Codex approval decision is invalid')
+    }
+    return {
+      kind: 'codex_approval_decision',
+      payload: {approval_id: approvalId, approved: value.approved},
+    }
+  }
   if (kind === 'clock.pong') {
     const timestamp = value.t_render_ms
     if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp < 0) {
@@ -860,6 +923,11 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
       return {
         kind: 'project_confirmation_decision',
         payload: {proposal_id: control.proposal_id, confirmed: control.confirmed},
+      }
+    case 'codex.approval_decision':
+      return {
+        kind: 'codex_approval_decision',
+        payload: {approval_id: control.approval_id, approved: control.approved},
       }
     case 'clock.pong':
       return {
@@ -940,6 +1008,20 @@ function sameProjectView(
       === (right.pending_workspace_display_name ?? null)
     && (left.pending_session_title ?? null) === (right.pending_session_title ?? null)
     && (left.pending_expires_in_seconds ?? null) === (right.pending_expires_in_seconds ?? null)
+}
+
+function sameApprovalView(
+  left: CodexApprovalView | null,
+  right: CodexApprovalView | null,
+): boolean {
+  if (left === null || right === null) return left === right
+  return left.pending_approval === right.pending_approval
+    && left.pending_approval_busy === right.pending_approval_busy
+    && left.pending_approval_id === right.pending_approval_id
+    && left.kind === right.kind
+    && left.operation_summary === right.operation_summary
+    && left.expires_at === right.expires_at
+    && JSON.stringify(left.local_detail) === JSON.stringify(right.local_detail)
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -103,6 +103,10 @@ function harness(
       calls.push(`project-decision:${proposalId}:${confirmed}`)
       return Promise.resolve()
     },
+    codexApprovalDecision: (approvalId, approved) => {
+      calls.push(`codex-approval:${approvalId}:${approved}`)
+      return true
+    },
   }
   const {withoutClock, codexState, ...bridgeOverrides} = overrides
   // Consumed above as the service's initial state; not a bridge option.
@@ -501,6 +505,70 @@ test('a banner decision carries the exact proposal binding to the service', asyn
     '{"type":"project.confirmation_decision","proposal_id":"proposal-1","confirmed":true,"extra":1}',
     {authenticated: true},
   ), DesktopProtocolError)
+})
+
+test('a Codex approval frame and click use an independent strict bridge path', async () => {
+  const {bridge, calls, clock} = harness()
+  bridge.markAuthenticated()
+  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
+  bridge.onCodexApproval({
+    pending_approval: true,
+    pending_approval_busy: false,
+    pending_approval_id: 'approval-1',
+    kind: 'file_change',
+    local_detail: {
+      kind: 'file_change', changes: [{change: 'update', path: 'src/a.ts', move_path: null}],
+    },
+    operation_summary: 'Codex 请求修改工作区文件。',
+    expires_at: clock.now() + 60,
+  })
+  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"src\/a\.ts"/u)
+  await bridge.receive(
+    '{"type":"codex.approval_decision","approval_id":"approval-1","approved":true}',
+    {authenticated: true},
+  )
+  assert.deepEqual(calls, ['codex-approval:approval-1:true'])
+  await assert.rejects(() => bridge.receive(
+    '{"type":"codex.approval_decision","approval_id":"approval-1","approved":true,"extra":1}',
+    {authenticated: true},
+  ), DesktopProtocolError)
+})
+
+test('independent latest slots deliver both overlapping confirmation views before settlement', () => {
+  const {bridge, clock} = harness()
+  bridge.markAuthenticated()
+  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
+  bridge.onCodexApproval({
+    pending_approval: true,
+    pending_approval_busy: false,
+    pending_approval_id: 'approval-1',
+    kind: 'command_execution',
+    local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+    expires_at: clock.now() + 60,
+  })
+  bridge.onCodexProject({
+    workspace_display_name: '研究项目',
+    session_title: null,
+    pending_confirmation: true,
+    pending_confirmation_busy: false,
+    pending_confirmation_id: 'proposal-1',
+    pending_action: 'select_workspace',
+    pending_workspace_display_name: 'beta',
+    pending_session_title: null,
+    pending_expires_in_seconds: 75,
+  })
+  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.project".*"proposal-1"/u)
+  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"approval-1"/u)
+  bridge.onCodexApproval({
+    pending_approval: false,
+    pending_approval_busy: false,
+    kind: null,
+    local_detail: null,
+    operation_summary: null,
+    expires_at: null,
+  })
+  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"pending_approval":false/u)
 })
 
 test('voice bridge rejects debug board requests', async () => {

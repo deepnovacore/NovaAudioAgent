@@ -17,6 +17,7 @@ import { canonicalJson } from '../src/canonical-json.js'
 import {
   DesktopProtocolError,
   captionMessage,
+  codexApprovalMessage,
   codexProjectMessage,
   codexStateMessage,
   decodeAudioFrame,
@@ -272,6 +273,37 @@ test('Codex project view carries workspace reuse confirmation', () => {
   })) as Readonly<Record<string, unknown>>
 
   assert.equal(parsed.pending_action, 'reuse_workspace')
+})
+
+test('Codex approval wire carries only bounded local display detail and relative expiry', () => {
+  const parsed: unknown = JSON.parse(codexApprovalMessage({
+    pending_approval: true,
+    pending_approval_busy: false,
+    pending_approval_id: 'approval-1',
+    kind: 'command_execution',
+    local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+    expires_at: 70,
+  }, 10))
+  assert.deepEqual(parsed, {
+    type: 'codex.approval',
+    pending_approval: true,
+    pending_approval_busy: false,
+    pending_approval_id: 'approval-1',
+    kind: 'command_execution',
+    local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+    expires_in_seconds: 60,
+  })
+  assert.throws(() => codexApprovalMessage({
+    pending_approval: true,
+    pending_approval_busy: false,
+    pending_approval_id: 'approval-1',
+    kind: 'command_execution',
+    local_detail: {kind: 'command_execution', command: 'x'.repeat(4097), cwd: 'C:\\workspace'},
+    operation_summary: 'summary',
+    expires_at: 70,
+  }, 10), DesktopProtocolError)
 })
 
 test('every desktop wire case matches the Python-exported golden, byte for byte', () => {

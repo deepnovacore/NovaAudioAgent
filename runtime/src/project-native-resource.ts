@@ -36,6 +36,7 @@ const WINDOWS_MODULE_EXPORTS = Object.freeze([
   ...MODULE_EXPORTS,
   'lookupWorkspaceAt',
   'matchesWorkspaceAt',
+  'prepareManagedAt',
 ].sort())
 
 export interface ProjectDirectoryHandle {
@@ -51,6 +52,8 @@ export interface ProjectNativeHost {
   }>
   /** Protects a retained child selected descriptor-relatively by the host. */
   protectDirectoryAt(root: number, name: string, child: number): boolean
+  /** Prepares a retained managed container without blocking inherited traversal access. */
+  prepareManagedDirectoryAt(root: number, name: string, child: number): boolean
   /** Creates a protected private child below an owned, not-yet-private parent. */
   mkdirPrivateAt(root: number, name: string): unknown
 }
@@ -71,9 +74,10 @@ export function protectDefaultProjectDirectories(
   const basenamePath = (path: string): string => paths.pathApi?.basename(path) ?? basename(path)
   const handles = paths.directoryHandles ?? host.directoryHandles
   const productRoot = joinPath(paths.homeDirectory, '.nova-audio-agent')
+  const defaultManagedRoot = joinPath(productRoot, 'workspaces')
   const defaults = new Set([
     joinPath(productRoot, 'state'),
-    joinPath(productRoot, 'workspaces'),
+    defaultManagedRoot,
     joinPath(productRoot, 'workspaces', 'default'),
   ])
   for (const path of [paths.stateRoot, paths.managedRoot, paths.workspace]) {
@@ -83,6 +87,7 @@ export function protectDefaultProjectDirectories(
       basenamePath(path),
       path,
       handles,
+      path === defaultManagedRoot,
     )) return false
   }
   return true
@@ -94,6 +99,7 @@ function protectDefaultDirectory(
   name: string,
   path: string,
   handles: Readonly<{open(path: string): ProjectDirectoryHandle}>,
+  managed: boolean,
 ): boolean {
   let parent: ProjectDirectoryHandle | null = null
   let child: ProjectDirectoryHandle | null = null
@@ -106,7 +112,9 @@ function protectDefaultDirectory(
       !Number.isSafeInteger(parent.fd) || parent.fd < 0
       || !Number.isSafeInteger(child.fd) || child.fd < 0
     ) return false
-    protectedDirectory = host.protectDirectoryAt(parent.fd, name, child.fd)
+    protectedDirectory = managed
+      ? host.prepareManagedDirectoryAt(parent.fd, name, child.fd)
+      : host.protectDirectoryAt(parent.fd, name, child.fd)
   } catch {
     protectedDirectory = false
   } finally {
@@ -208,6 +216,13 @@ function loadSupportedProjectNativeHostFromResources(
     }
     const after = snapshotRegularFile(addonPath, MAX_ADDON_BYTES)
     if (!sameSnapshot(before, after)) return null
+    const prepareManagedAt = (
+      root: number,
+      name: string,
+      child: number,
+    ): ProjectRootFileResult => addon.prepareManagedAt === undefined
+      ? addon.protectAt(root, name, child)
+      : addon.prepareManagedAt(root, name, child)
     const nativeLocks: NativeFileLockAuthority = Object.freeze({
       acquire: (descriptor: number) => addon.acquire(descriptor),
     })
@@ -258,6 +273,10 @@ function loadSupportedProjectNativeHostFromResources(
       directoryHandles,
       protectDirectoryAt: (root: number, name: string, child: number) => {
         const result: unknown = addon.protectAt(root, name, child)
+        return isStatus(result, 'ok')
+      },
+      prepareManagedDirectoryAt: (root: number, name: string, child: number) => {
+        const result: unknown = prepareManagedAt(root, name, child)
         return isStatus(result, 'ok')
       },
       mkdirPrivateAt: (root: number, name: string) => addon.mkdirPrivateAt(root, name),
@@ -435,6 +454,7 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
 interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
   openDirectory(path: string): unknown
   protectAt(root: number, name: string, child: number): ProjectRootFileResult
+  prepareManagedAt?(root: number, name: string, child: number): ProjectRootFileResult
   matchesWorkspaceAt?(root: number, name: string, child: number): ProjectRootFileResult
   lookupWorkspaceAt?(root: number, name: string): ProjectRootFileLookupResult
   mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult

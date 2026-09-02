@@ -212,7 +212,7 @@ static int nova_current_user(BYTE **token_user) {
   return 1;
 }
 
-static int nova_private_acl(HANDLE handle, int principal_policy) {
+static int nova_acl(HANDLE handle, int principal_policy, int protected) {
   BYTE *token_user = NULL;
   PSECURITY_DESCRIPTOR security = NULL;
   PSID owner = NULL;
@@ -230,7 +230,7 @@ static int nova_private_acl(HANDLE handle, int principal_policy) {
   SECURITY_DESCRIPTOR_CONTROL control = 0;
   DWORD revision = 0;
   if (!GetSecurityDescriptorControl(security, &control, &revision) ||
-      (control & SE_DACL_PROTECTED) == 0)
+      (((control & SE_DACL_PROTECTED) != 0) != protected))
     goto cleanup;
   ACL_SIZE_INFORMATION size;
   if (!GetAclInformation(dacl, &size, (DWORD)sizeof(size),
@@ -295,6 +295,14 @@ cleanup:
   return valid;
 }
 
+static int nova_private_acl(HANDLE handle, int principal_policy) {
+  return nova_acl(handle, principal_policy, 1);
+}
+
+static int nova_managed_directory_acl(HANDLE handle) {
+  return nova_acl(handle, 1, 0);
+}
+
 static int nova_owner_only_acl(HANDLE handle) {
   return nova_private_acl(handle, 0);
 }
@@ -325,7 +333,8 @@ static int nova_current_user_owner(HANDLE handle) {
   return valid;
 }
 
-static int nova_private_security_create(nova_private_security *output) {
+static int nova_private_security_create_with_flags(
+    nova_private_security *output, DWORD ace_flags) {
   ZeroMemory(output, sizeof(*output));
   if (!nova_current_user(&output->token_user))
     return 0;
@@ -335,7 +344,7 @@ static int nova_private_security_create(nova_private_security *output) {
   output->acl = (PACL)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, acl_bytes);
   if (output->acl == NULL ||
       !InitializeAcl(output->acl, acl_bytes, ACL_REVISION) ||
-      !AddAccessAllowedAceEx(output->acl, ACL_REVISION, 0, FILE_ALL_ACCESS,
+      !AddAccessAllowedAceEx(output->acl, ACL_REVISION, ace_flags, FILE_ALL_ACCESS,
                              sid) ||
       !InitializeSecurityDescriptor(&output->descriptor,
                                     SECURITY_DESCRIPTOR_REVISION) ||
@@ -346,6 +355,10 @@ static int nova_private_security_create(nova_private_security *output) {
                                     SE_DACL_PROTECTED))
     return 0;
   return 1;
+}
+
+static int nova_private_security_create(nova_private_security *output) {
+  return nova_private_security_create_with_flags(output, 0);
 }
 
 static void nova_private_security_destroy(nova_private_security *security) {
@@ -385,7 +398,7 @@ static int nova_validate_project_root(HANDLE handle,
   BY_HANDLE_FILE_INFORMATION info;
   if (!nova_handle_info(handle, &info) ||
       (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
-      !nova_project_root_acl(handle))
+      (!nova_project_root_acl(handle) && !nova_managed_directory_acl(handle)))
     return 0;
   if (output != NULL)
     *output = info;
@@ -884,7 +897,8 @@ static int nova_protect_directory_handle(HANDLE handle) {
   ZeroMemory(&security, sizeof(security));
   int valid = nova_handle_info(handle, &before) &&
               (before.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
-              nova_private_security_create(&security);
+              nova_private_security_create_with_flags(
+                  &security, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE);
   if (valid) {
     DWORD status = SetSecurityInfo(
         handle, SE_FILE_OBJECT,
@@ -898,7 +912,31 @@ static int nova_protect_directory_handle(HANDLE handle) {
   return valid;
 }
 
-static napi_value nova_protect_at(napi_env env, napi_callback_info info) {
+static int nova_prepare_managed_directory_handle(HANDLE handle) {
+  BY_HANDLE_FILE_INFORMATION before;
+  nova_private_security security;
+  ZeroMemory(&security, sizeof(security));
+  int valid = nova_handle_info(handle, &before) &&
+              (before.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+              nova_private_security_create_with_flags(
+                  &security, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE);
+  if (valid) {
+    DWORD status = SetSecurityInfo(
+        handle, SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+        NULL, NULL, security.acl, NULL);
+    BY_HANDLE_FILE_INFORMATION after;
+    valid = status == ERROR_SUCCESS && nova_managed_directory_acl(handle) &&
+            nova_handle_info(handle, &after) &&
+            nova_same_identity(&before, &after);
+  }
+  nova_private_security_destroy(&security);
+  return valid;
+}
+
+static napi_value nova_protect_at_policy(napi_env env,
+                                         napi_callback_info info,
+                                         int managed) {
   napi_value args[3];
   HANDLE root;
   HANDLE child;
@@ -926,10 +964,20 @@ static napi_value nova_protect_at(napi_env env, napi_callback_info info) {
   int valid = status == NOVA_STATUS_SUCCESS &&
               nova_handle_info(opened, &actual) &&
               nova_same_identity(&expected, &actual) &&
-              nova_protect_directory_handle(opened);
+              (managed ? nova_prepare_managed_directory_handle(opened)
+                       : nova_protect_directory_handle(opened));
   if (opened != INVALID_HANDLE_VALUE)
     CloseHandle(opened);
   return nova_status(env, valid ? "ok" : "failed");
+}
+
+static napi_value nova_protect_at(napi_env env, napi_callback_info info) {
+  return nova_protect_at_policy(env, info, 0);
+}
+
+static napi_value nova_prepare_managed_at(napi_env env,
+                                          napi_callback_info info) {
+  return nova_protect_at_policy(env, info, 1);
 }
 
 static napi_value nova_matches_at_policy(napi_env env, napi_callback_info info,
@@ -1434,6 +1482,7 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "mkdirAt", nova_mkdir_at) ||
       !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||
       !nova_export(env, exports, "protectAt", nova_protect_at) ||
+      !nova_export(env, exports, "prepareManagedAt", nova_prepare_managed_at) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
       !nova_export(env, exports, "renameNoReplaceAt", nova_rename_no_replace_at) ||
       !nova_export(env, exports, "syncDirectory", nova_sync_directory) ||

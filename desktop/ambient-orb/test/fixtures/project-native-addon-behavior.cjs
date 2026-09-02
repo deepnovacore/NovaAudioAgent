@@ -3,12 +3,10 @@
 const assert = require('node:assert/strict')
 const {
   closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync,
-  renameSync, rmSync, symlinkSync, writeFileSync,
+  renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } = require('node:fs')
-const {homedir} = require('node:os')
 const {join} = require('node:path')
 const {spawn, spawnSync} = require('node:child_process')
-const {bindWindowsCurrentOwner} = require('./windows-current-owner.cjs')
 
 const addonPath = process.argv[2]
 if (addonPath === undefined) process.exit(0)
@@ -31,7 +29,6 @@ function openDirectory(path) {
 }
 
 function openNativeDirectory(path) {
-  bindWindowsCurrentOwner(path)
   const opened = addon.openDirectory(path)
   assert.equal(opened.status, 'ok', JSON.stringify(opened))
   assert.equal(Number.isInteger(opened.descriptor), true)
@@ -46,6 +43,22 @@ function assertNativeDirectoryRejected(path) {
   assert.deepEqual(opened.status, 'failed')
 }
 
+function supportsDirectoryLinks(root) {
+  const target = join(root, 'directory-link-probe-target')
+  const link = join(root, 'directory-link-probe')
+  mkdirSync(target)
+  try {
+    symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+    return true
+  } catch (error) {
+    if (error?.code === 'EPERM' || error?.code === 'EACCES') return false
+    throw error
+  } finally {
+    rmSync(link, {recursive: true, force: true})
+    rmSync(target, {recursive: true, force: true})
+  }
+}
+
 if (mode === 'hold') {
   const descriptor = openSync(lockPath, 'r+')
   const held = addon.acquire(descriptor)
@@ -55,9 +68,6 @@ if (mode === 'hold') {
   setInterval(() => {}, 1_000)
 } else {
   void (async () => {
-    const homeHandle = openNativeDirectory(homedir())
-    assert.equal(homeHandle.close(), undefined)
-    assert.equal(homeHandle.close(), undefined)
     if (process.platform === 'win32' && process.env.SystemRoot) {
       assertNativeDirectoryRejected(process.env.SystemRoot)
     }
@@ -65,6 +75,7 @@ if (mode === 'hold') {
     const container = mkdtempSync(join(process.cwd(), 'build', 'nova-project-native-behavior-'))
     const root = join(container, 'root')
     mkdirSync(root)
+    let directoryLinksSupported = process.platform !== 'win32'
     const containerHandle = openNativeDirectory(container)
     const rootHandle = openNativeDirectory(root)
     const containerDescriptor = containerHandle.descriptor
@@ -77,6 +88,16 @@ if (mode === 'hold') {
       assert.deepEqual(addon.protectAt(containerDescriptor, 'root', rootDescriptor), {status: 'ok'})
       assert.deepEqual(addon.probe(rootDescriptor), {status: 'ok'})
       if (process.platform === 'win32') {
+        const protectedRootAcl = spawnSync('icacls.exe', [root], {
+          encoding: 'utf8',
+          windowsHide: true,
+        })
+        assert.equal(
+          protectedRootAcl.status,
+          0,
+          protectedRootAcl.stderr || protectedRootAcl.stdout,
+        )
+        assert.match(protectedRootAcl.stdout, /\(OI\)\(CI\)\(F\)/u)
         const readers = spawnSync('icacls.exe', [
           root,
           '/grant:r',
@@ -164,7 +185,6 @@ if (mode === 'hold') {
 
       const repairDirectory = join(root, 'repair-me')
       mkdirSync(repairDirectory)
-      bindWindowsCurrentOwner(repairDirectory)
       const repairDescriptor = openDirectory(repairDirectory)
       try {
         assert.deepEqual(
@@ -176,30 +196,110 @@ if (mode === 'hold') {
       }
 
       if (process.platform === 'win32') {
-        const finalJunctionTarget = join(root, 'final-junction-target')
-        const finalJunction = join(root, 'final-junction')
-        mkdirSync(finalJunctionTarget)
-        symlinkSync(finalJunctionTarget, finalJunction, 'junction')
-        assertNativeDirectoryRejected(finalJunction)
-        const finalCanonicalHandle = openNativeDirectory(finalJunctionTarget)
-        finalCanonicalHandle.close()
+        const managedContainer = addon.mkdirAt(rootDescriptor, 'managed-container')
+        assert.equal(managedContainer.status, 'ok')
+        const managedContainerPath = join(root, 'managed-container')
+        const managedIdentity = statSync(managedContainerPath, {bigint: true})
+        const managedHandle = openNativeDirectory(managedContainerPath)
+        try {
+          assert.deepEqual(
+            addon.prepareManagedAt(rootDescriptor, 'managed-container', rootDescriptor),
+            {status: 'failed'},
+          )
+          assert.deepEqual(
+            addon.prepareManagedAt(
+              rootDescriptor,
+              'managed-container',
+              managedHandle.descriptor,
+            ),
+            {status: 'ok'},
+          )
+          const managedChild = addon.mkdirAt(managedHandle.descriptor, 'managed-child')
+          assert.equal(managedChild.status, 'ok')
+          assert.deepEqual(
+            addon.unlinkAt(
+              managedHandle.descriptor,
+              'managed-child',
+              managedChild.identity,
+              'directory',
+            ),
+            {status: 'ok'},
+          )
+        } finally {
+          managedHandle.close()
+        }
+        const preparedIdentity = statSync(managedContainerPath, {bigint: true})
+        assert.equal(preparedIdentity.dev, managedIdentity.dev)
+        assert.equal(preparedIdentity.ino, managedIdentity.ino)
+        const preparedAcl = spawnSync('icacls.exe', [managedContainerPath], {
+          encoding: 'utf8',
+          windowsHide: true,
+        })
+        assert.equal(preparedAcl.status, 0, preparedAcl.stderr || preparedAcl.stdout)
+        assert.match(preparedAcl.stdout, /\(OI\)\(CI\)\(F\)/u)
+        const inheritableReaders = spawnSync('icacls.exe', [
+          root,
+          '/grant:r',
+          '*S-1-5-32-545:(OI)(CI)(RX)',
+        ], {encoding: 'utf8', windowsHide: true})
+        assert.equal(
+          inheritableReaders.status,
+          0,
+          inheritableReaders.stderr || inheritableReaders.stdout,
+        )
+        const managedAcl = spawnSync('icacls.exe', [managedContainerPath], {
+          encoding: 'utf8',
+          windowsHide: true,
+        })
+        assert.equal(managedAcl.status, 0, managedAcl.stderr || managedAcl.stdout)
+        assert.match(managedAcl.stdout, /\(I\)[^\r\n]*\(RX\)/u)
+        const removeInheritableReaders = spawnSync('icacls.exe', [
+          root,
+          '/remove:g',
+          '*S-1-5-32-545',
+        ], {encoding: 'utf8', windowsHide: true})
+        assert.equal(
+          removeInheritableReaders.status,
+          0,
+          removeInheritableReaders.stderr || removeInheritableReaders.stdout,
+        )
 
-        const intermediateJunctionTarget = join(root, 'intermediate-junction-target')
-        const intermediateCanonicalChild = join(intermediateJunctionTarget, 'child')
-        const intermediateJunction = join(root, 'intermediate-junction')
-        mkdirSync(intermediateCanonicalChild, {recursive: true})
-        symlinkSync(intermediateJunctionTarget, intermediateJunction, 'junction')
-        assertNativeDirectoryRejected(join(intermediateJunction, 'child'))
-        const intermediateCanonicalHandle = openNativeDirectory(intermediateCanonicalChild)
-        intermediateCanonicalHandle.close()
+        directoryLinksSupported = supportsDirectoryLinks(root)
+        if (directoryLinksSupported) {
+          const finalJunctionTarget = join(root, 'final-junction-target')
+          const finalJunction = join(root, 'final-junction')
+          mkdirSync(finalJunctionTarget)
+          symlinkSync(finalJunctionTarget, finalJunction, 'junction')
+          assertNativeDirectoryRejected(finalJunction)
+          const finalCanonicalHandle = openNativeDirectory(finalJunctionTarget)
+          finalCanonicalHandle.close()
+
+          const intermediateJunctionTarget = join(root, 'intermediate-junction-target')
+          const intermediateCanonicalChild = join(intermediateJunctionTarget, 'child')
+          const intermediateJunction = join(root, 'intermediate-junction')
+          mkdirSync(intermediateCanonicalChild, {recursive: true})
+          symlinkSync(intermediateJunctionTarget, intermediateJunction, 'junction')
+          assertNativeDirectoryRejected(join(intermediateJunction, 'child'))
+          const intermediateCanonicalHandle = openNativeDirectory(intermediateCanonicalChild)
+          intermediateCanonicalHandle.close()
+        }
 
         const readonlyDirectory = join(root, 'repair-readonly')
         mkdirSync(readonlyDirectory)
+        const currentIdentity = spawnSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], {
+          encoding: 'utf8',
+          windowsHide: true,
+        })
+        assert.equal(currentIdentity.status, 0, currentIdentity.stderr)
+        const currentSid = /,"(S-1-(?:[0-9]+-){1,15}[0-9]+)"\r?\n?$/u.exec(
+          currentIdentity.stdout,
+        )?.[1]
+        assert.notEqual(currentSid, undefined)
         const restricted = spawnSync('icacls.exe', [
           readonlyDirectory,
           '/inheritance:r',
           '/grant:r',
-          `${process.env.USERNAME}:(OI)(CI)(RX)`,
+          `*${currentSid}:(OI)(CI)(RX)`,
         ], {encoding: 'utf8', windowsHide: true})
         assert.equal(restricted.status, 0, restricted.stderr || restricted.stdout)
         const readonlyHandle = openNativeDirectory(readonlyDirectory)
@@ -276,11 +376,13 @@ if (mode === 'hold') {
       assert.equal(tombstone.status, 'ok')
       mkdirSync(join(root, 'tombstone', 'nested'))
       writeFileSync(join(root, 'tombstone', 'nested', 'data.txt'), 'delete')
-      symlinkSync(
-        outside,
-        join(root, 'tombstone', 'link-to-outside'),
-        process.platform === 'win32' ? 'junction' : 'dir',
-      )
+      if (directoryLinksSupported) {
+        symlinkSync(
+          outside,
+          join(root, 'tombstone', 'link-to-outside'),
+          process.platform === 'win32' ? 'junction' : 'dir',
+        )
+      }
       assert.deepEqual(
         addon.removeTreeAt(rootDescriptor, 'tombstone', tombstone.identity),
         {status: 'ok'},
@@ -385,6 +487,12 @@ if (mode === 'hold') {
           new Promise(resolve => lockChild.once('exit', resolve)),
           delay(1_000),
         ])
+      }
+      if (process.platform === 'win32') {
+        spawnSync('icacls.exe', [root, '/reset', '/T', '/Q', '/C'], {
+          encoding: 'utf8',
+          windowsHide: true,
+        })
       }
       assert.equal(rootHandle.close(), undefined)
       assert.equal(containerHandle.close(), undefined)

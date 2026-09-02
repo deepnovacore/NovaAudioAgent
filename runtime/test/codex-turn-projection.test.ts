@@ -5,11 +5,14 @@ import {VirtualClock, type Clock} from '../src/clock.js'
 import {CodexProtocolError, MAX_FINAL_TEXT_INPUT, MAX_INTERNAL_ACTIVITY} from '../src/codex-protocol.js'
 import {AppServerTurnProjection} from '../src/codex-turn-projection.js'
 
-function ephemeralThread(id = 'PRIVATE-THREAD'): Record<string, unknown> {
+function ephemeralThread(
+  id = 'PRIVATE-THREAD',
+  approvalPolicy: 'never' | 'on-request' = 'never',
+): Record<string, unknown> {
   return {
     thread: {id, ephemeral: true, path: null, cwd: '/workspace'},
     cwd: '/workspace',
-    approvalPolicy: 'never',
+    approvalPolicy,
     activePermissionProfile: {id: 'nova_audio_agent'},
   }
 }
@@ -66,6 +69,23 @@ test('thread binding accepts exact ephemeral and persistent workspace identities
   assert.equal(persistent.threadId, 'PRIVATE-THREAD')
 })
 
+test('thread binding requires the response policy to equal the requested policy', () => {
+  for (const approvalPolicy of ['never', 'on-request'] as const) {
+    const projection = new AppServerTurnProjection({clock: new VirtualClock()})
+    projection.bindThread(ephemeralThread('PRIVATE-THREAD', approvalPolicy), {
+      workspace: '/workspace',
+      approvalPolicy,
+    })
+    assert.equal(projection.threadId, 'PRIVATE-THREAD')
+
+    const mismatch = new AppServerTurnProjection({clock: new VirtualClock()})
+    assert.throws(() => mismatch.bindThread(
+      ephemeralThread('PRIVATE-THREAD', approvalPolicy === 'never' ? 'on-request' : 'never'),
+      {workspace: '/workspace', approvalPolicy},
+    ), error => code(error) === 'unsupported_protocol')
+  }
+})
+
 test('thread identity, policy, mode, root, and active profile mismatches are private failures', () => {
   const mutations: ((value: Record<string, unknown>) => void)[] = [
     value => { (value.thread as Record<string, unknown>).id = 'OTHER' },
@@ -116,6 +136,46 @@ test('turn response and notification correlate in either order and emit one exac
     assert.equal(projection.turnWasStarted, true)
     assert.equal(projection.activePair !== null, true)
   }
+})
+
+test('file approval correlates by current item identity, not its independent request timestamp', () => {
+  const projection = startedProjection()
+  const fileItem = {
+    id: 'PRIVATE-FILE-ITEM', type: 'fileChange', status: 'inProgress',
+    changes: [{path: '/workspace/src/a.ts', diff: 'private', kind: {type: 'add'}}],
+  }
+  projection.notification('item/started', {
+    threadId: 'PRIVATE-THREAD', turnId: 'PRIVATE-TURN', startedAtMs: 10, item: fileItem,
+  })
+  assert.deepEqual(projection.fileChangeItemForApproval(
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', 10,
+  ), fileItem)
+  assert.equal(projection.fileChangeItemForApproval(
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', 11,
+  )?.id, 'PRIVATE-FILE-ITEM')
+  assert.equal(projection.fileChangeItemForApproval(
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', -1,
+  ), null)
+  assert.equal(projection.fileChangeItemForApproval(
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'MISSING', 10,
+  ), null)
+
+  projection.notification('item/completed', {
+    threadId: 'PRIVATE-THREAD', turnId: 'PRIVATE-TURN', item: {
+      ...fileItem, status: 'completed',
+    },
+  })
+  assert.equal(projection.fileChangeItemForApproval(
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', 10,
+  ), null)
+
+  projection.notification('turn/completed', {
+    threadId: 'PRIVATE-THREAD',
+    turn: {id: 'PRIVATE-TURN', status: 'completed', items: []},
+  })
+  assert.equal(projection.fileChangeItemForApproval(
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', 10,
+  ), null)
 })
 
 test('turn identity mismatch fails without exposing either private identity', () => {

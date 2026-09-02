@@ -607,6 +607,16 @@ export class RealtimeSession {
     return this.#injectHostItem(item, {confirmationTimeout: null, asUserActivation: false})
   }
 
+  async injectHostContext(item: HostContextItem): Promise<boolean> {
+    if (item.kind === 'tool_output') {
+      throw new TypeError('tool output requires injectToolOutput')
+    }
+    if (item.kind === 'workspace_context') {
+      throw new TypeError('workspace context requires its dedicated delivery path')
+    }
+    return this.#injectHostItem(item, {confirmationTimeout: null, asUserActivation: false})
+  }
+
   /** Request one normal provider response for the user turn that already reached transcript final. */
   async requestUserResponse(): Promise<boolean> {
     if (

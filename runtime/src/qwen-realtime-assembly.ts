@@ -51,6 +51,7 @@ export interface BuildQwenRealtimeProviderOptions {
   readonly idFactory: () => string
   readonly now: () => number
   readonly workspaceGraphPolicy: boolean
+  readonly codexApproval: boolean
 }
 
 /**
@@ -78,6 +79,7 @@ export function buildQwenRealtimeAssembly(
       idFactory: options.idFactory,
       now: options.now,
       workspaceGraphPolicy: options.workspaceGraphPolicy,
+      codexApproval: options.codexApproval,
     })
   }
   const codexSelected = options.settings.executors.includes('codex')
@@ -126,6 +128,8 @@ export function buildQwenRealtimeAssembly(
     idFactory: () => ids.next('qwen'),
     now: () => clock.now(),
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
+    codexApproval: options.codexResource?.approvalController !== null
+      && options.codexResource?.approvalController !== undefined,
   })
   const workspaceGraph = workspaceGraphServiceFromSettings(
     options.settings,

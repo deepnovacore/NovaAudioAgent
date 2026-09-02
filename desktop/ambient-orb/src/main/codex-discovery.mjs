@@ -1,5 +1,6 @@
+import {admitCodexCliVersion} from '@nova-audio-agent/runtime/desktop'
+
 const SOURCES = new Set(['path', 'npm-user', 'common', 'manual', 'npm-launcher'])
-const VERSION = /^[^\u0000-\u001f\u007f]{1,128}$/u
 
 function appendNative(target, seen, command, source) {
   if (typeof command !== 'string' || command === '') return
@@ -110,11 +111,13 @@ export async function discoverCodex({ candidates, canonicalize, inspect }) {
     if (invocation === null) continue
     try {
       const result = await inspect(invocation)
-      if (!result || typeof result !== 'object' || !VERSION.test(result.version)) continue
+      if (!result || typeof result !== 'object') continue
+      const admitted = admitCodexCliVersion(result.version)
+      if (admitted === null) continue
       return Object.freeze({
         status: 'ready', invocation, path: invocation.command,
         prefixArgs: invocation.prefixArgs, source: candidate.source,
-        version: result.version,
+        version: admitted.display,
       })
     } catch {
       // A candidate that cannot answer the bounded version probe is not usable.

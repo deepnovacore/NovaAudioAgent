@@ -12,6 +12,8 @@ import {
   type TransportObserver,
 } from '../src/codex-app-server-transport.js'
 import {MAX_STDOUT} from '../src/codex-protocol.js'
+import {RealClock} from '../src/clock.js'
+import {CodexApprovalController} from '../src/realtime/codex-approval.js'
 import {
   hostBinaryForTest,
   hostCodexHomeForTest,
@@ -253,9 +255,19 @@ test('preflight rejects Codex versions older than the pinned app-server minimum'
   )
 })
 
-test('preflight rejects a prerelease at the pinned app-server minimum', async () => {
+test('preflight accepts newer prerelease and build-qualified Codex versions', async () => {
+  for (const version of ['0.151.0-alpha.7.2', '0.151.0-alpha.7+desktop.2', '0.145.0+build.1']) {
+    const transport = createTransport({spawn: async () => new MemoryAppServerOwner([])}, {
+      preflightRunner: {run: async () => ({...safePreflightReport(), version})},
+    })
+    assert.equal((await transport.preflight({expiresAtMs: Date.now() + 5000})).version, version)
+  }
+})
+
+test('preflight rejects a prerelease at the pinned app-server minimum and malformed labels', async () => {
   for (const version of [
-    '0.145.0-alpha', '0.145.0+build.1', 'v0.145.0', 'codex-cli 0.145.0', 'codex 0.145.0',
+    '0.145.0-alpha', 'v0.145.0', 'codex-cli 0.145.0', 'codex 0.145.0',
+    '0.151.0-alpha..7', '0.151.0 alpha.7',
   ]) {
     const transport = createTransport({spawn: async () => new MemoryAppServerOwner([])}, {
       preflightRunner: {run: async () => ({...safePreflightReport(), version})},
@@ -2277,6 +2289,85 @@ test('the real fake app-server handles arbitrary stdout chunks and barriered ste
   }
 })
 
+test('the real fake app-server carries correlated file and bounded command approvals end to end', async () => {
+  for (const scenario of ['file-approval', 'command-approval'] as const) {
+    const factory = new FakeAppServerOwnerFactory(scenario)
+    const controller = new CodexApprovalController({
+      clock: new RealClock(),
+      idFactory: () => `nova-${scenario}`,
+    })
+    const transport = createTransport(factory, {
+      approvalPolicy: 'on-request',
+      approvalController: controller,
+    })
+    try {
+      const running = transport.run(
+        {workOrder: 'approval fixture work'},
+        {},
+        {expiresAtMs: Date.now() + 10_000},
+      )
+      await settleUntil(() => factory.owner !== null, `${scenario} fake owner spawn`)
+      await within(factory.owner!.waitForBarrier('approval_request'), 5000, `${scenario} request`)
+      await settleUntil(() => controller.pending, `${scenario} controller pending`)
+      assert.equal(controller.pending, true, `${scenario} should be pending`)
+      assert.equal(controller.view.kind, scenario === 'file-approval'
+        ? 'file_change'
+        : 'command_execution')
+      assert.deepEqual(Object.keys(controller.view).sort(), [
+        'expires_at',
+        'kind',
+        'local_detail',
+        'operation_summary',
+        'pending_approval',
+        'pending_approval_busy',
+        'pending_approval_id',
+      ])
+      assert.equal(controller.view.pending_approval_id, `nova-${scenario}`)
+      assert.equal(controller.acceptDecision({
+        approvalId: `nova-${scenario}`,
+        decision: 'accept',
+      }), true)
+      await within(factory.owner!.waitForBarrier('approval_response'), 5000, `${scenario} response`)
+      const result = await running
+      assert.equal(result.classification, 'completed')
+      assert.equal(result.code, 'completed')
+    } finally {
+      await transport.close().catch(() => undefined)
+      await factory.owner?.killTree().catch(() => undefined)
+      await factory.owner?.dispose().catch(() => undefined)
+    }
+  }
+})
+
+test('the real fake app-server declines a file approval with invalid startedAtMs', async () => {
+  const factory = new FakeAppServerOwnerFactory('file-approval-invalid-start')
+  const controller = new CodexApprovalController({
+    clock: new RealClock(),
+    idFactory: () => 'must-not-be-offered',
+  })
+  const transport = createTransport(factory, {
+    approvalPolicy: 'on-request',
+    approvalController: controller,
+  })
+  try {
+    const running = transport.run(
+      {workOrder: 'stale approval fixture work'},
+      {},
+      {expiresAtMs: Date.now() + 10_000},
+    )
+    await settleUntil(() => factory.owner !== null, 'stale approval fake owner spawn')
+    await within(factory.owner!.waitForBarrier('approval_response'), 5000, 'stale response')
+    assert.equal(controller.pending, false)
+    const result = await running
+    assert.equal(result.classification, 'completed')
+    assert.equal(result.code, 'completed')
+  } finally {
+    await transport.close().catch(() => undefined)
+    await factory.owner?.killTree().catch(() => undefined)
+    await factory.owner?.dispose().catch(() => undefined)
+  }
+})
+
 test('real child malformed and bounded stream failures settle with stable private codes', async () => {
   for (const [scenario, code] of [
     ['malformed-after-turn', 'unsupported_protocol'],
@@ -2704,6 +2795,8 @@ function createTransport(
     readonly developerInstructions?: string | null
     readonly prepare?: (input: {readonly apiKey: string | null}) => Promise<never>
     readonly removeEphemeralHome?: () => Promise<void>
+    readonly approvalPolicy?: 'never' | 'on-request'
+    readonly approvalController?: CodexApprovalController
   } = {},
 ): OwnedCodexAppServerTransport {
   const workspace = process.cwd()
@@ -2716,6 +2809,12 @@ function createTransport(
       developerInstructions: overrides.developerInstructions ?? null,
       resumeThreadId: null,
       persistent: false,
+      ...(overrides.approvalPolicy === undefined
+        ? {}
+        : {approvalPolicy: overrides.approvalPolicy}),
+      ...(overrides.approvalController === undefined
+        ? {}
+        : {approvalController: overrides.approvalController}),
     },
     processFactory,
     credentialSnapshotter: {

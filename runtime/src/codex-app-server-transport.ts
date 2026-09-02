@@ -5,6 +5,7 @@ import {
   validateEffectiveCodexConfig,
 } from './codex-app-server-schema.js'
 import {sanitizeCodexPreflightReport} from './codex-contract.js'
+import {admitCodexVersion} from './codex-version.js'
 import type {
   CredentialSnapshot,
   CredentialSnapshotter,
@@ -34,6 +35,10 @@ import {RealClock} from './clock.js'
 import {stripLikePython, isWellFormed} from './python-text.js'
 import {normalizeNfcPinned} from './unicode-normalize.js'
 import {isOtherCategory} from './unicode-tables.js'
+import {
+  CodexApprovalController,
+  routeCodexApprovalServerRequest,
+} from './realtime/codex-approval.js'
 
 export const CODEX_PREFLIGHT_LIMIT_MS = 20_000
 export const CODEX_INTERRUPT_GRACE_MS = 2_000
@@ -79,12 +84,17 @@ export interface CodexAppServerLaunchConfig {
   readonly resumeThreadId: string | null
   readonly persistent: boolean
   readonly workingInterval?: number
+  readonly approvalPolicy?: 'never' | 'on-request'
+  readonly approvalController?: CodexApprovalController
 }
 
 type ValidatedCodexAppServerLaunchConfig = Omit<
   CodexAppServerLaunchConfig,
-  'workingInterval'
-> & {readonly workingInterval: number}
+  'workingInterval' | 'approvalPolicy'
+> & {
+  readonly workingInterval: number
+  readonly approvalPolicy: 'never' | 'on-request'
+}
 
 export interface TransportDeadline {
   readonly expiresAtMs: number
@@ -505,7 +515,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   }
 
   close(reason: 'shutdown' | 'cancel' | 'failure' = 'shutdown'): Promise<void> {
-    void reason
+    this.#config.approvalController?.invalidate(reason)
     if (this.#closePromise !== null) return this.#closePromise
     this.#closed = true
     const work = this.#closeAttempt()
@@ -840,14 +850,38 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         if (projection === null) return
         try {
           const completion = projection.notification(notification.method, notification.params)
-          if (completion !== null) session.completion?.resolve(completion)
+          if (completion !== null) {
+            this.#config.approvalController?.invalidate('turn_completed')
+            session.completion?.resolve(completion)
+          }
         } catch (error) {
           this.#failSession(session, safeTransportError(error, 'unsupported_protocol'))
         }
       },
-      onServerRequest: () => {
+      onServerRequest: (_id, method, params, signal) => {
+        const projection = session.projection
+        const controller = this.#config.approvalController
+        if (projection !== null && controller !== undefined) {
+          const routed = routeCodexApprovalServerRequest({
+            controller,
+            workspace: hostWorkspacePath(this.#config.workspace),
+            activePair: projection.activePair,
+            fileChangeItem: (itemId, startedAtMs) => {
+              const pair = projection.activePair
+              if (pair === null) return null
+              return projection.fileChangeItemForApproval(
+                pair[0], pair[1], itemId, startedAtMs,
+              )
+            },
+            method,
+            params,
+            signal,
+          })
+          if (routed !== undefined) return routed
+        }
         session.unexpectedServerRequest = true
         if (session.turnStartWritten) this.#failSession(session, new CodexTransportError('unexpected_server_request'))
+        return undefined
       },
     })
     const finishStdout = (failureCode: CodexTransportError | null): void => {
@@ -991,7 +1025,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     readonly params: Readonly<Record<string, unknown>>
   } {
     const workspace = hostWorkspacePath(this.#config.workspace)
-    const common: Record<string, unknown> = {approvalPolicy: 'never'}
+    const common: Record<string, unknown> = {approvalPolicy: this.#config.approvalPolicy}
     if (this.#config.developerInstructions !== null) {
       common.developerInstructions = this.#config.developerInstructions
     }
@@ -1016,6 +1050,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       projection.bindThread(response, {
         workspace: hostWorkspacePath(this.#config.workspace),
         ephemeral: !this.#config.persistent,
+        approvalPolicy: this.#config.approvalPolicy,
         ...(this.#config.resumeThreadId === null
           ? {}
           : {expectedThreadId: this.#config.resumeThreadId}),
@@ -1249,6 +1284,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   #failSession(session: Session, error: CodexTransportError): void {
     if (session.failureCause !== null) return
     session.failureCause = error
+    this.#config.approvalController?.invalidate(error.code)
     session.failure.resolve(error)
     if (session.warm && !session.used && !session.closing) {
       void this.#cleanup(session, true).catch(() => undefined)
@@ -1432,6 +1468,12 @@ function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCode
     ? null
     : validateThreadId(config.resumeThreadId)
   if (!config.persistent && resumeThreadId !== null) throw new CodexTransportError('resume_unavailable')
+  const approvalPolicy = config.approvalPolicy ?? 'never'
+  if (
+    (approvalPolicy !== 'never' && approvalPolicy !== 'on-request')
+    || (approvalPolicy === 'on-request' && !(config.approvalController instanceof CodexApprovalController))
+    || (approvalPolicy === 'never' && config.approvalController !== undefined)
+  ) throw new CodexTransportError('workspace_invalid')
   return Object.freeze({
     binary: config.binary,
     prefixArgs: Object.freeze([...(config.prefixArgs ?? [])]),
@@ -1441,6 +1483,10 @@ function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCode
     developerInstructions,
     resumeThreadId,
     persistent: config.persistent,
+    approvalPolicy,
+    ...(config.approvalController === undefined
+      ? {}
+      : {approvalController: config.approvalController}),
     workingInterval: validateWorkingInterval(config.workingInterval),
   })
 }
@@ -1498,7 +1544,7 @@ function requireCompletePreflightReport(value: unknown): SafePreflightReport {
   if (
     Object.hasOwn(raw, 'version')
     && typeof raw.version === 'string'
-    && !versionAtLeast(raw.version, [0, 145, 0])
+    && admitCodexVersion(raw.version) === null
   ) throw new CodexTransportError('unsupported_version')
   const admitted = sanitizeCodexPreflightReport(value)
   if (
@@ -1511,22 +1557,10 @@ function requireCompletePreflightReport(value: unknown): SafePreflightReport {
     || admitted.credential.present !== true
     || !isPlainRecord(admitted.limits)
   ) throw new CodexTransportError('preflight_failed')
-  if (!versionAtLeast(admitted.version, [0, 145, 0])) {
+  if (admitCodexVersion(admitted.version) === null) {
     throw new CodexTransportError('unsupported_version')
   }
   return admitted as SafePreflightReport
-}
-
-function versionAtLeast(value: string, minimum: readonly [number, number, number]): boolean {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(value)
-  if (match === null) return false
-  const actual = [Number(match[1]), Number(match[2]), Number(match[3])] as const
-  if (!actual.every(Number.isSafeInteger)) return false
-  for (let index = 0; index < minimum.length; index += 1) {
-    if (actual[index]! > minimum[index]!) return true
-    if (actual[index]! < minimum[index]!) return false
-  }
-  return true
 }
 
 async function requestWithDeadline(
@@ -1678,7 +1712,10 @@ function safeTransportError(error: unknown, fallback: CodexTransportCode): Codex
 }
 
 function isTurnLifecycleNotification(method: string): boolean {
-  return method === 'turn/started' || method === 'item/completed' || method === 'turn/completed'
+  return method === 'turn/started'
+    || method === 'item/started'
+    || method === 'item/completed'
+    || method === 'turn/completed'
 }
 
 const TRANSPORT_CODES: ReadonlySet<CodexTransportCode> = new Set([

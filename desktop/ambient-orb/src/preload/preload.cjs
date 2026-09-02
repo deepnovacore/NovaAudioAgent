@@ -41,7 +41,11 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     },
   }),
   memoryBoard: Object.freeze({
-    request: () => ipcRenderer.invoke('nova:memory-board:request'),
+    request: detail => ipcRenderer.invoke(
+      'nova:memory-board:request',
+      detail === 'full' ? 'full' : undefined,
+    ),
+    copyJson: () => ipcRenderer.invoke('nova:memory-board:copy-json'),
     export: () => ipcRenderer.invoke('nova:memory-board:export'),
   }),
   graphBoard: Object.freeze({

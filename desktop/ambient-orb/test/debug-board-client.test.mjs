@@ -2,10 +2,13 @@ import assert from 'node:assert/strict'
 import {EventEmitter} from 'node:events'
 import test from 'node:test'
 
-import {
+import * as debugBoardClient from '../src/main/debug-board-client.mjs'
+
+const {
   createDebugBoardRequester,
+  formatMemoryBoardExport,
   requestDebugBoard,
-} from '../src/main/debug-board-client.mjs'
+} = debugBoardClient
 
 const CONNECTION = Object.freeze({
   endpoint: 'ws://127.0.0.1:32123',
@@ -36,6 +39,25 @@ class FakeSocket extends EventEmitter {
     this.emit('open')
   }
 }
+
+test('memory board export formatting validates and bounds the full snapshot once for copy and save', () => {
+  assert.equal(typeof formatMemoryBoardExport, 'function')
+  const formatted = formatMemoryBoardExport({
+    channels: [{name: 'conversation', summary: null, item_count: 1, items: [{seq: 1}]}],
+    diagnostics: {
+      version: 1,
+      records: [{seq: 2, ts: 3.5, kind: 'runtime', payload: {ok: true}}],
+    },
+  }, {now: () => new Date('2026-09-02T03:00:00.000Z')})
+
+  assert.deepEqual(formatted, {
+    body: '{\n  "exported_at": "2026-09-02T03:00:00.000Z",\n  "channels": [\n    {\n      "name": "conversation",\n      "summary": null,\n      "item_count": 1,\n      "items": [\n        {\n          "seq": 1\n        }\n      ]\n    }\n  ],\n  "diagnostics": {\n    "version": 1,\n    "records": [\n      {\n        "seq": 2,\n        "ts": 3.5,\n        "kind": "runtime",\n        "payload": {\n          "ok": true\n        }\n      }\n    ]\n  }\n}',
+    stamp: '2026-09-02T03-00-00-000Z',
+  })
+  assert.deepEqual(formatMemoryBoardExport({channels: [], diagnostics: {version: 2, records: []}}), {
+    error: 'invalid_payload',
+  })
+})
 
 test('debug board client authenticates on the isolated path and accepts only its response', async () => {
   let socket

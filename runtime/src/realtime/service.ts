@@ -39,6 +39,8 @@ import type {
   ProjectConfirmationController,
   ProjectConfirmationView,
 } from './project-confirmation.js'
+import type {CodexApprovalController, CodexApprovalView} from './codex-approval.js'
+import {ConfirmationTurnIsolation} from './confirmation-turn-isolation.js'
 import type {
   HostContextItem,
   HostResponseIntent,
@@ -98,7 +100,33 @@ import type { RealtimeTelemetry } from './telemetry.js'
 import {UserOriginBindingLedger} from './user-origin-binding.js'
 
 const PROJECT_CONFIRMATION_TOOL = 'codex__confirm_project_action'
+const CODEX_APPROVAL_TOOL = 'codex__confirm_codex_approval'
 const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
+const CODEX_APPROVAL_CLARIFICATION = '请明确说同意或拒绝。'
+
+type ProviderReconnectReason =
+  | 'project_confirmation_ui_retry'
+  | 'uncertain_delivery'
+  | 'recoverable_provider_error'
+  | 'origin_resolution_overflow'
+  | 'origin_binding_overflow'
+  | 'refusal_ledger_overflow'
+  | 'project_confirmation_carrier_recovery'
+  | 'project_confirmation_expiry_cleanup'
+  | 'test'
+
+type CodexApprovalDecisionReason =
+  | 'not_pending'
+  | 'epoch_mismatch'
+  | 'authority_missing'
+  | 'revision_mismatch'
+  | 'item_mismatch'
+  | 'response_mismatch'
+  | 'malformed_arguments'
+  | 'expired'
+  | 'replaced'
+  | 'context_not_ready'
+  | 'voice_exhausted'
 
 interface BoundToolOrigin {
   readonly observedProviderResponseId: string | null
@@ -111,6 +139,33 @@ interface ProjectConfirmationDecisionRetry {
   readonly source_response_id: string
   requested: boolean
   retry_response_id: string | null
+}
+
+interface CodexApprovalDecisionRetry {
+  readonly item_key: string
+  readonly source_response_id: string
+  requested: boolean
+  retry_response_id: string | null
+}
+
+interface CodexApprovalAuthorityState {
+  readonly approvalId: string
+  readonly sessionEpoch: number
+  readonly expiresAt: number
+  readonly lifecycleToken: number
+  readonly contextItem: HostContextItem
+  contextReady: boolean
+  preContextOnset: boolean
+  attempt: 0 | 1 | 2
+  clarificationQueued: boolean
+}
+
+interface CodexApprovalPendingResponseQuarantine {
+  readonly sessionEpoch: number
+  readonly sourceRetry: CodexApprovalDecisionRetry | null
+  requestFreshResponse: boolean
+  responseId: string | null
+  terminal: boolean
 }
 
 function projectConfirmationDecisionArguments(
@@ -138,6 +193,29 @@ function projectConfirmationDecisionArguments(
     || typeof confirmed.value !== 'boolean'
   ) return null
   return {proposalId: proposal.value, confirmed: confirmed.value}
+}
+
+function codexApprovalDecisionArguments(
+  value: unknown,
+): {readonly approvalId: string; readonly approved: boolean} | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  if (Object.getPrototypeOf(value) !== Object.prototype) return null
+  const keys = Reflect.ownKeys(value)
+  if (keys.length !== 2 || !keys.includes('approval_id') || !keys.includes('approved')) return null
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  const approval = descriptors.approval_id
+  const approved = descriptors.approved
+  if (
+    approval === undefined
+    || approved === undefined
+    || !('value' in approval)
+    || !('value' in approved)
+    || typeof approval.value !== 'string'
+    || approval.value === ''
+    || codePointLengthLikePython(approval.value) > 128
+    || typeof approved.value !== 'boolean'
+  ) return null
+  return {approvalId: approval.value, approved: approved.value}
 }
 
 function suggestionSpeechView(content: Readonly<Record<string, JsonValue>>): string {
@@ -248,6 +326,8 @@ export interface RealtimeServiceOptions {
   readonly guardHistoryPairs?: number
   /** Absent means project confirmation is off, and every branch of it is inert. */
   readonly projectConfirmation?: ProjectConfirmationController
+  /** Independent one-shot Codex permission authority; absent on non-brokered transports. */
+  readonly codexApproval?: CodexApprovalController
   readonly commitProjectOperation?: (
     operation: ConfirmedProjectOperation,
   ) => Promise<{
@@ -296,6 +376,7 @@ export class RealtimeService {
   readonly #guardHistoryRecovery: GuardHistoryRecovery
   readonly #guardHistoryPairs: number
   readonly #projectConfirmation: ProjectConfirmationController | undefined
+  readonly #codexApproval: CodexApprovalController | undefined
   readonly #commitProjectOperation:
     | ((operation: ConfirmedProjectOperation) => Promise<{
       readonly accepted: boolean
@@ -365,6 +446,10 @@ export class RealtimeService {
   /** Best-effort provider cleanup is observed so it cannot reject outside service ownership. */
   readonly #providerRetirementTasks = new Set<Promise<void>>()
   readonly #providerRetirementEventIds = new Set<string>()
+  /** Exact audible approval responses being fenced after the local user settles or answers them. */
+  readonly #codexApprovalPromptReleaseTasks = new Set<Promise<void>>()
+  /** Exact standalone delegation acknowledgements superseded by their own terminal handoff. */
+  readonly #semanticAcknowledgementReleaseTasks = new Set<Promise<void>>()
   readonly #audioStarted = new Set<string>()
   /**
    * Slots promised to calls admitted but not yet acknowledged.
@@ -381,16 +466,18 @@ export class RealtimeService {
   readonly #pendingSync = new Map<string, string>()
   /** A timed-out sync call whose first real late handoff should become one host fact. */
   readonly #lateSync = new Map<string, string>()
-  /** Reserved user items answering a proposal, keyed `epoch:item`. */
-  readonly #projectConfirmationItems = new Set<string>()
+  /** Policy-free project turn identity state; never shared with Codex approval occupancy. */
+  readonly #projectConfirmationIsolation = new ConfirmationTurnIsolation<ToolCallReady>(
+    MAX_TRACKED_TOOL_CALLS,
+  )
+  /** Codex uses a separate isolation instance so its authority never shares project occupancy. */
+  readonly #codexApprovalIsolation = new ConfirmationTurnIsolation<ToolCallReady>(
+    MAX_TRACKED_TOOL_CALLS,
+  )
   /** Later utterances captured while another item owns the same confirmation. */
   readonly #projectConfirmationShadowItems = new Set<string>()
   /** Items mid-close: no longer answerable, still blocking tool calls. */
   readonly #projectConfirmationClosingItems = new Set<string>()
-  /** Responses a confirmation has blocked, so the block sticks for the whole turn. */
-  readonly #projectConfirmationResponses = new Set<string>()
-  /** Settled UI decisions still quarantine their exact old response until its terminal arrives. */
-  readonly #projectConfirmationQuarantinedResponses = new Set<string>()
   /** Bounded carrier cancel/watchdog work, observed so it cannot outlive service shutdown silently. */
   readonly #projectConfirmationCarrierReleaseTasks = new Set<Promise<void>>()
   /** Carrier recovery waits here while a newer user turn is still being transcribed. */
@@ -405,8 +492,6 @@ export class RealtimeService {
   readonly #projectConfirmationDecisionGates = new Map<string, Promise<void>>()
   /** Insertion-ordered so the oldest closed call is the one evicted. */
   readonly #projectConfirmationClosedCalls = new Map<string, null>()
-  #projectConfirmationBlocking = false
-  #projectConfirmationFencePending = false
   #projectConfirmationDecisionRetry: ProjectConfirmationDecisionRetry | null = null
   /** Confirmation commits whose terminal user-facing fact has not been selected yet. */
   readonly #projectConfirmationCommittingLifecycles = new Set<string>()
@@ -415,6 +500,26 @@ export class RealtimeService {
   readonly #projectExpiryBatches: ProjectExpiryBatch[] = []
   #projectExpiryDraining: Promise<void> | null = null
   #unsubscribeProjectExpiry: (() => void) | null = null
+  #unsubscribeCodexApproval: (() => void) | null = null
+  #codexApprovalAuthority: CodexApprovalAuthorityState | null = null
+  /** Current controller identity observed independently of the optional provider voice path. */
+  #codexApprovalObservedIdentity: {
+    readonly approvalId: string
+    readonly sessionEpoch: number
+    readonly expiresAt: number
+  } | null = null
+  /** One closed expiry tombstone used only to classify a late decision; never restored or emitted. */
+  #codexApprovalExpiredIdentity: {
+    readonly approvalId: string
+    readonly sessionEpoch: number
+  } | null = null
+  #codexApprovalLifecycleToken = 0
+  #codexApprovalDecisionRetry: CodexApprovalDecisionRetry | null = null
+  #codexApprovalPendingResponseQuarantine: CodexApprovalPendingResponseQuarantine | null = null
+  readonly #codexApprovalQuarantinedResponses = new Map<string, null>()
+  /** Internal response identity -> closed attempt number; IDs never enter approval telemetry. */
+  readonly #codexApprovalCarrierAttempts = new Map<string, 1 | 2>()
+  #codexApprovalNeedsFreshResponse = false
   /**
    * The last progress summary spoken for each delegate.
    *
@@ -467,6 +572,7 @@ export class RealtimeService {
     this.#guardHistoryRecovery = recovery
     this.#guardHistoryPairs = pairs
     this.#projectConfirmation = options.projectConfirmation
+    this.#codexApproval = options.codexApproval
     this.#commitProjectOperation = options.commitProjectOperation
     this.#onProjectView = options.onProjectView
     this.#projectViewProvider = options.projectViewProvider
@@ -477,6 +583,10 @@ export class RealtimeService {
     this.#unsubscribeProjectExpiry = options.projectConfirmation?.observeExpiry(() => {
       this.#projectConfirmationExpired()
     }) ?? null
+    this.#unsubscribeCodexApproval = options.codexApproval?.observe(view => {
+      this.#syncCodexApproval(view)
+    }) ?? null
+    if (options.codexApproval !== undefined) this.#syncCodexApproval(options.codexApproval.view)
   }
 
   get codexState(): CodexState {
@@ -514,6 +624,8 @@ export class RealtimeService {
     if (Number.isInteger(this.session.sessionEpoch) && this.session.sessionEpoch >= 0) {
       this.#userOrigins.beginEpoch(this.session.sessionEpoch)
     }
+    this.#syncProjectConfirmationIsolation()
+    if (this.#codexApproval !== undefined) this.#syncCodexApproval(this.#codexApproval.view)
     this.#unsubscribe = this.#runtime.observe(event => {
       this.projectRuntimeEvent(event)
     })
@@ -553,9 +665,14 @@ export class RealtimeService {
   async close(): Promise<void> {
     this.#stop.abort()
     this.#invalidateProjectConfirmation('service_closed')
+    this.#invalidateCodexApproval('service_closed')
     if (this.#unsubscribeProjectExpiry !== null) {
       this.#unsubscribeProjectExpiry()
       this.#unsubscribeProjectExpiry = null
+    }
+    if (this.#unsubscribeCodexApproval !== null) {
+      this.#unsubscribeCodexApproval()
+      this.#unsubscribeCodexApproval = null
     }
     this.#projectExpiryBatches.length = 0
     // The drain is shutdown-owned work. A promise cannot be cancelled, so its continuations check the
@@ -587,6 +704,8 @@ export class RealtimeService {
     const backgroundTasks = [
       ...this.#tasks,
       ...this.#providerRetirementTasks,
+      ...this.#codexApprovalPromptReleaseTasks,
+      ...this.#semanticAcknowledgementReleaseTasks,
       ...this.#projectConfirmationCarrierReleaseTasks,
     ]
     const tasks = draining === null ? backgroundTasks : [...backgroundTasks, draining]
@@ -610,6 +729,7 @@ export class RealtimeService {
   }
 
   async localSpeechOnset(speechId: string): Promise<void> {
+    this.#noteCodexApprovalOnsetBeforeContext()
     const generation = this.session.currentGeneration
     if (generation !== null) {
       const key = callKey(generation.session_epoch, generation.response_id)
@@ -623,6 +743,11 @@ export class RealtimeService {
         if (oldest.done) break
         this.#localSpeechInterruptedResponses.delete(oldest.value)
       }
+    }
+    const approvalId = this.#codexApprovalAuthority?.approvalId
+    if (approvalId !== undefined) {
+      this.#removeQueuedCodexApprovalPrompt(approvalId)
+      this.#releaseCodexApprovalQuestion(approvalId)
     }
     await this.session.localSpeechOnset(speechId)
   }
@@ -649,7 +774,10 @@ export class RealtimeService {
 
     // A click wins the same one-shot authority race as a function call. Close every voice carrier
     // before awaiting commit I/O so a late provider call cannot act on the settled proposal.
-    const items = [...this.#projectConfirmationItems].map(parseCallKey)
+    const reserved = this.#projectConfirmationIsolation.reservation
+    const items = reserved === null
+      ? []
+      : [{sessionEpoch: reserved.sessionEpoch, id: reserved.itemId}]
     const retry = this.#projectConfirmationDecisionRetry
     const reconnectOutstandingRetry = retry?.requested === true
       && retry.retry_response_id === null
@@ -676,7 +804,10 @@ export class RealtimeService {
       }
       if (reconnectOutstandingRetry) {
         try {
-          await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+          await this.#reconnectProviderSession({
+            reason: 'project_confirmation_ui_retry',
+            expectedEpoch: this.session.sessionEpoch,
+          })
         } catch (failure) {
           this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
             ? failure
@@ -685,13 +816,10 @@ export class RealtimeService {
       }
     } finally {
       for (const item of items) this.#endProjectConfirmationClose(item.sessionEpoch, item.id)
-      this.#projectConfirmationItems.clear()
       this.#projectConfirmationShadowItems.clear()
       this.#projectConfirmationClosingItems.clear()
-      this.#projectConfirmationResponses.clear()
       this.#projectConfirmationDecisionRetry = null
-      this.#projectConfirmationBlocking = false
-      this.#projectConfirmationFencePending = false
+      this.#projectConfirmationIsolation.setResponseFencePending(false)
     }
     // Expiry publishes through its observer-owned cleanup batch. Queuing here as well would create
     // two differently keyed host facts for the same deadline transition.
@@ -708,6 +836,32 @@ export class RealtimeService {
       outcome: outcome.kind,
       state,
     })
+  }
+
+  /** Renderer clicks are direct local-user authority on the same one-shot controller as voice. */
+  codexApprovalDecision(approvalId: string, approved: boolean): boolean {
+    if (typeof approved !== 'boolean') return false
+    const controller = this.#codexApproval
+    if (controller === undefined) return false
+    const accepted = controller.acceptDecision({
+      approvalId,
+      decision: approved ? 'accept' : 'decline',
+    })
+    const expired = this.#codexApprovalExpiredIdentity
+    this.#recordCodexApprovalDecision(
+      this.session.sessionEpoch,
+      'renderer',
+      accepted && approved ? 'accepted' : 'refused',
+      accepted
+        ? undefined
+        : controller.pending
+          ? controller.view.pending_approval_id !== approvalId ? 'replaced' : 'not_pending'
+          : expired?.sessionEpoch === this.session.sessionEpoch
+              && expired.approvalId === approvalId
+            ? 'expired'
+            : 'not_pending',
+    )
+    return accepted
   }
 
   async waitStopped(): Promise<void> {
@@ -826,7 +980,10 @@ export class RealtimeService {
       this.#uncertainDeliveryRetries.delete(oldest.value)
     }
     try {
-      const reconnected = await this.#reconnectProviderSession({expectedEpoch: failure.session_epoch})
+      const reconnected = await this.#reconnectProviderSession({
+        reason: 'uncertain_delivery',
+        expectedEpoch: failure.session_epoch,
+      })
       if (!reconnected) await this.#deliveryPass()
     } catch (cause) {
       if (cause instanceof ItemDeliveryUncertainError) {
@@ -961,6 +1118,7 @@ export class RealtimeService {
   async #flushHostItemsLocked(): Promise<void> {
     while (this.#hostItems.length > 0) {
       const queued = this.#hostItems[0]!
+      if (this.#codexApprovalBlocksSemanticAcknowledgement(queued)) break
       if (!this.#queuedHostItemEligible(queued)) {
         heapPop(this.#hostItems)
         if (queued.preemptive) this.#recomputePreemptPriority()
@@ -1057,6 +1215,15 @@ export class RealtimeService {
 
   /** Revalidate lifecycle eligibility at the final provider boundary. */
   #queuedHostItemEligible(queued: QueuedHostResponse): boolean {
+    const eventId = queued.intent.item.event_id
+    if (eventId.startsWith('codex-approval:')) {
+      const authority = this.#codexApprovalAuthority
+      if (
+        authority === null
+        || !eventId.startsWith(`codex-approval:${authority.approvalId}:`)
+        || !this.#codexApprovalAuthorityIsCurrent(authority)
+      ) return false
+    }
     if (queued.semantic_event_id !== null) {
       const acknowledgement = this.#semanticAcknowledgements.get(queued.semantic_event_id)
       if (
@@ -1069,6 +1236,11 @@ export class RealtimeService {
       if (state !== undefined && state !== 'running') return false
     }
     return queued.expires_at === null || this.#clock.now() < queued.expires_at
+  }
+
+  /** A pending permission question owns the foreground ahead of any generic startup receipt. */
+  #codexApprovalBlocksSemanticAcknowledgement(queued: QueuedHostResponse): boolean {
+    return this.#codexApprovalAuthority !== null && queued.semantic_event_id !== null
   }
 
   /** Whether this queued item is the captured Guard the current preemption is waiting to deliver. */
@@ -1493,13 +1665,34 @@ export class RealtimeService {
       || acknowledgement.heard
       || this.session.eventWasSpoken(acknowledgement.event_id)
     ) {
+      if (
+        acknowledgement.phase === 'bound'
+        && acknowledgement.binding === 'fallback'
+        && acknowledgement.response_id !== null
+        && acknowledgement.response_session_epoch === this.session.sessionEpoch
+      ) {
+        this.#cancelSemanticAcknowledgementResponse(
+          acknowledgement.response_session_epoch,
+          acknowledgement.response_id,
+        )
+      }
       this.#markAcknowledgementDelivered(acknowledgement)
       this.#retireSemanticAcknowledgementHostEvent(acknowledgement)
       return false
     }
     if (acknowledgement.phase === 'bound') {
       const responseId = acknowledgement.response_id
-      if (responseId === null || !this.session.suppressResponse(responseId)) return false
+      if (responseId === null) return false
+      if (!this.session.suppressResponse(responseId)) {
+        if (
+          acknowledgement.binding !== 'fallback'
+          || acknowledgement.response_session_epoch !== this.session.sessionEpoch
+        ) return false
+        this.#cancelSemanticAcknowledgementResponse(
+          acknowledgement.response_session_epoch,
+          responseId,
+        )
+      }
     }
     const retained = this.#hostItems.filter(queued => (
       queued.semantic_event_id !== acknowledgement.event_id
@@ -1515,6 +1708,26 @@ export class RealtimeService {
     acknowledgement.binding = null
     this.#retireSemanticAcknowledgementHostEvent(acknowledgement)
     return true
+  }
+
+  /** Cancel only the standalone acknowledgement that its own terminal handoff made obsolete. */
+  #cancelSemanticAcknowledgementResponse(sessionEpoch: number, responseId: string): void {
+    const cancellation = (async (): Promise<void> => {
+      if (sessionEpoch !== this.session.sessionEpoch) return
+      try {
+        await this.session.quarantineResponse(responseId)
+      } catch (failure) {
+        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+          ? failure
+          : new RealtimeDeliveryError(String(failure)))
+      } finally {
+        this.#deliveryReady.set()
+      }
+    })()
+    const task = cancellation.finally(() => {
+      this.#semanticAcknowledgementReleaseTasks.delete(task)
+    })
+    this.#semanticAcknowledgementReleaseTasks.add(task)
   }
 
   /**
@@ -1535,47 +1748,64 @@ export class RealtimeService {
    * session, and doing it again would discard a *live* one.
    */
   async #reconnectProviderSession(
-    options: {readonly expectedEpoch?: number} = {},
+    options: {readonly reason: ProviderReconnectReason; readonly expectedEpoch?: number},
   ): Promise<boolean> {
     const requestedEpoch = options.expectedEpoch ?? this.session.sessionEpoch
-    return this.#reconnectLock.run(async () => {
-      if (this.session.sessionEpoch !== requestedEpoch) return false
-      const oldEpoch = this.session.sessionEpoch
-      this.#invalidateProjectConfirmation('provider_replaced')
-      this.#guardPreemption = null
-      this.#providerReconnectSourceEpoch = oldEpoch
-      await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
-      // Only if nothing cleared it while we were awaiting. A user who started speaking during the
-      // reconnect has already activated the new session, so demanding an activation would be wrong.
-      if (this.#providerReconnectSourceEpoch === oldEpoch) {
-        this.#providerEpochNeedingActivation = this.session.sessionEpoch
-        this.#providerReconnectSourceEpoch = null
-      }
-      const retryOwner = this.#urgentHostResponseOwner
+    this.#telemetry?.record('provider.reconnect', {reason: options.reason, outcome: 'started'})
+    try {
+      return await this.#reconnectLock.run(async () => {
+        if (this.session.sessionEpoch !== requestedEpoch) {
+          this.#telemetry?.record('provider.reconnect', {
+            reason: options.reason,
+            outcome: 'skipped_epoch',
+          })
+          return false
+        }
+        const oldEpoch = this.session.sessionEpoch
+        this.#invalidateProjectConfirmation('provider_replaced')
+        this.#invalidateCodexApproval('provider_replaced')
+        this.#guardPreemption = null
+        this.#providerReconnectSourceEpoch = oldEpoch
+        await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
+        // Only if nothing cleared it while we were awaiting. A user who started speaking during the
+        // reconnect has already activated the new session, so demanding an activation would be wrong.
+        if (this.#providerReconnectSourceEpoch === oldEpoch) {
+          this.#providerEpochNeedingActivation = this.session.sessionEpoch
+          this.#providerReconnectSourceEpoch = null
+        }
+        const retryOwner = this.#urgentHostResponseOwner
 
-      // Every origin binding named items in a session that is gone. Keeping any of it would let a
-      // tool call cite evidence the new provider has never seen.
-      this.#awaitingUserOrigin = false
-      this.#userOriginPreexistingResponseId = null
-      this.#userOrigins.beginEpoch(this.session.sessionEpoch)
-      this.#originDeferredToolCalls.length = 0
+        // Every origin binding named items in a session that is gone. Keeping any of it would let a
+        // tool call cite evidence the new provider has never seen.
+        this.#awaitingUserOrigin = false
+        this.#userOriginPreexistingResponseId = null
+        this.#userOrigins.beginEpoch(this.session.sessionEpoch)
+        this.#originDeferredToolCalls.length = 0
 
-      this.#releaseUrgentHostResponseForEpoch(oldEpoch)
-      // An urgent item that was injected but never got a response is the one case worth retrying: it
-      // was delivered into a session that died before speaking it, so the user heard nothing. One that
-      // *did* get a response was taken up by the provider, and re-queueing would say it twice.
-      if (retryOwner?.session_epoch === oldEpoch && retryOwner.response_id === null) {
-        this.#requeueHostItem(retryOwner.queued)
-      }
-      this.#clearCaptions()
-      this.#audioStarted.clear()
-      this.#reconcileToolStateAfterReconnect(oldEpoch)
-      this.#reopenFailedSemanticAcknowledgements()
-      this.#reconcileSemanticAcknowledgementsAfterReconnect()
-      await this.driveContinuations()
-      await this.#deliveryPass()
-      return true
-    })
+        this.#releaseUrgentHostResponseForEpoch(oldEpoch)
+        // An urgent item that was injected but never got a response is the one case worth retrying: it
+        // was delivered into a session that died before speaking it, so the user heard nothing. One that
+        // *did* get a response was taken up by the provider, and re-queueing would say it twice.
+        if (retryOwner?.session_epoch === oldEpoch && retryOwner.response_id === null) {
+          this.#requeueHostItem(retryOwner.queued)
+        }
+        this.#clearCaptions()
+        this.#audioStarted.clear()
+        this.#reconcileToolStateAfterReconnect(oldEpoch)
+        this.#reopenFailedSemanticAcknowledgements()
+        this.#reconcileSemanticAcknowledgementsAfterReconnect()
+        await this.driveContinuations()
+        await this.#deliveryPass()
+        this.#telemetry?.record('provider.reconnect', {
+          reason: options.reason,
+          outcome: 'completed',
+        })
+        return true
+      })
+    } catch (failure) {
+      this.#telemetry?.record('provider.reconnect', {reason: options.reason, outcome: 'failed'})
+      throw failure
+    }
   }
 
   /**
@@ -2247,10 +2477,12 @@ export class RealtimeService {
    * for an event the session refused.
    */
   async handleEvent(event: RealtimeProviderEvent): Promise<void> {
+    this.#syncProjectConfirmationIsolation()
     if (event.kind === 'response_cancel_rejected') {
-      if (this.#projectConfirmationQuarantinedResponses.has(
-        callKey(event.session_epoch, event.response_id),
-      )) {
+      if (this.#projectConfirmationIsolation.responseState({
+        sessionEpoch: event.session_epoch,
+        responseId: event.response_id,
+      })?.quarantined === true) {
         await this.#recoverProjectConfirmationCarrier(
           event.session_epoch,
           event.response_id,
@@ -2268,16 +2500,39 @@ export class RealtimeService {
         `[realtime-diagnostic] provider_error code=${event.code} recoverable=${event.recoverable}`,
       )
       if (event.recoverable) {
-        await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+        await this.#reconnectProviderSession({
+          reason: 'recoverable_provider_error',
+          expectedEpoch: this.session.sessionEpoch,
+        })
         this.#clearCaptions()
       } else {
         this.#providerFailed = true
+        this.#invalidateCodexApproval('provider_failed')
         this.#urgentHostResponseOwner = null
         this.#guardPreemption = null
         this.#stop.abort()
       }
       return
     }
+
+    const codexEventResponseId = 'response_id' in event ? event.response_id : null
+    const pendingCodexResponseQuarantineAtStart = event.kind === 'response_started'
+      && this.#codexApprovalPendingResponseQuarantine?.sessionEpoch === event.session_epoch
+      && this.#codexApprovalPendingResponseQuarantine.responseId === null
+    if (
+      event.kind !== 'response_started'
+      && (
+        codexEventResponseId === null
+        || this.session.responseEventIds(codexEventResponseId).length === 0
+      )
+    ) {
+      this.#claimPendingCodexApprovalResponseQuarantine(
+        event.session_epoch,
+        codexEventResponseId,
+      )
+    }
+    let codexQuarantinedResponse = codexEventResponseId !== null
+      && this.#isCodexApprovalResponseQuarantined(event.session_epoch, codexEventResponseId)
 
     if (this.#telemetry !== undefined) {
       if (event.kind === 'response_audio_delta') {
@@ -2306,46 +2561,138 @@ export class RealtimeService {
     const blockedConfirmationTool = event.kind === 'tool_call_ready'
       && this.#blocksProjectConfirmationTool(event)
       && !isConfirmationDecision
+    const isCodexApprovalDecision = event.kind === 'tool_call_ready'
+      && event.name === CODEX_APPROVAL_TOOL
+    const blockedCodexApprovalTool = event.kind === 'tool_call_ready'
+      && this.#blocksCodexApprovalTool(event)
+      && !isCodexApprovalDecision
     // Qwen may create the response that will emit the confirmation function before VAD reports
     // speech end. That response is an authorization carrier, not an audible assistant turn. Let it
     // acquire an origin while the user still owns the floor, but never bypass the one-shot fence for
     // a stale host-requested confirmation question.
-    const confirmationFencePendingAtStart = this.#projectConfirmationFencePending
+    const confirmationFencePendingAtStart = this.#projectConfirmationIsolation.responseFencePending
     const confirmationResponseStartsDuringSpeech = event.kind === 'response_started'
       && event.session_epoch === this.session.sessionEpoch
       && this.session.floor.state === 'user_speaking'
-      && !this.#projectConfirmationFencePending
-      && [...this.#projectConfirmationItems]
-        .some(key => parseCallKey(key).sessionEpoch === event.session_epoch)
-    const accepted = blockedConfirmationTool
+      && !this.#projectConfirmationIsolation.responseFencePending
+      && this.#projectConfirmationIsolation.reservation?.sessionEpoch === event.session_epoch
+    const codexFencePendingAtStart = this.#codexApprovalIsolation.responseFencePending
+    const codexResponseCandidate = event.kind === 'response_started'
+      && event.session_epoch === this.session.sessionEpoch
+      && !codexFencePendingAtStart
+      && this.#codexApproval?.pending === true
+      && this.#codexApprovalIsolation.authority?.sessionEpoch === event.session_epoch
+      && !pendingCodexResponseQuarantineAtStart
+      && this.session.userInputRevision
+        > (this.#codexApprovalIsolation.authority?.createdUserRevision ?? Number.MAX_SAFE_INTEGER)
+    const codexProvisionalCandidate = event.kind === 'response_started'
+      && event.session_epoch === this.session.sessionEpoch
+      && !codexFencePendingAtStart
+      && this.#codexApproval?.pending === true
+      && this.#codexApprovalIsolation.reservation === null
+      && !pendingCodexResponseQuarantineAtStart
+      && this.session.userInputRevision
+        === this.#codexApprovalIsolation.authority?.createdUserRevision
+    const codexResponseStartsDuringSpeech = codexResponseCandidate
+      && this.session.floor.state === 'user_speaking'
+    const orphanedCodexRetryCandidate = event.kind === 'response_started'
+      && (codexQuarantinedResponse || pendingCodexResponseQuarantineAtStart)
+    const accepted = blockedConfirmationTool || blockedCodexApprovalTool
       ? false
       : await this.session.accept(event, {
-          allowResponseStartDuringUserSpeech: confirmationResponseStartsDuringSpeech,
+          allowResponseStartDuringUserSpeech: confirmationResponseStartsDuringSpeech
+            || codexResponseStartsDuringSpeech
+            || orphanedCodexRetryCandidate,
         })
+    if (
+      event.kind === 'response_started'
+      && accepted
+      && pendingCodexResponseQuarantineAtStart
+      && this.session.responseEventIds(event.response_id).length === 0
+    ) {
+      this.#claimPendingCodexApprovalResponseQuarantine(
+        event.session_epoch,
+        event.response_id,
+      )
+      codexQuarantinedResponse = true
+    }
+    const codexHostOwnedResponse = event.kind === 'response_started'
+      && accepted
+      && this.#isCodexApprovalHostResponse(event.response_id)
+    if (event.kind === 'response_started' && codexFencePendingAtStart) {
+      this.#codexApprovalIsolation.setResponseFencePending(false)
+    }
+    if (event.kind === 'response_started' && accepted && codexQuarantinedResponse) {
+      this.session.suppressResponse(event.response_id)
+      this.#cancelCodexApprovalPromptResponse(event.session_epoch, event.response_id)
+    }
+    if (
+      event.kind === 'response_started'
+      && accepted
+      && codexResponseCandidate
+      && !codexHostOwnedResponse
+      && !orphanedCodexRetryCandidate
+    ) {
+      this.#codexApprovalIsolation.markBlockedResponse({
+        sessionEpoch: event.session_epoch,
+        responseId: event.response_id,
+      })
+      this.session.suppressResponse(event.response_id)
+      await this.#bindCodexApprovalResponse(event.session_epoch, event.response_id)
+    }
+    if (
+      event.kind === 'response_started'
+      && accepted
+      && codexProvisionalCandidate
+      && !codexHostOwnedResponse
+      && !orphanedCodexRetryCandidate
+      && this.session.responseEventIds(event.response_id).length === 0
+    ) {
+      const authority = this.#codexApprovalIsolation.authority
+      const tracked = authority === null ? 'stale' : this.#codexApprovalIsolation.trackProvisionalResponse({
+        sessionEpoch: event.session_epoch,
+        userRevision: authority.createdUserRevision + 1,
+        responseId: event.response_id,
+      })
+      if (tracked === 'tracked' || tracked === 'idempotent') {
+        this.session.suppressResponse(event.response_id)
+      } else if (tracked === 'overflow') {
+        await this.#retireCodexApprovalVoiceAuthority()
+      }
+    }
     if (
       event.kind === 'response_started'
       && this.#projectConfirmationPendingQuarantineEpoch === event.session_epoch
     ) {
       this.#projectConfirmationPendingQuarantineEpoch = null
-      this.#projectConfirmationQuarantinedResponses.add(
-        callKey(event.session_epoch, event.response_id),
-      )
+      this.#projectConfirmationIsolation.markBlockedResponse({
+        sessionEpoch: event.session_epoch,
+        responseId: event.response_id,
+      })
+      this.#projectConfirmationIsolation.markQuarantined({
+        sessionEpoch: event.session_epoch,
+        responseId: event.response_id,
+      })
       this.session.suppressResponse(event.response_id)
     }
     if (
       event.kind === 'response_started'
       && event.session_epoch === this.session.sessionEpoch
-      && this.#projectConfirmationBlocking
+      && this.#projectConfirmationIsBlocking()
     ) {
       // A fenced pre-start response is the stale question the user interrupted, not the response to
       // their answer. It spends the one-shot fence but must not bind or release the reserved item.
       if (accepted) {
-        this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
+        this.#projectConfirmationIsolation.markBlockedResponse({
+          sessionEpoch: event.session_epoch,
+          responseId: event.response_id,
+        })
         if (this.#userOrigins.itemForResponse(event.session_epoch, event.response_id) === undefined) {
           if (!this.#bindProjectConfirmationRetryResponse(event.session_epoch, event.response_id)) {
             this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
           }
         }
+        this.#bindProjectConfirmationResponse(event.session_epoch, event.response_id)
         if (confirmationResponseStartsDuringSpeech) {
           // The provider may now finish its structured function call, but it must not start talking
           // after the user's floor opens. The deterministic confirmation fact remains the reply owner.
@@ -2353,14 +2700,11 @@ export class RealtimeService {
         }
       }
       // The armed fence has been spent by this response, so it no longer holds the block open.
-      this.#projectConfirmationFencePending = false
-      this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
-        || this.#projectConfirmationClosingItems.size > 0
+      this.#projectConfirmationIsolation.setResponseFencePending(false)
     }
     if (
       event.kind === 'response_started'
-      && [...this.#projectConfirmationItems]
-        .some(key => parseCallKey(key).sessionEpoch === event.session_epoch)
+      && this.#projectConfirmationIsolation.reservation?.sessionEpoch === event.session_epoch
     ) {
       this.#telemetry?.record('project_confirmation.response_started', {
         session_epoch: event.session_epoch,
@@ -2370,7 +2714,7 @@ export class RealtimeService {
         fence_pending: confirmationFencePendingAtStart,
         origin_bound: accepted
           && this.#userOrigins.itemForResponse(event.session_epoch, event.response_id) !== undefined,
-        confirmation_item_count: this.#projectConfirmationItems.size,
+        confirmation_item_count: this.#projectConfirmationIsolation.reservation === null ? 0 : 1,
         proposal_id: this.#projectConfirmation?.lifecycleId ?? 'none',
         proposal_origin_ref: this.#projectConfirmation?.proposalOriginRef ?? 'none',
         delegate_origin_ref: this.#projectConfirmation?.proposalOriginRef ?? 'none',
@@ -2463,6 +2807,13 @@ export class RealtimeService {
           event.provider_item_id,
         )
       }
+      this.#noteCodexApprovalOnsetBeforeContext()
+      const approvalId = this.#codexApprovalAuthority?.approvalId
+      if (approvalId !== undefined) {
+        this.#removeQueuedCodexApprovalPrompt(approvalId)
+        this.#releaseCodexApprovalQuestion(approvalId)
+      }
+      await this.#reserveCodexApprovalItem(event.session_epoch, event.provider_item_id)
       this.#reserveProjectConfirmation(event)
     }
     if (
@@ -2475,9 +2826,21 @@ export class RealtimeService {
         this.session.userInputRevision,
         event.provider_item_id,
       )
+      await this.#reserveCodexApprovalItem(event.session_epoch, event.provider_item_id)
+      await this.#maybeRequestFreshCodexApprovalResponse()
     }
 
     if (event.kind === 'response_terminal' && accepted) {
+      const codexCarrierKey = callKey(event.session_epoch, event.response_id)
+      const codexCarrierAttempt = this.#codexApprovalCarrierAttempts.get(codexCarrierKey)
+      if (codexCarrierAttempt !== undefined) {
+        this.#codexApprovalCarrierAttempts.delete(codexCarrierKey)
+        this.#telemetry?.record('codex_approval.carrier', {
+          session_epoch: event.session_epoch,
+          attempt: codexCarrierAttempt,
+          action: 'terminal',
+        })
+      }
       this.#recordGuardCancelTerminal(event)
       const generation = this.session.currentGeneration
       if (
@@ -2548,6 +2911,30 @@ export class RealtimeService {
           }
         }
       }
+      const codexCarrier = this.#codexApprovalIsolation.responseState({
+        sessionEpoch: event.session_epoch,
+        responseId: event.response_id,
+      })
+      if (
+        codexCarrier?.authorizationCarrier === true
+        && !this.session.responseHasSpoken(event.response_id)
+        && this.#codexApproval?.pending === true
+      ) {
+        const reservation = this.#codexApprovalIsolation.reservation
+        const retry = this.#codexApprovalDecisionRetry
+        const isRetryTerminal = retry?.retry_response_id === event.response_id
+        if (reservation !== null && !isRetryTerminal) {
+          this.#codexApprovalDecisionRetry ??= {
+            item_key: callKey(reservation.sessionEpoch, reservation.itemId),
+            source_response_id: event.response_id,
+            requested: false,
+            retry_response_id: null,
+          }
+          await this.#maybeRequestCodexApprovalDecisionRetry()
+        } else if (reservation !== null && isRetryTerminal) {
+          await this.#exhaustCodexApprovalAttempt()
+        }
+      }
       if (itemId !== undefined) {
         this.#projectConfirmationShadowItems.delete(callKey(event.session_epoch, itemId))
       }
@@ -2561,6 +2948,12 @@ export class RealtimeService {
       }
       this.#markGuardReplacementTerminal(terminalOwner)
     }
+    if (event.kind === 'response_terminal' && codexQuarantinedResponse) {
+      await this.#finishPendingCodexApprovalResponseQuarantine(
+        event.session_epoch,
+        event.response_id,
+      )
+    }
 
     if (event.kind === 'user_transcript_final') {
       if (accepted) {
@@ -2568,6 +2961,18 @@ export class RealtimeService {
           this.#providerEpochNeedingActivation = null
         }
         this.#providerReconnectSourceEpoch = null
+        if (this.#userOrigins.revisionForItem(event.session_epoch, event.item_id) === undefined) {
+          // Some realtime transports can deliver a final transcript without a preceding VAD item id.
+          // `RealtimeSession.accept()` has already advanced the exact item as the current user turn;
+          // mirror that accepted identity into the evidence ledger rather than dropping the transcript.
+          this.#rememberUnboundUserOrigin(
+            event.session_epoch,
+            this.session.userInputRevision,
+            event.item_id,
+          )
+        }
+        await this.#reserveCodexApprovalItem(event.session_epoch, event.item_id)
+        await this.#maybeRequestFreshCodexApprovalResponse()
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
         this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
         this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
@@ -2591,6 +2996,15 @@ export class RealtimeService {
       }
     } else if (event.kind === 'user_transcript_failed') {
       if (accepted) {
+        if (this.#userOrigins.revisionForItem(event.session_epoch, event.item_id) === undefined) {
+          this.#rememberUnboundUserOrigin(
+            event.session_epoch,
+            this.session.userInputRevision,
+            event.item_id,
+          )
+        }
+        await this.#reserveCodexApprovalItem(event.session_epoch, event.item_id)
+        await this.#maybeRequestFreshCodexApprovalResponse()
         // The transcript will never arrive, so anything waiting on it is waiting forever. Released
         // with a null ref: the calls still need an answer, and the bridge refuses them for want of
         // evidence rather than this layer dropping them silently.
@@ -2613,6 +3027,17 @@ export class RealtimeService {
         // A refused confirmation tool still owes the provider a terminal result, or the protocol stalls
         // waiting for one that will never come.
         if (blockedConfirmationTool) await this.#closeProjectConfirmationTool(event)
+        else if (blockedCodexApprovalTool) await this.#closeCodexApprovalCarrierTool(event)
+        else if (
+          isCodexApprovalDecision
+          && event.session_epoch === this.session.sessionEpoch
+        ) {
+          await this.#handleCodexApprovalDecision(event, {
+            observedProviderResponseId: event.response_id,
+            originItemId: null,
+            originRef: null,
+          })
+        }
         return
       }
       await this.#routeToolCall(event)
@@ -2621,12 +3046,21 @@ export class RealtimeService {
       await this.#resumeProjectConfirmationCarrierRecoveryAfterUser()
     }
     if (event.kind === 'response_terminal') {
-      this.#projectConfirmationResponses.delete(callKey(event.session_epoch, event.response_id))
-      this.#projectConfirmationQuarantinedResponses.delete(
-        callKey(event.session_epoch, event.response_id),
-      )
+      this.#projectConfirmationIsolation.clearResponse({
+        sessionEpoch: event.session_epoch,
+        responseId: event.response_id,
+      })
       if (this.#projectConfirmationPendingQuarantineEpoch === event.session_epoch) {
         this.#projectConfirmationPendingQuarantineEpoch = null
+      }
+      if (!this.#codexApprovalIsolation.markProvisionalTerminal({
+        sessionEpoch: event.session_epoch,
+        responseId: event.response_id,
+      })) {
+        this.#codexApprovalIsolation.clearResponse({
+          sessionEpoch: event.session_epoch,
+          responseId: event.response_id,
+        })
       }
     }
 
@@ -2650,6 +3084,11 @@ export class RealtimeService {
   async #routeToolCall(event: ToolCallReady): Promise<void> {
     const activeResponseId = this.session.activeProviderResponseId
     const observedResponseId = event.response_id ?? activeResponseId
+
+    if (event.name === CODEX_APPROVAL_TOOL) {
+      await this.#routeCodexApprovalCall(event, observedResponseId)
+      return
+    }
     const originItemId = observedResponseId === null
       ? undefined
       : this.#userOrigins.itemForResponse(event.session_epoch, observedResponseId)
@@ -2671,7 +3110,10 @@ export class RealtimeService {
           originRef,
         })
       } else if (this.#originDeferredToolCalls.length >= MAX_PENDING_TOOL_REFUSALS) {
-        await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+        await this.#reconnectProviderSession({
+          reason: 'origin_resolution_overflow',
+          expectedEpoch: this.session.sessionEpoch,
+        })
       } else {
         this.#originDeferredToolCalls.push({
           event,
@@ -2706,7 +3148,10 @@ export class RealtimeService {
       } else if (!originIsActive) {
         await this.#handleToolCall(event)
       } else if (this.#originDeferredToolCalls.length >= MAX_PENDING_TOOL_REFUSALS) {
-        await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+        await this.#reconnectProviderSession({
+          reason: 'origin_binding_overflow',
+          expectedEpoch: this.session.sessionEpoch,
+        })
       } else {
         // Non-null by construction: `originIsActive` above required it.
         this.#originDeferredToolCalls.push({
@@ -2719,6 +3164,92 @@ export class RealtimeService {
     }
 
     await this.#handleToolCall(event)
+  }
+
+  /** Route Codex's typed carrier without making transcript success or text an authority gate. */
+  async #routeCodexApprovalCall(
+    event: ToolCallReady,
+    observedResponseId: string | null,
+  ): Promise<void> {
+    if (
+      event.response_id !== null
+      && this.#isCodexApprovalResponseQuarantined(event.session_epoch, event.response_id)
+    ) {
+      await this.#handleCodexApprovalDecision(event, {
+        observedProviderResponseId: observedResponseId,
+        originItemId: null,
+        originRef: null,
+      })
+      return
+    }
+    const authority = this.#codexApprovalIsolation.authority
+    const responseId = event.response_id
+    const providerRevision = responseId === null
+      ? undefined
+      : this.session.providerTurnUserInputRevision(responseId)
+    const reservation = this.#codexApprovalIsolation.reservation
+    const revision = responseId !== null
+      && reservation !== null
+      && this.#codexApprovalIsolation.isAuthorizationCarrier({
+        sessionEpoch: event.session_epoch,
+        userRevision: reservation.userRevision,
+        responseId,
+      })
+      ? reservation.userRevision
+      : providerRevision
+    if (
+      authority !== null
+      && responseId !== null
+      && observedResponseId === responseId
+      && authority.sessionEpoch === event.session_epoch
+      && revision !== undefined
+      && revision > authority.createdUserRevision
+      && revision === this.session.userInputRevision
+    ) {
+      const reservation = this.#codexApprovalIsolation.reservation
+      if (this.#codexApprovalIsolation.isAuthorizationCarrier({
+        sessionEpoch: event.session_epoch,
+        userRevision: revision,
+        responseId,
+      })) {
+        await this.#handleCodexApprovalDecision(event, {
+          observedProviderResponseId: responseId,
+          originItemId: reservation?.itemId ?? null,
+          originRef: null,
+        })
+        return
+      }
+      const deferred = this.#codexApprovalIsolation.deferCall({
+        sessionEpoch: event.session_epoch,
+        userRevision: revision,
+        responseId,
+        call: event,
+      })
+      if (deferred === 'deferred') return
+    }
+    const decision = codexApprovalDecisionArguments(event.arguments)
+    if (
+      authority !== null
+      && responseId !== null
+      && observedResponseId === responseId
+      && authority.sessionEpoch === event.session_epoch
+      && providerRevision === authority.createdUserRevision
+      && this.#codexApproval?.pending === true
+      && this.#clock.now() < authority.expiresAt
+      && decision?.approvalId === authority.authorityId
+    ) {
+      const deferred = this.#codexApprovalIsolation.deferProvisionalCall({
+        sessionEpoch: event.session_epoch,
+        responseId,
+        call: event,
+      })
+      if (deferred === 'deferred') return
+    }
+    await this.#handleCodexApprovalDecision(event, {
+      observedProviderResponseId: observedResponseId,
+      originItemId: null,
+      originRef: null,
+    })
   }
 
   /**
@@ -2752,6 +3283,7 @@ export class RealtimeService {
       return
     }
     this.#providerFailed = true
+    this.#invalidateCodexApproval('task_failed')
     this.#urgentHostResponseOwner = null
     this.#guardPreemption = null
     this.#stop.abort()
@@ -2898,6 +3430,10 @@ export class RealtimeService {
       await this.#handleProjectConfirmationDecision(event, origin)
       return
     }
+    if (event.name === CODEX_APPROVAL_TOOL) {
+      await this.#handleCodexApprovalDecision(event, origin)
+      return
+    }
     await this.#handleToolCall(event, {
       observedProviderResponseId: origin.observedProviderResponseId,
       originRef: origin.originRef,
@@ -3029,7 +3565,10 @@ export class RealtimeService {
     if (overCapacity && this.#overflowToolCalls.size >= MAX_PENDING_TOOL_REFUSALS) {
       // Both ledgers full of refusals the provider has not acknowledged. The session is no longer
       // tracking reality, and reconnecting is the only way back to a state that can be reasoned about.
-      await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+      await this.#reconnectProviderSession({
+        reason: 'refusal_ledger_overflow',
+        expectedEpoch: this.session.sessionEpoch,
+      })
       return
     }
 
@@ -3285,6 +3824,32 @@ export class RealtimeService {
   // Family N: the acknowledgement a delegated call owes the user.
   // ---------------------------------------------------------------------------------------------
 
+  /** Mirror a newly visible controller lifecycle without importing its expiry policy. */
+  #syncProjectConfirmationIsolation(): void {
+    const controller = this.#projectConfirmation
+    const lifecycleId = controller?.lifecycleId
+    const sessionEpoch = this.session.sessionEpoch
+    if (
+      controller?.pending !== true
+      || lifecycleId === null
+      || lifecycleId === undefined
+      || sessionEpoch < 1
+    ) return
+    if (this.#codexApproval?.pending === true) {
+      this.#codexApproval.invalidate('confirmation_overlap')
+    }
+    const current = this.#projectConfirmationIsolation.authority
+    if (current?.authorityId === lifecycleId && current.sessionEpoch === sessionEpoch) return
+    const remaining = controller.view.pending_expires_in_seconds
+    if (remaining === undefined || remaining === null || !Number.isFinite(remaining)) return
+    this.#projectConfirmationIsolation.beginAuthority({
+      authorityId: lifecycleId,
+      sessionEpoch,
+      createdUserRevision: this.session.userInputRevision,
+      expiresAt: this.#clock.now() + Math.max(0, remaining),
+    })
+  }
+
   /**
    * The acknowledgement for one delegated call, creating it if the ledger has room.
    *
@@ -3414,6 +3979,832 @@ export class RealtimeService {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // Codex permission approval.
+  //
+  // This is deliberately smaller than project confirmation. The Codex controller already owns the
+  // one-shot decision and expiry; this layer only records which post-request final user item can
+  // authorize the dedicated provider function. Renderer clicks call the same controller directly.
+  // ---------------------------------------------------------------------------------------------
+
+  #syncCodexApproval(view: CodexApprovalView): void {
+    if (
+      view.pending_approval
+      && !view.pending_approval_busy
+      && view.pending_approval_id !== undefined
+      && view.kind !== null
+      && view.operation_summary !== null
+    ) {
+      if (this.#projectConfirmation?.pending === true || this.#projectConfirmation?.committing === true) {
+        this.#codexApproval?.invalidate('confirmation_overlap')
+        return
+      }
+      if (this.session.sessionEpoch < 1 || view.expires_at === null) return
+      this.#codexApprovalObservedIdentity = {
+        approvalId: view.pending_approval_id,
+        sessionEpoch: this.session.sessionEpoch,
+        expiresAt: view.expires_at,
+      }
+      if (
+        this.#codexApprovalAuthority?.approvalId === view.pending_approval_id
+        && this.#codexApprovalAuthority.sessionEpoch === this.session.sessionEpoch
+      ) return
+      this.#codexApprovalExpiredIdentity = null
+      if (this.#codexApprovalAuthority !== null) this.#clearCodexApprovalVoiceState()
+      this.#codexApprovalLifecycleToken += 1
+      const contextItem = hostFactIntent({
+        kind: 'final',
+        host_item_id: this.#idFactory(),
+        event_id: `codex-approval:${view.pending_approval_id}:requested`,
+        content: JSON.stringify({
+          approval_id: view.pending_approval_id,
+          kind: view.kind,
+          operation_summary: view.operation_summary,
+        }),
+      }).item
+      const authority: CodexApprovalAuthorityState = {
+        approvalId: view.pending_approval_id,
+        sessionEpoch: this.session.sessionEpoch,
+        expiresAt: view.expires_at,
+        lifecycleToken: this.#codexApprovalLifecycleToken,
+        contextItem,
+        contextReady: false,
+        preContextOnset: false,
+        attempt: 0,
+        clarificationQueued: false,
+      }
+      this.#codexApprovalAuthority = authority
+      this.#codexApprovalDecisionRetry = null
+      if (
+        this.#codexApprovalPendingResponseQuarantine?.sessionEpoch
+        !== this.session.sessionEpoch
+      ) this.#codexApprovalPendingResponseQuarantine = null
+      this.#codexApprovalNeedsFreshResponse = false
+      this.#codexApprovalIsolation.invalidate()
+      this.#trackCodexApprovalTask(this.#prepareCodexApprovalContext(authority))
+      return
+    }
+    const observed = this.#codexApprovalObservedIdentity
+    if (observed !== null) {
+      this.#codexApprovalExpiredIdentity = this.#clock.now() >= observed.expiresAt
+        ? {
+            approvalId: observed.approvalId,
+            sessionEpoch: observed.sessionEpoch,
+          }
+        : null
+      this.#codexApprovalObservedIdentity = null
+    }
+    this.#clearCodexApprovalVoiceState()
+    this.#deliveryReady.set()
+  }
+
+  /** Confirm the neutral ID-bearing fact before any provider response may answer it aloud. */
+  async #prepareCodexApprovalContext(authority: CodexApprovalAuthorityState): Promise<void> {
+    let injected = false
+    try {
+      injected = await this.session.injectHostContext(authority.contextItem)
+    } catch (failure) {
+      this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+        ? failure
+        : new RealtimeDeliveryError(String(failure)))
+    }
+    if (!this.#codexApprovalAuthorityIsCurrent(authority)) {
+      this.#telemetry?.record('codex_approval.context', {
+        session_epoch: authority.sessionEpoch,
+        outcome: 'stale',
+      })
+      if (injected) await this.#retireProviderHostEventNow(authority.contextItem.event_id)
+      return
+    }
+    if (!injected) {
+      this.#telemetry?.record('codex_approval.context', {
+        session_epoch: authority.sessionEpoch,
+        outcome: 'failed',
+      })
+      // A context that was not confirmed cannot support voice authority. Keep the renderer's
+      // controller pending, but release the foreground so an existing task receipt is not held until
+      // the approval TTL. Uncertain injection is intentionally not retried: the provider may already
+      // have accepted the fact even though this session could not confirm it.
+      this.#clearCodexApprovalVoiceState()
+      this.#deliveryReady.set()
+      return
+    }
+    authority.contextReady = true
+    this.#telemetry?.record('codex_approval.context', {
+      session_epoch: authority.sessionEpoch,
+      outcome: 'ready',
+    })
+    if (authority.preContextOnset) {
+      this.#beginCodexApprovalAttempt(
+        authority,
+        2,
+        this.session.userInputRevision,
+        'rotated',
+      )
+      this.#queueCodexApprovalClarification(authority)
+      return
+    }
+    this.#beginCodexApprovalAttempt(authority, 1, this.session.userInputRevision, 'begun')
+    // The fact is already in provider context. This queued delivery therefore only creates its
+    // host-owned audible response and cannot expose a response before context confirmation.
+    this.queueHostItem({
+      kind: 'host_fact',
+      item: authority.contextItem,
+      task_summary: null,
+      origin_spoken: false,
+    }, {
+      priority: USER_PRIORITY - 1,
+      preemptive: true,
+    })
+  }
+
+  #codexApprovalAuthorityIsCurrent(authority: CodexApprovalAuthorityState): boolean {
+    return this.#codexApprovalAuthority === authority
+      && authority.lifecycleToken === this.#codexApprovalLifecycleToken
+      && authority.sessionEpoch === this.session.sessionEpoch
+      && this.#codexApproval?.pending === true
+      && this.#clock.now() < authority.expiresAt
+  }
+
+  #trackCodexApprovalTask(work: Promise<void>): void {
+    const task = work.finally(() => {
+      this.#codexApprovalPromptReleaseTasks.delete(task)
+    })
+    this.#codexApprovalPromptReleaseTasks.add(task)
+  }
+
+  #beginCodexApprovalAttempt(
+    authority: CodexApprovalAuthorityState,
+    attempt: 1 | 2,
+    createdUserRevision: number,
+    action: 'begun' | 'rotated',
+  ): void {
+    if (!this.#codexApprovalAuthorityIsCurrent(authority)) return
+    authority.attempt = attempt
+    this.#codexApprovalDecisionRetry = null
+    this.#codexApprovalIsolation.beginAuthority({
+      authorityId: authority.approvalId,
+      sessionEpoch: authority.sessionEpoch,
+      createdUserRevision,
+      expiresAt: authority.expiresAt,
+    })
+    this.#telemetry?.record('codex_approval.attempt', {
+      session_epoch: authority.sessionEpoch,
+      attempt,
+      action,
+    })
+  }
+
+  /** The only extra audible prompt; it uses host createResponse, never a free provider retry. */
+  #queueCodexApprovalClarification(authority: CodexApprovalAuthorityState): void {
+    if (!this.#codexApprovalAuthorityIsCurrent(authority) || authority.clarificationQueued) return
+    authority.clarificationQueued = true
+    this.queueHostItem(hostFactIntent({
+      kind: 'final',
+      host_item_id: this.#idFactory(),
+      event_id: `codex-approval:${authority.approvalId}:clarification`,
+      content: CODEX_APPROVAL_CLARIFICATION,
+    }), {priority: USER_PRIORITY - 1, preemptive: true})
+  }
+
+  #noteCodexApprovalOnsetBeforeContext(): void {
+    const authority = this.#codexApprovalAuthority
+    if (authority !== null && !authority.contextReady) authority.preContextOnset = true
+  }
+
+  /** Retain one provider inference whose response id has not arrived yet across lifecycle changes. */
+  #capturePendingCodexApprovalResponse(requestFreshResponse: boolean): void {
+    const retry = this.#codexApprovalDecisionRetry
+    const reservation = this.#codexApprovalIsolation.reservation
+    const pendingRetry = retry?.requested === true && retry.retry_response_id === null
+    const pendingInitial = !pendingRetry
+      && reservation !== null
+      && !this.#codexApprovalIsolation.blockedResponses.some(response => (
+        response.authorizationCarrier && response.userRevision === reservation.userRevision
+      ))
+    if (!pendingRetry && !pendingInitial) return
+    const current = this.#codexApprovalPendingResponseQuarantine
+    if (current !== null) {
+      if (current.sessionEpoch === this.session.sessionEpoch) {
+        current.requestFreshResponse ||= requestFreshResponse
+      }
+      return
+    }
+    this.#codexApprovalPendingResponseQuarantine = {
+      sessionEpoch: this.session.sessionEpoch,
+      sourceRetry: pendingRetry ? retry : null,
+      requestFreshResponse,
+      responseId: null,
+      terminal: false,
+    }
+  }
+
+  /** The first response identity observed for the retained one-inference provider slot owns it. */
+  #claimPendingCodexApprovalResponseQuarantine(
+    sessionEpoch: number,
+    responseId: string | null,
+  ): void {
+    const pending = this.#codexApprovalPendingResponseQuarantine
+    if (
+      responseId === null
+      || pending?.sessionEpoch !== sessionEpoch
+      || pending.responseId !== null
+    ) return
+    pending.responseId = responseId
+    this.#rememberCodexApprovalQuarantinedResponse(sessionEpoch, responseId)
+    this.session.suppressResponse(responseId)
+  }
+
+  #isCodexApprovalResponseQuarantined(sessionEpoch: number, responseId: string): boolean {
+    return this.#codexApprovalQuarantinedResponses.has(callKey(sessionEpoch, responseId))
+  }
+
+  #rememberCodexApprovalQuarantinedResponse(sessionEpoch: number, responseId: string): void {
+    const key = callKey(sessionEpoch, responseId)
+    this.#codexApprovalQuarantinedResponses.delete(key)
+    this.#codexApprovalQuarantinedResponses.set(key, null)
+    while (this.#codexApprovalQuarantinedResponses.size > MAX_TRACKED_TOOL_CALLS) {
+      const oldest = this.#codexApprovalQuarantinedResponses.keys().next()
+      if (oldest.done) break
+      this.#codexApprovalQuarantinedResponses.delete(oldest.value)
+    }
+  }
+
+  async #finishPendingCodexApprovalResponseQuarantine(
+    sessionEpoch: number,
+    responseId: string,
+  ): Promise<void> {
+    const pending = this.#codexApprovalPendingResponseQuarantine
+    if (
+      pending?.sessionEpoch !== sessionEpoch
+      || pending.responseId !== responseId
+    ) return
+    pending.terminal = true
+    if (pending.requestFreshResponse) this.#codexApprovalNeedsFreshResponse = true
+    this.#codexApprovalPendingResponseQuarantine = null
+    await this.#maybeRequestFreshCodexApprovalResponse()
+    this.#deliveryReady.set()
+  }
+
+  /** A failed stale request proves that its not-yet-identified response can no longer arrive. */
+  #releaseFailedCodexApprovalResponseRequest(retry: CodexApprovalDecisionRetry): void {
+    const pending = this.#codexApprovalPendingResponseQuarantine
+    if (pending?.sourceRetry === retry && pending.responseId === null) {
+      this.#codexApprovalPendingResponseQuarantine = null
+    }
+  }
+
+  #clearCodexApprovalVoiceState(): void {
+    const authority = this.#codexApprovalAuthority
+    this.#codexApprovalLifecycleToken += 1
+    this.#capturePendingCodexApprovalResponse(false)
+    const abandonedCalls = this.#codexApprovalIsolation.takeAbandonedCalls()
+    if (authority !== null) {
+      this.#removeQueuedCodexApprovalPrompt(authority.approvalId)
+      this.#releaseCodexApprovalQuestion(authority.approvalId)
+      this.#quarantineCodexApprovalCarriers()
+      this.#retireCodexApprovalProviderContext(authority.approvalId)
+    }
+    this.#codexApprovalAuthority = null
+    this.#codexApprovalDecisionRetry = null
+    this.#codexApprovalNeedsFreshResponse = false
+    this.#codexApprovalIsolation.invalidate()
+    this.#scheduleCodexApprovalRefusals(abandonedCalls)
+  }
+
+  /** Remove only the undelivered local queue entry; provider context is a separate lifecycle. */
+  #removeQueuedCodexApprovalPrompt(approvalId: string): void {
+    const prefix = `codex-approval:${approvalId}:`
+    const retained = this.#hostItems.filter(queued => (
+      !queued.intent.item.event_id.startsWith(prefix)
+    ))
+    if (retained.length !== this.#hostItems.length) {
+      retained.sort(compareQueuedHostResponses)
+      this.#hostItems.length = 0
+      this.#hostItems.push(...retained)
+      this.#recomputePreemptPriority()
+    }
+  }
+
+  /** Stop/fence only the exact spoken question response while preserving its provider host fact. */
+  #releaseCodexApprovalQuestion(approvalId: string): void {
+    const prefix = `codex-approval:${approvalId}:`
+    const owner = this.#urgentHostResponseOwner
+    if (owner?.event_id.startsWith(prefix) === true) {
+      if (owner.response_id === null) {
+        this.#codexApprovalIsolation.setResponseFencePending(
+          this.session.armPendingResponseFence(),
+        )
+      } else {
+        this.session.suppressResponse(owner.response_id)
+        this.#cancelCodexApprovalPromptResponse(owner.session_epoch, owner.response_id)
+      }
+      this.#releaseUrgentHostResponse(owner)
+    }
+  }
+
+  #retireCodexApprovalProviderContext(approvalId: string): void {
+    this.#retireProviderHostEvent(`codex-approval:${approvalId}:requested`)
+    this.#retireProviderHostEvent(`codex-approval:${approvalId}:clarification`)
+  }
+
+  #isCodexApprovalHostResponse(responseId: string): boolean {
+    return this.session.responseEventIds(responseId).some(eventId => (
+      eventId.startsWith('codex-approval:')
+      && (eventId.endsWith(':requested') || eventId.endsWith(':clarification'))
+    ))
+  }
+
+  /** Quarantine only exact initial/retry/provisional responses recorded by Codex isolation. */
+  #quarantineCodexApprovalCarriers(): void {
+    for (const response of this.#codexApprovalIsolation.blockedResponses) {
+      this.#cancelCodexApprovalPromptResponse(response.sessionEpoch, response.responseId)
+    }
+  }
+
+  /** Fence one exact already-audible approval response without ever targeting a newer user turn. */
+  #cancelCodexApprovalPromptResponse(sessionEpoch: number, responseId: string): void {
+    const cancellation = (async (): Promise<void> => {
+      if (sessionEpoch !== this.session.sessionEpoch) return
+      try {
+        await this.session.quarantineResponse(responseId)
+      } catch (failure) {
+        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+          ? failure
+          : new RealtimeDeliveryError(String(failure)))
+      } finally {
+        this.#deliveryReady.set()
+      }
+    })()
+    const task = cancellation.finally(() => {
+      this.#codexApprovalPromptReleaseTasks.delete(task)
+    })
+    this.#codexApprovalPromptReleaseTasks.add(task)
+  }
+
+  /** Reserve one exact item in the current attempt; one newer revision gets a fresh isolation. */
+  async #reserveCodexApprovalItem(sessionEpoch: number, itemId: string | null): Promise<void> {
+    const state = this.#codexApprovalAuthority
+    let authority = this.#codexApprovalIsolation.authority
+    if (
+      itemId === null
+      || this.#codexApproval?.pending !== true
+      || state === null
+      || !state.contextReady
+      || authority?.sessionEpoch !== sessionEpoch
+    ) return
+    const userRevision = this.session.userInputRevision
+    const existing = this.#codexApprovalIsolation.reservation
+    const supersedesTrackedCarrier = existing === null
+      && this.#codexApprovalIsolation.blockedResponses.some(response => (
+        response.userRevision !== null && response.userRevision < userRevision
+      ))
+    if (
+      existing !== null && userRevision > existing.userRevision
+      || supersedesTrackedCarrier
+    ) {
+      if (state.attempt !== 1) {
+        await this.#retireCodexApprovalVoiceAuthority()
+        return
+      }
+      this.#rotateCodexApprovalAttempt(state, userRevision - 1)
+      authority = this.#codexApprovalIsolation.authority
+      if (authority?.sessionEpoch !== sessionEpoch) return
+    }
+    const abandonedCalls = this.#codexApprovalIsolation.takeAbandonedCalls({
+      sessionEpoch,
+      userRevision,
+    })
+    if (abandonedCalls.length > 0) {
+      await this.#refuseCodexApprovalCalls(abandonedCalls)
+    }
+    const result = this.#codexApprovalIsolation.reserveUserItem({
+      sessionEpoch,
+      itemId,
+      userRevision,
+    })
+    if (result === 'stale') {
+      await this.#retireCodexApprovalVoiceAuthority()
+      return
+    }
+    if (result !== 'reserved' && result !== 'idempotent') return
+    const provisional = this.#codexApprovalIsolation.bindProvisionalResponse()
+    if (provisional.kind === 'ambiguous') {
+      await this.#exhaustCodexApprovalAttempt()
+      return
+    }
+    if (provisional.kind === 'bound') {
+      await this.#bindCodexApprovalResponse(sessionEpoch, provisional.responseId, userRevision)
+      if (provisional.terminal && this.#codexApproval?.pending === true) {
+        this.#codexApprovalDecisionRetry ??= {
+          item_key: callKey(sessionEpoch, itemId),
+          source_response_id: provisional.responseId,
+          requested: false,
+          retry_response_id: null,
+        }
+        await this.#maybeRequestCodexApprovalDecisionRetry()
+      }
+      return
+    }
+    const responseId = this.session.activeProviderResponseId
+    if (responseId !== null) await this.#bindCodexApprovalResponse(sessionEpoch, responseId)
+  }
+
+  /** Replace attempt one before any await so old calls/responses cannot enter attempt two. */
+  #rotateCodexApprovalAttempt(
+    state: CodexApprovalAuthorityState,
+    createdUserRevision: number,
+  ): void {
+    if (!this.#codexApprovalAuthorityIsCurrent(state) || state.attempt !== 1) return
+    this.#capturePendingCodexApprovalResponse(true)
+    this.#quarantineCodexApprovalCarriers()
+    const abandoned = this.#codexApprovalIsolation.takeAbandonedCalls()
+    this.#beginCodexApprovalAttempt(state, 2, createdUserRevision, 'rotated')
+    this.#scheduleCodexApprovalRefusals(abandoned)
+    this.#deliveryReady.set()
+  }
+
+  /** Spend one attempt; only the first exhaustion may create the single host clarification. */
+  async #exhaustCodexApprovalAttempt(): Promise<void> {
+    const state = this.#codexApprovalAuthority
+    if (state === null || !this.#codexApprovalAuthorityIsCurrent(state)) return
+    const attempt = state.attempt
+    if (attempt === 1 || attempt === 2) {
+      this.#telemetry?.record('codex_approval.attempt', {
+        session_epoch: state.sessionEpoch,
+        attempt,
+        action: 'exhausted',
+      })
+    }
+    this.#quarantineCodexApprovalCarriers()
+    const abandoned = this.#codexApprovalIsolation.takeAbandonedCalls()
+    this.#codexApprovalDecisionRetry = null
+    this.#codexApprovalIsolation.invalidate()
+    await this.#refuseCodexApprovalCalls(abandoned)
+    if (!this.#codexApprovalAuthorityIsCurrent(state)) return
+    if (attempt === 1 && !state.clarificationQueued) {
+      this.#beginCodexApprovalAttempt(
+        state,
+        2,
+        this.session.userInputRevision,
+        'rotated',
+      )
+      this.#queueCodexApprovalClarification(state)
+      this.#deliveryReady.set()
+      return
+    }
+    state.attempt = 0
+    this.#deliveryReady.set()
+  }
+
+  /** Bind initial/retry carrier solely through exact authority/item/response/revision identity. */
+  async #bindCodexApprovalResponse(
+    sessionEpoch: number,
+    responseId: string,
+    correlatedRevision?: number,
+  ): Promise<boolean> {
+    const reservation = this.#codexApprovalIsolation.reservation
+    const revision = correlatedRevision ?? this.session.providerTurnUserInputRevision(responseId)
+    if (
+      reservation?.sessionEpoch !== sessionEpoch
+      || revision === undefined
+      || revision !== reservation.userRevision
+      || revision !== this.session.userInputRevision
+    ) return false
+    await this.#refuseCodexApprovalCalls(this.#codexApprovalIsolation.takeAbandonedCalls({
+      sessionEpoch,
+      userRevision: revision,
+      responseId,
+    }))
+    const retry = this.#codexApprovalDecisionRetry
+    const result = retry?.requested === true
+      && retry.retry_response_id === null
+      ? this.#codexApprovalIsolation.bindRetryResponse({
+          sessionEpoch,
+          itemId: reservation.itemId,
+          userRevision: revision,
+          responseId,
+        })
+      : this.#codexApprovalIsolation.bindResponse({
+          sessionEpoch,
+          itemId: reservation.itemId,
+          userRevision: revision,
+          responseId,
+        })
+    if (result !== 'bound' && result !== 'idempotent') return false
+    if (retry?.requested === true && retry.retry_response_id === null) {
+      retry.retry_response_id = responseId
+    }
+    this.#codexApprovalIsolation.markBlockedResponse({sessionEpoch, responseId})
+    this.session.suppressResponse(responseId)
+    if (result === 'bound') {
+      const attempt = this.#codexApprovalAuthority?.attempt
+      if (attempt === 1 || attempt === 2) {
+        const key = callKey(sessionEpoch, responseId)
+        this.#codexApprovalCarrierAttempts.delete(key)
+        this.#codexApprovalCarrierAttempts.set(key, attempt)
+        while (this.#codexApprovalCarrierAttempts.size > MAX_TRACKED_TOOL_CALLS) {
+          const oldest = this.#codexApprovalCarrierAttempts.keys().next()
+          if (oldest.done) break
+          this.#codexApprovalCarrierAttempts.delete(oldest.value)
+        }
+        this.#telemetry?.record('codex_approval.carrier', {
+          session_epoch: sessionEpoch,
+          attempt,
+          action: 'bound',
+        })
+      }
+    }
+    const calls = this.#codexApprovalIsolation.releaseCallsForResponse({
+      sessionEpoch,
+      userRevision: revision,
+      responseId,
+    })
+    for (const call of calls) {
+      await this.#handleCodexApprovalDecision(call, {
+        observedProviderResponseId: responseId,
+        originItemId: reservation.itemId,
+        originRef: null,
+      })
+    }
+    return true
+  }
+
+  /** One exact silent carrier may request one same-reservation structured-decision retry. */
+  async #maybeRequestCodexApprovalDecisionRetry(): Promise<void> {
+    const retry = this.#codexApprovalDecisionRetry
+    const reservation = this.#codexApprovalIsolation.reservation
+    const authority = this.#codexApprovalIsolation.authority
+    const state = this.#codexApprovalAuthority
+    if (
+      retry === null
+      || retry.requested
+      || reservation === null
+      || authority === null
+      || state === null
+      || retry.item_key !== callKey(reservation.sessionEpoch, reservation.itemId)
+      || this.#codexApproval?.pending !== true
+      || this.#clock.now() >= authority.expiresAt
+    ) return
+    const attempt = state.attempt
+    retry.requested = true
+    if (attempt === 1 || attempt === 2) {
+      this.#telemetry?.record('codex_approval.carrier', {
+        session_epoch: state.sessionEpoch,
+        attempt,
+        action: 'retry_requested',
+      })
+    }
+    let requested = false
+    try {
+      requested = await this.session.requestUserResponse()
+    } catch (failure) {
+      this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+        ? failure
+        : new RealtimeDeliveryError(String(failure)))
+    }
+    if (!requested && (attempt === 1 || attempt === 2)) {
+      this.#telemetry?.record('codex_approval.carrier', {
+        session_epoch: state.sessionEpoch,
+        attempt,
+        action: 'retry_failed',
+      })
+    }
+    const stillCurrent = this.#codexApprovalAuthorityIsCurrent(state)
+      && state.attempt === attempt
+      && this.#codexApprovalDecisionRetry === retry
+      && this.#codexApprovalIsolation.authority === authority
+      && this.#codexApprovalIsolation.reservation === reservation
+    if (!stillCurrent) {
+      if (!requested) this.#releaseFailedCodexApprovalResponseRequest(retry)
+      return
+    }
+    if (requested) return
+    await this.#exhaustCodexApprovalAttempt()
+  }
+
+  /** Replace one ambiguous old retry with an initial carrier request for the fresh attempt. */
+  async #maybeRequestFreshCodexApprovalResponse(): Promise<void> {
+    const state = this.#codexApprovalAuthority
+    if (
+      !this.#codexApprovalNeedsFreshResponse
+      || state === null
+      || !this.#codexApprovalAuthorityIsCurrent(state)
+      || state.attempt !== 2
+      || this.#codexApprovalIsolation.reservation === null
+    ) return
+    let requested = false
+    try {
+      requested = await this.session.requestUserResponse()
+    } catch (failure) {
+      this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+        ? failure
+        : new RealtimeDeliveryError(String(failure)))
+    }
+    if (requested) this.#codexApprovalNeedsFreshResponse = false
+  }
+
+  #blocksCodexApprovalTool(event: {
+    readonly session_epoch: number
+    readonly response_id: string | null
+  }): boolean {
+    if (
+      event.response_id !== null
+      && this.#isCodexApprovalResponseQuarantined(event.session_epoch, event.response_id)
+    ) return true
+    return event.response_id !== null && this.#codexApprovalIsolation.responseState({
+        sessionEpoch: event.session_epoch,
+        responseId: event.response_id,
+      })?.blocked === true
+  }
+
+  async #closeCodexApprovalCarrierTool(event: ToolCallReady): Promise<void> {
+    await this.session.injectToolOutput({
+      kind: 'tool_output',
+      host_item_id: this.#idFactory(),
+      event_id: this.#idFactory(),
+      call_id: event.call_id,
+      content: JSON.stringify({code: 'approval_carrier_tool_refused', state: 'refused'}),
+    })
+  }
+
+  /** Complete every abandoned current-session function without routing output to a retired epoch. */
+  async #refuseCodexApprovalCalls(calls: readonly ToolCallReady[]): Promise<void> {
+    for (const call of calls) {
+      if (call.session_epoch !== this.session.sessionEpoch) continue
+      try {
+        await this.session.injectToolOutput({
+          kind: 'tool_output',
+          host_item_id: this.#idFactory(),
+          event_id: this.#idFactory(),
+          call_id: call.call_id,
+          content: JSON.stringify({code: 'approval_not_authorized', state: 'refused'}),
+        })
+      } catch (failure) {
+        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+          ? failure
+          : new RealtimeDeliveryError(String(failure)))
+      }
+    }
+  }
+
+  /** A controller observer is synchronous, so own its protocol-completion work as a tracked task. */
+  #scheduleCodexApprovalRefusals(calls: readonly ToolCallReady[]): void {
+    if (calls.length === 0) return
+    const refusal = this.#refuseCodexApprovalCalls(calls)
+    const task = refusal.finally(() => {
+      this.#codexApprovalPromptReleaseTasks.delete(task)
+    })
+    this.#codexApprovalPromptReleaseTasks.add(task)
+  }
+
+  /** Permanently retire voice authority while leaving renderer/controller/provider-fact policy intact. */
+  async #retireCodexApprovalVoiceAuthority(): Promise<void> {
+    const state = this.#codexApprovalAuthority
+    if (state?.attempt === 1 || state?.attempt === 2) {
+      this.#telemetry?.record('codex_approval.attempt', {
+        session_epoch: state.sessionEpoch,
+        attempt: state.attempt,
+        action: 'exhausted',
+      })
+    }
+    this.#capturePendingCodexApprovalResponse(false)
+    this.#quarantineCodexApprovalCarriers()
+    const abandonedCalls = this.#codexApprovalIsolation.takeAbandonedCalls()
+    await this.#refuseCodexApprovalCalls(abandonedCalls)
+    this.#codexApprovalDecisionRetry = null
+    this.#codexApprovalNeedsFreshResponse = false
+    this.#codexApprovalIsolation.invalidate()
+    if (state !== null) state.attempt = 0
+    this.#deliveryReady.set()
+  }
+
+  async #handleCodexApprovalDecision(
+    event: ToolCallReady,
+    origin: BoundToolOrigin,
+  ): Promise<void> {
+    const controller = this.#codexApproval
+    const authority = this.#codexApprovalIsolation.authority
+    const reservation = this.#codexApprovalIsolation.reservation
+    const decision = codexApprovalDecisionArguments(event.arguments)
+    const voiceState = this.#codexApprovalAuthority
+    let code = decision === null
+      ? 'approval_invalid'
+      : controller?.pending === true ? 'approval_not_authorized' : 'approval_not_pending'
+    let state = 'refused'
+    let telemetryOutcome: 'accepted' | 'refused' = 'refused'
+    let telemetryReason: CodexApprovalDecisionReason | undefined
+    const expired = this.#codexApprovalExpiredIdentity
+    if (decision === null) telemetryReason = 'malformed_arguments'
+    else if (controller?.pending !== true) {
+      telemetryReason = expired?.sessionEpoch === event.session_epoch
+          && expired.approvalId === decision.approvalId
+        ? 'expired'
+        : 'not_pending'
+    }
+    else if (voiceState === null) telemetryReason = 'authority_missing'
+    else if (decision.approvalId !== voiceState.approvalId) telemetryReason = 'replaced'
+    else if (voiceState.sessionEpoch !== event.session_epoch) telemetryReason = 'epoch_mismatch'
+    else if (this.#clock.now() >= voiceState.expiresAt) telemetryReason = 'expired'
+    else if (!voiceState.contextReady) telemetryReason = 'context_not_ready'
+    else if (voiceState.attempt === 0) telemetryReason = 'voice_exhausted'
+    else if (authority === null || reservation === null) telemetryReason = 'authority_missing'
+    else if (
+      origin.originItemId !== null
+      && origin.originItemId !== reservation.itemId
+    ) telemetryReason = 'item_mismatch'
+    else if (
+      event.response_id === null
+      || origin.observedProviderResponseId !== event.response_id
+    ) telemetryReason = 'response_mismatch'
+    if (
+      decision !== null
+      && controller?.pending === true
+      && authority !== null
+      && telemetryReason === undefined
+    ) {
+      const responseId = event.response_id
+      const providerRevision = responseId === null
+        ? undefined
+        : this.session.providerTurnUserInputRevision(responseId)
+      const revision = responseId !== null
+        && reservation !== null
+        && this.#codexApprovalIsolation.isAuthorizationCarrier({
+          sessionEpoch: event.session_epoch,
+          userRevision: reservation.userRevision,
+          responseId,
+        })
+        ? reservation.userRevision
+        : providerRevision
+      const authorized = authority.authorityId === decision.approvalId
+        && authority.sessionEpoch === event.session_epoch
+        && this.#clock.now() < authority.expiresAt
+        && reservation !== null
+        && reservation.sessionEpoch === event.session_epoch
+        && responseId !== null
+        && origin.observedProviderResponseId === responseId
+        && revision !== undefined
+        && revision === reservation.userRevision
+        && revision > authority.createdUserRevision
+        && revision === this.session.userInputRevision
+        && this.#codexApprovalIsolation.isAuthorizationCarrier({
+          sessionEpoch: event.session_epoch,
+          userRevision: revision,
+          responseId,
+        })
+      if (!authorized) {
+        code = 'approval_not_authorized'
+        telemetryReason = revision === undefined || reservation === null
+          ? 'revision_mismatch'
+          : revision !== reservation.userRevision
+              || revision <= authority.createdUserRevision
+              || revision !== this.session.userInputRevision
+            ? 'revision_mismatch'
+            : 'response_mismatch'
+      } else if (controller.acceptDecision({
+        approvalId: decision.approvalId,
+        decision: decision.approved ? 'accept' : 'decline',
+      })) {
+        this.session.settleUserResponse(responseId)
+        code = decision.approved ? 'approval_accepted' : 'approval_declined'
+        state = decision.approved ? 'accepted' : 'refused'
+        telemetryOutcome = decision.approved ? 'accepted' : 'refused'
+        telemetryReason = undefined
+      } else {
+        telemetryReason = 'not_pending'
+      }
+    }
+    this.#recordCodexApprovalDecision(
+      event.session_epoch,
+      'function',
+      telemetryOutcome,
+      telemetryReason,
+    )
+    await this.session.injectToolOutput({
+      kind: 'tool_output',
+      host_item_id: this.#idFactory(),
+      event_id: this.#idFactory(),
+      call_id: event.call_id,
+      content: JSON.stringify({code, state}),
+    })
+  }
+
+  #recordCodexApprovalDecision(
+    sessionEpoch: number,
+    source: 'function' | 'renderer',
+    outcome: 'accepted' | 'refused',
+    reason?: CodexApprovalDecisionReason,
+  ): void {
+    this.#telemetry?.record('codex_approval.decision', reason === undefined
+      ? {session_epoch: sessionEpoch, source, outcome}
+      : {session_epoch: sessionEpoch, source, outcome, reason})
+  }
+
+  #invalidateCodexApproval(reason: string): void {
+    this.#codexApproval?.invalidate(reason)
+    if (this.#codexApprovalAuthority !== null) this.#clearCodexApprovalVoiceState()
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Family I: project confirmation.
   //
   // Changing which workspace the agent operates in needs the user to say yes out loud, and this is the
@@ -3455,13 +4846,44 @@ export class RealtimeService {
       }
       return
     }
-    this.#projectConfirmationItems.add(callKey(event.session_epoch, itemId))
-    this.#projectConfirmationBlocking = true
+    const mirrored = this.#projectConfirmationIsolation.reserveUserItem({
+      sessionEpoch: event.session_epoch,
+      itemId,
+      userRevision: this.session.userInputRevision,
+    })
+    if (mirrored !== 'reserved' && mirrored !== 'idempotent') {
+      const lifecycleId = this.#projectConfirmationLifecycleId()
+      this.#invalidateProjectConfirmation('missing_item_correlation')
+      this.#queueProjectConfirmationFact(
+        '缺少语音确认关联，本次操作已取消。',
+        lifecycleId,
+        'missing-item-correlation',
+      )
+      return
+    }
     // Cancel only a confirmation question whose host-requested response has not started yet. The
     // response created from this user answer must remain alive so Qwen can emit the structured
     // confirmation function after `response.created`.
-    this.#projectConfirmationFencePending = this.session.armPendingResponseFence()
+    this.#projectConfirmationIsolation.setResponseFencePending(
+      this.session.armPendingResponseFence(),
+    )
     this.#publishProjectView()
+  }
+
+  /** Bind an initial carrier only after the shared origin ledger proves the exact item/revision. */
+  #bindProjectConfirmationResponse(epoch: number, responseId: string): boolean {
+    const itemId = this.#userOrigins.itemForResponse(epoch, responseId)
+    const revision = itemId === undefined
+      ? undefined
+      : this.#userOrigins.revisionForItem(epoch, itemId)
+    if (itemId === undefined || revision === undefined) return false
+    const result = this.#projectConfirmationIsolation.bindResponse({
+      sessionEpoch: epoch,
+      itemId,
+      userRevision: revision,
+      responseId,
+    })
+    return result === 'bound' || result === 'idempotent'
   }
 
   /** Bind the provider response created by the one bounded retry to its original user evidence. */
@@ -3471,6 +4893,15 @@ export class RealtimeService {
     const item = parseCallKey(retry.item_key)
     if (item.sessionEpoch !== epoch) return false
     if (!this.#userOrigins.bindRetryResponse({epoch, responseId, itemId: item.id})) return false
+    const revision = this.#userOrigins.revisionForItem(epoch, item.id)
+    if (revision === undefined) return false
+    const isolated = this.#projectConfirmationIsolation.bindRetryResponse({
+      sessionEpoch: epoch,
+      itemId: item.id,
+      userRevision: revision,
+      responseId,
+    })
+    if (isolated !== 'bound' && isolated !== 'idempotent') return false
     retry.retry_response_id = responseId
     this.#telemetry?.record('project_confirmation.decision_retry_started', {
       session_epoch: epoch,
@@ -3545,22 +4976,18 @@ export class RealtimeService {
     const effectiveResponseId = event.response_id ?? this.session.activeProviderResponseId
     if (
       effectiveResponseId !== null
-      && this.#projectConfirmationQuarantinedResponses.has(
-        callKey(event.session_epoch, effectiveResponseId),
-      )
+      && this.#projectConfirmationIsolation.responseState({
+        sessionEpoch: event.session_epoch,
+        responseId: effectiveResponseId,
+      })?.quarantined === true
     ) return true
-    for (const key of this.#projectConfirmationResponses) {
-      if (parseCallKey(key).sessionEpoch === event.session_epoch) return true
-    }
-    if (
-      effectiveResponseId !== null
-      && this.#projectConfirmationResponses.has(callKey(event.session_epoch, effectiveResponseId))
-    ) {
-      return true
-    }
-    if (this.#projectConfirmationBlocking) {
+    if (this.#projectConfirmationIsolation.hasBlockedResponseInEpoch(event.session_epoch)) return true
+    if (this.#projectConfirmationIsBlocking()) {
       if (event.response_id !== null) {
-        this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
+        this.#projectConfirmationIsolation.markBlockedResponse({
+          sessionEpoch: event.session_epoch,
+          responseId: event.response_id,
+        })
       }
       return true
     }
@@ -3569,8 +4996,15 @@ export class RealtimeService {
 
   #isProjectConfirmationItem(epoch: number, itemId: string): boolean {
     const key = callKey(epoch, itemId)
-    return this.#projectConfirmationItems.has(key)
+    const reserved = this.#projectConfirmationIsolation.reservation
+    return reserved?.sessionEpoch === epoch && reserved.itemId === itemId
       || this.#projectConfirmationClosingItems.has(key)
+  }
+
+  #projectConfirmationIsBlocking(): boolean {
+    return this.#projectConfirmationIsolation.reservation !== null
+      || this.#projectConfirmationClosingItems.size > 0
+      || this.#projectConfirmationIsolation.responseFencePending
   }
 
   #isProjectConfirmationShadowItem(epoch: number, itemId: string): boolean {
@@ -3592,9 +5026,15 @@ export class RealtimeService {
    */
   #beginProjectConfirmationClose(epoch: number, itemId: string): void {
     const key = callKey(epoch, itemId)
-    this.#projectConfirmationItems.delete(key)
+    const reserved = this.#projectConfirmationIsolation.reservation
+    if (reserved?.sessionEpoch === epoch && reserved.itemId === itemId) {
+      this.#projectConfirmationIsolation.releaseReservation({
+        sessionEpoch: epoch,
+        itemId,
+        userRevision: reserved.userRevision,
+      })
+    }
     this.#projectConfirmationClosingItems.add(key)
-    this.#projectConfirmationBlocking = true
   }
 
   #endProjectConfirmationClose(epoch: number, itemId: string): void {
@@ -3603,20 +5043,21 @@ export class RealtimeService {
     if (this.#projectConfirmationDecisionRetry?.item_key === key) {
       this.#projectConfirmationDecisionRetry = null
     }
-    this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
-      || this.#projectConfirmationClosingItems.size > 0
-      || this.#projectConfirmationFencePending
   }
 
   #endProjectConfirmationItem(epoch: number, itemId: string): void {
     const key = callKey(epoch, itemId)
-    this.#projectConfirmationItems.delete(key)
+    const reserved = this.#projectConfirmationIsolation.reservation
+    if (reserved?.sessionEpoch === epoch && reserved.itemId === itemId) {
+      this.#projectConfirmationIsolation.releaseReservation({
+        sessionEpoch: epoch,
+        itemId,
+        userRevision: reserved.userRevision,
+      })
+    }
     if (this.#projectConfirmationDecisionRetry?.item_key === key) {
       this.#projectConfirmationDecisionRetry = null
     }
-    this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
-      || this.#projectConfirmationClosingItems.size > 0
-      || this.#projectConfirmationFencePending
   }
 
   async #handleProjectConfirmationDecision(
@@ -3688,6 +5129,11 @@ export class RealtimeService {
         && origin.originRef !== null
         && origin.observedProviderResponseId !== null
         && event.response_id === origin.observedProviderResponseId
+        && this.#projectConfirmationIsolation.isAuthorizationCarrier({
+          sessionEpoch: event.session_epoch,
+          userRevision: this.#userOrigins.revisionForItem(event.session_epoch, itemId) ?? -1,
+          responseId: origin.observedProviderResponseId,
+        })
         && this.#isProjectConfirmationItem(event.session_epoch, itemId)
       ) {
         let text: string | null = null
@@ -3904,13 +5350,10 @@ export class RealtimeService {
     if (
       controller?.pending !== true
       || event.session_epoch !== this.session.sessionEpoch
-      || this.#projectConfirmationFencePending
+      || this.#projectConfirmationIsolation.responseFencePending
     ) return false
-    const reserved = [...this.#projectConfirmationItems]
-      .map(key => parseCallKey(key))
-      .filter(item => item.sessionEpoch === event.session_epoch)
-    if (reserved.length !== 1) return false
-    const itemId = reserved[0]?.id
+    const reserved = this.#projectConfirmationIsolation.reservation
+    const itemId = reserved?.sessionEpoch === event.session_epoch ? reserved.itemId : undefined
     if (itemId === undefined || !controller.releaseUndecided({
       epoch: event.session_epoch,
       itemId,
@@ -4044,7 +5487,6 @@ export class RealtimeService {
 
   /** Transfer reply ownership locally before any provider I/O can delay the deterministic fact. */
   #prepareProjectConfirmationCarrier(sessionEpoch: number, responseId: string): boolean {
-    const key = callKey(sessionEpoch, responseId)
     const phase = this.session.providerTurnPhase(responseId)
     const generation = this.session.currentGeneration
     const live = sessionEpoch === this.session.sessionEpoch && (
@@ -4057,7 +5499,9 @@ export class RealtimeService {
         && generation.response_id === responseId
       )
     )
-    if (live) this.#projectConfirmationQuarantinedResponses.add(key)
+    if (live) {
+      this.#projectConfirmationIsolation.markQuarantined({sessionEpoch, responseId})
+    }
     this.session.suppressResponse(responseId)
     this.#abandonProjectConfirmationContinuation(sessionEpoch, responseId)
     return live
@@ -4069,14 +5513,14 @@ export class RealtimeService {
       try {
         const targeted = await this.session.quarantineResponse(responseId)
         if (!targeted) {
-          this.#projectConfirmationQuarantinedResponses.delete(callKey(sessionEpoch, responseId))
+          this.#projectConfirmationIsolation.clearQuarantined({sessionEpoch, responseId})
           return
         }
         if (this.session.providerTurnPhase(responseId) !== 'cancel_requested') {
           // The carrier may have reached terminal while tool output was being confirmed even though
           // its audio was still queued. The exact fence was still required, but no provider terminal
           // remains to release a quarantine entry or justify a reconnect watchdog.
-          this.#projectConfirmationQuarantinedResponses.delete(callKey(sessionEpoch, responseId))
+          this.#projectConfirmationIsolation.clearQuarantined({sessionEpoch, responseId})
           return
         }
       } catch (failure) {
@@ -4124,7 +5568,8 @@ export class RealtimeService {
     const key = callKey(sessionEpoch, responseId)
     if (
       sessionEpoch !== this.session.sessionEpoch
-      || !this.#projectConfirmationQuarantinedResponses.has(key)
+      || this.#projectConfirmationIsolation.responseState({sessionEpoch, responseId})
+        ?.quarantined !== true
       || this.session.providerTurnPhase(responseId) !== 'cancel_requested'
     ) return
     if (this.session.floor.state === 'user_speaking') {
@@ -4147,7 +5592,10 @@ export class RealtimeService {
       response_id: responseId,
       reason,
     })
-    await this.#reconnectProviderSession({expectedEpoch: sessionEpoch})
+    await this.#reconnectProviderSession({
+      reason: 'project_confirmation_carrier_recovery',
+      expectedEpoch: sessionEpoch,
+    })
   }
 
   async #recoverProjectConfirmationCarrierAfterStaleUserHold(key: string): Promise<void> {
@@ -4179,11 +5627,10 @@ export class RealtimeService {
 
   async #quarantineProjectConfirmationResponses(sessionEpoch: number): Promise<void> {
     const carriers: string[] = []
-    for (const response of this.#projectConfirmationResponses) {
-      const parsed = parseCallKey(response)
-      if (parsed.sessionEpoch !== sessionEpoch) continue
-      if (this.#prepareProjectConfirmationCarrier(sessionEpoch, parsed.id)) {
-        carriers.push(parsed.id)
+    for (const response of this.#projectConfirmationIsolation.blockedResponses) {
+      if (response.sessionEpoch !== sessionEpoch) continue
+      if (this.#prepareProjectConfirmationCarrier(sessionEpoch, response.responseId)) {
+        carriers.push(response.responseId)
       }
     }
     this.session.armPendingResponseFence()
@@ -4220,7 +5667,10 @@ export class RealtimeService {
    * awaiting either. A second expiry while one is draining joins the queue instead of racing it.
    */
   #projectConfirmationExpired(): void {
-    const itemKeys = [...this.#projectConfirmationItems]
+    const reserved = this.#projectConfirmationIsolation.reservation
+    const itemKeys = reserved === null
+      ? []
+      : [callKey(reserved.sessionEpoch, reserved.itemId)]
     const sourceEpoch = this.session.sessionEpoch
     const lifecycleId = this.#projectConfirmationLifecycleId()
     if (this.#projectConfirmationCommittingLifecycles.has(lifecycleId)) {
@@ -4228,11 +5678,10 @@ export class RealtimeService {
     }
     // A reconnect is needed when the confirmation armed a fence or blocked a response in this epoch:
     // either leaves provider state the next turn would otherwise inherit.
-    const reconnect = this.#projectConfirmationFencePending
+    const reconnect = this.#projectConfirmationIsolation.responseFencePending
       || (this.#projectConfirmationDecisionRetry?.requested === true
         && this.#projectConfirmationDecisionRetry.retry_response_id === null)
-      || [...this.#projectConfirmationResponses]
-        .some(key => parseCallKey(key).sessionEpoch === sourceEpoch)
+      || this.#projectConfirmationIsolation.hasBlockedResponseInEpoch(sourceEpoch)
     for (const key of itemKeys) {
       const {sessionEpoch, id} = parseCallKey(key)
       this.#beginProjectConfirmationClose(sessionEpoch, id)
@@ -4320,7 +5769,10 @@ export class RealtimeService {
     if (batch.reconnect || closeFailed) {
       try {
         await this.#runProjectExpiryStep(
-          this.#reconnectProviderSession({expectedEpoch: batch.source_epoch}),
+          this.#reconnectProviderSession({
+            reason: 'project_confirmation_expiry_cleanup',
+            expectedEpoch: batch.source_epoch,
+          }),
         )
       } catch (failure) {
         this.#onDiagnostic(
@@ -4402,16 +5854,12 @@ export class RealtimeService {
    */
   #invalidateProjectConfirmation(reason: string): void {
     this.#projectConfirmation?.invalidate(reason)
-    this.#projectConfirmationItems.clear()
+    this.#projectConfirmationIsolation.invalidate()
     this.#projectConfirmationShadowItems.clear()
     this.#projectConfirmationClosingItems.clear()
-    this.#projectConfirmationResponses.clear()
-    this.#projectConfirmationQuarantinedResponses.clear()
     this.#projectConfirmationCarrierReconnectAfterUser.clear()
     this.#projectConfirmationPendingQuarantineEpoch = null
     this.#projectConfirmationDecisionRetry = null
-    this.#projectConfirmationBlocking = false
-    this.#projectConfirmationFencePending = false
     this.#publishProjectView()
   }
 
@@ -5411,9 +6859,10 @@ export class RealtimeService {
    * on its own rather than only through one of them.
    */
   reconnectForTest(expectedEpoch?: number): Promise<boolean> {
-    return this.#reconnectProviderSession(
-      expectedEpoch === undefined ? {} : {expectedEpoch},
-    )
+    return this.#reconnectProviderSession({
+      reason: 'test',
+      ...(expectedEpoch === undefined ? {} : {expectedEpoch}),
+    })
   }
 
   /** Stand in for the Guard delivery that would normally create an urgent owner. */
@@ -5482,12 +6931,14 @@ export class RealtimeService {
 
   /** Which responses a confirmation has blocked. The block outliving its turn is the failure mode. */
   get confirmationResponsesForTest(): readonly string[] {
-    return [...this.#projectConfirmationResponses]
+    return this.#projectConfirmationIsolation.blockedResponses
+      .map(response => callKey(response.sessionEpoch, response.responseId))
   }
 
   /** Items reserved as the answer to a proposal. One left here blocks every later turn. */
   get confirmationItemsForTest(): readonly string[] {
-    return [...this.#projectConfirmationItems]
+    const reserved = this.#projectConfirmationIsolation.reservation
+    return reserved === null ? [] : [callKey(reserved.sessionEpoch, reserved.itemId)]
   }
 
   /** Items mid-close. One left here after an expiry would block every later turn. */
@@ -5502,7 +6953,7 @@ export class RealtimeService {
 
   /** Whether a confirmation is currently refusing tool calls. Invisible from outside otherwise. */
   get projectConfirmationBlockingForTest(): boolean {
-    return this.#projectConfirmationBlocking
+    return this.#projectConfirmationIsBlocking()
   }
 
   /** Which response holds which user turn, in binding order. */

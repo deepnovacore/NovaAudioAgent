@@ -541,6 +541,7 @@ test('project manifest and tool schema preserve exact flat operation order and s
   ])
   assert.deepEqual(adapter.manifest.ops[0]?.sensitive_params, ['work_order'])
   assert.deepEqual(adapter.manifest.ops[1]?.sensitive_params, [])
+  assert.deepEqual(adapter.manifest.ops[2]?.sensitive_params, ['instruction'])
 })
 
 test('project create proposal validates without mutating state or constructing transport', async () => {

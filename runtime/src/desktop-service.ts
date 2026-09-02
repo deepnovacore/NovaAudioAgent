@@ -21,6 +21,7 @@ import type {RealtimeAssembly} from './realtime-assembly.js'
 import {memoryBoardMessage} from './realtime/memory-board.js'
 import {workspaceGraphBoardMessage} from './realtime/workspace-graph-board.js'
 import type {ProjectConfirmationView} from './realtime/project-confirmation.js'
+import type {CodexApprovalView} from './realtime/codex-approval.js'
 import type {CaptionFrame} from './realtime/session-state.js'
 import type {CodexState} from './realtime/service-state.js'
 import type {RealtimeTelemetry} from './realtime/telemetry.js'
@@ -57,6 +58,7 @@ export interface BuildDesktopRealtimeCompositionOptions {
   ) => RealtimeAssembly
   readonly telemetry?: RealtimeTelemetry
   readonly projectView?: ProjectConfirmationView
+  readonly approvalView?: CodexApprovalView
   readonly createServer?: DesktopRealtimeOptions['createServer']
 }
 
@@ -147,6 +149,7 @@ export function buildDesktopRealtimeComposition(
     clock: realtime.runtime.clock,
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...(options.projectView === undefined ? {} : {projectView: options.projectView}),
+    ...(options.approvalView === undefined ? {} : {approvalView: options.approvalView}),
     ...(options.createServer === undefined ? {} : {createServer: options.createServer}),
   })
   holder.desktop = desktop

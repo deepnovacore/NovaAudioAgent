@@ -7,6 +7,7 @@ import {
   validateEffectiveCodexConfig,
 } from '../src/codex-app-server-schema.js'
 import {CodexProtocolError} from '../src/codex-protocol.js'
+import {approvalSchemaBundle} from './fixtures/codex/approval-schema-bundle.js'
 
 type Bundle = Record<string, unknown>
 
@@ -99,6 +100,11 @@ const INBOUND_SPECS = [
     nested: TURN_NESTED,
   },
   {
+    file: 'v2/ItemStartedNotification.json',
+    fields: {threadId: 'string', turnId: 'string', startedAtMs: 'integer', item: 'object'},
+    required: ['threadId', 'turnId', 'startedAtMs', 'item'],
+  },
+  {
     file: 'v2/ItemCompletedNotification.json',
     fields: {threadId: 'string', turnId: 'string', item: 'object'},
     required: ['threadId', 'turnId', 'item'],
@@ -170,6 +176,7 @@ function supportedBundle(): Bundle {
     }
     bundle[spec.file] = objectSchema(fields, spec.required, definitions)
   }
+  Object.assign(bundle, approvalSchemaBundle())
   return bundle
 }
 
@@ -210,6 +217,18 @@ function requestVariant(bundle: Bundle, method: string): Record<string, unknown>
   return record(found)
 }
 
+function serverRequestVariant(bundle: Bundle, method: string): Record<string, unknown> {
+  const variantsValue = record(bundle['ServerRequest.json']).oneOf
+  assert.ok(Array.isArray(variantsValue))
+  const variants = variantsValue as readonly unknown[]
+  const found = variants.find(candidate => {
+    const methodSchema = nested(record(candidate), 'properties', 'method')
+    return Array.isArray(methodSchema.enum) && methodSchema.enum[0] === method
+  })
+  assert.notEqual(found, undefined)
+  return record(found)
+}
+
 test('the exact supported request and inbound schema bundle validates', () => {
   assert.deepEqual(APP_SERVER_METHOD_SCHEMAS, METHOD_SPECS)
   assert.deepEqual(APP_SERVER_INBOUND_SCHEMAS, INBOUND_SPECS)
@@ -222,6 +241,20 @@ test('the exact supported request and inbound schema bundle validates', () => {
     'turn/steer': true,
     'turn/interrupt': true,
   })
+})
+
+test('the legacy command approval schema without kind remains supported', () => {
+  const bundle = supportedBundle()
+  for (const schema of [
+    nested(bundle, 'CommandExecutionRequestApprovalParams.json'),
+    nested(bundle, 'ServerRequest.json', 'definitions', 'CommandExecutionRequestApprovalParams'),
+  ]) delete nested(schema, 'properties').kind
+  for (const definitions of [
+    nested(bundle, 'CommandExecutionRequestApprovalParams.json', 'definitions'),
+    nested(bundle, 'ServerRequest.json', 'definitions'),
+  ]) delete definitions.CommandExecutionApprovalKind
+
+  assert.equal(validateCodexSchemaBundle(bundle)['turn/start'], true)
 })
 
 test('missing, widened, malformed, and recursive schemas fail closed', () => {
@@ -263,6 +296,117 @@ test('missing, widened, malformed, and recursive schemas fail closed', () => {
     const bundle = supportedBundle()
     mutate(bundle)
     assert.throws(() => validateCodexSchemaBundle(bundle), expectCode('unsupported_protocol'))
+  }
+})
+
+test('approval request union, params, file item kinds, and decisions are fail-closed', () => {
+  const mutations: ((bundle: Bundle) => void)[] = [
+    bundle => { delete bundle['ServerRequest.json'] },
+    bundle => {
+      const server = record(bundle['ServerRequest.json'])
+      assert.ok(Array.isArray(server.oneOf))
+      server.oneOf = server.oneOf.filter(candidate => (
+        candidate !== serverRequestVariant(bundle, 'item/fileChange/requestApproval')
+      ))
+    },
+    bundle => {
+      nested(
+        serverRequestVariant(bundle, 'item/commandExecution/requestApproval'),
+        'properties', 'params',
+      ).$ref = '#/definitions/WrongParams'
+    },
+    bundle => {
+      nested(
+        bundle,
+        'ServerRequest.json',
+        'definitions',
+        'FileChangeRequestApprovalParams',
+        'properties',
+        'startedAtMs',
+      ).type = 'string'
+    },
+    bundle => {
+      nested(bundle, 'FileChangeRequestApprovalParams.json', 'properties').futureGrant = {
+        type: 'object',
+      }
+    },
+    bundle => {
+      nested(bundle, 'CommandExecutionRequestApprovalParams.json', 'properties', 'command').type = [
+        'string', 'null', 'array',
+      ]
+    },
+    bundle => {
+      nested(
+        bundle,
+        'CommandExecutionRequestApprovalParams.json',
+        'definitions',
+        'CommandExecutionApprovalKind',
+      ).enum = ['command', 'writeStdin', 'futureAuthority']
+    },
+    bundle => {
+      delete nested(
+        bundle,
+        'ServerRequest.json',
+        'definitions',
+        'CommandExecutionRequestApprovalParams',
+        'properties',
+      ).kind
+      delete nested(
+        bundle,
+        'ServerRequest.json',
+        'definitions',
+      ).CommandExecutionApprovalKind
+    },
+    bundle => {
+      nested(
+        bundle, 'v2/ItemStartedNotification.json', 'definitions', 'ThreadItem',
+      ).oneOf = []
+    },
+    bundle => {
+      nested(
+        bundle, 'v2/ItemStartedNotification.json', 'definitions', 'FileUpdateChange',
+        'properties', 'kind',
+      ).$ref = '#/definitions/WrongKind'
+    },
+    bundle => {
+      const choices = nested(
+        bundle, 'v2/ItemStartedNotification.json', 'definitions', 'PatchChangeKind',
+      ).oneOf
+      assert.ok(Array.isArray(choices))
+      nested(record(choices[2]), 'properties', 'move_path').type = ['string', 'null', 'array']
+    },
+    bundle => {
+      nested(bundle, 'FileChangeRequestApprovalResponse.json', 'properties', 'decision').$ref = (
+        '#/definitions/WrongDecision'
+      )
+    },
+    bundle => {
+      const choices = nested(
+        bundle,
+        'FileChangeRequestApprovalResponse.json',
+        'definitions',
+        'FileChangeApprovalDecision',
+      ).oneOf
+      assert.ok(Array.isArray(choices))
+      choices.shift()
+    },
+    bundle => {
+      const choices = nested(
+        bundle,
+        'CommandExecutionRequestApprovalResponse.json',
+        'definitions',
+        'CommandExecutionApprovalDecision',
+      ).oneOf
+      assert.ok(Array.isArray(choices))
+      const first = record(choices[0])
+      assert.ok(Array.isArray(first.enum))
+      first.enum = ['accept', 'decline']
+    },
+  ]
+  for (const mutate of mutations) {
+    const bundle = supportedBundle()
+    mutate(bundle)
+    expectUnsupported(bundle)
   }
 })
 

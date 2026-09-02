@@ -330,6 +330,117 @@ test('injecting a non-tool-output item through the tool path is refused', async 
   )
 })
 
+test('host context injection confirms provider context without creating a response or taking the floor', async () => {
+  const {session, actions} = makeSession()
+  await session.connect({tools: []})
+  const item: HostContextItem = {
+    kind: 'progress',
+    host_item_id: 'host-1',
+    event_id: 'progress:1',
+    content: '在跑。',
+    call_id: null,
+  }
+
+  assert.equal(await session.injectHostContext(item), true)
+  assert.deepEqual(actions, ['connect:1', 'inject:host-1'])
+  assert.equal(session.floor.state, 'idle')
+  assert.equal(session.providerIdle, true)
+  assert.equal(session.foregroundIdle, true)
+})
+
+test('duplicate current-epoch host context injection is idempotent', async () => {
+  const {session, actions} = makeSession()
+  await session.connect({tools: []})
+  const item: HostContextItem = {
+    kind: 'progress',
+    host_item_id: 'host-1',
+    event_id: 'progress:1',
+    content: '在跑。',
+    call_id: null,
+  }
+
+  assert.equal(await session.injectHostContext(item), true)
+  assert.equal(await session.injectHostContext(item), false)
+  assert.deepEqual(actions, ['connect:1', 'inject:host-1'])
+})
+
+test('a later host response reuses the context-only provider item and creates one response', async () => {
+  const {session, actions} = makeSession()
+  await session.connect({tools: []})
+  const item: HostContextItem = {
+    kind: 'final',
+    host_item_id: 'host-1',
+    event_id: 'final:1',
+    content: '完成了。',
+    call_id: null,
+  }
+
+  assert.equal(await session.injectHostContext(item), true)
+  assert.deepEqual(await session.deliverHostResponse({
+    kind: 'host_fact',
+    item,
+    task_summary: null,
+    origin_spoken: false,
+  }), {accepted: true, injectionEpoch: 1})
+  assert.deepEqual(actions, [
+    'connect:1',
+    'inject:host-1',
+    'create_response:host_fact',
+  ])
+})
+
+test('retiring context-only injection deletes the exact provider item and releases its ledger entry', async () => {
+  const {session, actions} = makeSession()
+  await session.connect({tools: []})
+  const item: HostContextItem = {
+    kind: 'progress',
+    host_item_id: 'host-1',
+    event_id: 'progress:1',
+    content: '在跑。',
+    call_id: null,
+  }
+
+  assert.equal(await session.injectHostContext(item), true)
+  assert.equal(await session.retireHostEvent(item.event_id), true)
+  assert.equal(await session.injectHostContext(item), true)
+  assert.deepEqual(actions, [
+    'connect:1',
+    'inject:host-1',
+    'retire:provider-host-1',
+    'inject:host-1',
+  ])
+})
+
+test('context-only injection rejects tool output and workspace context dedicated paths', async () => {
+  const {session, actions} = makeSession()
+  await session.connect({tools: []})
+
+  await assert.rejects(
+    () => session.injectHostContext({
+      kind: 'tool_output',
+      host_item_id: 'host-1',
+      event_id: 'background:1',
+      content: '结果',
+      call_id: 'call-1',
+    }),
+    /tool output requires injectToolOutput/u,
+  )
+  await assert.rejects(
+    () => session.injectHostContext({
+      kind: 'workspace_context',
+      host_item_id: 'host-2',
+      event_id: 'workspace:1',
+      content: '工作区上下文',
+      call_id: null,
+      session_epoch: 1,
+      workspace_instance_id: 'workspace-1',
+      revision: 1,
+    }),
+    /workspace context requires its dedicated delivery path/u,
+  )
+  assert.deepEqual(actions, ['connect:1'])
+})
+
 test('retiring an injected host event deletes its exact provider item and releases injection', async () => {
   const {session, actions} = makeSession()
   await session.connect({tools: []})

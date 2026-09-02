@@ -25,7 +25,11 @@ import {
   type CodexHostPreflightRunner,
   type CodexLiveSchemaProbe,
 } from './codex-app-server-transport.js'
-import {APP_SERVER_INBOUND_SCHEMAS, APP_SERVER_METHOD_SCHEMAS} from './codex-app-server-schema.js'
+import {
+  APP_SERVER_APPROVAL_SCHEMA_FILES,
+  APP_SERVER_INBOUND_SCHEMAS,
+  APP_SERVER_METHOD_SCHEMAS,
+} from './codex-app-server-schema.js'
 import {hostBinaryPath, hostWorkspacePath} from './codex-process-owner.js'
 import {
   createPlatformCodexProcessOwnerFactory,
@@ -50,6 +54,7 @@ import {
   type ProjectNativeHost,
 } from './project-native-resource.js'
 import {stripLikePython} from './python-text.js'
+import {admitCodexCliVersion} from './codex-version.js'
 
 const PROBE_ID = 'codex_sandbox_probe'
 const PROBE_PATH = 'native/codex-sandbox-probe'
@@ -181,6 +186,12 @@ export function createProductionCodexHost(
     transportFactory: unavailableCodexBackendTransportFactory,
     projectHost: null,
   })
+  const hostEnvironment: Readonly<Record<string, string | undefined>> = (
+    platform === 'win32'
+      || typeof environment.HOME === 'string' && environment.HOME !== ''
+    ? environment
+    : Object.freeze({...environment, HOME: homeDirectory})
+  )
   const probe = loadCodexSandboxProbeFromResources({resourcesPath, platform, arch})
   if (probe === null) return Object.freeze({
     catalog,
@@ -216,11 +227,11 @@ export function createProductionCodexHost(
     projectHost,
   })
   const credentialSnapshotter = new CredentialSnapshotter({
-    environment,
+    environment: hostEnvironment,
     platform,
     ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
-    ...(typeof environment.CODEX_HOME === 'string' && environment.CODEX_HOME !== ''
-      ? {sourceHome: environment.CODEX_HOME}
+    ...(typeof hostEnvironment.CODEX_HOME === 'string' && hostEnvironment.CODEX_HOME !== ''
+      ? {sourceHome: hostEnvironment.CODEX_HOME}
       : {}),
   })
   const transportFactory = new OwnedCodexBackendTransportFactory({
@@ -231,7 +242,7 @@ export function createProductionCodexHost(
     credentialSnapshotter,
     preflightRunner: new NativeCodexHostPreflightRunner({
       probe,
-      environment,
+      environment: hostEnvironment,
       platform,
       hasApiKey: settings.codex_api_key !== null,
       ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
@@ -240,7 +251,7 @@ export function createProductionCodexHost(
         : {commandRunner: command => windowsGuardianFactory.runCommand(command)}),
     }),
     schemaProbe: new NativeCodexLiveSchemaProbe({
-      environment,
+      environment: hostEnvironment,
       platform,
       ...(windowsGuardianFactory === null
         ? {}
@@ -556,6 +567,7 @@ export class NativeCodexLiveSchemaProbe implements CodexLiveSchemaProbe {
       const files = new Set<string>(['ClientRequest.json'])
       for (const spec of Object.values(APP_SERVER_METHOD_SCHEMAS)) files.add(spec.file)
       for (const spec of APP_SERVER_INBOUND_SCHEMAS) files.add(spec.file)
+      for (const file of APP_SERVER_APPROVAL_SCHEMA_FILES) files.add(file)
       const bundle: Record<string, unknown> = {}
       for (const name of files) {
         const path = resolve(directory, name)
@@ -726,13 +738,9 @@ function processGroupAlive(pid: number | undefined): boolean {
 
 function parseVersion(result: BoundedCodexCommandResult): string {
   const value = decodeSuccessful(result, 'unsupported_version')
-  const match = /^codex-cli (\d+)\.(\d+)\.(\d+)$/u.exec(value)
-  if (match === null) throw new CodexTransportError('unsupported_version')
-  const version = match.slice(1).map(Number)
-  if (!version.every(Number.isSafeInteger) || compareVersion(version, [0, 145, 0]) < 0) {
-    throw new CodexTransportError('unsupported_version')
-  }
-  return version.join('.')
+  const admitted = admitCodexCliVersion(value)
+  if (admitted === null) throw new CodexTransportError('unsupported_version')
+  return admitted.version
 }
 
 function parseLogin(result: BoundedCodexCommandResult): 'chatgpt' | 'api_key' {
@@ -1006,14 +1014,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value)
   return keys.length === expected.length && expected.every(key => Object.hasOwn(value, key))
-}
-
-function compareVersion(left: readonly number[], right: readonly number[]): number {
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0)
-    if (difference !== 0) return difference
-  }
-  return 0
 }
 
 function isErrno(error: unknown, code: string): boolean {

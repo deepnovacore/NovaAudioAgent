@@ -1,4 +1,5 @@
 import {spawn} from 'node:child_process'
+import {resolve} from 'node:path'
 import {createInterface} from 'node:readline'
 
 const scenario = process.argv[2]
@@ -11,6 +12,13 @@ const allowedScenarios = new Set([
   'duplicate-response',
   'unknown-response',
   'server-request',
+  'file-approval',
+  'file-approval-held-terminal',
+  'file-approval-decline',
+  'file-approval-turn-interrupted',
+  'file-approval-process-exit',
+  'file-approval-invalid-start',
+  'command-approval',
   'clean-eof',
   'pending-eof',
   'turn-rejection-order',
@@ -20,6 +28,9 @@ const allowedScenarios = new Set([
 if (!allowedScenarios.has(scenario)) fail('invalid_scenario')
 
 let pendingTurnId = null
+let approvalTurnId = null
+let pendingApprovalCompletionId = null
+let approvalResponseCount = 0
 let threadId = 'fixture-thread-1'
 const releases = new Set()
 
@@ -34,6 +45,18 @@ process.on('message', message => {
     turnCompletion(id)
   }
   if (message.name === 'clean_eof' && scenario === 'clean-eof') endAndExit()
+  if (message.name === 'approval_process_exit') {
+    if (scenario !== 'file-approval-process-exit') fail('invalid_approval_process_exit')
+    endAndExit()
+  }
+  if (message.name === 'approval_turn_completion') {
+    if (scenario !== 'file-approval-held-terminal' || pendingApprovalCompletionId === null) {
+      fail('invalid_approval_turn_completion')
+    }
+    const id = pendingApprovalCompletionId
+    pendingApprovalCompletionId = null
+    turnCompletion(id)
+  }
   if (message.name === 'leader_exit') {
     process.disconnect?.()
     process.exit(0)
@@ -66,6 +89,41 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
     }
     if (
       plain(message)
+      && message.id === 910
+      && plain(message.result)
+      && (message.result.decision === 'accept' || message.result.decision === 'decline')
+    ) {
+      approvalResponseCount += 1
+      barrier('approval_response', {
+        decision: message.result.decision,
+        response_count: approvalResponseCount,
+      })
+      if (approvalResponseCount > 1) return
+      if (message.result.decision !== expectedApprovalDecision() || approvalTurnId === null) {
+        fail('invalid_approval_response')
+      }
+      const id = approvalTurnId
+      approvalTurnId = null
+      if (scenario === 'file-approval-held-terminal') pendingApprovalCompletionId = id
+      else if (scenario !== 'file-approval-turn-interrupted') turnCompletion(id)
+      return
+    }
+    if (plain(message) && message.method === 'fixture/approvalResponseCount') {
+      const params = plain(message.params) ? message.params : {}
+      if (
+        !isApprovalScenario()
+        || typeof params.probeId !== 'string'
+        || !/^approval-response-probe-[1-9][0-9]*$/u.test(params.probeId)
+        || params.probeId.length > 64
+      ) fail('invalid_approval_response_probe')
+      barrier('approval_response_count', {
+        probe_id: params.probeId,
+        response_count: approvalResponseCount,
+      })
+      return
+    }
+    if (
+      plain(message)
       && message.id === 909
       && plain(message.error)
       && message.error.code === -32601
@@ -86,13 +144,16 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       return
     }
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
-      if (params.approvalPolicy !== 'never') fail('invalid_thread')
+      const approvalScenario = isApprovalScenario()
+      if (params.approvalPolicy !== (approvalScenario ? 'on-request' : 'never')) fail('invalid_thread')
       if (message.method === 'thread/resume') {
         if (typeof params.threadId !== 'string') fail('invalid_resume')
         threadId = params.threadId
       }
       const persistent = params.ephemeral === false || message.method === 'thread/resume'
-      const response = {id: message.id, result: threadResponse(process.cwd(), threadId, persistent)}
+      const response = {id: message.id, result: threadResponse(
+        process.cwd(), threadId, persistent, approvalScenario ? 'on-request' : 'never',
+      )}
       if (scenario === 'duplicate-response') {
         sendMany([response, response])
         return
@@ -115,6 +176,73 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       send({method: 'turn/started', params: {
         threadId, turn: {id: 'fixture-turn-1', items: [], status: 'inProgress'},
       }})
+      if (
+        isApprovalScenario()
+      ) {
+        approvalTurnId = message.id
+        if (isFileApprovalScenario()) {
+          send({method: 'item/started', params: {
+            threadId,
+            turnId: 'fixture-turn-1',
+            startedAtMs: 1000,
+            item: {
+              id: 'fixture-file-item',
+              type: 'fileChange',
+              status: 'inProgress',
+              changes: [{
+                path: resolve(process.cwd(), 'fixture-change.txt'),
+                diff: '@@ -0,0 +1 @@\n+fixture\n',
+                kind: {type: 'add'},
+              }],
+            },
+          }})
+          send({
+            id: 910,
+            method: 'item/fileChange/requestApproval',
+            params: {
+              itemId: 'fixture-file-item',
+              startedAtMs: scenario === 'file-approval-invalid-start' ? -1 : 1001,
+              threadId,
+              turnId: 'fixture-turn-1',
+              grantRoot: null,
+              reason: null,
+            },
+          })
+        } else {
+          send({
+            id: 910,
+            method: 'item/commandExecution/requestApproval',
+            params: {
+              approvalId: null,
+              command: 'node --version',
+              commandActions: null,
+              cwd: process.cwd(),
+              environmentId: null,
+              itemId: 'fixture-command-item',
+              networkApprovalContext: null,
+              proposedExecpolicyAmendment: null,
+              proposedNetworkPolicyAmendments: null,
+              reason: null,
+              startedAtMs: 1001,
+              threadId,
+              turnId: 'fixture-turn-1',
+            },
+          })
+        }
+        barrier('approval_request')
+        if (scenario === 'file-approval-turn-interrupted') {
+          send({id: message.id, result: {
+            turn: {id: 'fixture-turn-1', items: [], status: 'inProgress'},
+          }})
+          send({method: 'turn/completed', params: {
+            threadId,
+            turn: {
+              id: 'fixture-turn-1', status: 'interrupted', itemsView: 'notLoaded', items: [],
+            },
+          }})
+        }
+        return
+      }
       if (scenario === 'clean-eof') {
         barrier('turn_start')
         return
@@ -200,9 +328,30 @@ function sendMany(values) {
   ))
 }
 
-function barrier(name) {
+function barrier(name, detail = {}) {
   if (typeof process.send !== 'function') fail('missing_ipc')
-  process.send({type: 'barrier', name})
+  process.send({type: 'barrier', name, ...detail})
+}
+
+function isApprovalScenario() {
+  return isFileApprovalScenario() || scenario === 'command-approval'
+}
+
+function isFileApprovalScenario() {
+  return scenario === 'file-approval'
+    || scenario === 'file-approval-held-terminal'
+    || scenario === 'file-approval-decline'
+    || scenario === 'file-approval-turn-interrupted'
+    || scenario === 'file-approval-process-exit'
+    || scenario === 'file-approval-invalid-start'
+}
+
+function expectedApprovalDecision() {
+  return scenario === 'file-approval-decline'
+    || scenario === 'file-approval-turn-interrupted'
+    || scenario === 'file-approval-invalid-start'
+    ? 'decline'
+    : 'accept'
 }
 
 function endAndExit() {
@@ -238,9 +387,9 @@ function effectiveConfig(workspace) {
   }
 }
 
-function threadResponse(workspace, id, persistent) {
+function threadResponse(workspace, id, persistent, approvalPolicy = 'never') {
   return {
-    approvalPolicy: 'never', cwd: workspace, sandbox: {},
+    approvalPolicy, cwd: workspace, sandbox: {},
     activePermissionProfile: {id: 'nova_audio_agent'},
     ...(persistent ? {runtimeWorkspaceRoots: [workspace]} : {}),
     thread: {

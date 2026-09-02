@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -44,7 +45,10 @@ import {
 import { createBackendSupervisor } from './backend-supervisor.mjs'
 import { createLifecycleCoordinator } from './lifecycle-coordinator.mjs'
 import { configureDevelopmentDockIcon } from './app-icon.mjs'
-import {createDebugBoardRequester} from './debug-board-client.mjs'
+import {
+  createDebugBoardRequester,
+  formatMemoryBoardExport,
+} from './debug-board-client.mjs'
 import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
@@ -141,6 +145,7 @@ let backendSupervisor = null
 let backendStatus = Object.freeze({
   state: 'stopped', connection: null, retryInMs: null, diagnostic: null,
 })
+let backendGeneration = 0
 let settingsApplyStatus = 'idle'
 let mainWindow = null
 let boardWindow = null
@@ -240,6 +245,27 @@ function settingsView() {
     secretsPresent: secretsPresent(currentSettings),
     keyringAvailable: secretCodec.available() && !hasPlaintextSecret(currentSettings),
   }
+}
+
+async function loadMemoryBoardExport() {
+  if (backendStatus.state !== 'connected' || !backendStatus.connection) {
+    return {error: 'unavailable'}
+  }
+  const connection = backendStatus.connection
+  const generation = backendGeneration
+  let snapshot
+  try {
+    snapshot = await requestBoardSnapshot(connection, {
+      board: 'memory',
+      detail: 'full',
+    })
+  } catch (error) {
+    return {error: error?.code === 'timeout' ? 'timeout' : 'unavailable'}
+  }
+  if (backendStatus.connection !== connection || backendGeneration !== generation) {
+    return {error: 'unavailable'}
+  }
+  return formatMemoryBoardExport(snapshot)
 }
 
 function publishSettingsApplyStatus(status) {
@@ -651,7 +677,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       if (code) console.error(`[backend-diagnostic] ${code}`)
     })
     spawnedBackend.once('exit', code => {
-      const safeCode = Number.isInteger(code) ? code : 'none'
+      const safeCode = Number.isInteger(code) ? code.toString() : 'none'
       console.error(`[backend-process-exit] code=${safeCode}`)
     })
     // Covers both deaths: the child that exits, and the utility process that never
@@ -774,18 +800,24 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   ipcMain.on('nova:settings:open', event => {
     if (mainWindow && event.sender === mainWindow.webContents) openSettingsWindow(launchId)
   })
-  ipcMain.handle('nova:memory-board:request', async event => {
+  ipcMain.handle('nova:memory-board:request', async (event, detail) => {
     if (!boardWindow || event.sender !== boardWindow.webContents) {
       throw new Error('memory board request rejected')
     }
     if (backendStatus.state !== 'connected' || !backendStatus.connection) {
       return { error: 'unavailable' }
     }
+    const connection = backendStatus.connection
+    const generation = backendGeneration
     try {
-      return await requestBoardSnapshot(backendStatus.connection, {
+      const snapshot = await requestBoardSnapshot(connection, {
         board: 'memory',
-        detail: 'compact',
+        detail: detail === 'full' ? 'full' : 'compact',
       })
+      if (backendStatus.connection !== connection || backendGeneration !== generation) {
+        return { error: 'unavailable' }
+      }
+      return { ...snapshot, backend_generation: generation }
     } catch (error) {
       return {error: error?.code === 'timeout' ? 'timeout' : 'unavailable'}
     }
@@ -806,56 +838,33 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       return {error: error?.code === 'timeout' ? 'timeout' : 'unavailable'}
     }
   })
+  ipcMain.handle('nova:memory-board:copy-json', async event => {
+    if (!boardWindow || event.sender !== boardWindow.webContents) {
+      throw new Error('memory board copy rejected')
+    }
+    const formatted = await loadMemoryBoardExport()
+    if (formatted.error) return formatted
+    try {
+      clipboard.writeText(formatted.body)
+    } catch {
+      return {error: 'unavailable'}
+    }
+    return {copied: true}
+  })
   ipcMain.handle('nova:memory-board:export', async event => {
     if (!boardWindow || event.sender !== boardWindow.webContents) {
       throw new Error('memory board export rejected')
     }
-    if (backendStatus.state !== 'connected' || !backendStatus.connection) {
-      return {error: 'unavailable'}
-    }
-    let snapshot
-    try {
-      snapshot = await requestBoardSnapshot(backendStatus.connection, {
-        board: 'memory',
-        detail: 'full',
-      })
-    } catch (error) {
-      return {error: error?.code === 'timeout' ? 'timeout' : 'unavailable'}
-    }
-    if (!snapshot || !Array.isArray(snapshot.channels)
-      || snapshot.diagnostics?.version !== 1
-      || !Array.isArray(snapshot.diagnostics.records)
-      || snapshot.diagnostics.records.length > 128
-      || !snapshot.diagnostics.records.every(record => (
-        record !== null
-        && typeof record === 'object'
-        && Number.isFinite(record.ts)
-        && typeof record.kind === 'string'
-        && record.payload !== null
-        && typeof record.payload === 'object'
-        && !Array.isArray(record.payload)
-      ))) return { error: 'invalid_payload' }
-    const body = JSON.stringify(
-      {
-        exported_at: new Date().toISOString(),
-        channels: snapshot.channels,
-        diagnostics: snapshot.diagnostics,
-      },
-      null,
-      2,
-    )
-    // Sender validation authorizes; this bounds. Board frames are <=256 KiB,
-    // so anything past 1 MiB is not board data.
-    if (Buffer.byteLength(body, 'utf8') > 1024 * 1024) return { error: 'too_large' }
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const formatted = await loadMemoryBoardExport()
+    if (formatted.error) return formatted
     const { canceled, filePath } = await dialog.showSaveDialog(boardWindow, {
-      defaultPath: `memory-board-${stamp}.json`,
+      defaultPath: `memory-board-${formatted.stamp}.json`,
       filters: [{ name: 'JSON', extensions: ['json'] }],
     })
     if (canceled || !filePath) return { canceled: true }
     const temporary = `${filePath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
     try {
-      await writeFile(temporary, body, { encoding: 'utf8', mode: 0o600 })
+      await writeFile(temporary, formatted.body, { encoding: 'utf8', mode: 0o600 })
       await rename(temporary, filePath)
     } finally {
       await unlink(temporary).catch(() => {})
@@ -1116,7 +1125,11 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       if (backend === child) backend = null
     },
     onStatus: status => {
+      const previousConnection = backendStatus.connection
       backendStatus = status
+      if (status.state === 'connected' && status.connection !== previousConnection) {
+        backendGeneration += 1
+      }
       if (status.state === 'connected' && settingsApplyStatus === 'restarting') {
         settingsApplyStatus = 'applied'
       } else if (

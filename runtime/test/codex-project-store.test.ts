@@ -721,6 +721,19 @@ function rootFilesForTest(stateRoot: string, managedRoot: string): ProjectRootFi
   return new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot])
 }
 
+class CountingProtectRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  protectCalls = 0
+
+  override protectAt(
+    rootDescriptor: number,
+    name: string,
+    childDescriptor: number,
+  ): ProjectRootFileResult {
+    this.protectCalls += 1
+    return super.protectAt(rootDescriptor, name, childDescriptor)
+  }
+}
+
 class DeferredReleaseLockAuthority implements NativeFileLockAuthority {
   releaseStarted: (() => void) | null = null
   releaseNow: (() => void) | null = null
@@ -3156,6 +3169,69 @@ test('workspace bindings pin inode identity and managed workspaces retain owner-
       (error: unknown) => error instanceof ProjectStateError
         && error.code === 'workspace_boundary_changed',
     )
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('Windows run revalidation reapplies the managed workspace ACL before admission', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-acl-refresh-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const rootFiles = new CountingProtectRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => 'workspace-0001',
+    platform: 'win32',
+  })
+  try {
+    const managed = await store.createManaged('managed')
+    const beforeAdmission = rootFiles.protectCalls
+
+    await store.revalidateWorkspace(managed.workspace_id)
+
+    assert.equal(rootFiles.protectCalls, beforeAdmission + 1)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('Windows session resume reapplies the managed workspace ACL before admission', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-resume-acl-refresh-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const rootFiles = new CountingProtectRootFileAuthority([stateRoot, managedRoot])
+  const ids = ['workspace-0001', 'session-0001'][Symbol.iterator]()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => ids.next().value ?? 'unused-id',
+    platform: 'win32',
+  })
+  try {
+    const managed = await store.createManaged('managed')
+    const session = await store.beginSession(managed.workspace_id, 'resume target')
+    await store.markSessionReady(session.session_id, 'thread-resume')
+    const beforeAdmission = rootFiles.protectCalls
+
+    await store.prepareSessionResume(
+      managed.workspace_id,
+      session.session_id,
+      'thread-resume',
+    )
+
+    assert.equal(rootFiles.protectCalls, beforeAdmission + 1)
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})

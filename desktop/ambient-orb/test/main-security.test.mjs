@@ -9,7 +9,7 @@ test('main owns single-instance lifecycle and denies renderer escape', async () 
   assert.match(source, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
   assert.match(source, /configureWindowSecurity\(window\)/)
   assert.match(source, /loadAppWindow\(mainWindow/)
-  assert.match(source, /Number\.isInteger\(code\) \? code : 'none'/)
+  assert.match(source, /Number\.isInteger\(code\) \? code\.toString\(\) : 'none'/)
   assert.doesNotMatch(source, /shell\.openExternal/)
 })
 
@@ -28,6 +28,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:codex:rescan',
     'nova:confirmation-mode',
     'nova:confirmation-placement',
+    'nova:memory-board:copy-json',
     'nova:memory-board:export',
     'nova:memory-board:request',
     'nova:microphone:permission',
@@ -55,6 +56,15 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:workspaces:open-current',
   ])
   assert.doesNotMatch(source, /sendSync/)
+})
+
+test('Memory Board copy stays in sender-validated main IPC instead of web clipboard permission', async () => {
+  const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const renderer = await readFile(new URL('../src/renderer/memory-board.mjs', import.meta.url), 'utf8')
+
+  assert.match(main, /ipcMain\.handle\('nova:memory-board:copy-json', async event => \{\n\s*if \(!boardWindow \|\| event\.sender !== boardWindow\.webContents\)/u)
+  assert.match(main, /clipboard\.writeText\(formatted\.body\)/u)
+  assert.doesNotMatch(renderer, /navigator\.clipboard/u)
 })
 
 test('microphone permission starts from the ready orb and every IPC edge is sender-bound', async () => {

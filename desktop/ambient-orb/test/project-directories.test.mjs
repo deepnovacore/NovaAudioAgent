@@ -19,6 +19,7 @@ function fixture() {
   const closes = []
   const creates = []
   const protects = []
+  const managedPrepares = []
   const nativeHost = {
     mkdirPrivateAt(rootFd, name) {
       creates.push(['bootstrap', rootFd, name])
@@ -34,6 +35,10 @@ function fixture() {
       protects.push([rootFd, name, childFd])
       return true
     },
+    prepareManagedDirectoryAt(rootFd, name, childFd) {
+      managedPrepares.push([rootFd, name, childFd])
+      return true
+    },
     directoryHandles: {
       open: target => ({
         fd: fds.get(target),
@@ -45,6 +50,7 @@ function fixture() {
     root,
     creates,
     protects,
+    managedPrepares,
     closes,
     nativeHost,
   }
@@ -75,9 +81,9 @@ test('Windows creates and verifies every default directory descriptor-relatively
   assert.deepEqual(value.protects, [
     [1, '.nova-audio-agent', 2],
     [2, 'state', 3],
-    [2, 'workspaces', 4],
     [4, 'default', 5],
   ])
+  assert.deepEqual(value.managedPrepares, [[2, 'workspaces', 4]])
 })
 
 test('Windows reuses the protected product root when it is also the state root', async () => {
@@ -103,9 +109,9 @@ test('Windows reuses the protected product root when it is also the state root',
   ])
   assert.deepEqual(value.protects, [
     [1, '.nova-audio-agent', 2],
-    [2, 'workspaces', 4],
     [4, 'default', 5],
   ])
+  assert.deepEqual(value.managedPrepares, [[2, 'workspaces', 4]])
 })
 
 test('repair selects a configured root enum and never consumes a renderer path', async () => {
@@ -120,6 +126,11 @@ test('repair selects a configured root enum and never consumes a renderer path',
     pathApi: path.win32,
   }), {status: 'ok', code: null})
   assert.deepEqual(value.protects, [[2, 'state', 3]])
+  assert.deepEqual(await repairProjectDirectory({
+    root: 'managed', config, nativeHost: value.nativeHost,
+    pathApi: path.win32,
+  }), {status: 'ok', code: null})
+  assert.deepEqual(value.managedPrepares, [[2, 'workspaces', 4]])
   assert.deepEqual(await repairProjectDirectory({
     root: 'C:\\attacker', config, nativeHost: value.nativeHost,
     pathApi: path.win32,

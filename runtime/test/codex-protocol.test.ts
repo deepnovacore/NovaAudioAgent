@@ -424,7 +424,120 @@ test('raw feed input rejects Proxy and non-Uint8 views without invoking private 
   assert.equal(ownGetterReads, 1)
 })
 
-test('server requests are observed by method only and refused with the fixed error', async () => {
+test('a held server request does not block later notifications and writes its snapshotted result once', async () => {
+  const writes: Uint8Array[] = []
+  const notifications: string[] = []
+  const observed: unknown[] = []
+  let decide!: (response: {result: {decision: string}}) => void
+  const decision = new Promise<{result: {decision: string}}>(resolve => { decide = resolve })
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onNotification: notification => { notifications.push(notification.method) },
+    onServerRequest: (
+      id: string | number,
+      method: string,
+      params: Readonly<Record<string, unknown>>,
+      signal: AbortSignal,
+    ) => {
+      observed.push({id, method, params, aborted: signal.aborted})
+      return decision
+    },
+  })
+
+  await connection.feed(joinBytes([
+    jsonLine({id: 'approval-1', method: 'approval/request', params: {item: {id: 7}}}),
+    jsonLine({method: 'turn/completed', params: {turn: {id: 'turn-1'}}}),
+  ]))
+
+  assert.deepEqual(notifications, ['turn/completed'])
+  assert.deepEqual(observed, [{
+    id: 'approval-1',
+    method: 'approval/request',
+    params: {item: {id: 7}},
+    aborted: false,
+  }])
+  assert.deepEqual(writes, [])
+
+  decide({result: {decision: 'accept'}})
+  await settleUntil(() => writes.length === 1, 'server request response')
+  assert.equal(
+    decoder.decode(writes[0]),
+    '{"id":"approval-1","result":{"decision":"accept"}}\n',
+  )
+  await Promise.resolve()
+  assert.equal(writes.length, 1)
+  assert.equal(connection.end(), undefined)
+})
+
+test('server request errors use the serialized writer', async () => {
+  const writes: Uint8Array[] = []
+  let releaseFirst!: () => void
+  const firstWrite = new Promise<void>(resolve => { releaseFirst = resolve })
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return writes.length === 1 ? firstWrite : Promise.resolve()
+    },
+    onServerRequest: () => Promise.resolve({
+      error: {code: -32602, message: 'Invalid params'},
+    }),
+  })
+
+  const notification = connection.notify('client/ready')
+  await settleUntil(() => writes.length === 1, 'blocked notification write')
+  await connection.feed(jsonLine({id: 91, method: 'approval/request', params: {}}))
+  await Promise.resolve()
+  assert.equal(writes.length, 1)
+  releaseFirst()
+  await notification
+  await settleUntil(() => writes.length === 2, 'serialized server error')
+  assert.deepEqual(writes.map(value => decoder.decode(value)), [
+    '{"method":"client/ready"}\n',
+    '{"id":91,"error":{"code":-32602,"message":"Invalid params"}}\n',
+  ])
+})
+
+test('an active handler rejection becomes one fixed private-safe internal error', async () => {
+  const writes: Uint8Array[] = []
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onServerRequest: () => Promise.reject(new Error('PRIVATE HANDLER FAILURE')),
+  })
+
+  await connection.feed(jsonLine({id: 911, method: 'approval/request', params: {}}))
+  await settleUntil(() => writes.length === 1, 'contained handler rejection')
+  assert.equal(
+    decoder.decode(writes[0]),
+    '{"id":911,"error":{"code":-32603,"message":"Internal error"}}\n',
+  )
+  assert.equal(decoder.decode(writes[0]).includes('PRIVATE'), false)
+  await Promise.resolve()
+  assert.equal(writes.length, 1)
+})
+
+test('a resolved server request is handled without writing a stale response', async () => {
+  const writes: Uint8Array[] = []
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onServerRequest: () => Promise.resolve({resolved: true as const}),
+  })
+
+  await connection.feed(jsonLine({id: 92, method: 'approval/request', params: {}}))
+  await Promise.resolve()
+  assert.deepEqual(writes, [])
+  assert.equal(connection.end(), undefined)
+})
+
+test('unknown server requests retain fixed refusal and observable method without payload leakage', async () => {
   const writes: Uint8Array[] = []
   const methods: string[] = []
   const connection = new JsonRpcConnection({
@@ -432,7 +545,10 @@ test('server requests are observed by method only and refused with the fixed err
       writes.push(bytes)
       return Promise.resolve()
     },
-    onServerRequest: method => methods.push(method),
+    onServerRequest: (_id, method) => {
+      methods.push(method)
+      return undefined
+    },
   })
   await connection.feed(encoder.encode(
     '{"id":"opaque","method":"item/commandExecution/requestApproval","params":{"secret":"DROP"}}\n',
@@ -443,6 +559,195 @@ test('server requests are observed by method only and refused with the fixed err
     '{"id":"opaque","error":{"code":-32601,"message":"Method not implemented"}}\n',
   )
   assert.equal(JSON.stringify({methods, writes: writes.map(value => decoder.decode(value))}).includes('DROP'), false)
+})
+
+test('server requests reject ambiguous ids, params, and response-shaped extra fields', async () => {
+  const invalid = [
+    {id: null, method: 'approval/request', params: {}},
+    {id: 1.5, method: 'approval/request', params: {}},
+    {id: 1, method: 'approval/request', params: []},
+    {id: 1, method: 'approval/request', params: {}, result: {decision: 'accept'}},
+  ]
+  for (const message of invalid) {
+    let handlerCalls = 0
+    const connection = new JsonRpcConnection({
+      write: () => Promise.resolve(),
+      onServerRequest: () => {
+        handlerCalls += 1
+        return Promise.resolve({result: null})
+      },
+    })
+    await assert.rejects(
+      connection.feed(jsonLine(message)),
+      error => errorCode(error) === 'malformed_jsonl',
+    )
+    assert.equal(handlerCalls, 0)
+  }
+})
+
+test('a server request id too large for a fixed response is rejected before handler invocation', async t => {
+  const writes: Uint8Array[] = []
+  const unhandled: unknown[] = []
+  const onUnhandled = (error: unknown): void => { unhandled.push(error) }
+  process.on('unhandledRejection', onUnhandled)
+  t.after(() => { process.off('unhandledRejection', onUnhandled) })
+  let handlerCalls = 0
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onServerRequest: () => {
+      handlerCalls += 1
+      return Promise.resolve({result: null})
+    },
+  })
+
+  await assert.rejects(
+    connection.feed(jsonLine({
+      id: 'x'.repeat(MAX_REQUEST),
+      method: 'approval/request',
+      params: {},
+    })),
+    error => errorCode(error) === 'malformed_jsonl',
+  )
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(handlerCalls, 0)
+  assert.deepEqual(writes, [])
+  assert.deepEqual(unhandled, [])
+})
+
+test('a hostile handled disposition becomes one fixed error without leaking or retaining ownership', async t => {
+  const writes: Uint8Array[] = []
+  const unhandled: unknown[] = []
+  const onUnhandled = (error: unknown): void => { unhandled.push(error) }
+  process.on('unhandledRejection', onUnhandled)
+  t.after(() => { process.off('unhandledRejection', onUnhandled) })
+  const hostile: Record<string, unknown> = {}
+  Object.defineProperty(hostile, 'resolved', {
+    enumerable: true,
+    get: () => { throw new Error('PRIVATE DISPOSITION TRAP') },
+  })
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onServerRequest: () => Promise.resolve(hostile as never),
+  })
+
+  await connection.feed(jsonLine({id: 912, method: 'approval/request', params: {}}))
+  await settleUntil(() => writes.length === 1, 'contained hostile disposition')
+  assert.equal(
+    decoder.decode(writes[0]),
+    '{"id":912,"error":{"code":-32603,"message":"Internal error"}}\n',
+  )
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.deepEqual(unhandled, [])
+  assert.equal(decoder.decode(writes[0]).includes('PRIVATE'), false)
+  assert.equal(connection.end(), undefined)
+})
+
+test('end aborts a held server request and suppresses its late completion', async () => {
+  const writes: Uint8Array[] = []
+  let signal: AbortSignal | undefined
+  let decide!: (response: {result: {decision: string}}) => void
+  const decision = new Promise<{result: {decision: string}}>(resolve => { decide = resolve })
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onServerRequest: (_id, _method, _params, requestSignal) => {
+      signal = requestSignal
+      return decision
+    },
+  })
+
+  await connection.feed(jsonLine({id: 93, method: 'approval/request', params: {}}))
+  const failure = connection.end()
+  assert.equal(failure?.code, 'transport_lost')
+  assert.equal(signal?.aborted, true)
+  decide({result: {decision: 'accept'}})
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(writes, [])
+})
+
+test('protocol poison aborts a held server request and contains a late handler rejection', async t => {
+  const writes: Uint8Array[] = []
+  const unhandled: unknown[] = []
+  const onUnhandled = (error: unknown): void => { unhandled.push(error) }
+  process.on('unhandledRejection', onUnhandled)
+  t.after(() => { process.off('unhandledRejection', onUnhandled) })
+  let signal: AbortSignal | undefined
+  let rejectDecision!: (error: Error) => void
+  const decision = new Promise<{result: null}>((_, reject) => { rejectDecision = reject })
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onServerRequest: (_id, _method, _params, requestSignal) => {
+      signal = requestSignal
+      return decision
+    },
+  })
+
+  await connection.feed(jsonLine({id: 94, method: 'approval/request', params: {}}))
+  await assert.rejects(
+    connection.feed(encoder.encode('not-json\n')),
+    error => errorCode(error) === 'malformed_jsonl',
+  )
+  assert.equal(signal?.aborted, true)
+  rejectDecision(new Error('PRIVATE LATE HANDLER FAILURE'))
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.deepEqual(unhandled, [])
+  assert.deepEqual(writes, [])
+})
+
+test('duplicate live server request ids poison without replacing the first authority', async () => {
+  const signals: AbortSignal[] = []
+  let decide!: (response: {result: null}) => void
+  const decision = new Promise<{result: null}>(resolve => { decide = resolve })
+  const connection = new JsonRpcConnection({
+    write: () => Promise.resolve(),
+    onServerRequest: (_id, _method, _params, signal) => {
+      signals.push(signal)
+      return decision
+    },
+  })
+
+  await connection.feed(jsonLine({id: 'same', method: 'approval/request', params: {first: true}}))
+  await assert.rejects(
+    connection.feed(jsonLine({id: 'same', method: 'approval/request', params: {second: true}})),
+    error => errorCode(error) === 'malformed_jsonl',
+  )
+  assert.equal(signals.length, 1)
+  assert.equal(signals[0]?.aborted, true)
+  decide({result: null})
+  await Promise.resolve()
+})
+
+test('server request concurrency is bounded and overflow aborts every tracked authority', async () => {
+  const signals: AbortSignal[] = []
+  const connection = new JsonRpcConnection({
+    write: () => Promise.resolve(),
+    onServerRequest: (_id, _method, _params, signal) => {
+      signals.push(signal)
+      return new Promise<{result: null}>(() => undefined)
+    },
+  })
+
+  for (let id = 1; id <= 64; id += 1) {
+    await connection.feed(jsonLine({id, method: 'approval/request', params: {}}))
+  }
+  await assert.rejects(
+    connection.feed(jsonLine({id: 65, method: 'approval/request', params: {}})),
+    error => errorCode(error) === 'malformed_jsonl',
+  )
+  assert.equal(signals.length, 64)
+  assert.equal(signals.every(signal => signal.aborted), true)
 })
 
 test('response rejection exposes only stable code and numeric server code', async () => {

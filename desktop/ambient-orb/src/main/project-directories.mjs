@@ -36,13 +36,16 @@ async function closeChild(handle) {
   try { await handle.close() } catch { /* close failure is handled by the owning operation */ }
 }
 
-async function ensureChild({parent, name, path, stage, bootstrap, nativeHost, openDirectory}) {
+async function ensureChild({parent, name, path, stage, bootstrap, managed, nativeHost, openDirectory}) {
   const created = bootstrap
     ? nativeHost.mkdirPrivateAt(parent.fd, name)
     : nativeHost.rootFiles.mkdirAt(parent.fd, name)
   if (statusOf(created) === null) throw new Error('project_directory_create_failed')
   const child = await openChild(openDirectory, path, stage)
-  if (!nativeHost.protectDirectoryAt(parent.fd, name, child.fd)) {
+  const protectedDirectory = managed
+    ? nativeHost.prepareManagedDirectoryAt(parent.fd, name, child.fd)
+    : nativeHost.protectDirectoryAt(parent.fd, name, child.fd)
+  if (!protectedDirectory) {
     await closeChild(child)
     throw new Error('project_directory_protection_failed')
   }
@@ -109,6 +112,7 @@ export async function ensurePrivateProjectDirectories({
       path: defaultManaged,
       stage: 'managed',
       bootstrap: false,
+      managed: true,
       nativeHost,
       openDirectory: openNativeDirectory,
     })
@@ -162,7 +166,9 @@ export async function repairProjectDirectory({
     const openNativeDirectory = directoryOpener(nativeHost, openDirectory)
     parent = await openChild(openNativeDirectory, parentPath)
     child = await openChild(openNativeDirectory, target)
-    const repaired = nativeHost.protectDirectoryAt(parent.fd, name, child.fd)
+    const repaired = root === 'managed'
+      ? nativeHost.prepareManagedDirectoryAt(parent.fd, name, child.fd)
+      : nativeHost.protectDirectoryAt(parent.fd, name, child.fd)
     return Object.freeze(repaired
       ? {status: 'ok', code: null}
       : {status: 'failed', code: 'protection_failed'})

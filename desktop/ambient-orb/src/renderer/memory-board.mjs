@@ -3,10 +3,16 @@ import {
   createGraphTabController,
   renderWorkspaceGraphBoard,
 } from './workspace-graph-board.mjs'
+import {
+  captureBoardScrollPositions,
+  diagnosticScrollKey,
+  restoreBoardScrollPositions,
+} from './board-scroll-state.mjs'
 
 const channelsRoot = document.querySelector('#channels')
 const statusLabel = document.querySelector('#status')
 const refreshButton = document.querySelector('#refresh')
+const copyJsonButton = document.querySelector('#copy-json')
 const exportButton = document.querySelector('#export')
 const memoryTab = document.querySelector('#memory-tab')
 const diagnosticsTab = document.querySelector('#diagnostics-tab')
@@ -20,6 +26,7 @@ const graphState = document.querySelector('#graph-state')
 
 let latestPayload = null
 let inFlight = false
+let copyInFlight = false
 let exportInFlight = false
 let activeTab = 'memory'
 let loadOwnership = 0
@@ -93,6 +100,7 @@ function renderChannel(channel, index) {
 
   const itemsRoot = document.createElement('div')
   itemsRoot.className = 'channel-items'
+  itemsRoot.dataset.scrollKey = `channel:${channel.name}`
   if (!channel.items.length) {
     const empty = document.createElement('p')
     empty.className = 'empty'
@@ -104,7 +112,7 @@ function renderChannel(channel, index) {
   return section
 }
 
-function renderDiagnostic(record) {
+function renderDiagnostic(record, backendGeneration) {
   const article = document.createElement('article')
   article.className = 'diagnostic-record'
   const header = document.createElement('header')
@@ -114,6 +122,7 @@ function renderDiagnostic(record) {
   timestamp.textContent = boardTime(record)
   header.append(kind, timestamp)
   const payload = document.createElement('pre')
+  payload.dataset.scrollKey = diagnosticScrollKey(backendGeneration, record)
   payload.textContent = JSON.stringify(record.payload, null, 2)
   article.append(header, payload)
   return article
@@ -121,10 +130,14 @@ function renderDiagnostic(record) {
 
 function validDiagnostics(payload) {
   return payload?.diagnostics?.version === 1
+    && Number.isSafeInteger(payload.backend_generation)
+    && payload.backend_generation > 0
     && Array.isArray(payload.diagnostics.records)
     && payload.diagnostics.records.length <= 128
     && payload.diagnostics.records.every(record => (
       record
+      && Number.isSafeInteger(record.seq)
+      && record.seq > 0
       && Number.isFinite(record.ts)
       && typeof record.kind === 'string'
       && record.payload
@@ -149,15 +162,20 @@ async function load() {
       return
     }
     latestPayload = payload
+    const scrollPositions = captureBoardScrollPositions(document)
+    copyJsonButton.disabled = copyInFlight || activeTab === 'graph'
     exportButton.disabled = exportInFlight || activeTab === 'graph'
     channelsRoot.replaceChildren(...payload.channels.map(renderChannel))
-    diagnosticsRoot.replaceChildren(...payload.diagnostics.records.map(renderDiagnostic))
+    diagnosticsRoot.replaceChildren(...payload.diagnostics.records.map(record => (
+      renderDiagnostic(record, payload.backend_generation)
+    )))
     if (payload.diagnostics.records.length === 0) {
       const empty = document.createElement('p')
       empty.className = 'empty'
       empty.textContent = '暂无诊断记录'
       diagnosticsRoot.append(empty)
     }
+    restoreBoardScrollPositions(document, scrollPositions)
     statusLabel.textContent = `更新于 ${new Date().toLocaleTimeString()}`
   } catch {
     if (owner !== loadOwnership || document.hidden || activeTab === 'graph') return
@@ -168,6 +186,21 @@ async function load() {
     if (owner !== loadOwnership && !document.hidden && activeTab !== 'graph') {
       queueMicrotask(() => { void load() })
     }
+  }
+}
+
+async function copyBoardJson() {
+  if (!latestPayload || copyInFlight) return
+  copyInFlight = true
+  copyJsonButton.disabled = true
+  try {
+    const result = await window.novaAudioAgentDesktop.memoryBoard.copyJson()
+    statusLabel.textContent = result?.copied ? '已复制 JSON' : '复制失败'
+  } catch {
+    statusLabel.textContent = '复制失败'
+  } finally {
+    copyInFlight = false
+    copyJsonButton.disabled = activeTab === 'graph' || latestPayload === null
   }
 }
 
@@ -218,6 +251,8 @@ function selectTab(tab) {
   memoryPanel.hidden = activeTab !== 'memory'
   diagnosticsPanel.hidden = !diagnosticsActive
   graphPanel.hidden = !graphActive
+  copyJsonButton.hidden = activeTab === 'graph'
+  copyJsonButton.disabled = graphActive || copyInFlight || latestPayload === null
   exportButton.hidden = activeTab === 'graph'
   exportButton.disabled = graphActive || exportInFlight || latestPayload === null
   if (graphActive) void graphController.activate()
@@ -246,6 +281,7 @@ refreshButton.addEventListener('click', () => {
   if (activeTab === 'graph') void graphController.refresh()
   else void load()
 })
+copyJsonButton.addEventListener('click', () => { void copyBoardJson() })
 exportButton.addEventListener('click', () => { void exportBoard() })
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {

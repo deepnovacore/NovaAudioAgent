@@ -1281,7 +1281,7 @@ export class CodexProjectStore {
       if (workspace === undefined) throw new ProjectStateError('workspace_not_found')
       let binding: DirectoryBinding
       if (workspace.origin === 'managed') {
-        binding = await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
+        binding = await this.#validateManagedWorkspaceBinding(workspace.canonical_path, true)
       } else {
         binding = await validateRegisteredWorkspace(
           workspace.canonical_path,
@@ -1323,7 +1323,7 @@ export class CodexProjectStore {
       const previousActiveWorkspaceId = state.activeWorkspaceId
       const previousActiveSessionId = workspace.active_session_id
       const binding = workspace.origin === 'managed'
-        ? await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
+        ? await this.#validateManagedWorkspaceBinding(workspace.canonical_path, true)
         : await validateRegisteredWorkspace(workspace.canonical_path, 'workspace_boundary_changed')
       this.#pinWorkspaceIdentity(workspaceId, binding.identity)
       const stamp = this.#stamp()
@@ -1754,7 +1754,10 @@ export class CodexProjectStore {
     }
   }
 
-  async #validateManagedWorkspaceBinding(path: string): Promise<DirectoryBinding> {
+  async #validateManagedWorkspaceBinding(
+    path: string,
+    refreshAcl = false,
+  ): Promise<DirectoryBinding> {
     const managed = await this.#validateManagedRoot()
     if (!isDirectChild(managed, path)) {
       throw new ProjectStateError('workspace_boundary_changed')
@@ -1764,6 +1767,10 @@ export class CodexProjectStore {
     try {
       file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
       this.#requireWorkspaceMatchesAt(root, basename(path), file, 'workspace_boundary_changed')
+      if (refreshAcl) {
+        this.#protectAt(root, basename(path), file, 'workspace_boundary_changed')
+        this.#requireWorkspaceMatchesAt(root, basename(path), file, 'workspace_boundary_changed')
+      }
       const info = await file.stat({bigint: true})
       const canonical = realpathSync(path)
       if (

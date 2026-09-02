@@ -222,6 +222,7 @@ export class RendererSocketRouter {
   #onCurrentClose
   #cameraTail = Promise.resolve()
   #permissionTail = Promise.resolve()
+  #playbackTail = Promise.resolve()
   #genericTail = Promise.resolve()
   #current = null
   #disposed = false
@@ -308,6 +309,17 @@ export class RendererSocketRouter {
           try { this.#onGenericError(error, record.delivery) } catch { /* renderer event boundary */ }
         })
         .catch(() => {})
+      return
+    }
+    if (typeof event?.data !== 'string') {
+      const runPlayback = () => {
+        if (!this.#isCurrent(record)) return undefined
+        return this.#handleGeneric(event, record.delivery)
+      }
+      this.#playbackTail = this.#playbackTail.then(runPlayback, runPlayback).catch(error => {
+        if (!this.#isCurrent(record)) return
+        try { this.#onGenericError(error, record.delivery) } catch { /* renderer event boundary */ }
+      }).catch(() => {})
       return
     }
     const runGeneric = () => {

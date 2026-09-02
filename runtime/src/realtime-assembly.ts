@@ -836,6 +836,10 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     ...(projectConfirmation === undefined
       ? {}
       : {projectConfirmation}),
+    ...(options.codexResource?.approvalController === null
+      || options.codexResource?.approvalController === undefined
+      ? {}
+      : {codexApproval: options.codexResource.approvalController}),
     ...(commitProjectOperation === undefined
       ? {}
       : {commitProjectOperation}),

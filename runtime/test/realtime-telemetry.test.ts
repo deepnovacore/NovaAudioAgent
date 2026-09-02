@@ -57,11 +57,21 @@ test('telemetry rejects non-finite JSON and keeps bounded body-free diagnostics 
   const diagnostics = nullTelemetry.diagnostics()
   assert.equal(diagnostics.version, 1)
   assert.equal(diagnostics.records.length, MAX_REALTIME_DIAGNOSTICS)
+  assert.equal(Reflect.get(diagnostics.records[0]!, 'seq'), 6)
+  assert.equal(Reflect.get(diagnostics.records.at(-1)!, 'seq'), MAX_REALTIME_DIAGNOSTICS + 5)
   assert.equal(diagnostics.records[0]?.payload.item_id, 'item-5')
   assert.equal(JSON.stringify(diagnostics).includes('private'), false)
   assert.deepEqual(diagnostics.records.at(-1)?.payload.nested, {revision: 132})
   assert.ok(Object.isFrozen(diagnostics.records.at(-1)?.payload.nested))
   nullTelemetry.close()
+})
+
+test('Memory Board diagnostic identities are unique when the clock does not advance', () => {
+  const telemetry = new NullTelemetry({clock: new VirtualClock(7)})
+  telemetry.record('renderer.ack', {revision: 1})
+  telemetry.record('renderer.ack', {revision: 2})
+
+  assert.deepEqual(telemetry.diagnostics().records.map(record => Reflect.get(record, 'seq')), [1, 2])
 })
 
 test('JSONL keeps full opt-in telemetry while its Memory Board snapshot is redacted', async t => {

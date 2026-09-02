@@ -19,6 +19,7 @@ const DIAGNOSTIC_BODY_KEY = /(?:^|_)(?:body|content|prompt|query|summary|text|tr
 const DEFAULT_REALTIME_TELEMETRY_PATH = '~/.nova-audio-agent/realtime-telemetry.jsonl'
 
 export interface RealtimeDiagnosticRecord {
+  readonly seq: number
   readonly ts: number
   readonly kind: string
   readonly payload: Readonly<Record<string, JsonValue>>
@@ -32,6 +33,7 @@ export interface RealtimeDiagnosticsSnapshot {
 class RealtimeDiagnosticRing {
   readonly #clock: Clock
   readonly #records: RealtimeDiagnosticRecord[] = []
+  #nextSequence = 1
 
   constructor(clock: Clock) {
     this.#clock = clock
@@ -39,7 +41,10 @@ class RealtimeDiagnosticRing {
 
   record(kind: string, payload: Readonly<Record<string, JsonValue>>): void {
     const safePayload = diagnosticObject(payload, 0)
+    const seq = this.#nextSequence
+    this.#nextSequence = seq === Number.MAX_SAFE_INTEGER ? 1 : seq + 1
     this.#records.push(Object.freeze({
+      seq,
       ts: this.#clock.now(),
       kind: sliceCodePoints(kind, MAX_DIAGNOSTIC_STRING_CHARS),
       payload: safePayload,

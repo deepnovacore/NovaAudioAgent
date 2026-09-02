@@ -21,6 +21,16 @@ function fakeMachAddon(): Buffer {
   return body
 }
 
+function fakeWindowsAddon(): Buffer {
+  const body = Buffer.alloc(128)
+  body.write('MZ', 0, 'ascii')
+  body.writeUInt32LE(64, 0x3c)
+  body.write('PE\0\0', 64, 'binary')
+  body.writeUInt16LE(0x8664, 68)
+  body.writeUInt16LE(0x2000, 86)
+  return body
+}
+
 function fakeAddon(): Record<string, (...args: readonly unknown[]) => unknown> {
   return {
     acquire: () => ({status: 'busy'}),
@@ -198,10 +208,59 @@ test('project native host rejects wrong ABI and decorated addon exports without 
   }
 })
 
-test('default project directories are protected while custom roots are only validated later', () => {
+test('Windows project native host forwards managed-directory preparation to the native addon', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-project-native-resource-')))
+  const addonPath = join(root, 'native', 'project-native', 'nova_project_native.node')
+  const body = fakeWindowsAddon()
+  const calls: Readonly<[number, string, number]>[] = []
+  try {
+    await mkdir(join(root, 'native', 'project-native'), {recursive: true})
+    await writeFile(addonPath, body)
+    await writeFile(join(root, 'native-resources-v1.json'), JSON.stringify({
+      schema_version: 1,
+      target: 'win32-x64',
+      resources: [{
+        logical_id: 'project_native_addon',
+        relative_path: 'native/project-native/nova_project_native.node',
+        byte_size: body.length,
+        sha256: createHash('sha256').update(body).digest('hex'),
+        kind: 'node_addon', platform: 'win32', architecture: 'x64',
+        electron_abi: 148, build_contract_version: 1,
+      }],
+    }))
+    const addon = {
+      ...fakeAddon(),
+      lookupWorkspaceAt: () => ({status: 'missing'}),
+      matchesWorkspaceAt: () => ({status: 'ok'}),
+      prepareManagedAt: (parent: number, name: string, child: number) => {
+        calls.push([parent, name, child])
+        return {status: child === 9 ? 'ok' : 'failed'}
+      },
+    }
+    const loaded = loadProjectNativeHostFromResources({
+      resourcesPath: root,
+      platform: 'win32',
+      arch: 'x64',
+      electronAbi: '148',
+      moduleLoader: () => addon,
+    })
+    assert.notEqual(loaded, null)
+    assert.equal(loaded?.prepareManagedDirectoryAt(7, 'workspaces', 9), true)
+    assert.equal(loaded?.prepareManagedDirectoryAt(7, 'workspaces', 10), false)
+    assert.deepEqual(calls, [
+      [7, 'workspaces', 9],
+      [7, 'workspaces', 10],
+    ])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('default project directories protect private defaults and prepare the managed container', () => {
   const opened: string[] = []
   const closed: number[] = []
   const protectedChildren: Readonly<[number, string, number]>[] = []
+  const managedChildren: Readonly<[number, string, number]>[] = []
   let pathProtectionCalls = 0
   const descriptors = new Map([
     ['/home/nova/.nova-audio-agent', 10],
@@ -216,7 +275,11 @@ test('default project directories are protected while custom roots are only vali
     },
     protectDirectoryAt: (parent: number, name: string, child: number) => {
       protectedChildren.push([parent, name, child])
-      return name !== 'default'
+      return true
+    },
+    prepareManagedDirectoryAt: (parent: number, name: string, child: number) => {
+      managedChildren.push([parent, name, child])
+      return true
     },
   } as unknown as ProjectNativeHost
   const configuredDefaults = {
@@ -234,7 +297,7 @@ test('default project directories are protected while custom roots are only vali
       },
     },
   }
-  assert.equal(protectDefaultProjectDirectories(host, configuredDefaults), false)
+  assert.equal(protectDefaultProjectDirectories(host, configuredDefaults), true)
   assert.equal(pathProtectionCalls, 0)
   assert.deepEqual(opened, [
     '/home/nova/.nova-audio-agent',
@@ -246,9 +309,9 @@ test('default project directories are protected while custom roots are only vali
   ])
   assert.deepEqual(protectedChildren, [
     [10, 'state', 11],
-    [10, 'workspaces', 12],
     [12, 'default', 13],
   ])
+  assert.deepEqual(managedChildren, [[10, 'workspaces', 12]])
   assert.deepEqual(closed, [11, 10, 12, 10, 13, 12])
 
   opened.length = 0
@@ -262,6 +325,37 @@ test('default project directories are protected while custom roots are only vali
   }
   assert.equal(protectDefaultProjectDirectories(host, customPaths), true)
   assert.deepEqual(opened, [])
+})
+
+test('default project protection fails closed when managed preparation fails', () => {
+  const protectedChildren: Readonly<[number, string, number]>[] = []
+  const managedChildren: Readonly<[number, string, number]>[] = []
+  const host = {
+    protectDirectoryAt: (parent: number, name: string, child: number) => {
+      protectedChildren.push([parent, name, child])
+      return true
+    },
+    prepareManagedDirectoryAt: (parent: number, name: string, child: number) => {
+      managedChildren.push([parent, name, child])
+      return false
+    },
+  } as unknown as ProjectNativeHost
+  const result = protectDefaultProjectDirectories(host, {
+    homeDirectory: '/home/nova',
+    stateRoot: null,
+    managedRoot: '/home/nova/.nova-audio-agent/workspaces',
+    workspace: null,
+    pathApi: posix,
+    directoryHandles: {
+      open: (path: string) => ({
+        fd: path.endsWith('workspaces') ? 12 : 10,
+        close: () => undefined,
+      }),
+    },
+  })
+  assert.equal(result, false)
+  assert.deepEqual(protectedChildren, [])
+  assert.deepEqual(managedChildren, [[10, 'workspaces', 12]])
 })
 
 test('default project protection fails closed and closes a retained parent when child open fails', () => {

@@ -18,6 +18,11 @@ import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
 import {PROJECT_CONFIRMATION_TTL_SECONDS} from './realtime/project-confirmation.js'
+import {
+  CODEX_APPROVAL_TTL_SECONDS,
+  type CodexApprovalLocalDetail,
+  type CodexApprovalView,
+} from './realtime/codex-approval.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1_024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1_024
@@ -290,6 +295,110 @@ export function codexProjectMessage(view: PublicProjectView): string {
     pending_session_title: pendingSession,
     pending_expires_in_seconds: pendingExpires,
   })
+}
+
+/** Independent foreground permission view; raw protocol request fields never enter this frame. */
+export function codexApprovalMessage(view: CodexApprovalView, now: number): string {
+  if (!Number.isFinite(now)) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  if (
+    typeof view.pending_approval !== 'boolean'
+    || typeof view.pending_approval_busy !== 'boolean'
+    || (!view.pending_approval && view.pending_approval_busy)
+  ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  const approvalId = view.pending_approval_id
+  if (!view.pending_approval) {
+    if (
+      approvalId !== undefined
+      || view.kind !== null
+      || view.local_detail !== null
+      || view.operation_summary !== null
+      || view.expires_at !== null
+    ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    return unicodeJson({
+      type: 'codex.approval',
+      pending_approval: false,
+      pending_approval_busy: false,
+      kind: null,
+      local_detail: null,
+      operation_summary: null,
+      expires_in_seconds: null,
+    })
+  }
+  const detail = view.local_detail
+  if (
+    typeof approvalId !== 'string'
+    || approvalId === ''
+    || codePointLengthLikePython(approvalId) > 128
+    || view.kind !== 'file_change' && view.kind !== 'command_execution'
+    || detail?.kind !== view.kind
+    || typeof view.operation_summary !== 'string'
+    || stripLikePython(view.operation_summary) === ''
+    || codePointLengthLikePython(view.operation_summary) > 256
+    || typeof view.expires_at !== 'number'
+    || !Number.isFinite(view.expires_at)
+  ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  const localDetail = validateCodexApprovalLocalDetail(detail)
+  const expiresInSeconds = Math.min(
+    CODEX_APPROVAL_TTL_SECONDS,
+    Math.max(0, view.expires_at - now),
+  )
+  const message = unicodeJson({
+    type: 'codex.approval',
+    pending_approval: true,
+    pending_approval_busy: view.pending_approval_busy,
+    pending_approval_id: approvalId,
+    kind: view.kind,
+    local_detail: localDetail,
+    operation_summary: view.operation_summary,
+    expires_in_seconds: expiresInSeconds,
+  })
+  if (new TextEncoder().encode(message).length > MAX_DESKTOP_JSON_BYTES) {
+    throw new DesktopProtocolError('desktop Codex approval view is too large')
+  }
+  return message
+}
+
+function validateCodexApprovalLocalDetail(
+  detail: CodexApprovalLocalDetail,
+): CodexApprovalLocalDetail {
+  if (detail.kind === 'command_execution') {
+    if (
+      Object.keys(detail).sort().join(',') !== 'command,cwd,kind'
+      || typeof detail.command !== 'string'
+      || stripLikePython(detail.command) === ''
+      || codePointLengthLikePython(detail.command) > 4096
+      || typeof detail.cwd !== 'string'
+      || stripLikePython(detail.cwd) === ''
+      || codePointLengthLikePython(detail.cwd) > 4096
+    ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    return detail
+  }
+  const rawChanges: unknown = detail.changes
+  if (
+    Object.keys(detail).sort().join(',') !== 'changes,kind'
+    || !Array.isArray(rawChanges)
+    || rawChanges.length === 0
+    || rawChanges.length > 64
+  ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  for (const candidate of rawChanges) {
+    if (!isPlainObject(candidate)) {
+      throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    }
+    const change = candidate
+    if (
+      Object.keys(change).sort().join(',') !== 'change,move_path,path'
+      || change.change !== 'add' && change.change !== 'delete' && change.change !== 'update'
+      || typeof change.path !== 'string'
+      || stripLikePython(change.path) === ''
+      || codePointLengthLikePython(change.path) > 4096
+      || change.move_path !== null && (
+        typeof change.move_path !== 'string'
+        || stripLikePython(change.move_path) === ''
+        || codePointLengthLikePython(change.move_path) > 4096
+      )
+    ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  }
+  return detail
 }
 
 /** Speculative or final transcript text. The sequence lets the renderer drop what arrives late. */

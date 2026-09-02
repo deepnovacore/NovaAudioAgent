@@ -120,7 +120,7 @@ test('GUI discovery executes the direct npm native binary on macOS and Windows',
   }
 })
 
-test('discovery returns the first canonical executable with a bounded version', async () => {
+test('discovery returns the first canonical executable with an admitted product prerelease', async () => {
   const inspected = []
   const status = await discoverCodex({
     candidates: [
@@ -131,7 +131,7 @@ test('discovery returns the first canonical executable with a bounded version', 
       ? {command: '/real/codex', prefixArgs: []} : null,
     inspect: async invocation => {
       inspected.push(invocation)
-      return { version: 'codex-cli 0.147.0' }
+      return { version: 'codex-cli 0.151.0-alpha.7.2' }
     },
   })
 
@@ -141,23 +141,25 @@ test('discovery returns the first canonical executable with a bounded version', 
     path: '/real/codex',
     prefixArgs: [],
     source: 'common',
-    version: 'codex-cli 0.147.0',
+    version: 'codex-cli 0.151.0-alpha.7.2',
   })
   assert.deepEqual(inspected, [{command: '/real/codex', prefixArgs: []}])
 })
 
 test('discovery rejects malformed probes without exposing their content', async () => {
-  const missing = await discoverCodex({
-    candidates: [{ kind: 'native', command: '/private/codex', prefixArgs: [], source: 'manual' }],
-    canonicalize: () => ({command: '/private/codex', prefixArgs: []}),
-    inspect: async () => ({ version: 'x'.repeat(129), private: 'secret' }),
-  })
+  for (const version of ['codex-cli 0.151.0-alpha..7', 'private output', 'x'.repeat(129)]) {
+    const missing = await discoverCodex({
+      candidates: [{ kind: 'native', command: '/private/codex', prefixArgs: [], source: 'manual' }],
+      canonicalize: () => ({command: '/private/codex', prefixArgs: []}),
+      inspect: async () => ({ version, private: 'secret' }),
+    })
 
-  assert.deepEqual(missing, {
-    status: 'missing', invocation: null, path: null, prefixArgs: null,
-    source: null, version: null,
-  })
-  assert.doesNotMatch(JSON.stringify(missing), /private|secret/)
+    assert.deepEqual(missing, {
+      status: 'missing', invocation: null, path: null, prefixArgs: null,
+      source: null, version: null,
+    })
+    assert.doesNotMatch(JSON.stringify(missing), /private|secret/)
+  }
 })
 
 test('desktop Codex resolution probes only the manual override and clears an invalid path', async () => {

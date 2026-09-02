@@ -168,7 +168,8 @@ function compileOp(manifest: ExecutorManifest, op: OpSpec): {
   }
 
   const parameters: Record<string, JsonValue> = structuredClone(op.params)
-  const hostHandledConfirmation = manifest.name === 'codex' && op.name === 'confirm_project_action'
+  const hostHandledConfirmation = manifest.name === 'codex'
+    && (op.name === 'confirm_project_action' || op.name === 'confirm_codex_approval')
   prepareObjectSchema(parameters, `${manifest.name}.${op.name}`, !hostHandledConfirmation)
 
   return {

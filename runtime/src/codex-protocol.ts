@@ -8,6 +8,10 @@ export const MAX_INTERNAL_ACTIVITY = 1_048_576
 export const WORKING_INTERVAL = 30
 export const SUMMARY_PROSE_LIMIT = 240
 
+const MAX_ACTIVE_SERVER_REQUESTS = 64
+const METHOD_NOT_IMPLEMENTED = {error: {code: -32601, message: 'Method not implemented'}} as const
+const INTERNAL_SERVER_ERROR = {error: {code: -32603, message: 'Internal error'}} as const
+
 export class CodexProtocolError extends Error {
   readonly code: string
 
@@ -36,8 +40,20 @@ export interface JsonRpcConnectionOptions {
     readonly method: string
     readonly params: Readonly<Record<string, unknown>>
   }) => void
-  readonly onServerRequest?: (method: string) => void
+  readonly onServerRequest?: (
+    id: JsonRpcServerRequestId,
+    method: string,
+    params: Readonly<Record<string, unknown>>,
+    signal: AbortSignal,
+  ) => JsonRpcServerRequestDisposition | Promise<JsonRpcServerRequestDisposition> | void
 }
+
+export type JsonRpcServerRequestId = string | number
+
+export type JsonRpcServerRequestDisposition =
+  | {readonly result: unknown}
+  | {readonly error: {readonly code: number; readonly message: string}}
+  | {readonly resolved: true}
 
 export interface JsonRpcRequestOptions {
   readonly onWritten?: (requestId: number) => void
@@ -49,6 +65,11 @@ interface PendingRequest {
   readonly reject: (error: Error) => void
   readonly signal: AbortSignal | undefined
   onAbort: (() => void) | undefined
+  active: boolean
+}
+
+interface PendingServerRequest {
+  readonly controller: AbortController
   active: boolean
 }
 
@@ -67,6 +88,7 @@ export class JsonRpcConnection {
   readonly #onBufferAllocate: JsonRpcConnectionOptions['onBufferAllocate']
   readonly #onBufferCopy: JsonRpcConnectionOptions['onBufferCopy']
   readonly #pending = new Map<number, PendingRequest>()
+  readonly #pendingServerRequests = new Map<JsonRpcServerRequestId, PendingServerRequest>()
   readonly #input: SegmentedByteQueue
   readonly #lineBuffer: Uint8Array
   #nextId = 0
@@ -214,7 +236,10 @@ export class JsonRpcConnection {
     if (this.#lineBytes > 0 || this.#input.byteLength > 0) {
       return this.#poison(new CodexProtocolError('malformed_jsonl'))
     }
-    if ([...this.#pending.values()].some(pending => pending.active)) {
+    if (
+      [...this.#pending.values()].some(pending => pending.active)
+      || [...this.#pendingServerRequests.values()].some(pending => pending.active)
+    ) {
       return this.#poison(new CodexProtocolError('transport_lost'))
     }
     for (const requestId of this.#pending.keys()) this.#discardPending(requestId)
@@ -223,22 +248,56 @@ export class JsonRpcConnection {
 
   async #route(message: Record<string, unknown>): Promise<void> {
     if (Object.hasOwn(message, 'method') && Object.hasOwn(message, 'id')) {
-      const method = message.method
-      if (typeof method !== 'string') throw this.#poison(new CodexProtocolError('malformed_jsonl'))
+      let requestId: JsonRpcServerRequestId
+      let method: string
+      let params: Readonly<Record<string, unknown>>
       try {
-        this.#onServerRequest?.(method)
+        const allowedKeys = new Set(['id', 'method', 'params'])
+        const idSnapshot = snapshotJsonValue(message.id)
+        const methodSnapshot = snapshotJsonValue(message.method)
+        const paramsSnapshot = snapshotJsonValue(
+          Object.hasOwn(message, 'params') ? message.params : {},
+        )
+        if (
+          Object.keys(message).some(key => !allowedKeys.has(key))
+          || (typeof idSnapshot !== 'string' && (
+            typeof idSnapshot !== 'number'
+            || !Number.isSafeInteger(idSnapshot)
+          ))
+          || typeof methodSnapshot !== 'string'
+          || !isPlainObject(paramsSnapshot)
+        ) throw new TypeError('invalid server request')
+        requestId = idSnapshot
+        method = methodSnapshot
+        params = paramsSnapshot
+        encodeMessage({id: requestId, ...METHOD_NOT_IMPLEMENTED})
       } catch {
-        // Observers do not own the protocol reader.
+        throw this.#poison(new CodexProtocolError('malformed_jsonl'))
       }
-      await this.#serializeWrite(async () => {
-        this.#raiseIfFailed()
-        try {
-          await this.#write(encodeMessage({
-            id: message.id,
-            error: {code: -32601, message: 'Method not implemented'},
-          }))
-        } catch {
-          throw this.#poison(new CodexProtocolError('stream_failure'))
+      if (
+        this.#pendingServerRequests.has(requestId)
+        || this.#pendingServerRequests.size >= MAX_ACTIVE_SERVER_REQUESTS
+      ) throw this.#poison(new CodexProtocolError('malformed_jsonl'))
+      const pending: PendingServerRequest = {controller: new AbortController(), active: true}
+      this.#pendingServerRequests.set(requestId, pending)
+      let disposition: ReturnType<NonNullable<JsonRpcConnectionOptions['onServerRequest']>>
+      try {
+        disposition = this.#onServerRequest?.(
+          requestId,
+          method,
+          params,
+          pending.controller.signal,
+        )
+      } catch {
+        disposition = Promise.resolve(INTERNAL_SERVER_ERROR)
+      }
+      if (disposition === undefined) {
+        await this.#writeServerResponse(requestId, pending, METHOD_NOT_IMPLEMENTED)
+        return
+      }
+      void this.#completeServerRequest(requestId, pending, disposition).catch(() => {
+        if (this.#ownsServerRequest(requestId, pending)) {
+          this.#poison(new CodexProtocolError('stream_failure'))
         }
       })
       return
@@ -354,6 +413,76 @@ export class JsonRpcConnection {
     return task
   }
 
+  async #completeServerRequest(
+    requestId: JsonRpcServerRequestId,
+    pending: PendingServerRequest,
+    task: JsonRpcServerRequestDisposition | Promise<JsonRpcServerRequestDisposition>,
+  ): Promise<void> {
+    let disposition: JsonRpcServerRequestDisposition
+    try {
+      disposition = await task
+    } catch {
+      disposition = INTERNAL_SERVER_ERROR
+    }
+    if (!this.#ownsServerRequest(requestId, pending)) return
+    let response: Exclude<JsonRpcServerRequestDisposition, {readonly resolved: true}>
+    try {
+      if (isResolvedServerRequest(disposition)) {
+        this.#discardServerRequest(requestId, pending)
+        return
+      }
+      response = isServerResponse(disposition) ? disposition : INTERNAL_SERVER_ERROR
+    } catch {
+      response = INTERNAL_SERVER_ERROR
+    }
+    await this.#writeServerResponse(requestId, pending, response)
+  }
+
+  async #writeServerResponse(
+    requestId: JsonRpcServerRequestId,
+    pending: PendingServerRequest,
+    response: Exclude<JsonRpcServerRequestDisposition, {readonly resolved: true}>,
+  ): Promise<void> {
+    await this.#serializeWrite(async () => {
+      if (!this.#ownsServerRequest(requestId, pending)) return
+      this.#raiseIfFailed()
+      let bytes: Uint8Array
+      try {
+        bytes = encodeMessage({id: requestId, ...response})
+      } catch {
+        try {
+          bytes = encodeMessage({id: requestId, ...INTERNAL_SERVER_ERROR})
+        } catch {
+          throw this.#poison(new CodexProtocolError('invalid_request'))
+        }
+      }
+      try {
+        await this.#write(bytes)
+      } catch {
+        throw this.#poison(new CodexProtocolError('stream_failure'))
+      }
+      this.#discardServerRequest(requestId, pending)
+    })
+  }
+
+  #ownsServerRequest(
+    requestId: JsonRpcServerRequestId,
+    pending: PendingServerRequest,
+  ): boolean {
+    return pending.active && this.#pendingServerRequests.get(requestId) === pending
+  }
+
+  #discardServerRequest(
+    requestId: JsonRpcServerRequestId,
+    pending: PendingServerRequest,
+    abort = false,
+  ): void {
+    if (this.#pendingServerRequests.get(requestId) !== pending) return
+    this.#pendingServerRequests.delete(requestId)
+    pending.active = false
+    if (abort) pending.controller.abort()
+  }
+
   #discardPending(requestId: number, deactivate = true): void {
     const pending = this.#pending.get(requestId)
     if (pending === undefined) return
@@ -372,6 +501,9 @@ export class JsonRpcConnection {
   #poison(failure: CodexProtocolError): CodexProtocolError {
     if (this.#failure !== undefined) return this.#failure
     this.#failure = failure
+    for (const [requestId, pending] of this.#pendingServerRequests) {
+      this.#discardServerRequest(requestId, pending, true)
+    }
     for (const [requestId, pending] of this.#pending) {
       const wasActive = pending.active
       this.#discardPending(requestId)
@@ -379,6 +511,27 @@ export class JsonRpcConnection {
     }
     return failure
   }
+}
+
+function isResolvedServerRequest(
+  value: JsonRpcServerRequestDisposition,
+): value is {readonly resolved: true} {
+  if (!isPlainObject(value)) return false
+  const candidate: Record<string, unknown> = value
+  return Object.keys(candidate).length === 1 && candidate.resolved === true
+}
+
+function isServerResponse(
+  value: JsonRpcServerRequestDisposition,
+): value is Exclude<JsonRpcServerRequestDisposition, {readonly resolved: true}> {
+  if (!isPlainObject(value) || Object.keys(value).length !== 1) return false
+  const candidate: Record<string, unknown> = value
+  if (Object.hasOwn(candidate, 'result')) return true
+  if (!Object.hasOwn(candidate, 'error') || !isPlainObject(candidate.error)) return false
+  return Object.keys(candidate.error).length === 2
+    && typeof candidate.error.code === 'number'
+    && Number.isSafeInteger(candidate.error.code)
+    && typeof candidate.error.message === 'string'
 }
 
 function encodeMessage(message: unknown): Uint8Array {

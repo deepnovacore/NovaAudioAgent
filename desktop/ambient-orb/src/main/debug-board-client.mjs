@@ -4,6 +4,7 @@ import {WebSocket} from 'ws'
 export const DEBUG_BOARD_PATH = '/debug-board'
 export const DEBUG_BOARD_TIMEOUT_MS = 5_000
 export const MAX_DEBUG_BOARD_RESPONSE_BYTES = 256 * 1024
+const MAX_MEMORY_BOARD_EXPORT_BYTES = 1024 * 1024
 
 const tokenPattern = /^[a-f0-9]{32}$/u
 const requestIdPattern = /^debug-[a-f0-9]{16}$/u
@@ -138,6 +139,34 @@ export function createDebugBoardRequester({request = requestDebugBoard} = {}) {
     pending.set(key, owned)
     return owned
   }
+}
+
+export function formatMemoryBoardExport(snapshot, {now = () => new Date()} = {}) {
+  if (!snapshot || !Array.isArray(snapshot.channels)
+    || snapshot.diagnostics?.version !== 1
+    || !Array.isArray(snapshot.diagnostics.records)
+    || snapshot.diagnostics.records.length > 128
+    || !snapshot.diagnostics.records.every(record => (
+      record !== null
+      && typeof record === 'object'
+      && Number.isSafeInteger(record.seq)
+      && record.seq > 0
+      && Number.isFinite(record.ts)
+      && typeof record.kind === 'string'
+      && record.payload !== null
+      && typeof record.payload === 'object'
+      && !Array.isArray(record.payload)
+    ))) return {error: 'invalid_payload'}
+  const exportedAt = now().toISOString()
+  const body = JSON.stringify({
+    exported_at: exportedAt,
+    channels: snapshot.channels,
+    diagnostics: snapshot.diagnostics,
+  }, null, 2)
+  if (Buffer.byteLength(body, 'utf8') > MAX_MEMORY_BOARD_EXPORT_BYTES) {
+    return {error: 'too_large'}
+  }
+  return {body, stamp: exportedAt.replace(/[:.]/g, '-')}
 }
 
 function debugBoardEndpoint(connection) {

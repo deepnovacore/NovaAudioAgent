@@ -90,7 +90,7 @@ test('production preflight uses the fixed native probe and never passes credenti
     await Promise.resolve()
     calls.push(command)
     if (command.argv[0] === '--version') {
-      return {status: 0, stdout: Buffer.from('codex-cli 0.147.0\n')}
+      return {status: 0, stdout: Buffer.from('codex-cli 0.151.0-alpha.7.2\n')}
     }
     if (command.argv[0] === 'login') {
       return {
@@ -136,7 +136,7 @@ test('production preflight uses the fixed native probe and never passes credenti
       workingInterval: 30,
     }, 5_000)
     assert.deepEqual(result, {
-      version: '0.147.0',
+      version: '0.151.0-alpha.7.2',
       root_matches: true,
       mount: 'workspace_only',
       subprocess: 'contained',
@@ -567,6 +567,17 @@ test('production host catalog admits only absolute host config and a packaged fi
     assert.equal(host.transportFactory.available, true)
     assert.equal(host.projectHost, null)
     assert.equal(canonicalSystemTemporaryDirectoryForTest(temporaryAlias), await realpath(temporary))
+
+    const missingHome = createProductionCodexHost(settings, {
+      resourcesPath: await realpath(resources),
+      platform: 'darwin',
+      arch: 'arm64',
+      electronAbi: '148',
+      homeDirectory: await realpath(home),
+      temporaryDirectory: await realpath(temporary),
+      environment: {PATH: '/usr/bin:/bin'},
+    })
+    assert.equal(missingHome.transportFactory.available, true)
 
     const configuredAlias = createProductionCodexHost(settings, {
       resourcesPath: await realpath(resources),
