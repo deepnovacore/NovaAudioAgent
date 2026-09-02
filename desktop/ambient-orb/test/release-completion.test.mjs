@@ -212,6 +212,28 @@ test('promotion is manual, candidate-bound, main-bound, and publishes npm only a
   assert.doesNotMatch(workflow, /push:\s*\n\s*tags:/u)
 })
 
+test('new-version publishing is candidate-build-bound and releases npm after GitHub assets', async () => {
+  const workflow = await readFile(
+    new URL('../../../.github/workflows/release-publish.yml', import.meta.url),
+    'utf8',
+  )
+  assert.match(workflow, /workflow_dispatch/u)
+  assert.match(workflow, /candidate_run_id/u)
+  assert.match(workflow, /environment: npm-release/u)
+  assert.match(workflow, /jq -r \.headSha/u)
+  assert.match(workflow, /platform-candidate .*macos-14, darwin, darwin-arm64/u)
+  assert.match(workflow, /platform-candidate .*windows-latest, win32, win32-x64/u)
+  assert.match(workflow, /assemble-release-artifact-root\.mjs/u)
+  assert.match(workflow, /npm pack \.\/cli/u)
+  assert.match(workflow, /gh release create "v\$RELEASE_VERSION"/u)
+  assert.match(workflow, /npm publish "\$tarball" --access public/u)
+  assert.ok(workflow.indexOf('gh release create "v$RELEASE_VERSION"')
+    < workflow.indexOf('npm publish "$tarball"'))
+  assert.match(workflow, /for attempt in \$\(seq 1 12\)/u)
+  assert.doesNotMatch(workflow, /push --force|release upload .*--clobber/u)
+  assert.doesNotMatch(workflow, /--notes[^\n]*(?:smoke|Smoke)/u)
+})
+
 test('promotion main refresh preserves candidate ancestry for split-run verification', {
   skip: process.platform === 'win32' ? 'promotion identity job runs on Ubuntu' : false,
 }, async t => {
