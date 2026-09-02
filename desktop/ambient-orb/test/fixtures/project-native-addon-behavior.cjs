@@ -187,6 +187,7 @@ if (mode === 'hold') {
 
       const repairDirectory = join(root, 'repair-me')
       mkdirSync(repairDirectory)
+      bindWindowsCurrentOwner(repairDirectory)
       const repairDescriptor = openDirectory(repairDirectory)
       try {
         assert.deepEqual(
