@@ -30,7 +30,6 @@ function openDirectory(path) {
 }
 
 function openNativeDirectory(path) {
-  bindWindowsCurrentOwner(path)
   const opened = addon.openDirectory(path)
   assert.equal(opened.status, 'ok', JSON.stringify(opened))
   assert.equal(Number.isInteger(opened.descriptor), true)
@@ -77,6 +76,8 @@ if (mode === 'hold') {
     const container = mkdtempSync(join(process.cwd(), 'build', 'nova-project-native-behavior-'))
     const root = join(container, 'root')
     mkdirSync(root)
+    bindWindowsCurrentOwner(container)
+    bindWindowsCurrentOwner(root)
     let directoryLinksSupported = process.platform !== 'win32'
     const containerHandle = openNativeDirectory(container)
     const rootHandle = openNativeDirectory(root)
@@ -272,6 +273,7 @@ if (mode === 'hold') {
           const finalJunctionTarget = join(root, 'final-junction-target')
           const finalJunction = join(root, 'final-junction')
           mkdirSync(finalJunctionTarget)
+          bindWindowsCurrentOwner(finalJunctionTarget)
           symlinkSync(finalJunctionTarget, finalJunction, 'junction')
           assertNativeDirectoryRejected(finalJunction)
           const finalCanonicalHandle = openNativeDirectory(finalJunctionTarget)
@@ -281,6 +283,7 @@ if (mode === 'hold') {
           const intermediateCanonicalChild = join(intermediateJunctionTarget, 'child')
           const intermediateJunction = join(root, 'intermediate-junction')
           mkdirSync(intermediateCanonicalChild, {recursive: true})
+          bindWindowsCurrentOwner(intermediateCanonicalChild)
           symlinkSync(intermediateJunctionTarget, intermediateJunction, 'junction')
           assertNativeDirectoryRejected(join(intermediateJunction, 'child'))
           const intermediateCanonicalHandle = openNativeDirectory(intermediateCanonicalChild)
@@ -289,6 +292,7 @@ if (mode === 'hold') {
 
         const readonlyDirectory = join(root, 'repair-readonly')
         mkdirSync(readonlyDirectory)
+        bindWindowsCurrentOwner(readonlyDirectory)
         const currentIdentity = spawnSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], {
           encoding: 'utf8',
           windowsHide: true,
