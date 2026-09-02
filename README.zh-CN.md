@@ -54,13 +54,14 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 v0.1.1 正式发布到 npm 后，可以在任意目录安装并启动打包好的桌面端：
 
 ```bash
+# 全局安装
 npm install --global nova-audio-agent@0.1.1
+# 启动客户端
 novaaudio
+# 打开设置面板（配置 dashscope 和 tavily api key）
 novaaudio config
 novaaudio doctor
 ```
-
-CLI 会先校验桌面产物的 SHA-256，再缓存到 `~/.nova-audio-agent/cli/releases/`。当前桌面产物尚未签名，macOS Gatekeeper 或 Windows SmartScreen 可能会显示安全警告。
 
 从源码开发时：
 
@@ -68,9 +69,16 @@ CLI 会先校验桌面产物的 SHA-256，再缓存到 `~/.nova-audio-agent/cli/
 git clone https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
 npm ci && cp .env.example .env
+# 从 dashscope 和 tavily 获取 api key 并填入
 ```
 
-默认集成 Qwen 桌面端需配置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。
+启动桌面应用：
+```bash
+npm run start:client
+```
+客户端包含麦克风、摄像头、声音开关等按钮，以及设置面板和工作区图谱。你也可以试试把鼠标悬在桌面 orb 上，会有惊喜）
+
+从 [DashScope](https://platform.qianwenai.com) 和 [Tavily](https://docs.tavily.com) 获取 API Key 并配置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。
 
 ```bash
 npm run build --workspace @nova-audio-agent/runtime
@@ -78,18 +86,13 @@ node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 ```
 
-原生回声消除采集（VoiceProcessingIO）仅 macOS 可用；Windows 与 Linux 走 Chromium 音频栈。
+注意，原生回声消除采集（VoiceProcessingIO）仅 macOS 可用；Windows 与 Linux 走 Chromium AEC。
 
-启动桌面应用：
-```bash
-npm run start:client
-```
-自带麦克风、摄像头、声音开关，以及设置面板和工作区图谱。把鼠标悬在桌面 orb 上，会有惊喜。
 
 
 ## 4. 文档
 
-| 读这篇 | 为了 |
+| 读这篇 | 目的 |
 |---|---|
 | [架构](docs/architecture.md) | 模块与边界 |
 | [术语与不变量](docs/glossary.md) | 核心常量 |

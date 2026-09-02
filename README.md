@@ -51,21 +51,20 @@ For more details about the architecture, check [Architecture](docs/architecture.
 ## 3. Quickstart
 
 Requirements: Node.js 22+, npm, Git, a logged-in `codex` executable (app-server is the only
-Codex transport), and a supported desktop session
+Codex transport).
 
-After the v0.1.1 release is published to npm, install and launch the packaged desktop
-from any directory:
+Besides the shipped app from releases, you can also install using npm
 
 ```bash
 npm install --global nova-audio-agent@0.1.1
+# open the shipped app
 novaaudio
+# open the settings panel in the app
+# get api key from dashscope and tavily to fill up 
 novaaudio config
 novaaudio doctor
 ```
 
-The CLI verifies the desktop release SHA-256 before caching it under
-`~/.nova-audio-agent/cli/releases/`. The current desktop builds are unsigned, so macOS
-Gatekeeper or Windows SmartScreen may show a warning.
 
 For development from source:
 
@@ -75,7 +74,12 @@ cd nova-audio-agent
 npm ci && cp .env.example .env
 ```
 
-Set `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` for the default integrated Qwen desktop.
+Get API key from [DashScope](https://platform.qianwenai.com) and [Tavily](https://docs.tavily.com) . And then set `DASHSCOPE_API_KEY` and `TAVILY_API_KEY`.
+
+```bash
+npm run start:client
+```
+It ships with toggles of microphone, camera, sounds, the settings panel and workspace graph. Try hovering over the desktop orb to get surprised :) Also you may try build or run demo locally:
 
 ```bash
 npm run build --workspace @nova-audio-agent/runtime
@@ -86,11 +90,6 @@ node runtime/dist/src/cli.js demo all
 Note that native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windows and Linux use
   Chromium's audio stack.
 
-To start up the desktop application, run
-```bash
-npm run start:client
-```
-It ships with toggles of microphone, camera, sounds, the settings panel and workspace graph. Try hovering over the desktop orb to get surprised!
 
 
 ## 4. Documentation
