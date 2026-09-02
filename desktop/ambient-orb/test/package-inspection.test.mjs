@@ -29,7 +29,7 @@ const DESKTOP_FILES = [
 
 const DESKTOP_MANIFEST = Object.freeze({
   name: '@nova-audio-agent/ambient-orb',
-  dependencies: { '@nova-audio-agent/runtime': '0.1.0' },
+  dependencies: { '@nova-audio-agent/runtime': '0.1.1' },
 })
 const RUNTIME_MANIFEST = Object.freeze({
   name: '@nova-audio-agent/runtime',
@@ -212,7 +212,7 @@ test('artifact dependency closure comes only from required manifest contents', (
       desktopManifest: {
         ...DESKTOP_MANIFEST,
         dependencies: {
-          '@nova-audio-agent/runtime': '0.1.0',
+          '@nova-audio-agent/runtime': '0.1.1',
           lodash: '4.17.21',
         },
       },
@@ -1168,11 +1168,11 @@ test('release candidate report binds artifact SHA and rejects an external resour
       packages: {
         'desktop/ambient-orb': {
           name: '@nova-audio-agent/ambient-orb',
-          dependencies: { '@nova-audio-agent/runtime': '0.1.0' },
+          dependencies: { '@nova-audio-agent/runtime': '0.1.1' },
         },
         'node_modules/@nova-audio-agent/runtime': { link: true, resolved: 'node/runtime' },
         'node/runtime': {
-          name: '@nova-audio-agent/runtime', version: '0.1.0',
+          name: '@nova-audio-agent/runtime', version: '0.1.1',
           dependencies: {
             '@livekit/agents': '1.6.4', '@livekit/rtc-node': '0.13.33',
             undici: '7.29.0', ws: '8.21.3', zod: '4.4.3',

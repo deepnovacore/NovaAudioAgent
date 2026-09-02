@@ -1,6 +1,6 @@
 {
   "name": "nova-audio-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Install and launch the Nova Audio Agent desktop client from the command line.",
   "type": "module",
   "bin": {

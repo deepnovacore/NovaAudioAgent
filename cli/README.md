@@ -14,7 +14,7 @@ novaaudio config
 novaaudio doctor
 ```
 
-The CLI downloads the matching `v0.1.0` desktop release into
+The CLI downloads the matching `v0.1.1` desktop release into
 `~/.nova-audio-agent/cli/releases/`, verifies its published SHA-256 digest, and
 keeps application settings in the desktop client's existing encrypted store.
 It never reads or prints secret values.

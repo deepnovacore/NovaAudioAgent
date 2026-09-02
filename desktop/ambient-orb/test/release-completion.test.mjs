@@ -154,7 +154,7 @@ test('candidate ledger workflow commands resolve repository-root artifacts acros
     await writeFile(join(artifactRoot, filename), `candidate:${filename}`)
   }
   const repository = fileURLToPath(new URL('../../..', import.meta.url))
-  const environment = {...process.env, GITHUB_WORKSPACE: workspace, RELEASE_VERSION: '0.1.0'}
+  const environment = {...process.env, GITHUB_WORKSPACE: workspace, RELEASE_VERSION: '0.1.1'}
   const generate = workflowStepFoldedCommand(
     workflow,
     'Generate the honest pending external-evidence ledger',
@@ -298,7 +298,7 @@ test('promotion audits and publishes the packed CLI from a canonical local tarba
     join(root, 'npm-smoke/node_modules/nova-audio-agent/package.json'),
     'utf8',
   ))
-  assert.equal(installedPackage.version, '0.1.0')
+  assert.equal(installedPackage.version, '0.1.1')
   const publishStart = workflow.indexOf('- name: Publish and verify nova-audio-agent 0.1.0')
   const publishEnd = workflow.indexOf('\n      - uses:', publishStart + 1)
   assert.ok(publishStart >= 0 && publishEnd > publishStart)
@@ -332,7 +332,7 @@ test('release manifest binds every portable and installer byte and emits checksu
     commit: 'a'.repeat(40),
     output,
   })
-  assert.equal(manifest.version, '0.1.0')
+  assert.equal(manifest.version, '0.1.1')
   assert.equal(manifest.signed, false)
   assert.equal(manifest.assets.length, Object.keys(RELEASE_ARTIFACT_FILES).length)
   for (const asset of manifest.assets) {

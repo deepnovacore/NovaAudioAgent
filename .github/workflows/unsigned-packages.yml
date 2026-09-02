@@ -77,7 +77,7 @@ jobs:
           - os: windows-2022
             target: win32-x64:nsis
             artifact_name: unsigned-win32-x64
-            filename: nova-audio-agent-0.1.0-windows-x64.exe
+            filename: nova-audio-agent-0.1.1-windows-x64.exe
             command: node
     runs-on: ${{ matrix.os }}
     steps:

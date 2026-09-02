@@ -1,6 +1,6 @@
 {
   "name": "@nova-audio-agent/ambient-orb",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first ambient voice agent desktop client",
   "homepage": "https://github.com/deepnovacore/NovaAudioAgent",
   "author": {
@@ -41,7 +41,7 @@
     "package:linux": "npm run build && electron-builder --config electron-builder.yml --linux AppImage deb --publish never"
   },
   "dependencies": {
-    "@nova-audio-agent/runtime": "0.1.0"
+    "@nova-audio-agent/runtime": "0.1.1"
   },
   "devDependencies": {
     "7zip-bin": "5.2.0",

@@ -397,7 +397,7 @@ test('THIRD_PARTY_NOTICES.md and LICENSES/** ship in files for every platform', 
 
 test('the packaged desktop declares the compiled Node runtime as a production dependency', async () => {
   const pkg = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8'))
-  assert.equal(pkg.dependencies['@nova-audio-agent/runtime'], '0.1.0')
+  assert.equal(pkg.dependencies['@nova-audio-agent/runtime'], '0.1.1')
 })
 
 test('every package: script disables publishing explicitly', async () => {
@@ -513,7 +513,7 @@ test('unsigned Windows workflow is manual-only and never creates a release', asy
       os: 'windows-2022',
       target: 'win32-x64:nsis',
       artifact_name: 'unsigned-win32-x64',
-      filename: 'nova-audio-agent-0.1.0-windows-x64.exe',
+      filename: 'nova-audio-agent-0.1.1-windows-x64.exe',
       command: 'node',
     },
   ])

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: Application version to validate (0.1.0 for this replacement)
+        description: Application version to validate
         required: true
-        default: 0.1.0
+        default: 0.1.1
         type: string
       candidate_scope:
         description: Full release evidence or a Windows-only repair run
@@ -110,17 +110,17 @@ jobs:
           - os: macos-14
             target: darwin-arm64:app
             artifact_name: candidate-darwin-arm64
-            filename: nova-audio-agent-0.1.0-macos-arm64-app.zip
+            filename: nova-audio-agent-0.1.1-macos-arm64-app.zip
             command: node
           - os: windows-latest
             target: win32-x64:portable
             artifact_name: candidate-win32-x64
-            filename: nova-audio-agent-0.1.0-windows-x64-portable.zip
+            filename: nova-audio-agent-0.1.1-windows-x64-portable.zip
             command: node
           - os: windows-latest
             target: win32-x64:nsis
             artifact_name: candidate-win32-x64
-            filename: nova-audio-agent-0.1.0-windows-x64.exe
+            filename: nova-audio-agent-0.1.1-windows-x64.exe
             command: node
     runs-on: ${{ matrix.os }}
     steps:

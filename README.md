@@ -53,11 +53,11 @@ For more details about the architecture, check [Architecture](docs/architecture.
 Requirements: Node.js 22+, npm, Git, a logged-in `codex` executable (app-server is the only
 Codex transport), and a supported desktop session
 
-After the replacement v0.1.0 release is published to npm, install and launch the packaged desktop
+After the v0.1.1 release is published to npm, install and launch the packaged desktop
 from any directory:
 
 ```bash
-npm install --global nova-audio-agent@0.1.0
+npm install --global nova-audio-agent@0.1.1
 novaaudio
 novaaudio config
 novaaudio doctor
