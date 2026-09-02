@@ -595,6 +595,7 @@ test('release workflow downloads exact candidates into checkout-free smoke jobs'
   assert.doesNotMatch(smokeJob, /actions\/checkout/u)
   assert.doesNotMatch(smokeJob, /continue-on-error|\|\| true/u)
   assert.doesNotMatch(smokeJob, /--commit|--signer-workflow|GH_TOKEN/u)
+  assert.match(smokeJob, /NOVA_RELEASE_SMOKE_DIAGNOSTICS: "1"/u)
 })
 
 test('installed candidate smoke cold-starts every packaged target through config mode', async () => {

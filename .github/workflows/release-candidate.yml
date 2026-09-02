@@ -135,6 +135,8 @@ jobs:
           path: candidate
       - name: Rehash, install, authenticate, exercise, quit, and remove candidate
         if: inputs.candidate_scope == 'full' || startsWith(matrix.target, 'win32-x64:')
+        env:
+          NOVA_RELEASE_SMOKE_DIAGNOSTICS: "1"
         run: >-
           ${{ matrix.command }} candidate/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs
           --target ${{ matrix.target }}
