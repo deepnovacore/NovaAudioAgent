@@ -103,8 +103,8 @@ It ships with toggles of microphone, camera, sounds, the settings panel and work
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | The design-space essay |
 
 ## 5. Roadmap
-
-- [ ] Support more e2e and cascaded frontend pipelines.
+- [ ] Fix and improve the permission apprroval system on windows. Add support for using network in codex.
+- [ ] Support more end-to-end and cascaded frontend pipelines.
 - [ ] Integrate MyContext to support workspace-centric memory.
 - [ ] More coding agents through the executor port.
 

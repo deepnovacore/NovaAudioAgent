@@ -97,10 +97,10 @@ npm run start:client
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 设计博客 |
 
 ## 5. 路线图
-
-- [ ] **支持更多端到端与级联前端管线。**
-- [ ] **接入 MyContext，做以工作区为中心的记忆。**
-- [ ] **通过 executor 端口接入更多 coding agent。**
+- [ ] 优化 Windows下的权限审批机制，在 mac/windows 下支持codex 使用网络。
+- [ ] 支持更多端到端与级联前端管线。
+- [ ] 接入 MyContext，做以工作区为中心的记忆。
+- [ ] 通过 executor 端口接入更多 coding agent。
 
 ## 6. 贡献
 
