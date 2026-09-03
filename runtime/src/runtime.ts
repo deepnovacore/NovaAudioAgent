@@ -17,6 +17,7 @@ import {
 import { Floor } from './floor.js'
 import type { IdFactory } from './ids.js'
 import {stripLikePython} from './python-text.js'
+import {executorWithRole} from './coding-executor.js'
 import {
   beginConfirmedProjectAdmission,
   finishConfirmedProjectAdmission,
@@ -601,7 +602,8 @@ export class CoreRuntime {
     capability: object,
   ): RuntimeDispatchResult {
     const parsed = delegateRequestSchema.safeParse(request)
-    if (!parsed.success || !beginConfirmedProjectAdmission(capability, parsed.data)) {
+    const coding = executorWithRole(this.#manifests.values(), 'coding')
+    if (!parsed.success || !beginConfirmedProjectAdmission(capability, parsed.data, coding?.name ?? null)) {
       const refused = this.#refuseDelegate(
         refusalDelegateRequest(request),
         'confirmed_capability_invalid',

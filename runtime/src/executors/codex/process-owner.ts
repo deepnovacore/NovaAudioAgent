@@ -1,8 +1,23 @@
-import {lstatSync, realpathSync, statSync} from 'node:fs'
+import {statSync} from 'node:fs'
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
 import {isAbsolute} from 'node:path'
 import type {Readable, Writable} from 'node:stream'
 
+import {
+  HostPathError,
+  hostEphemeralHomeFromConfig,
+  hostHomeForTest,
+  hostHomeValue,
+  hostPersistentHomeFromConfig,
+  hostWorkspaceForTest,
+  hostWorkspacePath,
+  hostWorkspaceFromConfig,
+  refreshEphemeralHomeIdentity,
+  requireCanonicalPath,
+  safeCanonicalPath,
+  type HostStateHome,
+  type HostWorkspace,
+} from '../../host-paths.js'
 import {isWellFormed} from '../../python-text.js'
 import {
   codexAppServerArgv,
@@ -11,31 +26,27 @@ import {
 } from './launch-profile.js'
 
 const hostBinaryBrand: unique symbol = Symbol('HostBinary')
-const hostWorkspaceBrand: unique symbol = Symbol('HostWorkspace')
-const hostCodexHomeBrand: unique symbol = Symbol('HostCodexHome')
 const approvedSpawnBrand: unique symbol = Symbol('ApprovedSpawnSpec')
 
 export interface HostBinary { readonly [hostBinaryBrand]: true }
-export interface HostWorkspace { readonly [hostWorkspaceBrand]: true }
-export interface HostCodexHome { readonly [hostCodexHomeBrand]: true }
+export type HostCodexHome = HostStateHome
+export {
+  HostPathError as CodexProcessOwnerError,
+  hostWorkspaceFromConfig,
+  hostWorkspaceForTest,
+  hostWorkspacePath,
+  hostEphemeralHomeFromConfig as hostEphemeralCodexHomeFromConfig,
+  hostPersistentHomeFromConfig as hostPersistentCodexHomeFromConfig,
+  hostHomeForTest as hostCodexHomeForTest,
+  hostHomeValue as hostCodexHomeValue,
+  refreshEphemeralHomeIdentity as refreshEphemeralCodexHomeIdentity,
+  type HostWorkspace,
+}
+const CodexProcessOwnerError = HostPathError
+type CodexProcessOwnerError = HostPathError
 export interface ApprovedSpawnSpec { readonly [approvedSpawnBrand]: true }
 
-interface CodexHomeValue {
-  readonly path: string
-  readonly ephemeral: boolean
-  identity: EphemeralHomeIdentity | null
-  cleanupPath: string | null
-}
-
-interface EphemeralHomeIdentity {
-  readonly device: bigint
-  readonly inode: bigint
-  readonly uid: number
-}
-
 const binaryValues = new WeakMap<HostBinary, string>()
-const workspaceValues = new WeakMap<HostWorkspace, string>()
-const homeValues = new WeakMap<HostCodexHome, CodexHomeValue>()
 const spawnValues = new WeakMap<ApprovedSpawnSpec, ApprovedSpawnDetails>()
 const unconfirmedOwnerErrors = new WeakMap<CodexProcessOwnerError, OwnedCodexProcess>()
 
@@ -57,16 +68,6 @@ const CHILD_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'CODEX_API_KEY',
   'CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED',
 ])
-
-export class CodexProcessOwnerError extends Error {
-  readonly code: 'spawn_failed' | 'workspace_invalid'
-
-  constructor(code: 'spawn_failed' | 'workspace_invalid') {
-    super(code)
-    this.name = 'CodexProcessOwnerError'
-    this.code = code
-  }
-}
 
 export function unconfirmedCodexProcessOwnerError(owner: OwnedCodexProcess): CodexProcessOwnerError {
   const error = new CodexProcessOwnerError('spawn_failed')
@@ -92,79 +93,14 @@ export function hostBinaryFromConfig(
   return brandBinary(canonical)
 }
 
-export function hostWorkspaceFromConfig(
-  configured: string,
-  allowlistedCanonicalWorkspaces: readonly string[],
-): HostWorkspace {
-  const canonical = requireCanonicalDirectory(configured, 'workspace_invalid')
-  if (!allowlistedCanonicalWorkspaces.some(candidate => safeCanonicalPath(candidate) === canonical)) {
-    throw new CodexProcessOwnerError('workspace_invalid')
-  }
-  return brandWorkspace(canonical)
-}
-
-export function hostEphemeralCodexHomeFromConfig(
-  configured: string,
-  allowlistedCanonicalHomes: readonly string[],
-): HostCodexHome {
-  const canonical = requireCanonicalDirectory(configured, 'workspace_invalid')
-  if (!allowlistedCanonicalHomes.some(candidate => safeCanonicalPath(candidate) === canonical)) {
-    throw new CodexProcessOwnerError('workspace_invalid')
-  }
-  return brandHome(canonical, true)
-}
-
-export function hostPersistentCodexHomeFromConfig(
-  configured: string,
-  allowlistedCanonicalHomes: readonly string[],
-): HostCodexHome {
-  const canonical = requireCanonicalDirectory(configured, 'workspace_invalid')
-  if (!allowlistedCanonicalHomes.some(candidate => safeCanonicalPath(candidate) === canonical)) {
-    throw new CodexProcessOwnerError('workspace_invalid')
-  }
-  return brandHome(canonical, false)
-}
-
-/** Test-only path constructors. They still enforce canonical absolute native paths. */
 export function hostBinaryForTest(configured: string): HostBinary {
   return brandBinary(requireCanonicalRegularFile(configured, 'spawn_failed'))
-}
-
-export function hostWorkspaceForTest(configured: string): HostWorkspace {
-  return brandWorkspace(requireCanonicalDirectory(configured, 'workspace_invalid'))
-}
-
-export function hostCodexHomeForTest(
-  configured: string,
-  options: {readonly ephemeral: boolean},
-): HostCodexHome {
-  return brandHome(requireCanonicalDirectory(configured, 'workspace_invalid'), options.ephemeral)
 }
 
 export function hostBinaryPath(value: HostBinary): string {
   const path = binaryValues.get(value)
   if (path === undefined) throw new CodexProcessOwnerError('spawn_failed')
   return path
-}
-
-export function hostWorkspacePath(value: HostWorkspace): string {
-  const path = workspaceValues.get(value)
-  if (path === undefined) throw new CodexProcessOwnerError('workspace_invalid')
-  return path
-}
-
-export function hostCodexHomeValue(value: HostCodexHome): CodexHomeValue {
-  const home = homeValues.get(value)
-  if (home === undefined) throw new CodexProcessOwnerError('workspace_invalid')
-  return home
-}
-
-/** Internal credential-cleanup capability refresh after creating an approved ephemeral home. */
-export function refreshEphemeralCodexHomeIdentity(value: HostCodexHome): void {
-  const home = homeValues.get(value)
-  if (!home?.ephemeral) throw new CodexProcessOwnerError('workspace_invalid')
-  home.identity = readEphemeralHomeIdentity(home.path)
-  home.cleanupPath = null
 }
 
 interface ApprovedSpawnDetails {
@@ -188,7 +124,7 @@ export function createApprovedCodexSpawnSpec(input: {
 }): ApprovedSpawnSpec {
   const binary = hostBinaryPath(input.binary)
   const cwd = hostWorkspacePath(input.workspace)
-  const home = hostCodexHomeValue(input.codexHome)
+  const home = hostHomeValue(input.codexHome)
   const environment = validateChildEnvironment(input.environment, home.path)
   const spec = Object.freeze({[approvedSpawnBrand]: true as const})
   spawnValues.set(spec, Object.freeze({
@@ -238,7 +174,7 @@ export function approvedCodexSpawnDetails(spec: ApprovedSpawnSpec): ApprovedSpaw
 export function createApprovedCodexSpawnSpecForTest(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
   const binary = hostBinaryForTest(requirePrimitiveString(input.binary))
   const workspace = hostWorkspaceForTest(requirePrimitiveString(input.workspace))
-  const codexHome = hostCodexHomeForTest(requirePrimitiveString(input.codexHome), {ephemeral: true})
+  const codexHome = hostHomeForTest(requirePrimitiveString(input.codexHome), {ephemeral: true})
   const environment = requireStringRecord(input.environment)
   const details = approvedCodexSpawnDetails(createApprovedCodexSpawnSpec({
     binary,
@@ -520,79 +456,17 @@ function brandBinary(path: string): HostBinary {
   return value
 }
 
-function brandWorkspace(path: string): HostWorkspace {
-  const value = Object.freeze({[hostWorkspaceBrand]: true as const})
-  workspaceValues.set(value, path)
-  return value
-}
-
-function brandHome(path: string, ephemeral: boolean): HostCodexHome {
-  const value = Object.freeze({[hostCodexHomeBrand]: true as const})
-  homeValues.set(value, {
-    path,
-    ephemeral,
-    identity: ephemeral ? readEphemeralHomeIdentity(path) : null,
-    cleanupPath: null,
-  })
-  return value
-}
-
-function readEphemeralHomeIdentity(path: string): EphemeralHomeIdentity {
-  try {
-    const info = lstatSync(path, {bigint: true})
-    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('invalid home')
-    return Object.freeze({device: info.dev, inode: info.ino, uid: Number(info.uid)})
-  } catch {
-    throw new CodexProcessOwnerError('workspace_invalid')
-  }
-}
-
 function requireCanonicalRegularFile(
   configured: string,
   code: 'spawn_failed' | 'workspace_invalid',
 ): string {
-  const canonical = requireCanonical(configured, code)
+  const canonical = requireCanonicalPath(configured, code)
   try {
     if (!statSync(canonical).isFile() || hasScriptSuffix(canonical)) throw new Error('not native')
   } catch {
     throw new CodexProcessOwnerError(code)
   }
   return canonical
-}
-
-function requireCanonicalDirectory(
-  configured: string,
-  code: 'spawn_failed' | 'workspace_invalid',
-): string {
-  const canonical = requireCanonical(configured, code)
-  try {
-    if (!statSync(canonical).isDirectory()) throw new Error('not directory')
-  } catch {
-    throw new CodexProcessOwnerError(code)
-  }
-  return canonical
-}
-
-function requireCanonical(configured: string, code: 'spawn_failed' | 'workspace_invalid'): string {
-  if (typeof configured !== 'string' || !isWellFormed(configured) || !isAbsolute(configured)) {
-    throw new CodexProcessOwnerError(code)
-  }
-  let canonical: string
-  try {
-    canonical = realpathSync(configured)
-  } catch {
-    throw new CodexProcessOwnerError(code)
-  }
-  if (canonical !== configured) throw new CodexProcessOwnerError(code)
-  return canonical
-}
-
-function safeCanonicalPath(candidate: string): string | null {
-  try {
-    return requireCanonical(candidate, 'workspace_invalid')
-  } catch {
-    return null
-  }
 }
 
 function hasScriptSuffix(path: string): boolean {

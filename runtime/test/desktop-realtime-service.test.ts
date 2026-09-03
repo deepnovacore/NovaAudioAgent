@@ -1019,12 +1019,10 @@ function waitDesktopClose(socket: WebSocket, label: string): Promise<number> {
 }
 
 async function authenticateDesktop(socket: WebSocket, label: string): Promise<void> {
-  const initial = receiveFrames(socket, 2, `${label} bootstrap`)
+  // No coding executor is configured here, so no executor.state frame follows the ready frame.
+  const initial = receiveFrames(socket, 1, `${label} bootstrap`)
   await sendDesktop(socket, JSON.stringify({type: 'hello', token: TOKEN}), `${label} hello`)
-  assert.deepEqual((await initial).map(frame => text(frame)), [
-    '{"type":"desktop.ready"}',
-    '{"type":"codex.state","state":"idle"}',
-  ])
+  assert.deepEqual((await initial).map(frame => text(frame)), ['{"type":"desktop.ready"}'])
 }
 
 async function assertDesktopControlOutputs(
@@ -1032,10 +1030,10 @@ async function assertDesktopControlOutputs(
   callbacks: DesktopOutputCallbacks,
   label: string,
 ): Promise<void> {
-  const frames = receiveFrames(socket, 4, `${label} control output`)
+  const frames = receiveFrames(socket, 3, `${label} control output`)
   callbacks.onAudioClear(`${label}-clear`, 2)
   callbacks.onAudioAlert(`${label}-alert`, 3)
-  callbacks.onCodexState('running')
+  callbacks.onExecutorState('running')
   callbacks.onProjectView({
     workspace_display_name: '项目甲', session_title: '会话乙', pending_confirmation: true,
     pending_confirmation_busy: false,
@@ -1045,9 +1043,8 @@ async function assertDesktopControlOutputs(
   assert.deepEqual(payloads, [
     {type: 'playback.clear', utterance_id: `${label}-clear`, generation_epoch: 2},
     {type: 'playback.alert', utterance_id: `${label}-alert`, generation_epoch: 3},
-    {type: 'codex.state', state: 'running'},
     {
-      type: 'codex.project', workspace_display_name: '项目甲',
+      type: 'project.state', workspace_display_name: '项目甲',
       session_title: '会话乙', pending_confirmation: true, pending_confirmation_busy: false,
       pending_action: null,
       pending_workspace_display_name: null,
@@ -1151,8 +1148,8 @@ test('production composition serves compact boards on debug sockets without dist
   assert.equal(readyGraph.publication_revision, 7)
 
   const stillUsable = receiveFrames(voice, 1, 'voice after production debug requests')
-  callbacks!.onCodexState('running')
-  assert.equal(text((await stillUsable)[0]!), '{"type":"codex.state","state":"running"}')
+  callbacks!.onCaption({role: 'user', text: 'still usable', final: true})
+  assert.match(text((await stillUsable)[0]!), /"type":"caption"/u)
 })
 
 test('authenticated fake-provider loopback uses one service for duplex audio and reconnect', async t => {
@@ -1234,12 +1231,9 @@ test('authenticated fake-provider loopback uses one service for duplex audio and
   const first = await connectDesktop(announced.port)
   opened.add(first)
   try {
-    const initial = receiveFrames(first, 2, 'desktop ready and current state')
+    const initial = receiveFrames(first, 1, 'desktop ready and current state')
     await sendDesktop(first, JSON.stringify({type: 'hello', token: TOKEN}), 'desktop hello')
-    assert.deepEqual((await initial).map(frame => text(frame)), [
-      '{"type":"desktop.ready"}',
-      '{"type":"codex.state","state":"idle"}',
-    ])
+    assert.deepEqual((await initial).map(frame => text(frame)), ['{"type":"desktop.ready"}'])
 
     await sendDesktop(first, new Uint8Array([1, 2, 3, 4]), 'desktop PCM')
     await sendDesktop(first, JSON.stringify({
@@ -1282,12 +1276,9 @@ test('authenticated fake-provider loopback uses one service for duplex audio and
   const second = await connectDesktop(announced.port)
   opened.add(second)
   try {
-    const current = receiveFrames(second, 2, 'reconnected desktop current state')
+    const current = receiveFrames(second, 1, 'reconnected desktop current state')
     await sendDesktop(second, JSON.stringify({type: 'hello', token: TOKEN}), 'reconnect hello')
-    assert.deepEqual((await current).map(frame => text(frame)), [
-      '{"type":"desktop.ready"}',
-      '{"type":"codex.state","state":"idle"}',
-    ])
+    assert.deepEqual((await current).map(frame => text(frame)), ['{"type":"desktop.ready"}'])
     assert.equal(provider.connectCalls, 1)
   } finally {
     await closeDesktop(second)
@@ -1661,11 +1652,12 @@ test('captured composition callbacks preserve clear alert Codex project clock an
   assert.equal(composition.realtime.runtime.clock, clock)
   assert.equal(composition.desktop.bridge.claim(), true)
   composition.desktop.bridge.markAuthenticated()
-  assert.equal(composition.desktop.bridge.takeNextDelivery()?.frame, '{"type":"codex.state","state":"idle"}')
+  // fast_sim carries no coding role, so there is no executor.state frame to deliver.
+  assert.equal(composition.desktop.bridge.takeNextDelivery(), null)
 
   callbacks!.onAudioClear('utterance-clear', 2)
   callbacks!.onAudioAlert('utterance-alert', 3)
-  callbacks!.onCodexState('running')
+  callbacks!.onExecutorState('running')
   callbacks!.onProjectView({
     workspace_display_name: '项目甲', session_title: '会话乙', pending_confirmation: true,
     pending_confirmation_busy: false,
@@ -1686,8 +1678,7 @@ test('captured composition callbacks preserve clear alert Codex project clock an
     '{"type":"playback.clear","utterance_id":"utterance-clear","generation_epoch":2}',
     '{"type":"playback.alert","utterance_id":"utterance-alert","generation_epoch":3}',
     '{"type":"clock.ping","ping_id":"ping-0"}',
-    '{"type":"codex.state","state":"running"}',
-      '{"type":"codex.project","workspace_display_name":"项目甲","session_title":"会话乙","pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
+      '{"type":"project.state","workspace_display_name":"项目甲","session_title":"会话乙","pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
   ])
   assert.deepEqual(telemetryRecords.map(record => record.kind), [
     'playback.clear_sent',

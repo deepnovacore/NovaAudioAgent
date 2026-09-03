@@ -5,7 +5,7 @@ import {test} from 'node:test'
 import {VirtualClock} from '../src/clock.js'
 import {IntakeController, isIntakeAction, type IntakeOptions} from '../src/realtime/intake.js'
 import {intakeModels, type IntakeModels, type IntakeSlots} from '../src/realtime/intake-model.js'
-import {ProjectConfirmationController} from '../src/realtime/project-confirmation.js'
+import {ProjectConfirmationController} from '../src/project-confirmation.js'
 import {renderWorkOrder, workOrderSchema} from '../src/realtime/work-order.js'
 
 const stated = (note: string) => ({state: 'stated' as const, note})

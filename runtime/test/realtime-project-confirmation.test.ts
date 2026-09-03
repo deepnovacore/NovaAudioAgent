@@ -4,7 +4,7 @@ import { VirtualClock } from '../src/clock.js'
 import {
   ProjectConfirmationController,
   type ProjectConfirmationView,
-} from '../src/realtime/project-confirmation.js'
+} from '../src/project-confirmation.js'
 
 function createController(
   clock: VirtualClock = new VirtualClock(10),

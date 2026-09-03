@@ -184,14 +184,14 @@ test('touching a provider turn moves it to the back of the eviction order', () =
 
 test('an omitted progress field preserves the slot; an explicit null clears it', () => {
   const state = new RealtimeSessionState()
-  state.registerDelegate('d-1', {summary: '跑测试', state: 'running',
+  state.registerDelegate('d-1', {channel: 'codex', summary: '跑测试', state: 'running',
     progress_summary: '编译中', internal_activity: 3, elapsed: 1.5})
   // A handoff that never mentions progress must not erase it.
-  state.registerDelegate('d-1', {summary: '跑测试', state: 'running'})
+  state.registerDelegate('d-1', {channel: 'codex', summary: '跑测试', state: 'running'})
   assert.equal(state.snapshot().active_delegates[0]?.[1].progress_summary, '编译中')
   assert.equal(state.snapshot().active_delegates[0]?.[1].internal_activity, 3)
 
-  state.registerDelegate('d-1', {summary: '跑测试', state: 'running', progress_summary: null})
+  state.registerDelegate('d-1', {channel: 'codex', summary: '跑测试', state: 'running', progress_summary: null})
   assert.equal(state.snapshot().active_delegates[0]?.[1].progress_summary, null)
 })
 
@@ -199,7 +199,7 @@ test('a progress summary keeps its head, bounded by code point', () => {
   // Distinct code points, so the retained half is provable rather than merely the right length.
   const state = new RealtimeSessionState()
   const characters = distinctCharacters(PROGRESS_SUMMARY_LIMIT + 50)
-  state.registerDelegate('d-1', {
+  state.registerDelegate('d-1', {channel: 'codex', 
     summary: 's',
     state: 'running',
     progress_summary: characters.join(''),
@@ -212,9 +212,9 @@ test('a progress summary keeps its head, bounded by code point', () => {
 test('only running delegates are visible, and the snapshot version advances', () => {
   const state = new RealtimeSessionState()
   const before = state.snapshotVersion
-  state.registerDelegate('d-1', {summary: 'a', state: 'running'})
-  state.registerDelegate('d-2', {summary: 'b', state: 'completed'})
-  state.registerDelegate('d-3', {summary: 'c', state: 'unknown'})
+  state.registerDelegate('d-1', {channel: 'codex', summary: 'a', state: 'running'})
+  state.registerDelegate('d-2', {channel: 'codex', summary: 'b', state: 'completed'})
+  state.registerDelegate('d-3', {channel: 'codex', summary: 'c', state: 'unknown'})
   const snapshot = state.snapshot()
   assert.deepEqual(snapshot.active_delegates.map(([id]) => id), ['d-1'])
   assert.ok(snapshot.version > before)
@@ -265,8 +265,8 @@ test('active executor dedup data contains exactly the bounded provider-visible r
 
 test('a delegate needs both an id and a summary', () => {
   const state = new RealtimeSessionState()
-  assert.throws(() => state.registerDelegate('', {summary: 'a', state: 'running'}), TypeError)
-  assert.throws(() => state.registerDelegate('d-1', {summary: '', state: 'running'}), TypeError)
+  assert.throws(() => state.registerDelegate('', {channel: 'codex', summary: 'a', state: 'running'}), TypeError)
+  assert.throws(() => state.registerDelegate('d-1', {channel: 'codex', summary: '', state: 'running'}), TypeError)
 })
 
 test('a caption keeps its newest end, the opposite end from a progress summary', () => {

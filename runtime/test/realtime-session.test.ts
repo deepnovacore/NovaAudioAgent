@@ -167,7 +167,7 @@ test('a registered delegate reaches the snapshot the recovery item is built from
   await session.connect({tools: []})
   const before = session.snapshot().version
 
-  session.registerDelegate('d-1', {summary: '跑测试', state: 'running'})
+  session.registerDelegate('d-1', {channel: 'codex', summary: '跑测试', state: 'running'})
   assert.equal(session.delegateState('d-1'), 'running')
   assert.ok(session.snapshot().version > before, 'registering publishes')
   assert.deepEqual(
@@ -183,7 +183,7 @@ test('a registered delegate reaches the snapshot the recovery item is built from
 
 test('a completed delegate is history, not active work', () => {
   const {session} = makeSession()
-  session.registerDelegate('d-1', {summary: '跑测试', state: 'completed'})
+  session.registerDelegate('d-1', {channel: 'codex', summary: '跑测试', state: 'completed'})
   assert.equal(session.delegateState('d-1'), 'completed')
   assert.deepEqual(session.snapshot().active_delegates, [])
 })

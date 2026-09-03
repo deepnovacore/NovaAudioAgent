@@ -32,7 +32,7 @@ import type {
 import {CodexTransportError} from '../src/executors/codex/app-server-transport.js'
 import {CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
 import {
-  CodexProjectStore,
+  ProjectStore,
   hostManagedProjectRootForTest,
   hostProjectRootForTest,
   ProjectStateError,
@@ -65,7 +65,7 @@ import {delegateSchema, type DelegateRequest} from '../src/ports.js'
 import {
   ProjectConfirmationController,
   type ConfirmedProjectOperation,
-} from '../src/realtime/project-confirmation.js'
+} from '../src/project-confirmation.js'
 import type {WakeReason} from '../src/slots.js'
 import {compileToolSchema} from '../src/tool-schema.js'
 
@@ -391,7 +391,7 @@ class RecordingProjectTransportFactory implements ProjectTransportFactory {
 
 interface Fixture {
   readonly root: string
-  readonly store: CodexProjectStore
+  readonly store: ProjectStore
   readonly adapter: ProjectCodexAdapter
   readonly confirmation: ProjectConfirmationController
   readonly factory: RecordingProjectTransportFactory
@@ -400,7 +400,7 @@ interface Fixture {
 
 async function fixture(options: {
   readonly preexistingSession?: boolean
-  readonly decorateStore?: (store: CodexProjectStore) => CodexProjectStore
+  readonly decorateStore?: (store: ProjectStore) => ProjectStore
 } = {}): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-adapter-'))
   const stateRoot = join(root, 'state')
@@ -413,7 +413,7 @@ async function fixture(options: {
     {length: 100},
     (_unused, index) => `${index % 2 === 0 ? 'workspace' : 'session'}-${String(index).padStart(4, '0')}`,
   )[Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -444,9 +444,9 @@ async function fixture(options: {
 }
 
 function storeWithPersistentHomeHook(
-  store: CodexProjectStore,
+  store: ProjectStore,
   afterPersistentHome: () => Promise<void>,
-): CodexProjectStore {
+): ProjectStore {
   return new Proxy(store, {
     get(target, property) {
       if (property === 'persistentHome') {
@@ -465,9 +465,9 @@ function storeWithPersistentHomeHook(
 }
 
 function storeWithManagedValidationHook(
-  store: CodexProjectStore,
+  store: ProjectStore,
   beforeValidation: (attempt: number) => Promise<void>,
-): CodexProjectStore {
+): ProjectStore {
   let attempts = 0
   return new Proxy(store, {
     get(target, property) {
@@ -487,9 +487,9 @@ function storeWithManagedValidationHook(
 }
 
 function storeWithBusyPublicContext(
-  store: CodexProjectStore,
+  store: ProjectStore,
   busy: () => boolean,
-): CodexProjectStore {
+): ProjectStore {
   return new Proxy(store, {
     get(target, property) {
       if (property === 'publicContext') {

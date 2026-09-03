@@ -14,12 +14,13 @@ import {
 } from './canonical-json.js'
 import {RealClock, type Clock} from './clock.js'
 import {
-  hostCodexHomeValue,
-  hostPersistentCodexHomeFromConfig,
+  hostHomeValue,
+  hostPersistentHomeFromConfig,
+  hostWorkspaceFromConfig,
   hostWorkspacePath,
-  type HostCodexHome,
+  type HostStateHome,
   type HostWorkspace,
-} from './executors/codex/process-owner.js'
+} from './host-paths.js'
 import type {NativeFileLockAuthority, NativeFileLockResult} from './native-file-lock.js'
 import {isPythonSpace, isWellFormed, stripLikePython} from './python-text.js'
 import {casefoldLikePython} from './unicode-casefold.js'
@@ -265,7 +266,7 @@ type DurabilityStep =
   | 'dir_fsync'
   | 'windows_metadata_commit'
 
-export interface CodexProjectStoreOptions {
+export interface ProjectStoreOptions {
   readonly stateRoot: HostProjectRoot
   readonly managedRoot: HostManagedProjectRoot
   readonly nativeLocks: NativeFileLockAuthority
@@ -330,7 +331,7 @@ export function hostManagedProjectRootForTest(
   return brandManagedProjectRoot(requireManagedProjectRoot(configured, platform))
 }
 
-export class CodexProjectStore {
+export class ProjectStore {
   readonly #stateRoot: string
   readonly #managedRoot: string
   readonly #nativeLocks: NativeFileLockAuthority
@@ -356,7 +357,7 @@ export class CodexProjectStore {
   #ownerLock: HeldLock | null = null
   #closePromise: Promise<void> | null = null
 
-  private constructor(options: CodexProjectStoreOptions) {
+  private constructor(options: ProjectStoreOptions) {
     this.#stateRoot = projectRootPath(options.stateRoot)
     this.#managedRoot = managedProjectRootPath(options.managedRoot)
     this.#nativeLocks = options.nativeLocks
@@ -370,8 +371,8 @@ export class CodexProjectStore {
     this.#platform = options.platform ?? process.platform
   }
 
-  static async open(options: CodexProjectStoreOptions): Promise<CodexProjectStore> {
-    const store = new CodexProjectStore(options)
+  static async open(options: ProjectStoreOptions): Promise<ProjectStore> {
+    const store = new ProjectStore(options)
     try {
       await store.#retainStateRoot()
       await store.#retainManagedRoot()
@@ -379,7 +380,7 @@ export class CodexProjectStore {
       if (store.#recoverStarting) {
         store.#ownerLock = await store.#openAndAcquireLock(PROJECT_OWNER_LOCK_FILE)
         await store.#revalidateStateRoot()
-        await store.#migrateLegacyCodexHomes(store.#requireStateRootHandle())
+        await store.#migrateLegacyHomes(store.#requireStateRootHandle())
       }
       return store
     } catch (error) {
@@ -1289,7 +1290,6 @@ export class CodexProjectStore {
         )
       }
       this.#pinWorkspaceIdentity(workspaceId, binding.identity)
-      const {hostWorkspaceFromConfig} = await import('./executors/codex/process-owner.js')
       return [hostWorkspaceFromConfig(binding.canonical, [binding.canonical]), false]
     })
   }
@@ -1342,7 +1342,6 @@ export class CodexProjectStore {
         previousActiveSessionId,
         resumedSessionId: sessionId,
       })
-      const {hostWorkspaceFromConfig} = await import('./executors/codex/process-owner.js')
       return [Object.freeze({
         workspace: hostWorkspaceFromConfig(binding.canonical, [binding.canonical]),
         rollback,
@@ -1588,13 +1587,13 @@ export class CodexProjectStore {
     })
   }
 
-  async persistentHome(workspaceId: string): Promise<HostCodexHome> {
+  async persistentHome(workspaceId: string): Promise<HostStateHome> {
     return await this.#transaction(async state => {
       const workspace = state.workspaces.get(workspaceId)
       if (workspace === undefined) throw new ProjectStateError('workspace_not_found')
       await this.#revalidateStateRoot()
       const stateRoot = this.#requireStateRootHandle()
-      await this.#migrateLegacyCodexHomes(stateRoot)
+      await this.#migrateLegacyHomes(stateRoot)
       const homesRoot = join(this.#stateRoot, PROJECT_CODEX_HOMES_DIRECTORY)
       const home = join(homesRoot, workspace.codex_home_key)
       if (!isDirectChild(homesRoot, home)) throw new ProjectStateError('workspace_boundary_changed')
@@ -1628,8 +1627,8 @@ export class CodexProjectStore {
           workspaceHome.file,
           'state_permissions',
         )
-        const branded = hostPersistentCodexHomeFromConfig(canonical, [canonical])
-        if (hostCodexHomeValue(branded).path !== canonical) {
+        const branded = hostPersistentHomeFromConfig(canonical, [canonical])
+        if (hostHomeValue(branded).path !== canonical) {
           throw new ProjectStateError('state_permissions')
         }
         this.#requireMatchesAt(
@@ -2124,7 +2123,7 @@ export class CodexProjectStore {
     if (this.#maintenanceFault?.(step) === true) throw new MaintenanceFaultError(step)
   }
 
-  async #migrateLegacyCodexHomes(root: FileHandle): Promise<void> {
+  async #migrateLegacyHomes(root: FileHandle): Promise<void> {
     const current = this.#lookupAt(root, PROJECT_CODEX_HOMES_DIRECTORY, 'state_permissions')
     if (current.status === 'ok') return
     if (current.status !== 'missing') throw new ProjectStateError('state_permissions')

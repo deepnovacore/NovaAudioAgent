@@ -296,7 +296,7 @@ test('RealtimeService alone publishes selected Codex idle-running-idle with no d
   const realtime = buildRealtimeAssembly({
     core,
     provider: new IdleProvider(),
-    onCodexState: state => { states.push(state) },
+    onExecutorState: state => { states.push(state) },
     onDiagnostic: () => undefined,
     idFactory: (() => {
       let next = 0
@@ -318,7 +318,7 @@ test('RealtimeService alone publishes selected Codex idle-running-idle with no d
     assert.equal(accepted.accepted, true)
     await waitNamed('Codex state settlement', () => states.at(-1) === 'idle' && states.includes('running'))
     assert.deepEqual(states, ['idle', 'running', 'idle'])
-    assert.equal(realtime.service.codexState, 'idle')
+    assert.equal(realtime.service.executorState, 'idle')
   } finally {
     await realtime.stop()
   }
@@ -337,7 +337,7 @@ test('RealtimeService suppresses duplicate running state for busy and unselected
   const realtime = buildRealtimeAssembly({
     core,
     provider: new IdleProvider(),
-    onCodexState: state => { states.push(state) },
+    onExecutorState: state => { states.push(state) },
     onDiagnostic: () => undefined,
   })
   await realtime.start()

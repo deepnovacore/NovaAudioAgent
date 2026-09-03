@@ -2,7 +2,7 @@ import {intakeModels} from './realtime/intake-model.js'
 /** Production Qwen composition above the provider-neutral realtime owner. */
 
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
-import type {CodexAssemblyResource} from './executors/codex/factory.js'
+import type {CodingExecutorResource} from './coding-executor.js'
 import { RealClock } from './clock.js'
 import {
   DASHSCOPE_COMPATIBLE_BASE_URL,
@@ -42,7 +42,7 @@ export interface BuildQwenRealtimeAssemblyOptions
   /** Host-selected provider; integrated registries never receive host composition options. */
   readonly qwenProvider?: RealtimeProvider
   /** Host-resolved Codex resource; never derived from provider or renderer input. */
-  readonly codexResource?: CodexAssemblyResource
+  readonly codexResource?: CodingExecutorResource
 }
 
 /** Narrow provider-only form used by the integrated provider registry. */
@@ -52,7 +52,7 @@ export interface BuildQwenRealtimeProviderOptions {
   readonly idFactory: () => string
   readonly now: () => number
   readonly workspaceGraphPolicy: boolean
-  readonly codexApproval: boolean
+  readonly executorApproval: boolean
 }
 
 /**
@@ -80,15 +80,15 @@ export function buildQwenRealtimeAssembly(
       idFactory: options.idFactory,
       now: options.now,
       workspaceGraphPolicy: options.workspaceGraphPolicy,
-      codexApproval: options.codexApproval,
+      executorApproval: options.executorApproval,
     })
   }
-  const codexSelected = options.settings.executors.includes('codex')
-  if (codexSelected !== (options.codexResource !== undefined)) {
-    throw new AssemblyError('realtime Codex resource selection mismatch')
-  }
+  if (
+    options.codexResource !== undefined
+    && !options.settings.executors.includes(options.codexResource.adapter.manifest.name)
+  ) throw new AssemblyError('realtime coding resource selection mismatch')
   if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {
-    throw new AssemblyError('realtime Codex project mode mismatch')
+    throw new AssemblyError('realtime coding resource project mode mismatch')
   }
   const qwen = options.qwenConfig ?? requireQwenRealtime(options.settings)
   const clock = options.clock ?? new RealClock()
@@ -129,7 +129,7 @@ export function buildQwenRealtimeAssembly(
     idFactory: () => ids.next('qwen'),
     now: () => clock.now(),
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
-    codexApproval: options.codexResource?.approvalController !== null
+    executorApproval: options.codexResource?.approvalController !== null
       && options.codexResource?.approvalController !== undefined,
   })
   const workspaceGraph = workspaceGraphServiceFromSettings(
@@ -159,7 +159,7 @@ export function buildQwenRealtimeAssembly(
     ...(options.onSpoken === undefined ? {} : {onSpoken: options.onSpoken}),
     ...(options.onDelivery === undefined ? {} : {onDelivery: options.onDelivery}),
     ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
-    ...(options.onCodexState === undefined ? {} : {onCodexState: options.onCodexState}),
+    ...(options.onExecutorState === undefined ? {} : {onExecutorState: options.onExecutorState}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),

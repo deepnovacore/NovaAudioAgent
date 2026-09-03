@@ -13,7 +13,7 @@
 import { z } from 'zod'
 import type { JsonValue } from './events.js'
 import type { StructuredTarget } from './memory.js'
-import type { ExecutorManifest, OpSpec } from './ports.js'
+import type {ExecutorManifest, ExecutorRole, OpSpec} from './ports.js'
 import {stripLikePython} from './python-text.js'
 
 const WIRE_PART = /^[A-Za-z0-9_-]+$/u
@@ -65,6 +65,8 @@ export type ToolBinding = z.infer<typeof toolBindingSchema>
 export interface CompiledTools {
   readonly schemas: readonly Readonly<Record<string, JsonValue>>[]
   readonly bindings: ReadonlyMap<string, ToolBinding>
+  /** Executor name -> declared roles, so callers can gate tools by role without the manifests. */
+  readonly executor_roles: ReadonlyMap<string, readonly ExecutorRole[]>
 }
 
 export class ToolSchemaError extends Error {
@@ -150,7 +152,11 @@ export function compileToolSchema(
     }
   }
 
-  return {schemas, bindings}
+  return {
+    schemas,
+    bindings,
+    executor_roles: new Map(manifests.map(manifest => [manifest.name, manifest.roles])),
+  }
 }
 
 function compileOp(manifest: ExecutorManifest, op: OpSpec): {
@@ -168,9 +174,7 @@ function compileOp(manifest: ExecutorManifest, op: OpSpec): {
   }
 
   const parameters: Record<string, JsonValue> = structuredClone(op.params)
-  const hostHandledConfirmation = manifest.name === 'codex'
-    && (op.name === 'confirm_project_action' || op.name === 'confirm_codex_approval')
-  prepareObjectSchema(parameters, `${manifest.name}.${op.name}`, !hostHandledConfirmation)
+  prepareObjectSchema(parameters, `${manifest.name}.${op.name}`, !op.host_confirmation)
 
   return {
     wireName,

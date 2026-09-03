@@ -20,9 +20,10 @@
 import {
   DesktopProtocolError,
   captionMessage,
-  codexApprovalMessage,
-  codexProjectMessage,
-  codexStateMessage,
+  executorApprovalMessage,
+  projectStateMessage,
+  executorStateMessage,
+  type ExecutorIdentity,
   decodeAudioFrame,
   encodeAudioFrame,
   playbackAlertMessage,
@@ -40,8 +41,8 @@ import {
 } from './desktop.js'
 import type { PlaybackFrame } from './playback.js'
 import type { CaptionFrame } from './realtime/session-state.js'
-import type { CodexState } from './realtime/service-state.js'
-import type {CodexApprovalView} from './executors/codex/approval.js'
+import type { ExecutorState } from './realtime/service-state.js'
+import type {ApprovalView as ExecutorApprovalView} from './approval-port.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 import {executorProgressSchema, executorResultSchema, type ExecutorProgress, type ExecutorResult, type ProgressMode} from './desktop-progress.js'
@@ -58,7 +59,7 @@ export interface DesktopCommand {
     | 'playback_done'
     | 'playback_cleared'
     | 'project_confirmation_decision'
-    | 'codex_approval_decision'
+    | 'executor_approval_decision'
     | 'playback_telemetry'
     | 'playback_telemetry_rejected'
     | 'clock_pong'
@@ -68,7 +69,7 @@ export interface DesktopCommand {
 
 /** The service surface the bridge drives. Narrow: six calls and one read. */
 export interface BridgeService {
-  readonly codexState: CodexState
+  readonly executorState: ExecutorState
   sendAudio(pcm: Uint8Array): Promise<void>
   localSpeechOnset(speechId: string): Promise<void>
   playbackStarted(utteranceId: string, generationEpoch: number): boolean
@@ -81,7 +82,7 @@ export interface BridgeService {
   playbackDisconnected(options?: {readonly resumeDelivery?: boolean}): Promise<boolean>
   playbackCleared(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean
   projectConfirmationDecision(proposalId: string, confirmed: boolean): Promise<void>
-  codexApprovalDecision(approvalId: string, approved: boolean, scope?: 'session'): boolean
+  executorApprovalDecision(approvalId: string, approved: boolean, scope?: 'session'): boolean
 }
 
 export interface DesktopBridgeOptions {
@@ -93,7 +94,9 @@ export interface DesktopBridgeOptions {
   readonly clock?: Clock
   readonly telemetry?: RealtimeTelemetry
   readonly projectView?: PublicProjectView
-  readonly approvalView?: CodexApprovalView
+  readonly approvalView?: ExecutorApprovalView
+  /** The coding executor whose state and approvals this bridge relays; absent when none is configured. */
+  readonly executor?: ExecutorIdentity | null
   readonly progressBubbles?: ProgressMode
   /** Wake the composition-owned sender after, and only after, work becomes available. */
   readonly onOutboundAvailable?: () => void
@@ -123,9 +126,10 @@ export class DesktopSocketBridge {
   /** Clears and alerts. Drained before `#outbound` so a clear overtakes the audio it cancels. */
   readonly #preemptOutbound: DesktopDelivery[] = []
   /** Single-slot: only the latest state matters, and a backlog of stale ones is worse than none. */
-  #codexOutbound: CodexState | null = null
+  #executorOutbound: ExecutorState | null = null
+  readonly #executor: ExecutorIdentity | null
   #projectOutbound: PublicProjectView | null = null
-  #approvalOutbound: CodexApprovalView | null = null
+  #approvalOutbound: ExecutorApprovalView | null = null
   readonly #progressMode: ProgressMode
   readonly #progressSummaries = new Map<string, string>()
   #lastResult: ExecutorResult | undefined
@@ -147,12 +151,12 @@ export class DesktopSocketBridge {
   #claimed = false
   #authenticated = false
   #everAuthenticated = false
-  #codexState: CodexState
-  #lastCodexStateSent: CodexState | null = null
+  #executorState: ExecutorState
+  #lastExecutorStateSent: ExecutorState | null = null
   #projectView: PublicProjectView | null
   #lastProjectViewSent: PublicProjectView | null = null
-  #approvalView: CodexApprovalView | null
-  #lastApprovalViewSent: CodexApprovalView | null = null
+  #approvalView: ExecutorApprovalView | null
+  #lastApprovalViewSent: ExecutorApprovalView | null = null
   #uplinkFrames = 0
   #uplinkBytes = 0
   #uplinkFlushedAt: number
@@ -174,10 +178,11 @@ export class DesktopSocketBridge {
     // Telemetry needs a clock to be worth anything: every sample it takes is a duration.
     this.#telemetry = options.clock === undefined ? undefined : options.telemetry
     this.#onOutboundAvailable = options.onOutboundAvailable
-    this.#codexState = options.service.codexState
+    this.#executorState = options.service.executorState
     this.#projectView = options.projectView ?? null
     this.#approvalView = options.approvalView ?? null
     this.#progressMode = options.progressBubbles ?? 'milestones'
+    this.#executor = options.executor ?? null
     this.#uplinkFlushedAt = options.clock?.now() ?? 0
   }
 
@@ -265,22 +270,22 @@ export class DesktopSocketBridge {
    * in-flight send is cancelled: the renderer wants the *current* state, and finishing a send of the
    * previous one first would show something already untrue.
    */
-  onCodexState(state: CodexState): void {
-    codexStateMessage(state)
-    if (state === this.#codexState) return
-    this.#codexState = state
-    this.#syncCodexStateDelivery()
+  onExecutorState(state: ExecutorState): void {
+    if (this.#executor !== null) executorStateMessage(state, this.#executor)
+    if (state === this.#executorState) return
+    this.#executorState = state
+    this.#syncExecutorStateDelivery()
   }
 
-  onCodexProject(view: PublicProjectView): void {
-    codexProjectMessage(view)
+  onProjectView(view: PublicProjectView): void {
+    projectStateMessage(view)
     if (sameProjectView(view, this.#projectView)) return
     this.#projectView = view
     this.#syncProjectDelivery()
   }
 
-  onCodexApproval(view: CodexApprovalView): void {
-    codexApprovalMessage(view, this.#clock?.now() ?? 0)
+  onExecutorApproval(view: ExecutorApprovalView): void {
+    if (this.#executor !== null) executorApprovalMessage(view, this.#clock?.now() ?? 0, this.#executor)
     if (sameApprovalView(view, this.#approvalView)) return
     this.#approvalView = view
     this.#syncApprovalDelivery()
@@ -343,10 +348,10 @@ export class DesktopSocketBridge {
     this.#fencePlaybackForConnectionBoundary()
     // The next renderer has been told nothing, so both latches reset -- otherwise it would never
     // receive the current state, having "already been sent" it.
-    this.#lastCodexStateSent = null
+    this.#lastExecutorStateSent = null
     this.#lastProjectViewSent = null
     this.#lastApprovalViewSent = null
-    this.#codexOutbound = null
+    this.#executorOutbound = null
     this.#projectOutbound = null
     this.#approvalOutbound = null
     this.#progressSummaries.clear()
@@ -359,7 +364,7 @@ export class DesktopSocketBridge {
     }
     this.#authenticated = true
     this.#everAuthenticated = true
-    this.#syncCodexStateDelivery()
+    this.#syncExecutorStateDelivery()
     this.#syncProjectDelivery()
     this.#syncApprovalDelivery()
     if (this.#lastResult !== undefined) {
@@ -486,10 +491,11 @@ export class DesktopSocketBridge {
         )
         return
       }
-      case 'codex_approval_decision': {
+      case 'executor_approval_decision': {
         const approvalId = command.payload.approval_id
-        if (typeof approvalId !== 'string') return
-        this.#service.codexApprovalDecision(approvalId, command.payload.approved === true, command.payload.scope === 'session' ? 'session' : undefined)
+        // A decision names its executor; one that names another executor is not ours to relay.
+        if (typeof approvalId !== 'string' || command.payload.executor !== this.#executor?.executor) return
+        this.#service.executorApprovalDecision(approvalId, command.payload.approved === true, command.payload.scope === 'session' ? 'session' : undefined)
         return
       }
       default:
@@ -521,13 +527,13 @@ export class DesktopSocketBridge {
       if (delivery === undefined) break
       if (!this.#isFencedPlaybackMessage(delivery.frame)) return delivery
     }
-    if (this.#codexOutbound !== null) {
-      const state = this.#codexOutbound
-      this.#codexOutbound = null
-      if (state !== this.#lastCodexStateSent) {
-        this.#lastCodexStateSent = state
-        this.#syncCodexStateDelivery()
-        return {frame: codexStateMessage(state), policy: 'latest'}
+    if (this.#executorOutbound !== null) {
+      const state = this.#executorOutbound
+      this.#executorOutbound = null
+      if (state !== this.#lastExecutorStateSent) {
+        this.#lastExecutorStateSent = state
+        this.#syncExecutorStateDelivery()
+        if (this.#executor !== null) return {frame: executorStateMessage(state, this.#executor), policy: 'latest'}
       }
     }
     if (this.#projectOutbound !== null) {
@@ -536,7 +542,7 @@ export class DesktopSocketBridge {
       if (!sameProjectView(view, this.#lastProjectViewSent)) {
         this.#lastProjectViewSent = view
         this.#syncProjectDelivery()
-        return {frame: codexProjectMessage(view), policy: 'latest'}
+        return {frame: projectStateMessage(view), policy: 'latest'}
       }
     }
     if (this.#approvalOutbound !== null) {
@@ -545,7 +551,9 @@ export class DesktopSocketBridge {
       if (!sameApprovalView(view, this.#lastApprovalViewSent)) {
         this.#lastApprovalViewSent = view
         this.#syncApprovalDelivery()
-        return {frame: codexApprovalMessage(view, this.#clock?.now() ?? 0), policy: 'latest'}
+        if (this.#executor !== null) {
+          return {frame: executorApprovalMessage(view, this.#clock?.now() ?? 0, this.#executor), policy: 'latest'}
+        }
       }
     }
     if (this.#authenticated && this.#resultPending) {
@@ -627,12 +635,12 @@ export class DesktopSocketBridge {
   }
 
   /** Re-arm the single slot if the renderer's state is still behind. */
-  #syncCodexStateDelivery(): void {
-    const next = this.#authenticated && this.#codexState !== this.#lastCodexStateSent
-      ? this.#codexState
+  #syncExecutorStateDelivery(): void {
+    const next = this.#authenticated && this.#executorState !== this.#lastExecutorStateSent
+      ? this.#executorState
       : null
-    if (next === this.#codexOutbound) return
-    this.#codexOutbound = next
+    if (next === this.#executorOutbound) return
+    this.#executorOutbound = next
     if (next !== null) this.#onOutboundAvailable?.()
   }
 
@@ -722,14 +730,14 @@ export class DesktopSocketBridge {
   get pendingCounts(): {
     readonly outbound: number
     readonly preempt: number
-    readonly codex: boolean
+    readonly executor: boolean
     readonly project: boolean
     readonly approval: boolean
   } {
     return {
       outbound: this.#outbound.length,
       preempt: this.#preemptOutbound.length,
-      codex: this.#codexOutbound !== null,
+      executor: this.#executorOutbound !== null,
       project: this.#projectOutbound !== null,
       approval: this.#approvalOutbound !== null,
     }
@@ -897,20 +905,21 @@ export function parseClientMessage(
       payload: {proposal_id: proposalId, confirmed: value.confirmed},
     }
   }
-  if (kind === 'codex.approval_decision') {
-    if (Object.keys(value).sort().join(',') !== (value.scope === undefined ? 'approval_id,approved,type' : 'approval_id,approved,scope,type')) {
+  if (kind === 'executor.approval_decision') {
+    if (Object.keys(value).sort().join(',') !== (value.scope === undefined ? 'approval_id,approved,executor,type' : 'approval_id,approved,executor,scope,type')) {
       throw new DesktopProtocolError('desktop control frame type is unsupported')
     }
     if (typeof value.approved !== 'boolean' || value.scope !== undefined && (value.scope !== 'session' || !value.approved)) {
-      throw new DesktopProtocolError('desktop Codex approval decision is invalid')
+      throw new DesktopProtocolError('desktop executor approval decision is invalid')
     }
+    const executor = readIdentifier(value, 'executor')
     const approvalId = readIdentifier(value, 'approval_id')
     if (codePointLengthLikePython(approvalId) > 128) {
-      throw new DesktopProtocolError('desktop Codex approval decision is invalid')
+      throw new DesktopProtocolError('desktop executor approval decision is invalid')
     }
     return {
-      kind: 'codex_approval_decision',
-      payload: {approval_id: approvalId, approved: value.approved, ...(value.scope === undefined ? {} : {scope: value.scope})},
+      kind: 'executor_approval_decision',
+      payload: {executor, approval_id: approvalId, approved: value.approved, ...(value.scope === undefined ? {} : {scope: value.scope})},
     }
   }
   if (kind === 'clock.pong') {
@@ -965,10 +974,10 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
         kind: 'project_confirmation_decision',
         payload: {proposal_id: control.proposal_id, confirmed: control.confirmed},
       }
-    case 'codex.approval_decision':
+    case 'executor.approval_decision':
       return {
-        kind: 'codex_approval_decision',
-        payload: {approval_id: control.approval_id, approved: control.approved, ...(control.scope === undefined ? {} : {scope: control.scope})},
+        kind: 'executor_approval_decision',
+        payload: {executor: control.executor, approval_id: control.approval_id, approved: control.approved, ...(control.scope === undefined ? {} : {scope: control.scope})},
       }
     case 'clock.pong':
       return {
@@ -1052,8 +1061,8 @@ function sameProjectView(
 }
 
 function sameApprovalView(
-  left: CodexApprovalView | null,
-  right: CodexApprovalView | null,
+  left: ExecutorApprovalView | null,
+  right: ExecutorApprovalView | null,
 ): boolean {
   if (left === null || right === null) return left === right
   return left.pending_approval === right.pending_approval

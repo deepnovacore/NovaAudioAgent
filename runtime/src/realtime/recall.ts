@@ -27,7 +27,7 @@ import {
   type MemoryRef,
 } from '../memory.js'
 import { normalizeAndLowerPinned } from '../unicode-normalize.js'
-import { safeMemoryEvidence } from './evidence.js'
+import { safeMemoryEvidence, type CodingChannel } from './evidence.js'
 
 type Trust = z.infer<typeof trustSchema>
 type Outcome = z.infer<typeof outcomeSchema>
@@ -90,6 +90,8 @@ export function compileMemoryRecall(
     readonly query: string
     readonly scope: RecallScope
     readonly beforeRef: MemoryRef
+    /** Coding-role channel whose items render with the coding speech view. */
+    readonly coding?: CodingChannel | null
   },
 ): RecallView {
   const query = stripLikePython(options.query)
@@ -112,7 +114,7 @@ export function compileMemoryRecall(
     // evidence layer has already judged safe to show. That layer returns null rather than an empty
     // string for everything it rejects, so null is the whole condition -- the oracle's
     // `if not evidence` reads as a falsy check but can only ever see None here.
-    const evidence = safeMemoryEvidence(item)
+    const evidence = safeMemoryEvidence(item, options.coding ?? null)
     if (evidence === null) continue
     const itemTokens = lexicalTokens(evidence)
     let score = 0

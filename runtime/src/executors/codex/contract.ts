@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto'
-import type {ExecutorProgress} from '../../causal-runtime.js'
+import type {ExecutorAdmission, ExecutorProgress} from '../../causal-runtime.js'
 import type {JsonValue} from '../../events.js'
 import {snapshotJsonRecord} from './safe-json.js'
 import {validProgressSummary} from '../../events.js'
@@ -37,6 +37,7 @@ const RUN: OpSpec = {
   verifies: [],
   sensitive_params: ['work_order'],
   sync_result: false,
+  host_confirmation: false,
 }
 
 const STATUS: OpSpec = {
@@ -49,6 +50,7 @@ const STATUS: OpSpec = {
   verifies: [],
   sensitive_params: [],
   sync_result: true,
+  host_confirmation: false,
 }
 
 const STEER: OpSpec = {
@@ -66,6 +68,7 @@ const STEER: OpSpec = {
   verifies: [],
   sensitive_params: ['instruction'],
   sync_result: false,
+  host_confirmation: false,
 }
 
 const PROJECT_FIELDS: Readonly<Record<string, Readonly<Record<string, JsonValue>>>> = {
@@ -143,6 +146,7 @@ const PROJECT: OpSpec = {
   verifies: [],
   sensitive_params: ['work_order'],
   sync_result: false,
+  host_confirmation: false,
 }
 
 const CONFIRM_PROJECT_ACTION: OpSpec = {
@@ -166,6 +170,7 @@ const CONFIRM_PROJECT_ACTION: OpSpec = {
   verifies: [],
   sensitive_params: [],
   sync_result: true,
+  host_confirmation: true,
 }
 
 const CONFIRM_CODEX_APPROVAL: OpSpec = {
@@ -191,10 +196,18 @@ const CONFIRM_CODEX_APPROVAL: OpSpec = {
   verifies: [],
   sensitive_params: [],
   sync_result: true,
+  host_confirmation: true,
 }
 
 function manifest(ops: readonly OpSpec[]): ExecutorManifest {
-  return deepFreeze(executorManifestSchema.parse({name: 'codex', ops, policy: CODEX_POLICY}))
+  return deepFreeze(executorManifestSchema.parse({
+    name: 'codex',
+    display_name: 'Codex',
+    roles: ['coding'],
+    approvals: ops.includes(CONFIRM_CODEX_APPROVAL),
+    ops,
+    policy: CODEX_POLICY,
+  }))
 }
 
 export const CODEX_BASE_MANIFEST = manifest([RUN, STATUS])
@@ -205,6 +218,31 @@ export const CODEX_PROJECT_MANIFEST = manifest([
 export const CODEX_PROJECT_APPROVAL_MANIFEST = manifest([
   PROJECT, CONFIRM_PROJECT_ACTION, CONFIRM_CODEX_APPROVAL, STEER, STATUS,
 ])
+
+/** Project actions that hold the protocol open for their Handoff; only `start_session` is delegated work. */
+const SYNCHRONOUS_PROJECT_ACTIONS: ReadonlySet<string> = new Set([
+  'list_workspaces',
+  'create_workspace',
+  'select_workspace',
+  'list_sessions',
+  'resume_session',
+])
+
+/** Host admission for the multiplexed `project` op; `null` for every other op. */
+export function admitCodexProjectRequest(
+  op: string,
+  request: Readonly<Record<string, JsonValue>>,
+): ExecutorAdmission | null {
+  if (op !== 'project') return null
+  const validated = validateCodexRequest('project', 'project', request)
+  if (!validated.ok) return {ok: false}
+  const action = validated.value.action
+  return {
+    ok: true,
+    request: validated.value as Readonly<Record<string, JsonValue>>,
+    sync_result: typeof action === 'string' && SYNCHRONOUS_PROJECT_ACTIONS.has(action),
+  }
+}
 
 export type CodexVariant = 'base' | 'live' | 'project'
 export type CodexRequestValidation =

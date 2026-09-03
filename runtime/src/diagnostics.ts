@@ -68,9 +68,14 @@ export interface DiagnosticReport {
   readonly checks: readonly DiagnosticCheck[]
 }
 
+/** One executor package's settings check; `null` when the executor is not selected. */
+export type ExecutorDiagnostic = (settings: Settings) => DiagnosticCheck | null
+
 export function buildDiagnosticReport(options: {
   readonly environment: NodeJS.ProcessEnv
   readonly nodeVersion: string
+  /** Supplied by the composition root from the executor registry; core knows no executor. */
+  readonly executorChecks?: readonly ExecutorDiagnostic[]
 }): Promise<DiagnosticReport> {
   const checks: DiagnosticCheck[] = [nodeVersionCheck(options.nodeVersion)]
   try {
@@ -100,7 +105,7 @@ export function buildDiagnosticReport(options: {
   }
 
   checks.push(providerCheck(settings))
-  checks.push(executorCheck(settings))
+  checks.push(executorCheck(settings, options.executorChecks ?? []))
   checks.push(searchCheck(settings))
   try {
     checks.push(cameraCheck(options.environment))
@@ -138,12 +143,10 @@ function providerCheck(settings: Settings): DiagnosticCheck {
   }
 }
 
-function executorCheck(settings: Settings): DiagnosticCheck {
-  if (settings.executors.includes('codex')) {
-    const workspace = stripLikePython(settings.codex_workspace ?? '')
-    if (workspace === '') {
-      return check('executors.contract', 'fail', 'executor_configuration_invalid')
-    }
+function executorCheck(settings: Settings, executorChecks: readonly ExecutorDiagnostic[]): DiagnosticCheck {
+  for (const diagnose of executorChecks) {
+    const result = diagnose(settings)
+    if (result !== null && result.status === 'fail') return result
   }
   return check('executors.contract', 'pass', 'executor_configuration_valid')
 }

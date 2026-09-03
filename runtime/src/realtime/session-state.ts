@@ -513,7 +513,7 @@ export class RealtimeSessionState {
     update: {
       readonly summary: string
       readonly state: DelegateState
-      readonly channel?: string
+      readonly channel: string
       readonly progress_summary?: string | null
       readonly internal_activity?: number
       readonly elapsed?: number
@@ -529,7 +529,7 @@ export class RealtimeSessionState {
     this.#delegates.set(delegateId, {
       summary: update.summary,
       state: delegateStateSchema.parse(update.state),
-      channel: update.channel ?? 'codex',
+      channel: update.channel,
       progress_summary: progress,
       internal_activity: update.internal_activity ?? previous?.internal_activity ?? 0,
       elapsed: update.elapsed ?? previous?.elapsed ?? 0,

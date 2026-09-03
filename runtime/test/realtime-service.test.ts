@@ -20,6 +20,7 @@ import { VirtualClock } from '../src/clock.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
+  admitCodexProjectRequest,
 } from '../src/executors/codex/contract.js'
 import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
@@ -41,7 +42,7 @@ import {
   ProjectConfirmationController,
   type ConfirmedProjectOperation,
   type ProjectConfirmationView,
-} from '../src/realtime/project-confirmation.js'
+} from '../src/project-confirmation.js'
 import {CodexApprovalController, type CodexApprovalResolution} from '../src/executors/codex/approval.js'
 import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
@@ -643,7 +644,7 @@ function pipelineService(options: {
   readonly parkProviderEvents?: boolean
   readonly beforeInjectConfirmation?: (item: HostContextItem) => Promise<void>
   readonly beforeCancelResponse?: () => Promise<void>
-  readonly withCodexApproval?: boolean
+  readonly withExecutorApproval?: boolean
   readonly ensureResponseFailure?: boolean
   readonly failReconnect?: boolean
 } = {}): {
@@ -654,13 +655,15 @@ function pipelineService(options: {
   readonly session: RealtimeSession
   readonly clock: VirtualClock
   readonly diagnostics: string[]
-  readonly codexApproval: CodexApprovalController | null
+  readonly executorApproval: CodexApprovalController | null
   readonly telemetry: {readonly kind: string; readonly payload: Readonly<Record<string, JsonValue>>}[]
 } {
-  const manifest = options.withCodexApproval
+  const manifest = options.withExecutorApproval
     ? CODEX_PROJECT_APPROVAL_MANIFEST
     : options.projectTool ? CODEX_PROJECT_MANIFEST : executorManifestSchema.parse({
     name: 'codex',
+    display_name: 'Codex',
+    roles: ['coding'],
     policy: {
       channel: 'codex',
       priority: 50,
@@ -692,7 +695,7 @@ function pipelineService(options: {
   })
   const clock = new VirtualClock()
   const memory = new Memory({policies: [manifest.policy]})
-  const executors = new Map([[manifest.name, {manifest}]])
+  const executors = new Map([[manifest.name, {manifest, admitRequest: admitCodexProjectRequest}]])
   const actions: string[] = []
   const injectedContents: string[] = []
   const injectedItems: HostContextItem[] = []
@@ -703,7 +706,7 @@ function pipelineService(options: {
     idSeq += 1
     return `id-${idSeq}`
   }
-  const codexApproval = options.withCodexApproval === true
+  const executorApproval = options.withExecutorApproval === true
     ? new CodexApprovalController({clock, idFactory: nextId})
     : null
   const playback = new PlaybackRegistry({
@@ -823,7 +826,7 @@ function pipelineService(options: {
       idFactory: nextId,
     }),
     ...(options.intake === undefined ? {} : {intake: options.intake}),
-    ...(codexApproval === null ? {} : {codexApproval}),
+    ...(executorApproval === null ? {} : {executorApproval}),
     idFactory: nextId,
     // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
     // one explicitly set to undefined, and the service's contract is the former.
@@ -835,7 +838,7 @@ function pipelineService(options: {
     },
   })
   return {
-    service, actions, injectedContents, injectedItems, session, clock, diagnostics, codexApproval,
+    service, actions, injectedContents, injectedItems, session, clock, diagnostics, executorApproval,
     telemetry,
   }
 }
@@ -887,7 +890,7 @@ test('a tool call is admitted against the user turn that justifies it', async ()
   assert.equal(admitted[0]!.call_id, 'call-1')
   // The delegate is registered on the session, which is what makes the work visible to the model.
   assert.equal(session.snapshot().active_delegates.length, 1)
-  assert.equal(service.codexState, 'running', 'the renderer is told Codex is working')
+  assert.equal(service.executorState, 'running', 'the renderer is told Codex is working')
 
   // The response ends, so the batch becomes ready and the tool result reaches the provider.
   await service.handleEvent({
@@ -1035,7 +1038,7 @@ test('a runtime rejection is recorded as a refusal the provider can see', async 
   assert.equal(admitted.length, 1)
   assert.equal(admitted[0]!.acceptance.accepted, false)
   assert.equal(admitted[0]!.acceptance.code, 'runtime_rejected')
-  assert.equal(service.codexState, 'idle', 'nothing was dispatched, so nothing is running')
+  assert.equal(service.executorState, 'idle', 'nothing was dispatched, so nothing is running')
 })
 
 test('a replayed user-start cannot put a spent origin back in the queue', async () => {
@@ -1445,6 +1448,7 @@ function projectionService(options: {
   }
   const manifest = executorManifestSchema.parse({
     name: delegate.executor,
+    ...(delegate.executor === 'codex' ? {display_name: 'Codex', roles: ['coding']} : {}),
     policy: {
       channel: delegate.executor,
       priority: options.priority ?? 50,
@@ -4591,7 +4595,7 @@ function offerCodexCommand(
   }, signal)
 }
 
-async function finishCodexApprovalQuestion(service: RealtimeService, responseId: string): Promise<void> {
+async function finishExecutorApprovalQuestion(service: RealtimeService, responseId: string): Promise<void> {
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await service.flushHostItems()
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId})
@@ -4602,7 +4606,7 @@ async function finishCodexApprovalQuestion(service: RealtimeService, responseId:
   await service.localSpeechOnset(`local-onset-${responseId}`)
 }
 
-async function beginCodexApprovalCarrier(
+async function beginExecutorApprovalCarrier(
   service: RealtimeService,
   input: {
     readonly itemId: string | null
@@ -4626,7 +4630,7 @@ async function beginCodexApprovalCarrier(
   })
 }
 
-async function endCodexApprovalSpeech(
+async function endExecutorApprovalSpeech(
   service: RealtimeService,
   responseId: string,
   itemId: string,
@@ -4637,7 +4641,7 @@ async function endCodexApprovalSpeech(
   })
 }
 
-async function emitCodexApprovalFunction(
+async function emitExecutorApprovalFunction(
   service: RealtimeService,
   input: {
     readonly approvalId: string
@@ -4669,19 +4673,19 @@ async function finishProviderResponse(service: RealtimeService, responseId: stri
 }
 
 test('a Codex approval prompt is a neutral host fact with no local command detail', async () => {
-  const {service, codexApproval} = pipelineService({
+  const {service, executorApproval} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id
   assert.ok(approvalId !== undefined)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   const prompt = service.queuedHostItems().find(item => (
-    item.intent.item.event_id === `codex-approval:${approvalId}:requested`
+    item.intent.item.event_id === `approval:${approvalId}:requested`
   ))?.intent.item.content
   assert.notEqual(prompt, undefined)
   assert.deepEqual(JSON.parse(prompt!), {
@@ -4691,7 +4695,7 @@ test('a Codex approval prompt is a neutral host fact with no local command detai
   })
   assert.doesNotMatch(prompt!, /Remove-Item|raw-command|raw-cwd|private/u)
 
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
@@ -4700,53 +4704,53 @@ test('Codex approval confirms provider context before it queues the audible ques
   const contextGate = new Promise<void>(resolve => { releaseContext = resolve })
   let signalContextStarted!: () => void
   const contextStarted = new Promise<void>(resolve => { signalContextStarted = resolve })
-  const {service, codexApproval, actions, telemetry} = pipelineService({
+  const {service, executorApproval, actions, telemetry} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
     beforeInjectConfirmation: item => {
-      if (!item.event_id.startsWith('codex-approval:')) return Promise.resolve()
+      if (!item.event_id.startsWith('approval:')) return Promise.resolve()
       signalContextStarted()
       return contextGate
     },
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
   assert.ok(
-    actions.includes(`inject:codex-approval:${approvalId}:requested`),
+    actions.includes(`inject:approval:${approvalId}:requested`),
     'context injection starts without waiting for the audible delivery queue',
   )
   await contextStarted
 
-  assert.deepEqual(actions.filter(action => action.startsWith('inject:codex-approval:')), [
-    `inject:codex-approval:${approvalId}:requested`,
+  assert.deepEqual(actions.filter(action => action.startsWith('inject:approval:')), [
+    `inject:approval:${approvalId}:requested`,
   ])
   assert.equal(actions.some(action => action.startsWith('create_response:')), false)
   assert.equal(service.queuedHostItems().some(item => (
-    item.intent.item.event_id === `codex-approval:${approvalId}:requested`
+    item.intent.item.event_id === `approval:${approvalId}:requested`
   )), false, 'the question is not eligible before exact context confirmation')
 
   releaseContext()
   await new Promise<void>(resolve => { setImmediate(resolve) })
   assert.deepEqual(
-    telemetry.filter(record => record.kind === 'codex_approval.context'),
-    [{kind: 'codex_approval.context', payload: {session_epoch: 1, outcome: 'ready'}}],
+    telemetry.filter(record => record.kind === 'approval.context'),
+    [{kind: 'approval.context', payload: {session_epoch: 1, outcome: 'ready'}}],
   )
   assert.equal(service.queuedHostItems().some(item => (
-    item.intent.item.event_id === `codex-approval:${approvalId}:requested`
+    item.intent.item.event_id === `approval:${approvalId}:requested`
   )), true)
   await service.flushHostItems()
   assert.equal(
-    actions.filter(action => action === `inject:codex-approval:${approvalId}:requested`).length,
+    actions.filter(action => action === `inject:approval:${approvalId}:requested`).length,
     1,
     'audible delivery reuses the already-injected context item',
   )
   assert.equal(actions.filter(action => action === 'create_response:host_fact').length, 1)
 
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
@@ -4761,11 +4765,11 @@ test('unconfirmed Codex approval context disables voice and releases one existin
         settleContext = () => { resolve(false) }
         rejectContext = reject
       })
-      const {service, codexApproval, actions, session, telemetry} = pipelineService({
+      const {service, executorApproval, actions, session, telemetry} = pipelineService({
         projectTool: true,
-        withCodexApproval: true,
+        withExecutorApproval: true,
       })
-      assert.ok(codexApproval !== null)
+      assert.ok(executorApproval !== null)
       let contextAttempts = 0
       session.injectHostContext = () => {
         contextAttempts += 1
@@ -4778,8 +4782,8 @@ test('unconfirmed Codex approval context disables voice and releases one existin
         semanticEventId: `background:context-${outcome}`,
       })
 
-      const waiting = offerCodexCommand(codexApproval)
-      const approvalId = codexApproval.view.pending_approval_id!
+      const waiting = offerCodexCommand(executorApproval)
+      const approvalId = executorApproval.view.pending_approval_id!
       await contextStarted
       await service.flushHostItems()
       assert.equal(
@@ -4802,18 +4806,18 @@ test('unconfirmed Codex approval context disables voice and releases one existin
       }
       await new Promise<void>(resolve => { setImmediate(resolve) })
       assert.deepEqual(
-        telemetry.filter(record => record.kind === 'codex_approval.context'),
+        telemetry.filter(record => record.kind === 'approval.context'),
         [{
-          kind: 'codex_approval.context',
+          kind: 'approval.context',
           payload: {session_epoch: 1, outcome: 'failed'},
         }],
       )
       await new Promise<void>(resolve => { setImmediate(resolve) })
 
-      assert.equal(codexApproval.pending, true, 'renderer authority remains clickable')
+      assert.equal(executorApproval.pending, true, 'renderer authority remains clickable')
       assert.equal(contextAttempts, 1, 'a failed or uncertain context injection is never retried')
       assert.equal(service.queuedHostItems().some(item => (
-        item.intent.item.event_id.startsWith(`codex-approval:${approvalId}:`)
+        item.intent.item.event_id.startsWith(`approval:${approvalId}:`)
       )), false, 'no audible approval question survives the failed context')
       assert.equal(actions.some(action => action.startsWith('create_response:')), false)
 
@@ -4824,12 +4828,12 @@ test('unconfirmed Codex approval context disables voice and releases one existin
         1,
         'the existing semantic acknowledgement is released exactly once',
       )
-      assert.equal(service.codexApprovalDecision(approvalId, false), true)
+      assert.equal(service.executorApprovalDecision(approvalId, false), true)
       assert.deepEqual(await waiting, {decision: 'decline'})
       assert.deepEqual(
-        telemetry.filter(record => record.kind === 'codex_approval.decision'),
+        telemetry.filter(record => record.kind === 'approval.decision'),
         [{
-          kind: 'codex_approval.decision',
+          kind: 'approval.decision',
           payload: {session_epoch: 1, source: 'renderer', outcome: 'refused'},
         }],
       )
@@ -4842,40 +4846,40 @@ test('a click that wins context injection prevents a late Codex question and ret
   const contextGate = new Promise<void>(resolve => { releaseContext = resolve })
   let signalContextStarted!: () => void
   const contextStarted = new Promise<void>(resolve => { signalContextStarted = resolve })
-  const {service, codexApproval, actions, telemetry} = pipelineService({
+  const {service, executorApproval, actions, telemetry} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
     beforeInjectConfirmation: item => {
-      if (!item.event_id.startsWith('codex-approval:')) return Promise.resolve()
+      if (!item.event_id.startsWith('approval:')) return Promise.resolve()
       signalContextStarted()
       return contextGate
     },
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
-  assert.ok(actions.includes(`inject:codex-approval:${approvalId}:requested`))
+  assert.ok(actions.includes(`inject:approval:${approvalId}:requested`))
   await contextStarted
-  assert.equal(service.codexApprovalDecision(approvalId, true), true)
+  assert.equal(service.executorApprovalDecision(approvalId, true), true)
   assert.deepEqual(await waiting, {decision: 'accept'})
 
   releaseContext()
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await new Promise<void>(resolve => { setImmediate(resolve) })
   assert.deepEqual(
-    telemetry.filter(record => record.kind === 'codex_approval.context'),
-    [{kind: 'codex_approval.context', payload: {session_epoch: 1, outcome: 'stale'}}],
+    telemetry.filter(record => record.kind === 'approval.context'),
+    [{kind: 'approval.context', payload: {session_epoch: 1, outcome: 'stale'}}],
   )
   assert.equal(service.queuedHostItems().some(item => (
-    item.intent.item.event_id.startsWith(`codex-approval:${approvalId}:`)
+    item.intent.item.event_id.startsWith(`approval:${approvalId}:`)
   )), false)
   assert.equal(actions.some(action => action.startsWith('create_response:')), false)
   assert.equal(
     actions.filter(action => (
-      action === `retire:provider:codex-approval:${approvalId}:requested`
+      action === `retire:provider:approval:${approvalId}:requested`
     )).length,
     1,
   )
@@ -4886,34 +4890,34 @@ test('expiry during Codex context injection prevents late voice authority and qu
   const contextGate = new Promise<void>(resolve => { releaseContext = resolve })
   let signalContextStarted!: () => void
   const contextStarted = new Promise<void>(resolve => { signalContextStarted = resolve })
-  const {service, codexApproval, actions, clock} = pipelineService({
+  const {service, executorApproval, actions, clock} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
     beforeInjectConfirmation: item => {
-      if (!item.event_id.startsWith('codex-approval:')) return Promise.resolve()
+      if (!item.event_id.startsWith('approval:')) return Promise.resolve()
       signalContextStarted()
       return contextGate
     },
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await contextStarted
 
-  clock.advanceTo(codexApproval.view.expires_at!)
+  clock.advanceTo(executorApproval.view.expires_at!)
   assert.deepEqual(await waiting, {decision: 'decline'})
   releaseContext()
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
   assert.equal(service.queuedHostItems().some(item => (
-    item.intent.item.event_id.startsWith(`codex-approval:${approvalId}:`)
+    item.intent.item.event_id.startsWith(`approval:${approvalId}:`)
   )), false)
   assert.equal(actions.some(action => action.startsWith('create_response:')), false)
   assert.equal(
     actions.filter(action => (
-      action === `retire:provider:codex-approval:${approvalId}:requested`
+      action === `retire:provider:approval:${approvalId}:requested`
     )).length,
     1,
   )
@@ -4924,21 +4928,21 @@ test('pre-context speech cannot authorize retroactively and gets one host clarif
   const contextGate = new Promise<void>(resolve => { releaseContext = resolve })
   let signalContextStarted!: () => void
   const contextStarted = new Promise<void>(resolve => { signalContextStarted = resolve })
-  const {service, codexApproval, injectedItems, actions} = pipelineService({
+  const {service, executorApproval, injectedItems, actions} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
     beforeInjectConfirmation: item => {
-      if (!item.event_id.startsWith('codex-approval:')) return Promise.resolve()
+      if (!item.event_id.startsWith('approval:')) return Promise.resolve()
       signalContextStarted()
       return contextGate
     },
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
-  assert.ok(actions.includes(`inject:codex-approval:${approvalId}:requested`))
+  assert.ok(actions.includes(`inject:approval:${approvalId}:requested`))
   await contextStarted
 
   await service.localSpeechOnset('pre-context-local')
@@ -4949,10 +4953,10 @@ test('pre-context speech cannot authorize retroactively and gets one host clarif
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'pre-context-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'pre-context-response', callId: 'pre-context-call',
   })
-  assert.equal(codexApproval.pending, true)
+  assert.equal(executorApproval.pending, true)
   assert.match(
     injectedItems.find(item => item.kind === 'tool_output' && item.call_id === 'pre-context-call')
       ?.content ?? '',
@@ -4967,51 +4971,51 @@ test('pre-context speech cannot authorize retroactively and gets one host clarif
   releaseContext()
   await new Promise<void>(resolve => { setImmediate(resolve) })
   const clarifications = service.queuedHostItems().filter(item => (
-    item.intent.item.event_id === `codex-approval:${approvalId}:clarification`
+    item.intent.item.event_id === `approval:${approvalId}:clarification`
   ))
   assert.equal(clarifications.length, 1)
   assert.equal(clarifications[0]?.intent.item.content, '请明确说同意或拒绝。')
 
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('post-context onset removes only the question and keeps the exact function authority', async () => {
-  const {service, codexApproval, actions} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, actions} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
   assert.equal(service.queuedHostItems().some(item => (
-    item.intent.item.event_id === `codex-approval:${approvalId}:requested`
+    item.intent.item.event_id === `approval:${approvalId}:requested`
   )), true)
 
   await service.localSpeechOnset('post-context-local')
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'post-context-item', responseId: 'post-context-response',
   })
   assert.equal(service.queuedHostItems().some(item => (
-    item.intent.item.event_id === `codex-approval:${approvalId}:requested`
+    item.intent.item.event_id === `approval:${approvalId}:requested`
   )), false)
   assert.equal(
-    actions.includes(`retire:provider:codex-approval:${approvalId}:requested`),
+    actions.includes(`retire:provider:approval:${approvalId}:requested`),
     false,
   )
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'post-context-response',
   })
   assert.deepEqual(await waiting, {decision: 'accept'})
 })
 
 test('a Codex approval prompt preempts an active response instead of waiting for user speech', async () => {
-  const {service, codexApproval, actions} = pipelineService({
+  const {service, executorApproval, actions} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'response-before-approval',
@@ -5021,8 +5025,8 @@ test('a Codex approval prompt preempts an active response instead of waiting for
     pcm: new Uint8Array([0, 1]),
   })
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id
   assert.ok(approvalId !== undefined)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await service.flushHostItems()
@@ -5037,20 +5041,20 @@ test('a Codex approval prompt preempts an active response instead of waiting for
   })
   await service.flushHostItems()
   assert.ok(
-    actions.includes(`inject:codex-approval:${approvalId}:requested`),
+    actions.includes(`inject:approval:${approvalId}:requested`),
     'the approval prompt is delivered as soon as the interrupted turn releases the floor',
   )
 
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('settling a Codex approval during preemption retires its unsaid prompt', async () => {
-  const {service, codexApproval, actions} = pipelineService({
+  const {service, executorApproval, actions} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'response-before-fast-decision',
@@ -5060,14 +5064,14 @@ test('settling a Codex approval during preemption retires its unsaid prompt', as
     pcm: new Uint8Array([0, 1]),
   })
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id
   assert.ok(approvalId !== undefined)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await service.flushHostItems()
   assert.ok(actions.includes('cancel:response-before-fast-decision'))
 
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
   await service.handleEvent({
     kind: 'response_terminal', session_epoch: 1, response_id: 'response-before-fast-decision',
@@ -5075,7 +5079,7 @@ test('settling a Codex approval during preemption retires its unsaid prompt', as
   })
   await service.flushHostItems()
   assert.equal(
-    actions.filter(action => action === `inject:codex-approval:${approvalId}:requested`).length,
+    actions.filter(action => action === `inject:approval:${approvalId}:requested`).length,
     1,
     'the context-only fact was confirmed before the click',
   )
@@ -5086,22 +5090,22 @@ test('settling a Codex approval during preemption retires its unsaid prompt', as
   )
   assert.equal(
     actions.filter(action => (
-      action === `retire:provider:codex-approval:${approvalId}:requested`
+      action === `retire:provider:approval:${approvalId}:requested`
     )).length,
     1,
   )
 })
 
 test('Codex approval user onset stops exact question audio but retains provider context', async () => {
-  const {service, codexApproval, actions, session} = pipelineService({
+  const {service, executorApproval, actions, session} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id
   assert.ok(approvalId !== undefined)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await service.flushHostItems()
@@ -5121,16 +5125,16 @@ test('Codex approval user onset stops exact question audio but retains provider 
 
   assert.ok(actions.includes('cancel:audible-approval-response'))
   assert.equal(
-    actions.includes(`retire:provider:codex-approval:${approvalId}:requested`),
+    actions.includes(`retire:provider:approval:${approvalId}:requested`),
     false,
     'speech onset preserves the provider fact that carries the opaque approval ID',
   )
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
   await new Promise<void>(resolve => { setImmediate(resolve) })
   assert.equal(
     actions.filter(action => (
-      action === `retire:provider:codex-approval:${approvalId}:requested`
+      action === `retire:provider:approval:${approvalId}:requested`
     )).length,
     1,
     'actual settlement retires provider context exactly once',
@@ -5138,19 +5142,19 @@ test('Codex approval user onset stops exact question audio but retains provider 
 })
 
 test('a pending Codex approval keeps its startup acknowledgement out of the user answer turn', async () => {
-  const {service, codexApproval, actions, session} = pipelineService({
+  const {service, executorApproval, actions, session} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id
   assert.ok(approvalId !== undefined)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await service.flushHostItems()
-  assert.ok(actions.includes(`inject:codex-approval:${approvalId}:requested`))
+  assert.ok(actions.includes(`inject:approval:${approvalId}:requested`))
   const backgroundInjectionsBefore = actions
     .filter(action => action === 'inject:background:d-1').length
 
@@ -5188,7 +5192,7 @@ test('a pending Codex approval keeps its startup acknowledgement out of the user
     backgroundInjectionsBefore,
     'the generic startup acknowledgement cannot open a competing response while approval is pending',
   )
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
   await service.flushHostItems()
   assert.equal(
@@ -5199,23 +5203,23 @@ test('a pending Codex approval keeps its startup acknowledgement out of the user
 })
 
 test('a Codex function settlement releases one existing task acknowledgement exactly once', async () => {
-  const {service, codexApproval, actions} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, actions} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
   service.queueHostItem(hostFact('background:function-release'), {
     priority: 50,
     semanticEventId: 'background:function-release',
   })
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'function-release-item', responseId: 'function-release-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'function-release-response',
   })
   await finishProviderResponse(service, 'function-release-response')
@@ -5225,7 +5229,7 @@ test('a Codex function settlement releases one existing task acknowledgement exa
     actions.filter(action => action === 'inject:background:function-release').length,
     1,
   )
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'function-release-response',
     callId: 'function-release-duplicate',
   })
@@ -5237,42 +5241,42 @@ test('a Codex function settlement releases one existing task acknowledgement exa
 })
 
 test('Codex approval telemetry is closed, privacy-safe, and records function versus renderer races', async () => {
-  const {service, codexApproval, telemetry} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, telemetry} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'private-approval-item', responseId: 'private-approval-response',
   })
-  assert.equal(service.codexApprovalDecision(approvalId, true), true)
+  assert.equal(service.executorApprovalDecision(approvalId, true), true)
   assert.deepEqual(await waiting, {decision: 'accept'})
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'private-approval-response',
     callId: 'private-losing-call',
   })
 
-  const records = telemetry.filter(record => record.kind.startsWith('codex_approval.'))
-  assert.deepEqual(records.filter(record => record.kind === 'codex_approval.context'), [{
-    kind: 'codex_approval.context', payload: {session_epoch: 1, outcome: 'ready'},
+  const records = telemetry.filter(record => record.kind.startsWith('approval.'))
+  assert.deepEqual(records.filter(record => record.kind === 'approval.context'), [{
+    kind: 'approval.context', payload: {session_epoch: 1, outcome: 'ready'},
   }])
-  assert.deepEqual(records.filter(record => record.kind === 'codex_approval.attempt'), [{
-    kind: 'codex_approval.attempt', payload: {session_epoch: 1, attempt: 1, action: 'begun'},
+  assert.deepEqual(records.filter(record => record.kind === 'approval.attempt'), [{
+    kind: 'approval.attempt', payload: {session_epoch: 1, attempt: 1, action: 'begun'},
   }])
-  assert.deepEqual(records.filter(record => record.kind === 'codex_approval.carrier'), [{
-    kind: 'codex_approval.carrier', payload: {session_epoch: 1, attempt: 1, action: 'bound'},
+  assert.deepEqual(records.filter(record => record.kind === 'approval.carrier'), [{
+    kind: 'approval.carrier', payload: {session_epoch: 1, attempt: 1, action: 'bound'},
   }])
-  assert.deepEqual(records.filter(record => record.kind === 'codex_approval.decision'), [
+  assert.deepEqual(records.filter(record => record.kind === 'approval.decision'), [
     {
-      kind: 'codex_approval.decision',
+      kind: 'approval.decision',
       payload: {session_epoch: 1, source: 'renderer', outcome: 'accepted'},
     },
     {
-      kind: 'codex_approval.decision',
+      kind: 'approval.decision',
       payload: {
         session_epoch: 1, source: 'function', outcome: 'refused', reason: 'not_pending',
       },
@@ -5285,17 +5289,17 @@ test('Codex approval telemetry is closed, privacy-safe, and records function ver
 })
 
 test('Codex approval telemetry records bounded retry exhaustion without sensitive carrier values', async () => {
-  const {service, codexApproval, telemetry} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, telemetry} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
-  await finishCodexApprovalQuestion(service, 'private-question-response')
+  await finishExecutorApprovalQuestion(service, 'private-question-response')
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'private-attempt-one-item', responseId: 'private-attempt-one-source',
   })
   await finishProviderResponse(service, 'private-attempt-one-source')
@@ -5306,7 +5310,7 @@ test('Codex approval telemetry records bounded retry exhaustion without sensitiv
   await service.flushHostItems()
   await finishProviderResponse(service, 'private-host-clarification')
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'private-attempt-two-item', responseId: 'private-attempt-two-source',
   })
   await finishProviderResponse(service, 'private-attempt-two-source')
@@ -5315,18 +5319,18 @@ test('Codex approval telemetry records bounded retry exhaustion without sensitiv
   })
   await finishProviderResponse(service, 'private-attempt-two-retry')
 
-  assert.equal(codexApproval.pending, true)
+  assert.equal(executorApproval.pending, true)
   assert.deepEqual(
-    telemetry.filter(record => record.kind === 'codex_approval.attempt'),
+    telemetry.filter(record => record.kind === 'approval.attempt'),
     [
-      {kind: 'codex_approval.attempt', payload: {session_epoch: 1, attempt: 1, action: 'begun'}},
-      {kind: 'codex_approval.attempt', payload: {session_epoch: 1, attempt: 1, action: 'exhausted'}},
-      {kind: 'codex_approval.attempt', payload: {session_epoch: 1, attempt: 2, action: 'rotated'}},
-      {kind: 'codex_approval.attempt', payload: {session_epoch: 1, attempt: 2, action: 'exhausted'}},
+      {kind: 'approval.attempt', payload: {session_epoch: 1, attempt: 1, action: 'begun'}},
+      {kind: 'approval.attempt', payload: {session_epoch: 1, attempt: 1, action: 'exhausted'}},
+      {kind: 'approval.attempt', payload: {session_epoch: 1, attempt: 2, action: 'rotated'}},
+      {kind: 'approval.attempt', payload: {session_epoch: 1, attempt: 2, action: 'exhausted'}},
     ],
   )
   assert.deepEqual(
-    telemetry.filter(record => record.kind === 'codex_approval.carrier').map(record => record.payload),
+    telemetry.filter(record => record.kind === 'approval.carrier').map(record => record.payload),
     [
       {session_epoch: 1, attempt: 1, action: 'bound'},
       {session_epoch: 1, attempt: 1, action: 'terminal'},
@@ -5341,34 +5345,34 @@ test('Codex approval telemetry records bounded retry exhaustion without sensitiv
     ],
   )
   const serialized = JSON.stringify(telemetry.filter(record => (
-    record.kind.startsWith('codex_approval.')
+    record.kind.startsWith('approval.')
   )))
   for (const sensitive of [approvalId, 'private-attempt', 'private-host']) {
     assert.equal(serialized.includes(sensitive), false)
   }
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('Codex approval telemetry classifies exact-deadline renderer and function decisions as expired', async t => {
   await t.test('renderer', async () => {
-    const {service, codexApproval, clock, telemetry} = pipelineService({
-      projectTool: true, withCodexApproval: true,
+    const {service, executorApproval, clock, telemetry} = pipelineService({
+      projectTool: true, withExecutorApproval: true,
     })
-    assert.ok(codexApproval !== null)
+    assert.ok(executorApproval !== null)
     await service.connect()
-    const waiting = offerCodexCommand(codexApproval)
-    const approvalId = codexApproval.view.pending_approval_id!
-    const expiresAt = codexApproval.view.expires_at!
+    const waiting = offerCodexCommand(executorApproval)
+    const approvalId = executorApproval.view.pending_approval_id!
+    const expiresAt = executorApproval.view.expires_at!
     await new Promise<void>(resolve => { setImmediate(resolve) })
 
     clock.advanceTo(expiresAt)
     assert.deepEqual(await waiting, {decision: 'decline'})
-    assert.equal(service.codexApprovalDecision(approvalId, true), false)
+    assert.equal(service.executorApprovalDecision(approvalId, true), false)
     assert.deepEqual(
-      telemetry.filter(record => record.kind === 'codex_approval.decision'),
+      telemetry.filter(record => record.kind === 'approval.decision'),
       [{
-        kind: 'codex_approval.decision',
+        kind: 'approval.decision',
         payload: {
           session_epoch: 1, source: 'renderer', outcome: 'refused', reason: 'expired',
         },
@@ -5377,38 +5381,38 @@ test('Codex approval telemetry classifies exact-deadline renderer and function d
   })
 
   await t.test('function', async () => {
-    const {service, codexApproval, clock, telemetry} = pipelineService({
-      projectTool: true, withCodexApproval: true,
+    const {service, executorApproval, clock, telemetry} = pipelineService({
+      projectTool: true, withExecutorApproval: true,
     })
-    assert.ok(codexApproval !== null)
+    assert.ok(executorApproval !== null)
     await service.connect()
-    const waiting = offerCodexCommand(codexApproval)
-    const approvalId = codexApproval.view.pending_approval_id!
-    const expiresAt = codexApproval.view.expires_at!
+    const waiting = offerCodexCommand(executorApproval)
+    const approvalId = executorApproval.view.pending_approval_id!
+    const expiresAt = executorApproval.view.expires_at!
     await new Promise<void>(resolve => { setImmediate(resolve) })
-    await beginCodexApprovalCarrier(service, {
+    await beginExecutorApprovalCarrier(service, {
       itemId: 'expired-private-item', responseId: 'expired-private-response',
     })
 
     clock.advanceTo(expiresAt)
     assert.deepEqual(await waiting, {decision: 'decline'})
-    await emitCodexApprovalFunction(service, {
+    await emitExecutorApprovalFunction(service, {
       approvalId,
       approved: true,
       responseId: 'expired-private-response',
       callId: 'expired-private-call',
     })
     assert.deepEqual(
-      telemetry.filter(record => record.kind === 'codex_approval.decision'),
+      telemetry.filter(record => record.kind === 'approval.decision'),
       [{
-        kind: 'codex_approval.decision',
+        kind: 'approval.decision',
         payload: {
           session_epoch: 1, source: 'function', outcome: 'refused', reason: 'expired',
         },
       }],
     )
     const serialized = JSON.stringify(telemetry.filter(record => (
-      record.kind.startsWith('codex_approval.')
+      record.kind.startsWith('approval.')
     )))
     for (const sensitive of [approvalId, 'expired-private-item', 'expired-private-response']) {
       assert.equal(serialized.includes(sensitive), false)
@@ -5418,25 +5422,25 @@ test('Codex approval telemetry classifies exact-deadline renderer and function d
 
 test('Codex approval telemetry preserves exact-deadline expiry after context failure disables voice', async t => {
   await t.test('renderer', async () => {
-    const {service, codexApproval, clock, telemetry, session} = pipelineService({
-      projectTool: true, withCodexApproval: true,
+    const {service, executorApproval, clock, telemetry, session} = pipelineService({
+      projectTool: true, withExecutorApproval: true,
     })
-    assert.ok(codexApproval !== null)
+    assert.ok(executorApproval !== null)
     session.injectHostContext = () => Promise.resolve(false)
     await service.connect()
-    const waiting = offerCodexCommand(codexApproval)
-    const approvalId = codexApproval.view.pending_approval_id!
-    const expiresAt = codexApproval.view.expires_at!
+    const waiting = offerCodexCommand(executorApproval)
+    const approvalId = executorApproval.view.pending_approval_id!
+    const expiresAt = executorApproval.view.expires_at!
     await new Promise<void>(resolve => { setImmediate(resolve) })
-    assert.equal(codexApproval.pending, true, 'context failure leaves renderer authority pending')
+    assert.equal(executorApproval.pending, true, 'context failure leaves renderer authority pending')
 
     clock.advanceTo(expiresAt)
     assert.deepEqual(await waiting, {decision: 'decline'})
-    assert.equal(service.codexApprovalDecision(approvalId, true), false)
+    assert.equal(service.executorApprovalDecision(approvalId, true), false)
     assert.deepEqual(
-      telemetry.filter(record => record.kind === 'codex_approval.decision'),
+      telemetry.filter(record => record.kind === 'approval.decision'),
       [{
-        kind: 'codex_approval.decision',
+        kind: 'approval.decision',
         payload: {
           session_epoch: 1, source: 'renderer', outcome: 'refused', reason: 'expired',
         },
@@ -5445,30 +5449,30 @@ test('Codex approval telemetry preserves exact-deadline expiry after context fai
   })
 
   await t.test('function', async () => {
-    const {service, codexApproval, clock, telemetry, session} = pipelineService({
-      projectTool: true, withCodexApproval: true,
+    const {service, executorApproval, clock, telemetry, session} = pipelineService({
+      projectTool: true, withExecutorApproval: true,
     })
-    assert.ok(codexApproval !== null)
+    assert.ok(executorApproval !== null)
     session.injectHostContext = () => Promise.resolve(false)
     await service.connect()
-    const waiting = offerCodexCommand(codexApproval)
-    const approvalId = codexApproval.view.pending_approval_id!
-    const expiresAt = codexApproval.view.expires_at!
+    const waiting = offerCodexCommand(executorApproval)
+    const approvalId = executorApproval.view.pending_approval_id!
+    const expiresAt = executorApproval.view.expires_at!
     await new Promise<void>(resolve => { setImmediate(resolve) })
-    assert.equal(codexApproval.pending, true, 'context failure leaves renderer authority pending')
+    assert.equal(executorApproval.pending, true, 'context failure leaves renderer authority pending')
 
     clock.advanceTo(expiresAt)
     assert.deepEqual(await waiting, {decision: 'decline'})
-    await emitCodexApprovalFunction(service, {
+    await emitExecutorApprovalFunction(service, {
       approvalId,
       approved: true,
       responseId: 'context-failed-expired-response',
       callId: 'context-failed-expired-call',
     })
     assert.deepEqual(
-      telemetry.filter(record => record.kind === 'codex_approval.decision'),
+      telemetry.filter(record => record.kind === 'approval.decision'),
       [{
-        kind: 'codex_approval.decision',
+        kind: 'approval.decision',
         payload: {
           session_epoch: 1, source: 'function', outcome: 'refused', reason: 'expired',
         },
@@ -5530,14 +5534,14 @@ test('every provider reconnect call site declares one reviewed categorical reaso
 })
 
 test('a pending Codex semantic acknowledgement does not block higher-priority Guard', async () => {
-  const {service, codexApproval, actions} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, actions} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await finishCodexApprovalQuestion(service, 'guard-priority-question')
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await finishExecutorApprovalQuestion(service, 'guard-priority-question')
   service.queueHostItem(hostFact('background:guard-priority-blocked'), {
     priority: 50,
     semanticEventId: 'background:guard-priority-blocked',
@@ -5550,15 +5554,15 @@ test('a pending Codex semantic acknowledgement does not block higher-priority Gu
 
   assert.equal(actions.includes('inject:final:guard-priority-visible'), true)
   assert.equal(actions.includes('inject:background:guard-priority-blocked'), false)
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('Codex approval invalidation wakes a queued semantic acknowledgement', async () => {
-  const {service, codexApproval, actions} = pipelineService({projectTool: true, withCodexApproval: true})
-  assert.ok(codexApproval !== null)
+  const {service, executorApproval, actions} = pipelineService({projectTool: true, withExecutorApproval: true})
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
+  const waiting = offerCodexCommand(executorApproval)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await service.flushHostItems()
   await service.handleEvent({
@@ -5580,22 +5584,22 @@ test('Codex approval invalidation wakes a queued semantic acknowledgement', asyn
   await service.flushHostItems()
   assert.equal(actions.includes('inject:background:invalidate-release'), false)
 
-  assert.equal(codexApproval.invalidate('test_invalidation'), true)
+  assert.equal(executorApproval.invalidate('test_invalidation'), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
   await service.flushHostItems()
   assert.equal(actions.includes('inject:background:invalidate-release'), true)
 })
 
 test('a banner decision cancels the exact Codex approval response that is already audible', async () => {
-  const {service, codexApproval, actions, session} = pipelineService({
+  const {service, executorApproval, actions, session} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id
   assert.ok(approvalId !== undefined)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   await service.flushHostItems()
@@ -5610,7 +5614,7 @@ test('a banner decision cancels the exact Codex approval response that is alread
   assert.notEqual(generation, null)
   assert.equal(service.playbackStarted(generation!.utterance_id, generation!.generation_epoch), true)
 
-  assert.equal(service.codexApprovalDecision(approvalId, true), true)
+  assert.equal(service.executorApprovalDecision(approvalId, true), true)
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
   assert.ok(
@@ -5621,13 +5625,13 @@ test('a banner decision cancels the exact Codex approval response that is alread
 })
 
 test('Codex approval transcript completion alone leaves the controller pending', async () => {
-  const {service, codexApproval} = pipelineService({projectTool: true, withCodexApproval: true})
-  assert.ok(codexApproval !== null)
+  const {service, executorApproval} = pipelineService({projectTool: true, withExecutorApproval: true})
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'transcript-only-item', responseId: 'transcript-only-response',
   })
   await service.handleEvent({
@@ -5635,36 +5639,36 @@ test('Codex approval transcript completion alone leaves the controller pending',
     item_id: 'transcript-only-item', text: '确认。',
   })
 
-  assert.equal(codexApproval.pending, true, 'transcript text is audit data, not approval authority')
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(executorApproval.pending, true, 'transcript text is audit data, not approval authority')
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('Codex function is authoritative before or after transcript completion', async t => {
   for (const order of ['function-first', 'transcript-first'] as const) {
     await t.test(order, async () => {
-      const {service, codexApproval, injectedContents} = pipelineService({
-        projectTool: true, withCodexApproval: true,
+      const {service, executorApproval, injectedContents} = pipelineService({
+        projectTool: true, withExecutorApproval: true,
       })
-      assert.ok(codexApproval !== null)
+      assert.ok(executorApproval !== null)
       await service.connect()
-      const waiting = offerCodexCommand(codexApproval)
-      const approvalId = codexApproval.view.pending_approval_id!
+      const waiting = offerCodexCommand(executorApproval)
+      const approvalId = executorApproval.view.pending_approval_id!
       const itemId = `${order}-item`
       const responseId = `${order}-response`
-      await beginCodexApprovalCarrier(service, {itemId, responseId})
+      await beginExecutorApprovalCarrier(service, {itemId, responseId})
       if (order === 'transcript-first') {
         await service.handleEvent({
           kind: 'user_transcript_final', session_epoch: 1, item_id: itemId, text: '自然语言随意',
         })
-        assert.equal(codexApproval.pending, true, 'transcript-first waits for the function')
+        assert.equal(executorApproval.pending, true, 'transcript-first waits for the function')
       }
 
-      await emitCodexApprovalFunction(service, {
+      await emitExecutorApprovalFunction(service, {
         approvalId, approved: order === 'function-first', responseId,
       })
 
-      assert.equal(codexApproval.pending, false, 'the valid exact function settles immediately')
+      assert.equal(executorApproval.pending, false, 'the valid exact function settles immediately')
       assert.deepEqual(await waiting, {
         decision: order === 'function-first' ? 'accept' : 'decline',
       })
@@ -5677,40 +5681,40 @@ test('Codex function is authoritative before or after transcript completion', as
 })
 
 test('Codex function arriving before user-item binding is held until exact reveal', async () => {
-  const {service, codexApproval, injectedContents} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedContents} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: null, responseId: 'prebinding-response', revealItemAtEnd: 'prebinding-item',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'prebinding-response',
   })
-  assert.equal(codexApproval.pending, true)
+  assert.equal(executorApproval.pending, true)
   assert.equal(injectedContents.some(content => content.includes('approval_accepted')), false)
 
-  await endCodexApprovalSpeech(service, 'prebinding-response', 'prebinding-item')
+  await endExecutorApprovalSpeech(service, 'prebinding-response', 'prebinding-item')
 
-  assert.equal(codexApproval.pending, false, 'exact item reveal releases the held function')
+  assert.equal(executorApproval.pending, false, 'exact item reveal releases the held function')
   assert.deepEqual(await waiting, {decision: 'accept'})
   assert.match(injectedContents.at(-1) ?? '', /"code":"approval_accepted"/u)
 })
 
 test('Codex final-only function stays silent and correlated through terminal before transcript', async () => {
-  const {service, codexApproval, injectedContents, session} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedContents, session} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   const responseId = 'final-only-response'
 
-  await finishCodexApprovalQuestion(service, 'approval-question-response')
+  await finishExecutorApprovalQuestion(service, 'approval-question-response')
 
   // Qwen may emit this entire response before the sibling transcript, without either VAD event.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId})
@@ -5722,8 +5726,8 @@ test('Codex final-only function stays silent and correlated through terminal bef
   })
   assert.equal(session.currentGeneration, null, 'the provisional authorization carrier stays silent')
 
-  await emitCodexApprovalFunction(service, {approvalId, approved: true, responseId})
-  assert.equal(codexApproval.pending, true, 'the function waits for exact item provenance')
+  await emitExecutorApprovalFunction(service, {approvalId, approved: true, responseId})
+  assert.equal(executorApproval.pending, true, 'the function waits for exact item provenance')
   assert.deepEqual(
     injectedContents.filter(content => content.includes('"code":"approval_')),
     [],
@@ -5739,7 +5743,7 @@ test('Codex final-only function stays silent and correlated through terminal bef
     item_id: 'final-only-item', text: '内容只用于记忆与审计。',
   })
 
-  assert.equal(codexApproval.pending, false, 'the structured function settles after provenance arrives')
+  assert.equal(executorApproval.pending, false, 'the structured function settles after provenance arrives')
   assert.deepEqual(await waiting, {decision: 'accept'})
   assert.equal(
     injectedContents.filter(content => content.includes('"code":"approval_accepted"')).length,
@@ -5749,23 +5753,23 @@ test('Codex final-only function stays silent and correlated through terminal bef
 })
 
 test('Codex final-only response binds when transcript precedes its structured function', async () => {
-  const {service, codexApproval, injectedContents} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedContents} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   const responseId = 'final-only-transcript-first-response'
-  await finishCodexApprovalQuestion(service, 'transcript-first-question')
+  await finishExecutorApprovalQuestion(service, 'transcript-first-question')
 
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId})
   await service.handleEvent({
     kind: 'user_transcript_final', session_epoch: 1,
     item_id: 'final-only-transcript-first-item', text: 'ASR 文本不参与授权。',
   })
-  assert.equal(codexApproval.pending, true)
-  await emitCodexApprovalFunction(service, {approvalId, approved: false, responseId})
+  assert.equal(executorApproval.pending, true)
+  await emitExecutorApprovalFunction(service, {approvalId, approved: false, responseId})
 
   assert.deepEqual(await waiting, {decision: 'decline'})
   assert.equal(
@@ -5775,15 +5779,15 @@ test('Codex final-only response binds when transcript precedes its structured fu
 })
 
 test('Codex final-only terminal without a function requests only one structured retry', async () => {
-  const {service, codexApproval, actions} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, actions} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   const responseId = 'final-only-empty-response'
-  await finishCodexApprovalQuestion(service, 'empty-question-response')
+  await finishExecutorApprovalQuestion(service, 'empty-question-response')
 
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId})
   await service.handleEvent({
@@ -5799,7 +5803,7 @@ test('Codex final-only terminal without a function requests only one structured 
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'final-only-retry-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'final-only-retry-response',
   })
   assert.deepEqual(await waiting, {decision: 'accept'})
@@ -5807,18 +5811,18 @@ test('Codex final-only terminal without a function requests only one structured 
 })
 
 test('Codex final-only wrong approval identity stays refused while renderer click remains viable', async () => {
-  const {service, codexApproval, injectedContents} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedContents} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   const responseId = 'final-only-wrong-id-response'
-  await finishCodexApprovalQuestion(service, 'wrong-id-question-response')
+  await finishExecutorApprovalQuestion(service, 'wrong-id-question-response')
 
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId})
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId: `${approvalId}-wrong`, approved: true, responseId,
   })
   await service.handleEvent({
@@ -5826,34 +5830,34 @@ test('Codex final-only wrong approval identity stays refused while renderer clic
     item_id: 'final-only-wrong-id-item', text: '确认。',
   })
 
-  assert.equal(codexApproval.pending, true, 'neither wrong function identity nor ASR text authorizes')
+  assert.equal(executorApproval.pending, true, 'neither wrong function identity nor ASR text authorizes')
   assert.equal(
     injectedContents.filter(content => content.includes('"code":"approval_not_authorized"')).length,
     1,
   )
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('ASR failure leaves both Codex function and renderer click authority viable', async t => {
   for (const authority of ['function', 'click'] as const) {
     await t.test(authority, async () => {
-      const {service, codexApproval} = pipelineService({projectTool: true, withCodexApproval: true})
-      assert.ok(codexApproval !== null)
+      const {service, executorApproval} = pipelineService({projectTool: true, withExecutorApproval: true})
+      assert.ok(executorApproval !== null)
       await service.connect()
-      const waiting = offerCodexCommand(codexApproval)
-      const approvalId = codexApproval.view.pending_approval_id!
+      const waiting = offerCodexCommand(executorApproval)
+      const approvalId = executorApproval.view.pending_approval_id!
       const itemId = `asr-failed-${authority}`
       const responseId = `asr-failed-${authority}-response`
-      await beginCodexApprovalCarrier(service, {itemId, responseId})
+      await beginExecutorApprovalCarrier(service, {itemId, responseId})
       await service.handleEvent({
         kind: 'user_transcript_failed', session_epoch: 1, item_id: itemId,
       })
       if (authority === 'function') {
-        await emitCodexApprovalFunction(service, {approvalId, approved: true, responseId})
-        assert.equal(codexApproval.pending, false, 'ASR failure does not disable exact function authority')
+        await emitExecutorApprovalFunction(service, {approvalId, approved: true, responseId})
+        assert.equal(executorApproval.pending, false, 'ASR failure does not disable exact function authority')
       } else {
-        assert.equal(service.codexApprovalDecision(approvalId, true), true)
+        assert.equal(service.executorApprovalDecision(approvalId, true), true)
       }
       assert.deepEqual(await waiting, {decision: 'accept'})
     })
@@ -5861,14 +5865,14 @@ test('ASR failure leaves both Codex function and renderer click authority viable
 })
 
 test('a split Codex answer rotates to one fresh second attempt without inheriting the first', async () => {
-  const {service, codexApproval, injectedContents} = pipelineService({
+  const {service, executorApproval, injectedContents} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
 
   await service.handleEvent({
     kind: 'user_speech_started', session_epoch: 1,
@@ -5887,11 +5891,11 @@ test('a split Codex answer rotates to one fresh second attempt without inheritin
     speech_id: 'speech-turn-b',
     provider_item_id: 'approval-turn-b',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'approval-response-a',
   })
 
-  assert.equal(codexApproval.pending, true, 'turn A cannot authorize after turn B starts')
+  assert.equal(executorApproval.pending, true, 'turn A cannot authorize after turn B starts')
   assert.match(injectedContents.at(-1) ?? '', /"code":"approval_not_authorized"/u)
   await finishProviderResponse(service, 'approval-response-a')
   await service.handleEvent({
@@ -5901,24 +5905,24 @@ test('a split Codex answer rotates to one fresh second attempt without inheritin
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'approval-response-b',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'approval-response-b',
   })
-  assert.equal(codexApproval.pending, false, 'turn B owns a fresh exact isolation attempt')
+  assert.equal(executorApproval.pending, false, 'turn B owns a fresh exact isolation attempt')
   assert.match(injectedContents.at(-1) ?? '', /"code":"approval_accepted"/u)
   assert.deepEqual(await waiting, {decision: 'accept'})
 })
 
 test('a late unknown retry from attempt one cannot become attempt two carrier', async () => {
-  const {service, codexApproval, injectedItems, session} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedItems, session} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'orphan-attempt-one-item', responseId: 'orphan-attempt-one-source',
   })
   await finishProviderResponse(service, 'orphan-attempt-one-source')
@@ -5935,10 +5939,10 @@ test('a late unknown retry from attempt one cannot become attempt two carrier', 
     response_id: 'orphan-late-retry', pcm: new Uint8Array([9, 9]),
   })
   assert.equal(session.currentGeneration, null, 'the ambiguous old retry stays silent')
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'orphan-late-retry', callId: 'orphan-late-call',
   })
-  assert.equal(codexApproval.pending, true, 'the old retry cannot settle the fresh attempt')
+  assert.equal(executorApproval.pending, true, 'the old retry cannot settle the fresh attempt')
   assert.match(
     injectedItems.find(item => item.kind === 'tool_output' && item.call_id === 'orphan-late-call')
       ?.content ?? '',
@@ -5952,7 +5956,7 @@ test('a late unknown retry from attempt one cannot become attempt two carrier', 
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'orphan-attempt-two-fresh',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'orphan-attempt-two-fresh',
   })
   assert.deepEqual(await waiting, {decision: 'accept'})
@@ -5963,20 +5967,20 @@ test('a stale failed retry request cannot exhaust the fresh second attempt', asy
   const retryGate = new Promise<void>(resolve => { releaseRetry = resolve })
   let signalRetryStarted!: () => void
   const retryStarted = new Promise<void>(resolve => { signalRetryStarted = resolve })
-  const {service, codexApproval, session} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, session} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   session.requestUserResponse = async () => {
     signalRetryStarted()
     await retryGate
     return false
   }
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'stale-retry-attempt-one-item', responseId: 'stale-retry-attempt-one-response',
   })
   const staleTerminal = finishProviderResponse(service, 'stale-retry-attempt-one-response')
@@ -5995,11 +5999,11 @@ test('a stale failed retry request cannot exhaust the fresh second attempt', asy
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'stale-retry-attempt-two-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'stale-retry-attempt-two-response',
   })
 
-  assert.equal(codexApproval.pending, false, 'attempt two still owns exact voice authority')
+  assert.equal(executorApproval.pending, false, 'attempt two still owns exact voice authority')
   assert.deepEqual(await waiting, {decision: 'accept'})
 })
 
@@ -6008,55 +6012,55 @@ test('an old failed retry continuation cannot mutate a replacement approval life
   const retryGate = new Promise<void>(resolve => { releaseRetry = resolve })
   let signalRetryStarted!: () => void
   const retryStarted = new Promise<void>(resolve => { signalRetryStarted = resolve })
-  const {service, codexApproval, session} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, session} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   session.requestUserResponse = async () => {
     signalRetryStarted()
     await retryGate
     return false
   }
   await service.connect()
-  const oldWaiting = offerCodexCommand(codexApproval)
-  const oldApprovalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const oldWaiting = offerCodexCommand(executorApproval)
+  const oldApprovalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'replacement-old-item', responseId: 'replacement-old-response',
   })
   const staleTerminal = finishProviderResponse(service, 'replacement-old-response')
   await retryStarted
 
-  assert.equal(service.codexApprovalDecision(oldApprovalId, true), true)
+  assert.equal(service.executorApprovalDecision(oldApprovalId, true), true)
   const oldResolution = await oldWaiting
   assert.deepEqual(oldResolution, {decision: 'accept'})
-  assert.equal(codexApproval.consume(oldResolution), 'accept')
-  const replacementWaiting = offerCodexCommand(codexApproval)
-  const replacementId = codexApproval.view.pending_approval_id!
+  assert.equal(executorApproval.consume(oldResolution), 'accept')
+  const replacementWaiting = offerCodexCommand(executorApproval)
+  const replacementId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
   releaseRetry()
   await staleTerminal
   assert.equal(service.queuedHostItems().some(item => (
-    item.intent.item.event_id === `codex-approval:${replacementId}:clarification`
+    item.intent.item.event_id === `approval:${replacementId}:clarification`
   )), false, 'the stale continuation cannot spend attempt one of the replacement')
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'replacement-fresh-item', responseId: 'replacement-fresh-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId: replacementId, approved: false, responseId: 'replacement-fresh-response',
   })
   assert.deepEqual(await replacementWaiting, {decision: 'decline'})
 })
 
 test('a delayed attempt-one initial response cannot inherit the fresh attempt-two revision', async () => {
-  const {service, codexApproval, injectedItems, session} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedItems, session} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
   await service.handleEvent({
@@ -6084,11 +6088,11 @@ test('a delayed attempt-one initial response cannot inherit the fresh attempt-tw
     response_id: 'delayed-attempt-one-response', pcm: new Uint8Array([1, 2, 3]),
   })
   assert.equal(session.currentGeneration, null, 'the old initial response is silent')
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'delayed-attempt-one-response',
     callId: 'delayed-attempt-one-call',
   })
-  assert.equal(codexApproval.pending, true, 'the old approval decision cannot consume attempt two')
+  assert.equal(executorApproval.pending, true, 'the old approval decision cannot consume attempt two')
   assert.match(
     injectedItems.find(item => (
       item.kind === 'tool_output' && item.call_id === 'delayed-attempt-one-call'
@@ -6100,20 +6104,20 @@ test('a delayed attempt-one initial response cannot inherit the fresh attempt-tw
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'delayed-attempt-two-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: false, responseId: 'delayed-attempt-two-response',
   })
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('an unrelated host response cannot consume a pending stale approval-response quarantine', async () => {
-  const {service, codexApproval, injectedItems, session, actions} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedItems, session, actions} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
   await service.handleEvent({
@@ -6167,11 +6171,11 @@ test('an unrelated host response cannot consume a pending stale approval-respons
     response_id: 'old-response-after-host', pcm: new Uint8Array([8, 9]),
   })
   assert.equal(session.currentGeneration, null, 'the retained stale response remains silent')
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'old-response-after-host',
     callId: 'old-call-after-host',
   })
-  assert.equal(codexApproval.pending, true)
+  assert.equal(executorApproval.pending, true)
   assert.match(
     injectedItems.find(item => item.kind === 'tool_output' && item.call_id === 'old-call-after-host')
       ?.content ?? '',
@@ -6182,7 +6186,7 @@ test('an unrelated host response cannot consume a pending stale approval-respons
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'fresh-response-after-host',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: false, responseId: 'fresh-response-after-host',
   })
   assert.deepEqual(await waiting, {decision: 'decline'})
@@ -6191,14 +6195,14 @@ test('an unrelated host response cannot consume a pending stale approval-respons
 test('a pending retry remains quarantined after click, expiry, or replacement', async t => {
   for (const settlement of ['click', 'expiry', 'replacement'] as const) {
     await t.test(settlement, async () => {
-      const {service, codexApproval, injectedItems, session, clock, actions} = pipelineService({
-        projectTool: true, withCodexApproval: true,
+      const {service, executorApproval, injectedItems, session, clock, actions} = pipelineService({
+        projectTool: true, withExecutorApproval: true,
       })
-      assert.ok(codexApproval !== null)
+      assert.ok(executorApproval !== null)
       await service.connect()
-      const oldWaiting = offerCodexCommand(codexApproval)
-      const oldApprovalId = codexApproval.view.pending_approval_id!
-      await beginCodexApprovalCarrier(service, {
+      const oldWaiting = offerCodexCommand(executorApproval)
+      const oldApprovalId = executorApproval.view.pending_approval_id!
+      await beginExecutorApprovalCarrier(service, {
         itemId: `${settlement}-pending-item`, responseId: `${settlement}-pending-source`,
       })
       await finishProviderResponse(service, `${settlement}-pending-source`)
@@ -6208,21 +6212,21 @@ test('a pending retry remains quarantined after click, expiry, or replacement', 
       })
 
       if (settlement === 'click') {
-        assert.equal(service.codexApprovalDecision(oldApprovalId, true), true)
+        assert.equal(service.executorApprovalDecision(oldApprovalId, true), true)
         assert.deepEqual(await oldWaiting, {decision: 'accept'})
       } else if (settlement === 'expiry') {
-        clock.advanceTo(codexApproval.view.expires_at!)
+        clock.advanceTo(executorApproval.view.expires_at!)
         assert.deepEqual(await oldWaiting, {decision: 'decline'})
       } else {
-        codexApproval.invalidate('replacement')
+        executorApproval.invalidate('replacement')
         assert.deepEqual(await oldWaiting, {decision: 'decline'})
-        const currentWaiting = offerCodexCommand(codexApproval)
-        const currentApprovalId = codexApproval.view.pending_approval_id!
+        const currentWaiting = offerCodexCommand(executorApproval)
+        const currentApprovalId = executorApproval.view.pending_approval_id!
         await new Promise<void>(resolve => { setImmediate(resolve) })
-        assert.equal(service.codexApprovalDecision(currentApprovalId, false), true)
+        assert.equal(service.executorApprovalDecision(currentApprovalId, false), true)
         const currentResolution = await currentWaiting
         assert.deepEqual(currentResolution, {decision: 'decline'})
-        assert.equal(codexApproval.consume(currentResolution), 'decline')
+        assert.equal(executorApproval.consume(currentResolution), 'decline')
       }
 
       const lateResponseId = `${settlement}-late-retry`
@@ -6234,7 +6238,7 @@ test('a pending retry remains quarantined after click, expiry, or replacement', 
         response_id: lateResponseId, pcm: new Uint8Array([5, 6]),
       })
       assert.equal(session.currentGeneration, null, `${settlement} late retry stays silent`)
-      await emitCodexApprovalFunction(service, {
+      await emitExecutorApprovalFunction(service, {
         approvalId: oldApprovalId, approved: true, responseId: lateResponseId,
         callId: `${settlement}-late-call`,
       })
@@ -6257,17 +6261,17 @@ test('a pending retry remains quarantined after click, expiry, or replacement', 
 })
 
 test('attempt-one retry exhaustion opens one audible host clarification and a fresh attempt', async () => {
-  const {service, codexApproval, actions, session, injectedItems} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, actions, session, injectedItems} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
-  await finishCodexApprovalQuestion(service, 'attempt-one-question')
+  await finishExecutorApprovalQuestion(service, 'attempt-one-question')
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'attempt-one-item', responseId: 'attempt-one-response',
   })
   await finishProviderResponse(service, 'attempt-one-response')
@@ -6278,13 +6282,13 @@ test('attempt-one retry exhaustion opens one audible host clarification and a fr
   await finishProviderResponse(service, 'attempt-one-retry')
 
   const clarification = injectedItems.filter(item => (
-    item.event_id === `codex-approval:${approvalId}:clarification`
+    item.event_id === `approval:${approvalId}:clarification`
   ))
   assert.equal(clarification.length, 1)
   assert.equal(clarification[0]?.content, '请明确说同意或拒绝。')
   await service.flushHostItems()
   assert.equal(
-    actions.filter(action => action === `inject:codex-approval:${approvalId}:clarification`).length,
+    actions.filter(action => action === `inject:approval:${approvalId}:clarification`).length,
     1,
   )
   assert.equal(actions.filter(action => action === 'create_response:host_fact').length, 2)
@@ -6299,26 +6303,26 @@ test('attempt-one retry exhaustion opens one audible host clarification and a fr
   await finishProviderResponse(service, 'host-clarification-response')
 
   await service.localSpeechOnset('attempt-two-local')
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'attempt-two-item', responseId: 'attempt-two-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'attempt-two-response',
   })
   assert.deepEqual(await waiting, {decision: 'accept'})
 })
 
 test('a third user revision retires voice authority but leaves the original banner clickable', async () => {
-  const {service, codexApproval, injectedItems} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedItems} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'turn-one-item', responseId: 'turn-one-response',
   })
   await service.handleEvent({
@@ -6336,52 +6340,52 @@ test('a third user revision retires voice authority but leaves the original bann
     kind: 'user_speech_started', session_epoch: 1,
     speech_id: 'turn-three-speech', provider_item_id: 'turn-three-item',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'turn-two-response', callId: 'late-turn-two-call',
   })
 
-  assert.equal(codexApproval.pending, true)
+  assert.equal(executorApproval.pending, true)
   assert.match(
     injectedItems.find(item => item.kind === 'tool_output' && item.call_id === 'late-turn-two-call')
       ?.content ?? '',
     /"code":"approval_not_authorized"/u,
   )
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('Codex approval click and function share one first-valid-decision race', async () => {
-  const {service, codexApproval, injectedContents} = pipelineService({
-    projectTool: true, withCodexApproval: true,
+  const {service, executorApproval, injectedContents} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
 
-  const clickWaiting = offerCodexCommand(codexApproval)
-  const clickId = codexApproval.view.pending_approval_id!
-  assert.equal(service.codexApprovalDecision(clickId, true), true)
+  const clickWaiting = offerCodexCommand(executorApproval)
+  const clickId = executorApproval.view.pending_approval_id!
+  assert.equal(service.executorApprovalDecision(clickId, true), true)
   const clickResolution = await clickWaiting
   assert.deepEqual(clickResolution, {decision: 'accept'})
-  assert.equal(service.codexApprovalDecision(clickId, false), false)
-  await emitCodexApprovalFunction(service, {
+  assert.equal(service.executorApprovalDecision(clickId, false), false)
+  await emitExecutorApprovalFunction(service, {
     approvalId: clickId, approved: false, responseId: null, callId: 'late-after-click',
   })
   assert.match(injectedContents.at(-1) ?? '', /"code":"approval_not_pending"/u)
   assert.ok(clickResolution !== null)
-  assert.equal(codexApproval.consume(clickResolution), 'accept')
+  assert.equal(executorApproval.consume(clickResolution), 'accept')
 
-  const voiceWaiting = offerCodexCommand(codexApproval)
-  const voiceId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const voiceWaiting = offerCodexCommand(executorApproval)
+  const voiceId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'voice-wins', responseId: 'response-voice-wins',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId: voiceId, approved: false, responseId: 'response-voice-wins',
   })
   const voiceResolution = await voiceWaiting
   assert.deepEqual(voiceResolution, {decision: 'decline'})
-  assert.equal(service.codexApprovalDecision(voiceId, true), false)
-  await emitCodexApprovalFunction(service, {
+  assert.equal(service.executorApprovalDecision(voiceId, true), false)
+  await emitExecutorApprovalFunction(service, {
     approvalId: voiceId, approved: true, responseId: 'response-voice-wins',
     callId: 'duplicate-function',
   })
@@ -6391,65 +6395,65 @@ test('Codex approval click and function share one first-valid-decision race', as
 test('Codex function identity mismatches fail closed while renderer authority remains', async t => {
   for (const mismatch of ['approval-id', 'response', 'epoch', 'arguments'] as const) {
     await t.test(mismatch, async () => {
-      const {service, codexApproval, injectedContents} = pipelineService({
-        projectTool: true, withCodexApproval: true,
+      const {service, executorApproval, injectedContents} = pipelineService({
+        projectTool: true, withExecutorApproval: true,
       })
-      assert.ok(codexApproval !== null)
+      assert.ok(executorApproval !== null)
       await service.connect()
-      const waiting = offerCodexCommand(codexApproval)
-      const approvalId = codexApproval.view.pending_approval_id!
-      await beginCodexApprovalCarrier(service, {
+      const waiting = offerCodexCommand(executorApproval)
+      const approvalId = executorApproval.view.pending_approval_id!
+      await beginExecutorApprovalCarrier(service, {
         itemId: `mismatch-${mismatch}`, responseId: `mismatch-${mismatch}-response`,
       })
-      await emitCodexApprovalFunction(service, {
+      await emitExecutorApprovalFunction(service, {
         approvalId: mismatch === 'approval-id' ? 'wrong-id' : approvalId,
         approved: mismatch === 'arguments' ? 'yes' : true,
         responseId: mismatch === 'response' ? 'wrong-response' : `mismatch-${mismatch}-response`,
         epoch: mismatch === 'epoch' ? 2 : 1,
       })
-      assert.equal(codexApproval.pending, true)
+      assert.equal(executorApproval.pending, true)
       if (mismatch !== 'epoch') {
         assert.match(injectedContents.at(-1) ?? '', /"state":"refused"/u)
       }
-      assert.equal(service.codexApprovalDecision(approvalId, false), true)
+      assert.equal(service.executorApprovalDecision(approvalId, false), true)
       assert.deepEqual(await waiting, {decision: 'decline'})
     })
   }
 })
 
 test('Codex approval silent carrier retries once and retry function can settle', async () => {
-  const {service, codexApproval, actions} = pipelineService({projectTool: true, withCodexApproval: true})
-  assert.ok(codexApproval !== null)
+  const {service, executorApproval, actions} = pipelineService({projectTool: true, withExecutorApproval: true})
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'retry-item', responseId: 'retry-source-response',
   })
   await finishProviderResponse(service, 'retry-source-response')
   assert.equal(actions.filter(action => action === 'ensure_response').length, 1)
-  assert.equal(codexApproval.pending, true)
+  assert.equal(executorApproval.pending, true)
 
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'retry-carrier-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId, approved: true, responseId: 'retry-carrier-response',
   })
-  assert.equal(codexApproval.pending, false, 'the exact retry carrier can settle')
+  assert.equal(executorApproval.pending, false, 'the exact retry carrier can settle')
   assert.deepEqual(await waiting, {decision: 'accept'})
 })
 
 test('Codex approval exhausts both attempts before leaving only the click pending', async () => {
-  const {service, codexApproval, actions, injectedItems} = pipelineService({
+  const {service, executorApproval, actions, injectedItems} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'retry-exhausted-item', responseId: 'retry-exhausted-source',
   })
   await finishProviderResponse(service, 'retry-exhausted-source')
@@ -6459,12 +6463,12 @@ test('Codex approval exhausts both attempts before leaving only the click pendin
   await finishProviderResponse(service, 'retry-exhausted-carrier')
 
   assert.equal(actions.filter(action => action === 'ensure_response').length, 1)
-  assert.equal(codexApproval.pending, true)
+  assert.equal(executorApproval.pending, true)
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'retry-exhausted-clarification',
   })
   await finishProviderResponse(service, 'retry-exhausted-clarification')
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'second-exhausted-item', responseId: 'second-exhausted-source',
   })
   await finishProviderResponse(service, 'second-exhausted-source')
@@ -6474,38 +6478,38 @@ test('Codex approval exhausts both attempts before leaving only the click pendin
   })
   await finishProviderResponse(service, 'second-exhausted-retry')
 
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'later-item-after-exhaustion', responseId: 'later-response-after-exhaustion',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId,
     approved: true,
     responseId: 'later-response-after-exhaustion',
     callId: 'later-call-after-exhaustion',
   })
 
-  assert.equal(codexApproval.pending, true, 'two exhausted attempts permanently retire voice authority')
+  assert.equal(executorApproval.pending, true, 'two exhausted attempts permanently retire voice authority')
   assert.equal(actions.filter(action => action === 'ensure_response').length, 2)
   const laterOutputs = injectedItems.filter(item => (
     item.kind === 'tool_output' && item.call_id === 'later-call-after-exhaustion'
   ))
   assert.equal(laterOutputs.length, 1)
   assert.match(laterOutputs[0]?.content ?? '', /"code":"approval_not_authorized"/u)
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('a failed Codex retry request rotates to the one fresh second attempt', async () => {
-  const {service, codexApproval, actions, injectedItems} = pipelineService({
+  const {service, executorApproval, actions, injectedItems} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
     ensureResponseFailure: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'failed-retry-item', responseId: 'failed-retry-source',
   })
   await finishProviderResponse(service, 'failed-retry-source')
@@ -6514,17 +6518,17 @@ test('a failed Codex retry request rotates to the one fresh second attempt', asy
     kind: 'response_started', session_epoch: 1, response_id: 'failed-retry-clarification',
   })
   await finishProviderResponse(service, 'failed-retry-clarification')
-  await beginCodexApprovalCarrier(service, {
+  await beginExecutorApprovalCarrier(service, {
     itemId: 'later-item-after-failed-retry', responseId: 'later-response-after-failed-retry',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId,
     approved: true,
     responseId: 'later-response-after-failed-retry',
     callId: 'later-call-after-failed-retry',
   })
 
-  assert.equal(codexApproval.pending, false)
+  assert.equal(executorApproval.pending, false)
   assert.equal(actions.filter(action => action === 'ensure_response').length, 1)
   const laterOutputs = injectedItems.filter(item => (
     item.kind === 'tool_output' && item.call_id === 'later-call-after-failed-retry'
@@ -6535,25 +6539,25 @@ test('a failed Codex retry request rotates to the one fresh second attempt', asy
 })
 
 test('Codex invalidation refuses every deferred current-epoch function exactly once', async () => {
-  const {service, codexApproval, injectedItems} = pipelineService({
+  const {service, executorApproval, injectedItems} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: null, responseId: 'deferred-invalidation-response', revealItemAtEnd: 'never-revealed',
   })
   for (const callId of ['deferred-invalidation-a', 'deferred-invalidation-b']) {
-    await emitCodexApprovalFunction(service, {
+    await emitExecutorApprovalFunction(service, {
       approvalId, approved: true, responseId: 'deferred-invalidation-response', callId,
     })
   }
   assert.equal(injectedItems.some(item => item.kind === 'tool_output'), false)
 
-  assert.equal(codexApproval.invalidate('test_invalidation'), true)
+  assert.equal(executorApproval.invalidate('test_invalidation'), true)
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
   for (const callId of ['deferred-invalidation-a', 'deferred-invalidation-b']) {
@@ -6569,9 +6573,9 @@ test('a deferred Codex refusal batch never injects its second call after reconne
   const firstInjectionGate = new Promise<void>(resolve => { releaseFirstInjection = resolve })
   let signalFirstInjection!: () => void
   const firstInjectionStarted = new Promise<void>(resolve => { signalFirstInjection = resolve })
-  const {service, codexApproval, injectedItems} = pipelineService({
+  const {service, executorApproval, injectedItems} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
     beforeInjectConfirmation: item => {
       if (item.kind === 'tool_output' && item.call_id === 'epoch-race-first') {
         signalFirstInjection()
@@ -6580,20 +6584,20 @@ test('a deferred Codex refusal batch never injects its second call after reconne
       return Promise.resolve()
     },
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: null, responseId: 'epoch-race-response', revealItemAtEnd: 'never-revealed',
   })
   for (const callId of ['epoch-race-first', 'epoch-race-second']) {
-    await emitCodexApprovalFunction(service, {
+    await emitExecutorApprovalFunction(service, {
       approvalId, approved: true, responseId: 'epoch-race-response', callId,
     })
   }
 
-  assert.equal(codexApproval.invalidate('epoch_race'), true)
+  assert.equal(executorApproval.invalidate('epoch_race'), true)
   await firstInjectionStarted
   assert.equal(await service.reconnectForTest(1), true)
   releaseFirstInjection()
@@ -6610,9 +6614,9 @@ test('a deferred Codex refusal batch never injects its second call after reconne
 
 test('a failed deferred Codex refusal does not strand later calls in the same epoch', async () => {
   const completedCallIds: string[] = []
-  const {service, codexApproval, injectedItems, diagnostics} = pipelineService({
+  const {service, executorApproval, injectedItems, diagnostics} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
     beforeInjectConfirmation: item => {
       if (item.kind !== 'tool_output') return Promise.resolve()
       if (item.call_id === 'independent-failure-first') {
@@ -6622,20 +6626,20 @@ test('a failed deferred Codex refusal does not strand later calls in the same ep
       return Promise.resolve()
     },
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: null, responseId: 'independent-failure-response', revealItemAtEnd: 'never-revealed',
   })
   for (const callId of ['independent-failure-first', 'independent-failure-second']) {
-    await emitCodexApprovalFunction(service, {
+    await emitExecutorApprovalFunction(service, {
       approvalId, approved: true, responseId: 'independent-failure-response', callId,
     })
   }
 
-  assert.equal(codexApproval.invalidate('injection_failure'), true)
+  assert.equal(executorApproval.invalidate('injection_failure'), true)
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
   for (const callId of ['independent-failure-first', 'independent-failure-second']) {
@@ -6649,18 +6653,18 @@ test('a failed deferred Codex refusal does not strand later calls in the same ep
 })
 
 test('a newer user item refuses deferred Codex functions and cannot inherit voice authority', async () => {
-  const {service, codexApproval, actions, injectedItems} = pipelineService({
+  const {service, executorApproval, actions, injectedItems} = pipelineService({
     projectTool: true,
-    withCodexApproval: true,
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id!
-  await beginCodexApprovalCarrier(service, {
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await beginExecutorApprovalCarrier(service, {
     itemId: null, responseId: 'deferred-stale-response', revealItemAtEnd: 'never-revealed',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId,
     approved: true,
     responseId: 'deferred-stale-response',
@@ -6687,51 +6691,51 @@ test('a newer user item refuses deferred Codex functions and cannot inherit voic
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'later-stale-response',
   })
-  await emitCodexApprovalFunction(service, {
+  await emitExecutorApprovalFunction(service, {
     approvalId,
     approved: true,
     responseId: 'later-stale-response',
     callId: 'later-stale-call',
   })
 
-  assert.equal(codexApproval.pending, true)
+  assert.equal(executorApproval.pending, true)
   assert.equal(actions.filter(action => action === 'ensure_response').length, 0)
   const laterOutputs = injectedItems.filter(item => (
     item.kind === 'tool_output' && item.call_id === 'later-stale-call'
   ))
   assert.equal(laterOutputs.length, 1)
   assert.match(laterOutputs[0]?.content ?? '', /"code":"approval_not_authorized"/u)
-  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
 
 test('Codex approval expiry and provider reconnect revoke pending voice authority', async () => {
-  const expired = pipelineService({projectTool: true, withCodexApproval: true})
-  assert.ok(expired.codexApproval !== null)
+  const expired = pipelineService({projectTool: true, withExecutorApproval: true})
+  assert.ok(expired.executorApproval !== null)
   await expired.service.connect()
-  const expiredWaiting = offerCodexCommand(expired.codexApproval)
-  const expiredId = expired.codexApproval.view.pending_approval_id!
+  const expiredWaiting = offerCodexCommand(expired.executorApproval)
+  const expiredId = expired.executorApproval.view.pending_approval_id!
   await expired.service.flushHostItems()
-  expired.clock.advanceTo(expired.codexApproval.view.expires_at!)
+  expired.clock.advanceTo(expired.executorApproval.view.expires_at!)
   assert.deepEqual(await expiredWaiting, {decision: 'decline'})
-  assert.equal(expired.codexApproval.pending, false)
+  assert.equal(expired.executorApproval.pending, false)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   assert.equal(expired.actions.filter(action => (
-    action === `retire:provider:codex-approval:${expiredId}:requested`
+    action === `retire:provider:approval:${expiredId}:requested`
   )).length, 1)
 
-  const reconnected = pipelineService({projectTool: true, withCodexApproval: true})
-  assert.ok(reconnected.codexApproval !== null)
+  const reconnected = pipelineService({projectTool: true, withExecutorApproval: true})
+  assert.ok(reconnected.executorApproval !== null)
   await reconnected.service.connect()
-  const reconnectWaiting = offerCodexCommand(reconnected.codexApproval)
-  const reconnectId = reconnected.codexApproval.view.pending_approval_id!
+  const reconnectWaiting = offerCodexCommand(reconnected.executorApproval)
+  const reconnectId = reconnected.executorApproval.view.pending_approval_id!
   await reconnected.service.flushHostItems()
   assert.equal(await reconnected.service.reconnectForTest(1), true)
   assert.deepEqual(await reconnectWaiting, {decision: 'decline'})
-  assert.equal(reconnected.codexApproval.pending, false)
+  assert.equal(reconnected.executorApproval.pending, false)
   await new Promise<void>(resolve => { setImmediate(resolve) })
   assert.equal(reconnected.actions.filter(action => (
-    action === `retire:provider:codex-approval:${reconnectId}:requested`
+    action === `retire:provider:approval:${reconnectId}:requested`
   )).length, 1)
 })
 
@@ -6753,7 +6757,7 @@ function confirmationService(options: {
   readonly beforeInjection?: (item: HostContextItem) => Promise<void>
   readonly expiryStepTimeoutMs?: number
   readonly idFactory?: () => string
-  readonly withCodexApproval?: boolean
+  readonly withExecutorApproval?: boolean
 } = {}): {
   readonly service: RealtimeService
   readonly controller: ProjectConfirmationController
@@ -6763,10 +6767,12 @@ function confirmationService(options: {
   readonly diagnostics: string[]
   readonly telemetry: {readonly kind: string; readonly payload: Readonly<Record<string, JsonValue>>}[]
   readonly clock: VirtualClock
-  readonly codexApproval: CodexApprovalController | null
+  readonly executorApproval: CodexApprovalController | null
 } {
   const manifest = executorManifestSchema.parse({
     name: 'codex',
+    display_name: 'Codex',
+    roles: ['coding'],
     policy: {
       channel: 'codex',
       priority: 50,
@@ -6856,7 +6862,7 @@ function confirmationService(options: {
     onDiagnostic: () => undefined,
   })
   const controller = new ProjectConfirmationController({clock, idFactory: nextId})
-  const codexApproval = options.withCodexApproval === true
+  const executorApproval = options.withExecutorApproval === true
     ? new CodexApprovalController({clock, idFactory: nextId})
     : null
   let ingested = 0
@@ -6922,7 +6928,7 @@ function confirmationService(options: {
     }),
     idFactory: nextId,
     projectConfirmation: controller,
-    ...(codexApproval === null ? {} : {codexApproval}),
+    ...(executorApproval === null ? {} : {executorApproval}),
     ...(options.expiryStepTimeoutMs === undefined
       ? {}
       : {projectExpiryStepTimeoutMs: options.expiryStepTimeoutMs}),
@@ -6934,7 +6940,7 @@ function confirmationService(options: {
       close: () => undefined,
     },
   })
-  return {service, controller, actions, injected, views, diagnostics, telemetry, clock, codexApproval}
+  return {service, controller, actions, injected, views, diagnostics, telemetry, clock, executorApproval}
 }
 
 /**
@@ -7019,14 +7025,14 @@ async function reserveConfirmationTurn(
 }
 
 test('a later project confirmation invalidates Codex without sharing isolation occupancy', async () => {
-  const {service, controller, codexApproval, actions} = confirmationService({
-    withCodexApproval: true,
+  const {service, controller, executorApproval, actions} = confirmationService({
+    withExecutorApproval: true,
   })
-  assert.ok(codexApproval !== null)
+  assert.ok(executorApproval !== null)
   await service.connect()
 
-  const waiting = offerCodexCommand(codexApproval)
-  const approvalId = codexApproval.view.pending_approval_id
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id
   assert.ok(approvalId !== undefined)
   await service.flushHostItems()
   await service.handleEvent({
@@ -7041,7 +7047,7 @@ test('a later project confirmation invalidates Codex without sharing isolation o
   })
 
   try {
-    assert.equal(codexApproval.pending, false, 'project authority wins the overlap fail-closed')
+    assert.equal(executorApproval.pending, false, 'project authority wins the overlap fail-closed')
     assert.deepEqual(await waiting, {decision: 'decline'})
     await new Promise<void>(resolve => { setImmediate(resolve) })
     assert.equal(
@@ -7051,7 +7057,7 @@ test('a later project confirmation invalidates Codex without sharing isolation o
     )
     assert.equal(
       actions.filter(action => (
-        action === `retire:provider:codex-approval:${approvalId}:requested`
+        action === `retire:provider:approval:${approvalId}:requested`
       )).length,
       1,
       'the Codex provider fact is retired once',
@@ -7059,9 +7065,9 @@ test('a later project confirmation invalidates Codex without sharing isolation o
     assert.deepEqual(service.confirmationItemsForTest, ['1:independent-project-item'])
     assert.equal(service.projectConfirmationBlockingForTest, true)
     assert.equal(controller.lifecycleId, proposal.proposal_id)
-    assert.equal(service.codexApprovalDecision(approvalId, true), false)
+    assert.equal(service.executorApprovalDecision(approvalId, true), false)
   } finally {
-    if (codexApproval.pending) service.codexApprovalDecision(approvalId, false)
+    if (executorApproval.pending) service.executorApprovalDecision(approvalId, false)
     await waiting
   }
 })
@@ -8988,6 +8994,8 @@ test('a view observer that throws does not break the state change that produced 
   // the decision has already been made.
   const manifest = executorManifestSchema.parse({
     name: 'codex',
+    display_name: 'Codex',
+    roles: ['coding'],
     policy: {
       channel: 'codex',
       priority: 50,

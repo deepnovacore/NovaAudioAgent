@@ -33,9 +33,10 @@ function loadJson<T>(name: string): T {
 
 void new VirtualClock()
 
-function manifest(name: string, ops: readonly Record<string, JsonValue>[]) {
+function manifest(name: string, ops: readonly Record<string, JsonValue>[], roles: readonly string[] = []) {
   return executorManifestSchema.parse({
     name,
+    roles,
     policy: handoffPolicySchema.parse({
       channel: name, priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8,
     }),
@@ -53,7 +54,7 @@ const writeOp = {
 
 const tools = compileToolSchema([
   manifest('slow_sim', [readonlyOp]),
-  manifest('codex', [readonlyOp, writeOp]),
+  manifest('codex', [readonlyOp, writeOp], ['coding']),
 ])
 
 class ScriptedGateway implements ModelGateway {

@@ -54,12 +54,14 @@ test('camera is a registry adapter with the Python snapshot manifest', () => {
       verifies: ['snapshot'],
       sensitive_params: [],
       sync_result: false,
+      host_confirmation: false,
     }],
     policy: {
       channel: 'cam', priority: 40, wake: 'surrogate', typical_latency: 0.05, compress_watermark: 20,
       suggest: false, progress_via_surrogate: false,
     },
-    confirm_ttl: 0,
+    roles: [],
+    approvals: false,
   })
 })
 

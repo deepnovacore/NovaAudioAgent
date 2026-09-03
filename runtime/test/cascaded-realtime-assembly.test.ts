@@ -706,7 +706,7 @@ test('cascaded realtime composition rejects a live Codex fallback', () => {
   assert.throws(
     () => buildCascadedRealtimeAssembly(assemblyOptions(configured, {codexResource: resource})),
     error => error instanceof AssemblyError
-      && error.message === 'realtime Codex project mode mismatch',
+      && error.message === 'realtime coding resource selection mismatch',
   )
 })
 

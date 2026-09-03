@@ -122,12 +122,18 @@ export function deriveOrbState(input) {
   const codexMode = pendingConfirmation
     ? 'confirmation'
     : projectLabel === '' ? 'hidden' : 'project'
-  const codexStatus = input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲'
+  // The label names the executor by its own display name; with none announced there is nothing to say.
+  const executorName = typeof input.executorName === 'string' ? input.executorName : ''
+  const codexStatus = executorName === ''
+    ? ''
+    : input.codex === 'working' ? `${executorName} 正在后台工作` : `${executorName} 空闲`
   const compactCodexStatus = pendingConfirmation
     ? '等待你的确认'
-    : input.codex === 'working'
-      ? 'Codex 工作中'
-      : 'Codex 空闲'
+    : executorName === ''
+      ? ''
+      : input.codex === 'working'
+        ? `${executorName} 工作中`
+        : `${executorName} 空闲`
   const codexLabel = [...project, ...(pendingConfirmation ? [] : [codexStatus])]
     .join(pendingConfirmation ? '\n' : ' · ')
   const label = name === 'permission-denied' && input.platform === 'win32'
@@ -138,7 +144,7 @@ export function deriveOrbState(input) {
     label,
     statusLine: pendingConfirmation
       ? '需要你的确认'
-      : `${compactOrbLabel(name)} · ${compactCodexStatus}`,
+      : [compactOrbLabel(name), compactCodexStatus].filter(Boolean).join(' · '),
     codexLabel,
     projectLabel,
     codexMode,

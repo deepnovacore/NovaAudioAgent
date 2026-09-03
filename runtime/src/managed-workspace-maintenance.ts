@@ -7,7 +7,7 @@ import type {
   ProjectMaintenanceSnapshot,
 } from './project-store.js'
 import {
-  CodexProjectStore,
+  ProjectStore,
   hostManagedProjectRootFromConfig,
   hostProjectRootFromConfig,
 } from './project-store.js'
@@ -160,7 +160,7 @@ export class ManagedWorkspaceMaintenanceService {
     readonly managedRoot: string
     readonly nativeHost: ProjectNativeHost
   }): Promise<ManagedWorkspaceMaintenanceService> {
-    const store = await CodexProjectStore.open({
+    const store = await ProjectStore.open({
       stateRoot: hostProjectRootFromConfig(options.stateRoot),
       managedRoot: hostManagedProjectRootFromConfig(options.managedRoot),
       nativeLocks: options.nativeHost.nativeLocks,

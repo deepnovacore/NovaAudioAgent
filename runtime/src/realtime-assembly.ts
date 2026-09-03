@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly } from './assembly.js'
-import type {CodexAssemblyResource} from './executors/codex/factory.js'
 import { canonicalJson } from './canonical-json.js'
 import type {PublicProjectContext} from './project-store.js'
 import type { JsonValue } from './events.js'
-import type {
-  CommittedWorkspaceEvent,
-  ProjectCodexAdapter,
-  TerminalWorkOrderEvent,
-} from './executors/codex/adapter-project.js'
+import {
+  executorWithRole,
+  type CodingExecutorResource,
+  type CommittedWorkspaceEvent,
+  type ProjectExecutorAdapter,
+  type TerminalWorkOrderEvent,
+} from './coding-executor.js'
 import {
   PlaybackRegistry,
   type PlaybackCompletion,
@@ -20,11 +21,11 @@ import type {
   ConfirmedProjectOperation,
   ProjectConfirmationController,
   ProjectConfirmationView,
-} from './realtime/project-confirmation.js'
+} from './project-confirmation.js'
 import type { RealtimeProvider } from './realtime/protocol.js'
 import { RealtimeProviderSession } from './realtime/provider-session.js'
 import { RealtimeService } from './realtime/service.js'
-import type { CodexState, GuardHistoryRecovery } from './realtime/service-state.js'
+import type { ExecutorState, GuardHistoryRecovery } from './realtime/service-state.js'
 import { RealtimeSession } from './realtime/session.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
@@ -84,7 +85,7 @@ export interface RealtimeAssemblyOptions {
   readonly onSpoken?: (text: string) => void
   readonly onDelivery?: (completion: PlaybackCompletion) => void
   readonly onCaption?: (frame: CaptionFrame) => void
-  readonly onCodexState?: (state: CodexState) => void
+  readonly onExecutorState?: (state: ExecutorState) => void
   readonly onProjectView?: (view: ProjectConfirmationView) => void
   readonly telemetry?: RealtimeTelemetry
   readonly onDiagnostic?: (line: string) => void
@@ -92,12 +93,12 @@ export interface RealtimeAssemblyOptions {
   readonly guardHistoryRecovery?: GuardHistoryRecovery
   readonly guardHistoryPairs?: number
   readonly projectConfirmation?: ProjectConfirmationController
-  readonly projectAdapter?: ProjectCodexAdapter
+  readonly projectAdapter?: ProjectExecutorAdapter
   readonly commitProjectOperation?: (
     operation: ConfirmedProjectOperation,
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly projectExpiryStepTimeoutMs?: number
-  readonly codexResource?: CodexAssemblyResource
+  readonly codexResource?: CodingExecutorResource
   readonly workspaceGraph?: RealtimeWorkspaceGraph
 }
 
@@ -129,8 +130,8 @@ export class RealtimeAssembly {
   readonly workspaceGraph: RealtimeWorkspaceGraph | undefined
 
   readonly #onDiagnostic: (line: string) => void
-  readonly #projectAdapter: ProjectCodexAdapter | undefined
-  readonly #codexResource: CodexAssemblyResource | undefined
+  readonly #projectAdapter: ProjectExecutorAdapter | undefined
+  readonly #codexResource: CodingExecutorResource | undefined
   readonly #unsubscribeProjectView: (() => void) | undefined
   readonly #unsubscribeProjectContext: (() => void) | undefined
   readonly #unsubscribeCommittedWorkspace: (() => void) | undefined
@@ -172,9 +173,9 @@ export class RealtimeAssembly {
     readonly bridge: RealtimeRuntimeBridge
     readonly service: RealtimeService
     readonly onDiagnostic: (line: string) => void
-    readonly projectAdapter?: ProjectCodexAdapter
+    readonly projectAdapter?: ProjectExecutorAdapter
     readonly onProjectView?: (view: ProjectConfirmationView) => void
-    readonly codexResource?: CodexAssemblyResource
+    readonly codexResource?: CodingExecutorResource
     readonly workspaceGraph?: RealtimeWorkspaceGraph
     readonly idFactory: () => string
     readonly wallClockNow: () => number
@@ -756,12 +757,13 @@ function isWorkspaceGraphQueueFull(error: unknown): boolean {
 export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): RealtimeAssembly {
   const core = options.core
   const resourceAdapter = options.codexResource?.adapter
+  const codingManifest = executorWithRole([...core.runtime.executors.values()].map(adapter => adapter.manifest), 'coding')
   if (
     options.codexResource !== undefined
-    && core.runtime.executors.get('codex') !== resourceAdapter
-  ) throw new AssemblyError('Codex resource must be the registered codex executor')
+    && (codingManifest === null || core.runtime.executors.get(codingManifest.name) !== resourceAdapter)
+  ) throw new AssemblyError('coding resource must be the registered coding executor')
   if (options.projectAdapter !== undefined && options.codexResource !== undefined) {
-    throw new AssemblyError('manual project adapter cannot be combined with Codex resource')
+    throw new AssemblyError('manual project adapter cannot be combined with coding resource')
   }
   const projectAdapter = options.codexResource?.mode === 'project'
     ? asProjectAdapter(resourceAdapter)
@@ -770,8 +772,8 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     if (options.projectConfirmation !== undefined || options.commitProjectOperation !== undefined) {
       throw new AssemblyError('project adapter cannot be combined with manual project wiring')
     }
-    if (core.runtime.executors.get('codex') !== projectAdapter) {
-      throw new AssemblyError('project adapter must be the registered codex executor')
+    if (codingManifest === null || core.runtime.executors.get(codingManifest.name) !== projectAdapter) {
+      throw new AssemblyError('project adapter must be the registered coding executor')
     }
   }
   const projectConfirmation = projectAdapter?.confirmationController ?? options.projectConfirmation
@@ -824,11 +826,11 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       ...options.intake,
       resolveTarget: (request: Readonly<Record<string, JsonValue>>) => projectAdapter.resolveIntakeTarget(request),
       dispatch: (intake: IntakeSession) => core.runtime.dispatchExternal({
-        executor: 'codex', op: 'project', origin_ref: intake.origin_ref,
+        executor: projectAdapter.manifest.name, op: 'project', origin_ref: intake.origin_ref,
         request: {...intake.request, work_order: intake.work_order!},
       }, {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null}),
       record: (intake: IntakeSession, kind: string, data: Readonly<Record<string, JsonValue>>) => {
-        core.runtime.memory.append('codex', {
+        core.runtime.memory.append(projectAdapter.manifest.name, {
           ts: core.runtime.clock.now(), trust: 'trusted_system', priority: USER_PRIORITY - 1,
           content: {kind, intake_id: intake.intake_id, revision: intake.revision, ...data}, refs: [intake.origin_ref],
         })
@@ -838,7 +840,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     onProviderTerminal: generation => {
       options.onAudioTerminal?.(generation.utterance_id, generation.generation_epoch)
     },
-    ...(options.onCodexState === undefined ? {} : {onCodexState: options.onCodexState}),
+    ...(options.onExecutorState === undefined ? {} : {onExecutorState: options.onExecutorState}),
     onActiveWorkChanged: () => {
       void assemblyHolder.current?.enqueueActiveWorkContextPublication().catch(() => {
         onDiagnostic('[realtime-diagnostic] active_executor_context_delivery_failed')
@@ -859,7 +861,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     ...(options.codexResource?.approvalController === null
       || options.codexResource?.approvalController === undefined
       ? {}
-      : {codexApproval: options.codexResource.approvalController}),
+      : {executorApproval: options.codexResource.approvalController}),
     ...(commitProjectOperation === undefined
       ? {}
       : {commitProjectOperation}),
@@ -905,7 +907,7 @@ function assignAssembly(
   return assembly
 }
 
-function asProjectAdapter(adapter: unknown): ProjectCodexAdapter {
+function asProjectAdapter(adapter: unknown): ProjectExecutorAdapter {
   if (
     typeof adapter !== 'object'
     || adapter === null
@@ -918,8 +920,8 @@ function asProjectAdapter(adapter: unknown): ProjectCodexAdapter {
     || !('observeProjectContext' in adapter)
     || !('observeCommittedWorkspace' in adapter)
     || !('observeTerminalWorkOrder' in adapter)
-  ) throw new AssemblyError('project Codex resource has an invalid adapter')
-  return adapter as ProjectCodexAdapter
+  ) throw new AssemblyError('project coding resource has an invalid adapter')
+  return adapter as ProjectExecutorAdapter
 }
 
 function validateProviderToolView(

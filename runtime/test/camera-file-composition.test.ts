@@ -333,7 +333,7 @@ async function connectRenderer(port: number): Promise<InjectedRenderer> {
     socket.once('open', resolve)
     socket.once('error', reject)
   }))
-  const bootstrap = nextTextFrames(socket, 2)
+  const bootstrap = nextTextFrames(socket, 1)
   socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
   await settleWithin('injected renderer authentication', bootstrap)
   return new InjectedRenderer(socket)

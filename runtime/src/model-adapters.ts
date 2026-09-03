@@ -148,7 +148,7 @@ export class GatewayFastBrain {
 }
 
 /**
- * Drop Codex tools when the wake was not a user turn.
+ * Drop coding-role tools when the wake was not a user turn.
  *
  * A background trigger must not be able to start new development work; only an
  * explicit user turn can.
@@ -160,7 +160,8 @@ export function toolsForTrigger(
 ): CompiledTools {
   if (!enabled || triggerKind === 'user_input') return tools
   const bindings = new Map(
-    [...tools.bindings].filter(([, binding]) => binding.executor !== 'codex'),
+    [...tools.bindings].filter(([, binding]) =>
+      binding.executor === null || !(tools.executor_roles.get(binding.executor) ?? []).includes('coding')),
   )
   const schemas = tools.schemas.filter(schema => {
     const declared = schema.function
@@ -169,7 +170,7 @@ export function toolsForTrigger(
       : undefined
     return typeof name === 'string' && bindings.has(name)
   })
-  return {schemas, bindings}
+  return {...tools, schemas, bindings}
 }
 
 const toolArgumentsSchema = z.record(z.string(), z.unknown())

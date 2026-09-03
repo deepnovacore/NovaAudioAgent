@@ -17,7 +17,7 @@ import { wakeReasonSchema, type Slot, type WakeReason } from '../src/slots.js'
 import { fixtureSlowSimManifest as fixtureSlowSim } from '../src/sim.js'
 import {CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
 import {VirtualClock} from '../src/clock.js'
-import {ProjectConfirmationController} from '../src/realtime/project-confirmation.js'
+import {ProjectConfirmationController} from '../src/project-confirmation.js'
 
 const manifest = executorManifestSchema.parse({
   name: 'slow_sim',

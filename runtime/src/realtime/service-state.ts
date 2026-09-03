@@ -48,7 +48,7 @@ export const GUARD_CLEAR_ACK_DEADLINE_S = 0.5
  */
 export const HIT_ALERT_MIN_PRIORITY = 55
 
-export type CodexState = 'idle' | 'running'
+export type ExecutorState = 'idle' | 'running'
 export type GuardHistoryRecovery = 'none' | 'packed'
 
 /** What the service will say when a confirmed project operation could not be carried out. */
@@ -186,13 +186,13 @@ export function semanticAcknowledgement(input: {
   readonly event_id: string
   readonly delegate_id: string
   readonly summary: string
-  readonly channel?: string
+  readonly channel: string
 }): SemanticAcknowledgement {
   return {
     event_id: input.event_id,
     delegate_id: input.delegate_id,
     summary: input.summary,
-    channel: input.channel ?? 'codex',
+    channel: input.channel,
     origin_session_epoch: null,
     origin_response_id: null,
     origin_user_input_revision: null,

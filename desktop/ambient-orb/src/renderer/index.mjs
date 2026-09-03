@@ -161,6 +161,8 @@ const axes = {
   capture: 'idle',
   playback: 'idle',
   codex: 'idle',
+  /** Display name of the coding executor, from the last executor.state frame; '' until one arrives. */
+  executorName: '',
   workspace: '',
   session: '',
   pendingConfirmation: false,
@@ -377,7 +379,7 @@ function applyConfirmationPresentation() {
     if (previousKind !== null) {
       setText(
         confirmationAnnouncement,
-        previousKind === 'project' ? '项目确认已结束。' : 'Codex 授权确认已结束。',
+        previousKind === 'project' ? '项目确认已结束。' : `${axes.executorName || '执行器'} 授权确认已结束。`,
       )
     }
     return
@@ -805,9 +807,10 @@ async function handleControl(message) {
     captionLabel.textContent = message.text
     captionLabel.dataset.role = message.role
     captionLabel.hidden = !message.text
-  } else if (message.type === 'codex.state') {
+  } else if (message.type === 'executor.state') {
     axes.codex = message.state === 'running' ? 'working' : 'idle'
-  } else if (message.type === 'codex.project') {
+    if (typeof message.display_name === 'string') axes.executorName = message.display_name
+  } else if (message.type === 'project.state') {
     const keys = Object.keys(message).sort().join(',')
     const workspace = message.workspace_display_name
     const session = message.session_title
@@ -888,9 +891,10 @@ async function handleControl(message) {
       confirmationPresentation.sync('project', message.pending_confirmation)
       applyConfirmationPresentation()
     }
-  } else if (message.type === 'codex.approval') {
+  } else if (message.type === 'executor.approval') {
     const approval = parseCodexApprovalMessage(message)
     if (approval !== null) {
+      axes.executorName = approval.display_name
       latestCodexApproval = approval.pending_approval
         ? {
             kind: 'codex',
@@ -903,6 +907,7 @@ async function handleControl(message) {
       codexApprovalDecision.sync({
         pending: approval.pending_approval,
         approvalId: approval.pending_approval ? approval.pending_approval_id : null,
+        executor: approval.executor,
         busy: approval.pending_approval_busy,
         allowedDecisions: approval.allowed_decisions,
       })

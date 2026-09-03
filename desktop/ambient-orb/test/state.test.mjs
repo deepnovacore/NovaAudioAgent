@@ -11,6 +11,7 @@ const base = {
   capture: 'idle',
   playback: 'idle',
   codex: 'idle',
+  executorName: 'Codex',
   connected: true,
   permission: 'granted',
   error: '',
@@ -240,7 +241,7 @@ test('does not claim an AEC implementation before microphone activation', () => 
 test('backend terminal and reconnecting states remain distinguishable', () => {
   const base = {
     booting: false, connected: false, permission: 'granted', activated: false,
-    capture: 'idle', playback: 'idle', codex: 'idle', workspace: '', session: '',
+    capture: 'idle', playback: 'idle', codex: 'idle', executorName: 'Codex', workspace: '', session: '',
     pendingConfirmation: false, error: '', audioMode: 'inactive', shellExpanded: false,
   }
   assert.equal(deriveOrbState({...base, backendState: 'reconnecting'}).name, 'reconnecting')

@@ -27,6 +27,7 @@ export const executorResultSchema = z.object({
 export type ExecutorResult = z.infer<typeof executorResultSchema>['result']
 export type ProgressMode = 'off' | 'milestones' | 'all'
 type RuntimeEvidence = Pick<CausalRuntime, 'inFlightDelegate' | 'claimedHandoff' | 'delegateFor' | 'terminatedByDeadline'>
+  & {readonly executors?: ReadonlyMap<string, {readonly manifest: {readonly display_name?: string | undefined}}>}
 
 /** Prefer a neutral reminder to exposing a command, path or credential in the orb. */
 export function safeProgressSummary(value: unknown, fallback: string): string {
@@ -50,7 +51,8 @@ export function projectExecutorEvent(event: EventRecord, runtime: RuntimeEvidenc
   if (event.kind !== 'deadline' && delegate.executor !== event.payload.channel) return null
   if ((event.kind === 'progress' || event.kind === 'observation') && delegate.op !== event.payload.op) return null
   if ((event.kind === 'handoff' || event.kind === 'observation') && delegate.origin_ref !== event.payload.origin_ref) return null
-  const label = delegate.executor === 'codex' ? 'Codex' : delegate.executor === 'guard' ? '监护' : delegate.executor === 'watch' ? '观察' : '任务'
+  const label = delegate.executor === 'guard' ? '监护' : delegate.executor === 'watch' ? '观察'
+    : runtime.executors?.get(delegate.executor)?.manifest.display_name ?? '任务'
   let phase: ExecutorProgress['phase']
   let level: ExecutorProgress['level'] = 'milestone'
   let text: string

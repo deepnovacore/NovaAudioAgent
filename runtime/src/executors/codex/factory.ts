@@ -19,7 +19,7 @@ import {codexCredentialApiKey} from './host-config.js'
 import type {CredentialSnapshotter} from './credential-snapshot.js'
 import type {PublicProjectView} from '../../project-store.js'
 import {
-  CodexProjectStore,
+  ProjectStore,
   MAX_PROJECT_WORKSPACE_NAME,
   ProjectStateError,
 } from '../../project-store.js'
@@ -37,7 +37,7 @@ import type {Clock} from '../../clock.js'
 import {CodexHostConfigurationError} from './host-config.js'
 import {ProjectCodexAdapter} from './adapter-project.js'
 import {CodexAdapter} from './adapter.js'
-import {ProjectConfirmationController} from '../../realtime/project-confirmation.js'
+import {ProjectConfirmationController} from '../../project-confirmation.js'
 import {
   CodexApprovalController,
   type CodexApprovalView,
@@ -278,7 +278,7 @@ async function createProjectResource(
   if (host === undefined) {
     throw new CodexHostConfigurationError('codex_project_host_unsupported')
   }
-  let store: CodexProjectStore | null = null
+  let store: ProjectStore | null = null
   let startupTransport: CodexAppServerTransport | null = null
   try {
     startupTransport = options.transportFactory.create(Object.freeze({
@@ -298,7 +298,7 @@ async function createProjectResource(
     if (!isCodexTransport(startupTransport)) {
       throw new CodexHostConfigurationError('codex_host_unavailable')
     }
-    store = await CodexProjectStore.open({
+    store = await ProjectStore.open({
       stateRoot,
       managedRoot,
       nativeLocks: host.nativeLocks,

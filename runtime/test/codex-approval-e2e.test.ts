@@ -182,7 +182,7 @@ function realtimeHarness(
     tools,
     session,
     bridge,
-    codexApproval: controller,
+    executorApproval: controller,
     idFactory,
     onDiagnostic: () => undefined,
   })
@@ -344,7 +344,7 @@ test('Windows file approval crosses fake app-server, Codex function authority, a
   await waitUntil(() => e2e.controller.pending, 'voice controller pending')
   const approvalId = e2e.controller.view.pending_approval_id!
   const prompt = e2e.service.queuedHostItems().find(item => (
-    item.intent.item.event_id === `codex-approval:${approvalId}:requested`
+    item.intent.item.event_id === `approval:${approvalId}:requested`
   ))?.intent.item.content
   assert.deepEqual(JSON.parse(prompt ?? ''), {
     approval_id: approvalId,
@@ -389,6 +389,7 @@ test('Windows renderer decision crosses real desktop loopback into the same tran
   const stop = new AbortController()
   const inbound = new DesktopInboundObserver()
   const desktop = new DesktopRealtime({
+    executor: {executor: 'codex', display_name: 'Codex'},
     token: DESKTOP_TOKEN,
     service: e2e.service,
     stop,
@@ -396,7 +397,7 @@ test('Windows renderer decision crosses real desktop loopback into the same tran
     approvalView: e2e.controller.view,
     createServer: options => inbound.createServer(options),
   })
-  const unsubscribe = e2e.controller.observe(view => { desktop.bridge.onCodexApproval(view) })
+  const unsubscribe = e2e.controller.observe(view => { desktop.bridge.onExecutorApproval(view) })
   let socket: WebSocket | null = null
   const readiness = await within(desktop.server.start(), 'desktop server start')
   t.after(async () => {
@@ -405,32 +406,32 @@ test('Windows renderer decision crosses real desktop loopback into the same tran
     await desktop.server.close()
   })
   socket = await connectDesktop(readiness.port)
-  const approvalFrame = nextTextFrame(socket, frame => frame.type === 'codex.approval')
+  const approvalFrame = nextTextFrame(socket, frame => frame.type === 'executor.approval')
   await sendSocket(socket, JSON.stringify({type: 'hello', token: DESKTOP_TOKEN}))
-  desktop.bridge.onCodexApproval(e2e.controller.view)
+  desktop.bridge.onExecutorApproval(e2e.controller.view)
   const publicView = await within(approvalFrame, 'desktop approval frame')
   assert.equal(publicView.pending_approval, true)
   const approvalId = String(publicView.pending_approval_id)
 
   await sendSocket(socket, JSON.stringify({
-    type: 'codex.approval_decision', approval_id: 'stale-public-id', approved: false,
+    type: 'executor.approval_decision', executor: 'codex', approval_id: 'stale-public-id', approved: false,
   }))
   await inbound.waitForCount(1, 'stale desktop inbound decision')
   assert.equal(e2e.controller.pending, true, 'stale renderer ID has no authority')
   await sendSocket(socket, JSON.stringify({
-    type: 'codex.approval_decision', approval_id: approvalId, approved: true,
+    type: 'executor.approval_decision', executor: 'codex', approval_id: approvalId, approved: true,
   }))
   await inbound.waitForCount(2, 'valid desktop inbound decision')
   assert.equal(await within(e2e.factory.owner!.approvalDecision, 'desktop wire decision'), 'accept')
   await sendSocket(socket, JSON.stringify({
-    type: 'codex.approval_decision', approval_id: approvalId, approved: false,
+    type: 'executor.approval_decision', executor: 'codex', approval_id: approvalId, approved: false,
   }))
   await inbound.waitForCount(3, 'duplicate desktop inbound decision')
 
   assert.deepEqual(inbound.controls, [
-    {type: 'codex.approval_decision', approval_id: 'stale-public-id', approved: false},
-    {type: 'codex.approval_decision', approval_id: approvalId, approved: true},
-    {type: 'codex.approval_decision', approval_id: approvalId, approved: false},
+    {type: 'executor.approval_decision', executor: 'codex', approval_id: 'stale-public-id', approved: false},
+    {type: 'executor.approval_decision', executor: 'codex', approval_id: approvalId, approved: true},
+    {type: 'executor.approval_decision', executor: 'codex', approval_id: approvalId, approved: false},
   ])
   assert.equal(
     await within(
@@ -443,7 +444,7 @@ test('Windows renderer decision crosses real desktop loopback into the same tran
   e2e.factory.owner!.release('approval_turn_completion')
   const result = await within(e2e.running, 'desktop terminal completion')
   assert.equal(result.classification, 'completed')
-  assert.equal(e2e.service.codexApprovalDecision(approvalId, false), false, 'duplicate is spent')
+  assert.equal(e2e.service.executorApprovalDecision(approvalId, false), false, 'duplicate is spent')
   assert.equal(stop.signal.aborted, false)
 })
 
@@ -461,7 +462,7 @@ test('explicit Realtime refusal writes one decline and still reaches server term
   assert.equal(await within(e2e.factory.owner!.approvalDecision, 'decline wire decision'), 'decline')
   const result = await within(e2e.running, 'decline terminal completion')
   assert.equal(result.classification, 'completed')
-  assert.equal(e2e.service.codexApprovalDecision(approvalId, true), false)
+  assert.equal(e2e.service.executorApprovalDecision(approvalId, true), false)
 })
 
 test('expiry and provider reconnect each revoke authority and write decline through the real transport', async t => {
@@ -475,7 +476,7 @@ test('expiry and provider reconnect each revoke authority and write decline thro
       else assert.equal(await e2e.service.reconnectForTest(1), true)
       assert.equal(await within(e2e.factory.owner!.approvalDecision, `${mode} wire decision`), 'decline')
       assert.equal((await within(e2e.running, `${mode} terminal completion`)).classification, 'completed')
-      assert.equal(e2e.service.codexApprovalDecision(approvalId, true), false)
+      assert.equal(e2e.service.executorApprovalDecision(approvalId, true), false)
     })
   }
 })
@@ -501,7 +502,7 @@ test('a duplicate Codex function arriving after settlement cannot spend the requ
     arguments: {approval_id: approvalId, approved: true},
   })
   assert.equal(e2e.controller.pending, false)
-  assert.equal(e2e.service.codexApprovalDecision(approvalId, false), false)
+  assert.equal(e2e.service.executorApprovalDecision(approvalId, false), false)
   assert.equal(
     await within(
       e2e.factory.owner!.probeApprovalResponseCountForTest(),
@@ -529,7 +530,7 @@ test('service close and nonrecoverable provider end revoke pending transport aut
       }
       assert.equal(await within(e2e.factory.owner!.approvalDecision, `${mode} wire decline`), 'decline')
       assert.equal((await within(e2e.running, `${mode} terminal completion`)).classification, 'completed')
-      assert.equal(e2e.service.codexApprovalDecision(approvalId, true), false)
+      assert.equal(e2e.service.executorApprovalDecision(approvalId, true), false)
     })
   }
 })
@@ -543,7 +544,7 @@ test('turn interruption and process exit clear pending authority before any late
   const interruptedResult = await within(interrupted.running, 'interrupted turn result')
   assert.notEqual(interruptedResult.classification, 'completed')
   assert.equal(interrupted.controller.pending, false)
-  assert.equal(interrupted.service.codexApprovalDecision(
+  assert.equal(interrupted.service.executorApprovalDecision(
     'public-file-approval-turn-interrupted', true,
   ), false)
 
@@ -554,7 +555,7 @@ test('turn interruption and process exit clear pending authority before any late
   const exitedResult = await within(exited.running, 'process exit result')
   assert.equal(exitedResult.code, 'transport_lost')
   assert.equal(exited.controller.pending, false)
-  assert.equal(exited.service.codexApprovalDecision(exitedApprovalId, true), false)
+  assert.equal(exited.service.executorApprovalDecision(exitedApprovalId, true), false)
 })
 
 async function waitUntil(predicate: () => boolean, label: string): Promise<void> {

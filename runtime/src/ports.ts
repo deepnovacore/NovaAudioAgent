@@ -107,6 +107,8 @@ export const opSpecSchema = z.object({
   verifies: z.array(z.string()).default([]),
   sensitive_params: z.array(z.string()).default([]),
   sync_result: z.boolean().default(false),
+  /** Resolved by a host confirmation FSM, never dispatched; the host does not inject `origin_ref`. */
+  host_confirmation: z.boolean().default(false),
 }).strict().superRefine((value, context) => {
   if (new Set(value.sensitive_params).size !== value.sensitive_params.length) {
     context.addIssue({code: 'custom', message: 'sensitive_params must be unique'})
@@ -126,11 +128,18 @@ export const opSpecSchema = z.object({
   }
 })
 
+/** Roles the host routes by. An executor is found by role, never by name. */
+export const executorRoleSchema = z.enum(['coding'])
+
 export const executorManifestSchema = z.object({
   name: z.string().min(1),
+  /** Human label for wire frames and bubbles; defaults to `name` at the read site. */
+  display_name: z.string().min(1).max(40).optional(),
+  roles: z.array(executorRoleSchema).default([]),
+  /** The executor raises mid-run approvals; the host attaches its approval surface. */
+  approvals: z.boolean().default(false),
   ops: z.array(opSpecSchema),
   policy: handoffPolicySchema,
-  confirm_ttl: z.number().finite().nonnegative().default(0),
 }).strict().superRefine((value, context) => {
   if (value.name !== value.policy.channel) {
     context.addIssue({code: 'custom', message: 'manifest name must match policy channel'})
@@ -139,3 +148,4 @@ export const executorManifestSchema = z.object({
 
 export type OpSpec = z.infer<typeof opSpecSchema>
 export type ExecutorManifest = z.infer<typeof executorManifestSchema>
+export type ExecutorRole = z.infer<typeof executorRoleSchema>

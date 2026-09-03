@@ -45,7 +45,7 @@ export {
   type ManagedWorkspaceScope,
 } from './managed-workspace-maintenance.js'
 
-export {admitCodexCliVersion} from './executors/codex/version.js'
+export {admitCodexCliVersion} from './executors/index.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
@@ -135,7 +135,6 @@ export const connectionDiagnosticSchema = z.discriminatedUnion('phase', [
 ])
 const DEFAULT_BOOTSTRAP_TEXT_FRAMES = [
   '{"type":"desktop.ready"}',
-  '{"type":"codex.state","state":"idle"}',
 ] as const
 
 const ordinaryDesktopControlSchema = z.discriminatedUnion('type', [
@@ -164,7 +163,8 @@ const ordinaryDesktopControlSchema = z.discriminatedUnion('type', [
     confirmed: z.boolean(),
   }).strict(),
   z.object({
-    type: z.literal('codex.approval_decision'),
+    type: z.literal('executor.approval_decision'),
+    executor: identifierSchema,
     approval_id: identifierSchema.refine(value => codePointLengthLikePython(value) <= 128),
     approved: z.boolean(),
     scope: z.literal('session').optional(),

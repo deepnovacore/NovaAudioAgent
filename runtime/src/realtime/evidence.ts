@@ -21,10 +21,21 @@ const GENERIC_SCALAR_KEYS = [
 ] as const
 const STRUCTURED_EVIDENCE_CHANNELS = new Set(['ha', 'fast_sim', 'slow_sim', 'autoglm', 'cam'])
 const UNKNOWN_PROSE_KEYS = ['observation', 'summary', 'message', 'error'] as const
-const CODEX_PROGRESS_KEYS = new Set(['op', 'phase', 'internal_activity', 'elapsed', 'summary'])
+const CODING_PROGRESS_KEYS = new Set(['op', 'phase', 'internal_activity', 'elapsed', 'summary'])
 
-export function finalSpeechView(outcome: string, content: unknown): string {
-  const confirmation = outcome === 'ok' ? codexConfirmationSpeech(content) : null
+/** The coding-role executor as speech needs it: which channel it writes and how to name it. */
+export interface CodingChannel {
+  readonly channel: string
+  readonly display_name: string
+}
+
+/**
+ * Speech for the coding executor's terminal handoff. The content vocabulary (`confirmation_required`,
+ * startup-failure stages, `result.final_message`) is the coding-role handoff contract, not one
+ * executor's private shape; only the display name is executor-specific.
+ */
+export function finalSpeechView(outcome: string, content: unknown, displayName: string): string {
+  const confirmation = outcome === 'ok' ? codingConfirmationSpeech(content, displayName) : null
   if (confirmation !== null) return confirmation
   let finalMessage: unknown
   let code: unknown
@@ -40,7 +51,7 @@ export function finalSpeechView(outcome: string, content: unknown): string {
     ? code
     : typeof error === 'string' && error !== '' ? error : 'no_final_message'
   if (outcome === 'refused') {
-    return `Codex 未执行，需要选择或修正请求（${category}）`
+    return `${displayName} 未执行，需要选择或修正请求（${category}）`
   }
   let text: string | undefined
   let upstreamTruncated = false
@@ -52,19 +63,19 @@ export function finalSpeechView(outcome: string, content: unknown): string {
   }
   if (text === undefined) {
     if (outcome === 'failed') {
-      const failure = codexStartupFailureSpeech(category, stage)
+      const failure = codingStartupFailureSpeech(category, stage, displayName)
       if (failure !== null) return failure
     }
-    return `Codex 任务未能确认完成（${category}）`
+    return `${displayName} 任务未能确认完成（${category}）`
   }
   const prepared = prepareForSpeech(text, {limit: SPEECH_FINAL_LIMIT})
   const note = upstreamTruncated || prepared.truncated ? '（结果较长，已截取要点）' : ''
-  if (outcome === 'ok') return `Codex 报告任务完成：${prepared.text}${note}`
+  if (outcome === 'ok') return `${displayName} 报告任务完成：${prepared.text}${note}`
   if (outcome === 'failed') {
     const category = typeof code === 'string' && code !== '' ? `（${code}）` : ''
-    return `Codex 任务失败${category}：${prepared.text}${note}`
+    return `${displayName} 任务失败${category}：${prepared.text}${note}`
   }
-  return `Codex 任务结果不确定：${prepared.text}${note}`
+  return `${displayName} 任务结果不确定：${prepared.text}${note}`
 }
 
 /**
@@ -72,7 +83,7 @@ export function finalSpeechView(outcome: string, content: unknown): string {
  * fields beside it. This keeps proposal ids, work orders, and forged prose out of speech while still
  * preserving the question that used to be lost by the generic no-final-message fallback.
  */
-function codexConfirmationSpeech(content: unknown): string | null {
+function codingConfirmationSpeech(content: unknown, displayName: string): string | null {
   if (!isObject(content) || content.code !== 'confirmation_required') return null
   const action = content.action
   const workspace = content.workspace
@@ -85,7 +96,7 @@ function codexConfirmationSpeech(content: unknown): string | null {
     || codePointLengthLikePython(workspace) > 120
     || typeof prompt !== 'string'
     || codePointLengthLikePython(prompt) > 512
-  ) return genericCodexConfirmationSpeech()
+  ) return genericCodingConfirmationSpeech(displayName)
 
   let expected: readonly string[]
   if (action === 'create_workspace') {
@@ -105,35 +116,35 @@ function codexConfirmationSpeech(content: unknown): string | null {
   ) {
     expected = [`准备切换到${workspace}，并继续 Session“${session}”，请确认或取消。`]
   } else {
-    return genericCodexConfirmationSpeech()
+    return genericCodingConfirmationSpeech(displayName)
   }
-  if (!expected.includes(prompt)) return genericCodexConfirmationSpeech()
+  if (!expected.includes(prompt)) return genericCodingConfirmationSpeech(displayName)
   return prompt
 }
 
-function genericCodexConfirmationSpeech(): string {
-  return 'Codex 有一项项目操作等待你的确认。'
-    + '这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。'
+function genericCodingConfirmationSpeech(displayName: string): string {
+  return `${displayName} 有一项项目操作等待你的确认。`
+    + `这项操作尚未执行，${displayName} 也还没有开始任务。请确认或取消。`
 }
 
-function codexStartupFailureSpeech(category: string, stage: unknown): string | null {
+function codingStartupFailureSpeech(category: string, stage: unknown, displayName: string): string | null {
   if (category === 'credential_missing' || stage === 'credential') {
-    return 'Codex 登录凭据不可用，这次任务没有成功启动。'
+    return `${displayName} 登录凭据不可用，这次任务没有成功启动。`
   }
   if (category === 'spawn_failed' || stage === 'spawn') {
-    return 'Codex 进程未能启动，这次任务没有成功启动。'
+    return `${displayName} 进程未能启动，这次任务没有成功启动。`
   }
   if (category === 'thread_id_invalid' || category === 'session_thread_mismatch') {
-    return 'Codex 会话未能建立，这次任务没有成功启动。'
+    return `${displayName} 会话未能建立，这次任务没有成功启动。`
   }
   if (category === 'worker_refused' || category === 'server_rejected') {
-    return 'Codex 会话启动被拒绝，这次任务没有成功启动。'
+    return `${displayName} 会话启动被拒绝，这次任务没有成功启动。`
   }
   if (stage === 'preflight') {
-    return 'Codex 启动前检查失败，这次任务没有成功启动。'
+    return `${displayName} 启动前检查失败，这次任务没有成功启动。`
   }
   if (stage === 'thread_start') {
-    return 'Codex 会话启动失败，这次任务没有成功启动。'
+    return `${displayName} 会话启动失败，这次任务没有成功启动。`
   }
   return null
 }
@@ -183,7 +194,7 @@ export function genericFinalSpeechView(
   return prepareForSpeech(text, {limit: SPEECH_FINAL_LIMIT}).text
 }
 
-export function safeMemoryEvidence(item: MemoryItem): string | null {
+export function safeMemoryEvidence(item: MemoryItem, coding: CodingChannel | null = null): string | null {
   const content = item.content
   const outcome = item.outcome ?? 'unknown'
 
@@ -193,10 +204,10 @@ export function safeMemoryEvidence(item: MemoryItem): string | null {
     return nonemptyPrepared(text)
   }
 
-  if (item.channel === 'codex') {
-    if (item.outcome !== null) return finalSpeechView(outcome, content)
-    const summary = storedCodexProgressSummary(item)
-    return summary === null ? finalSpeechView(outcome, content) : nonemptyPrepared(summary)
+  if (coding !== null && item.channel === coding.channel) {
+    if (item.outcome !== null) return finalSpeechView(outcome, content, coding.display_name)
+    const summary = storedCodingProgressSummary(item)
+    return summary === null ? finalSpeechView(outcome, content, coding.display_name) : nonemptyPrepared(summary)
   }
 
   if (item.channel === 'search') return searchEvidence(content)
@@ -241,13 +252,13 @@ export function safeMemoryEvidence(item: MemoryItem): string | null {
   }).text
 }
 
-function storedCodexProgressSummary(item: MemoryItem): string | null {
+function storedCodingProgressSummary(item: MemoryItem): string | null {
   const keys = Object.keys(item.content)
   if (
     item.trust !== 'trusted_system'
     || item.outcome !== null
-    || keys.length !== CODEX_PROGRESS_KEYS.size
-    || keys.some(key => !CODEX_PROGRESS_KEYS.has(key))
+    || keys.length !== CODING_PROGRESS_KEYS.size
+    || keys.some(key => !CODING_PROGRESS_KEYS.has(key))
     || item.content.op !== 'run'
     || item.content.phase !== 'working'
   ) return null

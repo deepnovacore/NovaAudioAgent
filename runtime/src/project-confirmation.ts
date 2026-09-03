@@ -9,14 +9,14 @@
  * meaning is deliberately outside this controller.
  */
 
-import type { Clock } from '../clock.js'
+import type { Clock } from './clock.js'
 import {
   confirmedProjectCapabilityWasAdmitted,
   issueConfirmedProjectCapability,
   recordConfirmedProjectAdmission,
   revokeConfirmedProjectCapability,
-} from '../confirmed-project-capability.js'
-import {codePointLengthLikePython} from '../python-text.js'
+} from './confirmed-project-capability.js'
+import {codePointLengthLikePython} from './python-text.js'
 
 export type ProjectAction = 'create' | 'reuse' | 'select' | 'resume'
 export type ConfirmationKind = 'confirmed' | 'cancelled' | 'invalid' | 'expired' | 'ignored'

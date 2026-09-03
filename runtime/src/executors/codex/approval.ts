@@ -3,10 +3,18 @@ import {isAbsolute, relative, resolve, sep} from 'node:path'
 import {z} from 'zod'
 
 import type {Clock} from '../../clock.js'
+import {
+  APPROVAL_TTL_SECONDS,
+  type ApprovalDecision,
+  type ApprovalKind,
+  type ApprovalLocalDetail,
+  type ApprovalView,
+  type FileChangeDisplay,
+} from '../../approval-port.js'
 import {snapshotJsonRecord} from './safe-json.js'
 import {codePointLengthLikePython, isWellFormed, stripLikePython} from '../../python-text.js'
 
-export const CODEX_APPROVAL_TTL_SECONDS = 60
+export const CODEX_APPROVAL_TTL_SECONDS = APPROVAL_TTL_SECONDS
 const CODEX_APPROVAL_ID_LIMIT = 128
 const CODEX_APPROVAL_COMMAND_LIMIT = 4096
 const CODEX_APPROVAL_PATH_LIMIT = 4096
@@ -17,8 +25,8 @@ const CODEX_APPROVAL_REASON_LIMIT = 1024
 const CODEX_APPROVAL_DIFF_LIMIT = 65_536
 const CODEX_APPROVAL_ACTIONS_LIMIT = 16_384
 
-export type CodexApprovalDecision = 'accept' | 'acceptForSession' | 'decline'
-export type CodexApprovalKind = 'file_change' | 'command_execution' | 'network' | 'permissions'
+export type CodexApprovalDecision = ApprovalDecision
+export type CodexApprovalKind = ApprovalKind
 
 const permissionPath = z.string().min(1).max(CODEX_APPROVAL_PATH_LIMIT).refine(isWellFormed)
 const specialPath = z.union([
@@ -45,27 +53,9 @@ type PermissionFileSystemPath = NonNullable<NonNullable<PermissionProfile['fileS
 type PermissionSpecialPath = Extract<PermissionFileSystemPath, {type: 'special'}>['value']
 const SESSION_DECISIONS = Object.freeze(['accept', 'acceptForSession', 'decline'] as const)
 
-export interface CodexFileChangeDisplay {
-  readonly change: 'add' | 'delete' | 'update'
-  readonly path: string
-  readonly move_path: string | null
-}
+export type CodexFileChangeDisplay = FileChangeDisplay
 
-export type CodexApprovalLocalDetail =
-  | {
-    readonly kind: 'file_change'
-    readonly changes: readonly CodexFileChangeDisplay[]
-  }
-  | {
-    readonly kind: 'command_execution' | 'network'
-    readonly command: string
-    readonly cwd: string
-    readonly scope?: string
-  }
-  | {
-    readonly kind: 'permissions'
-    readonly scope: string
-  }
+export type CodexApprovalLocalDetail = ApprovalLocalDetail
 
 export interface CodexApprovalOffer {
   readonly kind: CodexApprovalKind
@@ -74,16 +64,7 @@ export interface CodexApprovalOffer {
   readonly allowed_decisions?: readonly CodexApprovalDecision[]
 }
 
-export interface CodexApprovalView {
-  readonly pending_approval: boolean
-  readonly pending_approval_busy: boolean
-  readonly pending_approval_id?: string
-  readonly kind: CodexApprovalKind | null
-  readonly local_detail: CodexApprovalLocalDetail | null
-  readonly operation_summary: string | null
-  readonly expires_at: number | null
-  readonly allowed_decisions?: readonly CodexApprovalDecision[]
-}
+export type CodexApprovalView = ApprovalView
 
 export interface CodexApprovalResolution {
   readonly decision: CodexApprovalDecision

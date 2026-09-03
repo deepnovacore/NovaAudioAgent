@@ -226,35 +226,35 @@
     },
     {
       "name": "codex-state-idle",
-      "text": "{\"type\":\"codex.state\",\"state\":\"idle\"}"
+      "text": "{\"type\":\"executor.state\",\"executor\":\"codex\",\"display_name\":\"Codex\",\"state\":\"idle\"}"
     },
     {
       "name": "codex-state-running",
-      "text": "{\"type\":\"codex.state\",\"state\":\"running\"}"
+      "text": "{\"type\":\"executor.state\",\"executor\":\"codex\",\"display_name\":\"Codex\",\"state\":\"running\"}"
     },
     {
       "name": "codex-state-invalid",
-      "error": "desktop Codex state is invalid"
+      "error": "desktop executor state is invalid"
     },
     {
       "name": "project-empty",
-      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":null,\"session_title\":null,\"pending_confirmation\":false,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
+      "text": "{\"type\":\"project.state\",\"workspace_display_name\":null,\"session_title\":null,\"pending_confirmation\":false,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
     },
     {
       "name": "project-named",
-      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":\"研究项目\",\"session_title\":\"上次的会话\",\"pending_confirmation\":true,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
+      "text": "{\"type\":\"project.state\",\"workspace_display_name\":\"研究项目\",\"session_title\":\"上次的会话\",\"pending_confirmation\":true,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
     },
     {
       "name": "project-empty-name",
-      "error": "desktop Codex project view is invalid"
+      "error": "desktop project view is invalid"
     },
     {
       "name": "project-oversized-name",
-      "error": "desktop Codex project view is invalid"
+      "error": "desktop project view is invalid"
     },
     {
       "name": "project-at-name-bound",
-      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"session_title\":null,\"pending_confirmation\":false,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
+      "text": "{\"type\":\"project.state\",\"workspace_display_name\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"session_title\":null,\"pending_confirmation\":false,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
     },
     {
       "name": "caption-user-partial",

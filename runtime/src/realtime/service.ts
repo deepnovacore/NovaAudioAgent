@@ -25,9 +25,10 @@
 
 import {createHash, randomUUID} from 'node:crypto'
 import {canonicalJson} from '../canonical-json.js'
-import {validateCodexRequest} from '../executors/codex/contract.js'
 import {IntakeController, isIntakeAction, type IntakeOptions, type IntakeSession} from './intake.js'
+import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { Clock } from '../clock.js'
+import type {ExecutorRole} from '../ports.js'
 import { validProgressSummary, type EventRecord, type JsonValue } from '../events.js'
 import { parseMemoryRef, USER_PRIORITY, type MemoryItem } from '../memory.js'
 import type {Suggestion} from '../suggestions.js'
@@ -40,8 +41,8 @@ import type {
   ConfirmedProjectOperation,
   ProjectConfirmationController,
   ProjectConfirmationView,
-} from './project-confirmation.js'
-import type {CodexApprovalController, CodexApprovalView} from '../executors/codex/approval.js'
+} from '../project-confirmation.js'
+import type {ApprovalController as ExecutorApprovalController, ApprovalView as ExecutorApprovalView} from '../approval-port.js'
 import {ConfirmationTurnIsolation} from './confirmation-turn-isolation.js'
 import type {
   HostContextItem,
@@ -82,7 +83,7 @@ import {
   projectCommitFailureText,
   semanticAcknowledgement,
   toolCallState,
-  type CodexState,
+  type ExecutorState,
   type ContinuationBatch,
   type DeferredOriginToolCall,
   type GuardActivationAuthority,
@@ -96,13 +97,14 @@ import {
   type ToolCallState,
   type UrgentHostResponseOwner,
 } from './service-state.js'
-import { finalSpeechView, genericFinalSpeechView } from './evidence.js'
+import { finalSpeechView, genericFinalSpeechView, type CodingChannel } from './evidence.js'
 import { SPEECH_FINAL_LIMIT, prepareForSpeech } from './speech-prep.js'
 import type { RealtimeTelemetry } from './telemetry.js'
 import {UserOriginBindingLedger} from './user-origin-binding.js'
 
-const PROJECT_CONFIRMATION_TOOL = 'codex__confirm_project_action'
-const CODEX_APPROVAL_TOOL = 'codex__confirm_codex_approval'
+/** Host-confirmation op names on the coding executor's manifest; the wire name is `<executor>__<op>`. */
+const PROJECT_CONFIRMATION_OP = 'confirm_project_action'
+const APPROVAL_OP = 'confirm_codex_approval'
 const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
 const CODEX_APPROVAL_CLARIFICATION = '请明确说同意或拒绝。'
 
@@ -117,7 +119,7 @@ type ProviderReconnectReason =
   | 'project_confirmation_expiry_cleanup'
   | 'test'
 
-type CodexApprovalDecisionReason =
+type ExecutorApprovalDecisionReason =
   | 'not_pending'
   | 'epoch_mismatch'
   | 'authority_missing'
@@ -143,14 +145,14 @@ interface ProjectConfirmationDecisionRetry {
   retry_response_id: string | null
 }
 
-interface CodexApprovalDecisionRetry {
+interface ExecutorApprovalDecisionRetry {
   readonly item_key: string
   readonly source_response_id: string
   requested: boolean
   retry_response_id: string | null
 }
 
-interface CodexApprovalAuthorityState {
+interface ExecutorApprovalAuthorityState {
   readonly approvalId: string
   readonly sessionEpoch: number
   readonly expiresAt: number
@@ -162,9 +164,9 @@ interface CodexApprovalAuthorityState {
   clarificationQueued: boolean
 }
 
-interface CodexApprovalPendingResponseQuarantine {
+interface ExecutorApprovalPendingResponseQuarantine {
   readonly sessionEpoch: number
-  readonly sourceRetry: CodexApprovalDecisionRetry | null
+  readonly sourceRetry: ExecutorApprovalDecisionRetry | null
   requestFreshResponse: boolean
   responseId: string | null
   terminal: boolean
@@ -197,7 +199,7 @@ function projectConfirmationDecisionArguments(
   return {proposalId: proposal.value, confirmed: confirmed.value}
 }
 
-function codexApprovalDecisionArguments(
+function executorApprovalDecisionArguments(
   value: unknown,
 ): {readonly approvalId: string; readonly approved: boolean} | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
@@ -255,6 +257,9 @@ export interface DelegateLike {
 
 /** What the projection needs from an executor's manifest. */
 export interface ExecutorManifestLike {
+  readonly name: string
+  readonly display_name?: string | undefined
+  readonly roles: readonly ExecutorRole[]
   readonly ops: readonly {readonly name: string; readonly sync_result?: boolean}[]
   readonly policy: {
     readonly priority: number
@@ -265,7 +270,10 @@ export interface ExecutorManifestLike {
 
 export interface ServiceRuntime {
   readonly clock: Clock
-  readonly executors: ReadonlyMap<string, {readonly manifest: ExecutorManifestLike}>
+  readonly executors: ReadonlyMap<string, {
+    readonly manifest: ExecutorManifestLike
+    admitRequest?(op: string, request: Readonly<Record<string, JsonValue>>): ExecutorAdmission | null
+  }>
   observe(observer: (event: EventRecord) => void): () => void
   serve(stop: AbortSignal): Promise<void>
   /** The delegate a handoff claimed, if this exact event claimed one. */
@@ -319,7 +327,7 @@ export interface RealtimeServiceOptions {
   readonly bridge: RealtimeRuntimeBridge
   readonly idFactory?: () => string
   readonly onProviderTerminal?: (generation: PlaybackGeneration) => void
-  readonly onCodexState?: (state: CodexState) => void
+  readonly onExecutorState?: (state: ExecutorState) => void
   /** Fired when active delegate progress changes so provider context can refresh. */
   readonly onActiveWorkChanged?: () => void
   readonly onCaption?: (frame: CaptionFrame) => void
@@ -330,7 +338,7 @@ export interface RealtimeServiceOptions {
   /** Absent means project confirmation is off, and every branch of it is inert. */
   readonly projectConfirmation?: ProjectConfirmationController
   /** Independent one-shot Codex permission authority; absent on non-brokered transports. */
-  readonly codexApproval?: CodexApprovalController
+  readonly executorApproval?: ExecutorApprovalController
   readonly commitProjectOperation?: (
     operation: ConfirmedProjectOperation,
   ) => Promise<{
@@ -373,7 +381,7 @@ export class RealtimeService {
   readonly #bridge: RealtimeRuntimeBridge
   readonly #idFactory: () => string
   readonly #onProviderTerminal: (generation: PlaybackGeneration) => void
-  readonly #onCodexState: (state: CodexState) => void
+  readonly #onExecutorState: (state: ExecutorState) => void
   readonly #onActiveWorkChanged: () => void
   readonly #onCaption: ((frame: CaptionFrame) => void) | undefined
   readonly #telemetry: RealtimeTelemetry | undefined
@@ -382,7 +390,11 @@ export class RealtimeService {
   readonly #guardHistoryRecovery: GuardHistoryRecovery
   readonly #guardHistoryPairs: number
   readonly #projectConfirmation: ProjectConfirmationController | undefined
-  readonly #codexApproval: CodexApprovalController | undefined
+  readonly #executorApproval: ExecutorApprovalController | undefined
+  /** The coding-role executor's channel and label, resolved once from the registered manifests. */
+  readonly #coding: CodingChannel | null
+  readonly #projectConfirmationTool: string | null
+  readonly #approvalTool: string | null
   readonly #commitProjectOperation:
     | ((operation: ConfirmedProjectOperation) => Promise<{
       readonly accepted: boolean
@@ -434,7 +446,7 @@ export class RealtimeService {
   #tasks: Promise<void>[] = []
   #connected = false
   #providerFailed = false
-  #codexState: CodexState = 'idle'
+  #executorState: ExecutorState = 'idle'
   /** Compact fingerprint of delegate progress for context refresh. */
   #activeWorkFingerprint = canonicalJson(activeExecutorContextData([]))
 
@@ -453,7 +465,7 @@ export class RealtimeService {
   readonly #providerRetirementTasks = new Set<Promise<void>>()
   readonly #providerRetirementEventIds = new Set<string>()
   /** Exact audible approval responses being fenced after the local user settles or answers them. */
-  readonly #codexApprovalPromptReleaseTasks = new Set<Promise<void>>()
+  readonly #executorApprovalPromptReleaseTasks = new Set<Promise<void>>()
   /** Exact standalone delegation acknowledgements superseded by their own terminal handoff. */
   readonly #semanticAcknowledgementReleaseTasks = new Set<Promise<void>>()
   readonly #audioStarted = new Set<string>()
@@ -477,7 +489,7 @@ export class RealtimeService {
     MAX_TRACKED_TOOL_CALLS,
   )
   /** Codex uses a separate isolation instance so its authority never shares project occupancy. */
-  readonly #codexApprovalIsolation = new ConfirmationTurnIsolation<ToolCallReady>(
+  readonly #executorApprovalIsolation = new ConfirmationTurnIsolation<ToolCallReady>(
     MAX_TRACKED_TOOL_CALLS,
   )
   /** Later utterances captured while another item owns the same confirmation. */
@@ -506,26 +518,26 @@ export class RealtimeService {
   readonly #projectExpiryBatches: ProjectExpiryBatch[] = []
   #projectExpiryDraining: Promise<void> | null = null
   #unsubscribeProjectExpiry: (() => void) | null = null
-  #unsubscribeCodexApproval: (() => void) | null = null
-  #codexApprovalAuthority: CodexApprovalAuthorityState | null = null
+  #unsubscribeExecutorApproval: (() => void) | null = null
+  #executorApprovalAuthority: ExecutorApprovalAuthorityState | null = null
   /** Current controller identity observed independently of the optional provider voice path. */
-  #codexApprovalObservedIdentity: {
+  #executorApprovalObservedIdentity: {
     readonly approvalId: string
     readonly sessionEpoch: number
     readonly expiresAt: number
   } | null = null
   /** One closed expiry tombstone used only to classify a late decision; never restored or emitted. */
-  #codexApprovalExpiredIdentity: {
+  #executorApprovalExpiredIdentity: {
     readonly approvalId: string
     readonly sessionEpoch: number
   } | null = null
-  #codexApprovalLifecycleToken = 0
-  #codexApprovalDecisionRetry: CodexApprovalDecisionRetry | null = null
-  #codexApprovalPendingResponseQuarantine: CodexApprovalPendingResponseQuarantine | null = null
-  readonly #codexApprovalQuarantinedResponses = new Map<string, null>()
+  #executorApprovalLifecycleToken = 0
+  #executorApprovalDecisionRetry: ExecutorApprovalDecisionRetry | null = null
+  #executorApprovalPendingResponseQuarantine: ExecutorApprovalPendingResponseQuarantine | null = null
+  readonly #executorApprovalQuarantinedResponses = new Map<string, null>()
   /** Internal response identity -> closed attempt number; IDs never enter approval telemetry. */
-  readonly #codexApprovalCarrierAttempts = new Map<string, 1 | 2>()
-  #codexApprovalNeedsFreshResponse = false
+  readonly #executorApprovalCarrierAttempts = new Map<string, 1 | 2>()
+  #executorApprovalNeedsFreshResponse = false
   /**
    * The last progress summary spoken for each delegate.
    *
@@ -567,7 +579,7 @@ export class RealtimeService {
     this.#bridge = options.bridge
     this.#idFactory = options.idFactory ?? (() => `host_${randomHex()}`)
     this.#onProviderTerminal = options.onProviderTerminal ?? noop
-    this.#onCodexState = options.onCodexState ?? noop
+    this.#onExecutorState = options.onExecutorState ?? noop
     this.#onActiveWorkChanged = options.onActiveWorkChanged ?? noop
     this.#onCaption = options.onCaption
     this.#telemetry = options.telemetry
@@ -584,9 +596,9 @@ export class RealtimeService {
       dispatch: intake => {
         const result = options.intake!.dispatch(intake)
         if (result.accepted && result.delegate_id !== null && result.delegate_id !== undefined) {
-          this.session.registerDelegate(result.delegate_id, {summary: intake.slots.goal.note.slice(0, 240), state: 'running', channel: 'codex'})
-          this.#telemetry?.record('codex.dispatch', {delegate_id: result.delegate_id})
-          this.#publishCodexState()
+          this.session.registerDelegate(result.delegate_id, {summary: intake.slots.goal.note.slice(0, 240), state: 'running', channel: this.#coding?.channel ?? 'coding'})
+          this.#telemetry?.record('executor.dispatch', {delegate_id: result.delegate_id})
+          this.#publishExecutorState()
         }
         return result
       },
@@ -614,7 +626,16 @@ export class RealtimeService {
         return proposal
       },
     })
-    this.#codexApproval = options.codexApproval
+    this.#executorApproval = options.executorApproval
+    this.#coding = null
+    for (const adapter of options.runtime.executors.values()) {
+      if (adapter.manifest.roles.includes('coding')) {
+        this.#coding = {channel: adapter.manifest.name, display_name: adapter.manifest.display_name ?? adapter.manifest.name}
+        break
+      }
+    }
+    this.#projectConfirmationTool = this.#coding === null ? null : `${this.#coding.channel}__${PROJECT_CONFIRMATION_OP}`
+    this.#approvalTool = this.#coding === null ? null : `${this.#coding.channel}__${APPROVAL_OP}`
     this.#commitProjectOperation = options.commitProjectOperation
     this.#onProjectView = options.onProjectView
     this.#projectViewProvider = options.projectViewProvider
@@ -627,14 +648,14 @@ export class RealtimeService {
       this.#projectConfirmationExpired()
       if (proposalId !== undefined && proposalId !== null) this.#intake?.decline(proposalId)
     }) ?? null
-    this.#unsubscribeCodexApproval = options.codexApproval?.observe(view => {
-      this.#syncCodexApproval(view)
+    this.#unsubscribeExecutorApproval = options.executorApproval?.observe(view => {
+      this.#syncExecutorApproval(view)
     }) ?? null
-    if (options.codexApproval !== undefined) this.#syncCodexApproval(options.codexApproval.view)
+    if (options.executorApproval !== undefined) this.#syncExecutorApproval(options.executorApproval.view)
   }
 
-  get codexState(): CodexState {
-    return this.#codexState
+  get executorState(): ExecutorState {
+    return this.#executorState
   }
 
   get intakeSession(): Readonly<IntakeSession> | null { return this.#intake?.view ?? null }
@@ -678,7 +699,7 @@ export class RealtimeService {
       this.#userOrigins.beginEpoch(this.session.sessionEpoch)
     }
     this.#syncProjectConfirmationIsolation()
-    if (this.#codexApproval !== undefined) this.#syncCodexApproval(this.#codexApproval.view)
+    if (this.#executorApproval !== undefined) this.#syncExecutorApproval(this.#executorApproval.view)
     this.#unsubscribe = this.#runtime.observe(event => {
       this.projectRuntimeEvent(event)
     })
@@ -718,14 +739,14 @@ export class RealtimeService {
   async close(): Promise<void> {
     this.#stop.abort()
     this.#invalidateProjectConfirmation('service_closed')
-    this.#invalidateCodexApproval('service_closed')
+    this.#invalidateExecutorApproval('service_closed')
     if (this.#unsubscribeProjectExpiry !== null) {
       this.#unsubscribeProjectExpiry()
       this.#unsubscribeProjectExpiry = null
     }
-    if (this.#unsubscribeCodexApproval !== null) {
-      this.#unsubscribeCodexApproval()
-      this.#unsubscribeCodexApproval = null
+    if (this.#unsubscribeExecutorApproval !== null) {
+      this.#unsubscribeExecutorApproval()
+      this.#unsubscribeExecutorApproval = null
     }
     this.#projectExpiryBatches.length = 0
     // The drain is shutdown-owned work. A promise cannot be cancelled, so its continuations check the
@@ -757,7 +778,7 @@ export class RealtimeService {
     const backgroundTasks = [
       ...this.#tasks,
       ...this.#providerRetirementTasks,
-      ...this.#codexApprovalPromptReleaseTasks,
+      ...this.#executorApprovalPromptReleaseTasks,
       ...this.#semanticAcknowledgementReleaseTasks,
       ...this.#projectConfirmationCarrierReleaseTasks,
     ]
@@ -783,7 +804,7 @@ export class RealtimeService {
 
   async localSpeechOnset(speechId: string): Promise<void> {
     this.#intake?.userInputStarted()
-    this.#noteCodexApprovalOnsetBeforeContext()
+    this.#noteExecutorApprovalOnsetBeforeContext()
     const generation = this.session.currentGeneration
     if (generation !== null) {
       const key = callKey(generation.session_epoch, generation.response_id)
@@ -798,10 +819,10 @@ export class RealtimeService {
         this.#localSpeechInterruptedResponses.delete(oldest.value)
       }
     }
-    const approvalId = this.#codexApprovalAuthority?.approvalId
+    const approvalId = this.#executorApprovalAuthority?.approvalId
     if (approvalId !== undefined) {
-      this.#removeQueuedCodexApprovalPrompt(approvalId)
-      this.#releaseCodexApprovalQuestion(approvalId)
+      this.#removeQueuedExecutorApprovalPrompt(approvalId)
+      this.#releaseExecutorApprovalQuestion(approvalId)
     }
     await this.session.localSpeechOnset(speechId)
   }
@@ -894,16 +915,16 @@ export class RealtimeService {
   }
 
   /** Renderer clicks are direct local-user authority on the same one-shot controller as voice. */
-  codexApprovalDecision(approvalId: string, approved: boolean, scope?: 'session'): boolean {
+  executorApprovalDecision(approvalId: string, approved: boolean, scope?: 'session'): boolean {
     if (typeof approved !== 'boolean' || scope !== undefined && (scope !== 'session' || !approved)) return false
-    const controller = this.#codexApproval
+    const controller = this.#executorApproval
     if (controller === undefined) return false
     const accepted = controller.acceptDecision({
       approvalId,
       decision: approved ? scope === 'session' ? 'acceptForSession' : 'accept' : 'decline',
     })
-    const expired = this.#codexApprovalExpiredIdentity
-    this.#recordCodexApprovalDecision(
+    const expired = this.#executorApprovalExpiredIdentity
+    this.#recordExecutorApprovalDecision(
       this.session.sessionEpoch,
       'renderer',
       accepted && approved ? 'accepted' : 'refused',
@@ -1173,7 +1194,7 @@ export class RealtimeService {
   async #flushHostItemsLocked(): Promise<void> {
     while (this.#hostItems.length > 0) {
       const queued = this.#hostItems[0]!
-      if (this.#codexApprovalBlocksSemanticAcknowledgement(queued)) break
+      if (this.#executorApprovalBlocksSemanticAcknowledgement(queued)) break
       if (!this.#queuedHostItemEligible(queued)) {
         heapPop(this.#hostItems)
         if (queued.preemptive) this.#recomputePreemptPriority()
@@ -1277,12 +1298,12 @@ export class RealtimeService {
         || !eventId.startsWith(`intake:${intake.intake_id}:${intake.revision}:`)
         || intake.outcome === 'cancelled') return false
     }
-    if (eventId.startsWith('codex-approval:')) {
-      const authority = this.#codexApprovalAuthority
+    if (eventId.startsWith('approval:')) {
+      const authority = this.#executorApprovalAuthority
       if (
         authority === null
-        || !eventId.startsWith(`codex-approval:${authority.approvalId}:`)
-        || !this.#codexApprovalAuthorityIsCurrent(authority)
+        || !eventId.startsWith(`approval:${authority.approvalId}:`)
+        || !this.#executorApprovalAuthorityIsCurrent(authority)
       ) return false
     }
     if (queued.semantic_event_id !== null) {
@@ -1300,8 +1321,8 @@ export class RealtimeService {
   }
 
   /** A pending permission question owns the foreground ahead of any generic startup receipt. */
-  #codexApprovalBlocksSemanticAcknowledgement(queued: QueuedHostResponse): boolean {
-    return this.#codexApprovalAuthority !== null && queued.semantic_event_id !== null
+  #executorApprovalBlocksSemanticAcknowledgement(queued: QueuedHostResponse): boolean {
+    return this.#executorApprovalAuthority !== null && queued.semantic_event_id !== null
   }
 
   /** Whether this queued item is the captured Guard the current preemption is waiting to deliver. */
@@ -1824,7 +1845,7 @@ export class RealtimeService {
         }
         const oldEpoch = this.session.sessionEpoch
         this.#invalidateProjectConfirmation('provider_replaced')
-        this.#invalidateCodexApproval('provider_replaced')
+        this.#invalidateExecutorApproval('provider_replaced')
         this.#guardPreemption = null
         this.#providerReconnectSourceEpoch = oldEpoch
         await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
@@ -2006,15 +2027,15 @@ export class RealtimeService {
     const manifest = this.#runtime.executors.get(event.payload.channel)?.manifest
     if (manifest === undefined) return
 
-    if (event.payload.channel === 'codex' && this.#telemetry !== undefined) {
+    if (event.payload.channel === this.#coding?.channel && this.#telemetry !== undefined) {
       if (event.kind === 'progress') {
-        this.#telemetry.record('codex.progress', {
+        this.#telemetry.record('executor.progress', {
           delegate_id: event.payload.delegate_id,
           phase: event.payload.phase,
           internal_activity: event.payload.internal_activity,
         })
       } else if (event.kind === 'handoff') {
-        this.#telemetry.record('codex.handoff', {
+        this.#telemetry.record('executor.handoff', {
           delegate_id: event.payload.delegate_id,
           outcome: event.payload.outcome,
         })
@@ -2221,7 +2242,7 @@ export class RealtimeService {
     // A settled delegate leaves no dedup residue behind, or a later run of the same delegate id would
     // inherit a summary it never produced.
     this.#lastProgressSummary.delete(delegateId)
-    this.#publishCodexState()
+    this.#publishExecutorState()
     this.queueHostItem(hostFactIntent({
       kind: 'final',
       host_item_id: this.#idFactory(),
@@ -2248,7 +2269,7 @@ export class RealtimeService {
       state: 'running',
       channel: event.payload.channel,
     })
-    this.#publishCodexState()
+    this.#publishExecutorState()
     if (event.payload.content.hit !== true) return
     if (manifest.policy.suggest === true && delegate.routing_class === 'ambient') return
     const speechView = event.payload.channel === 'guard' || event.payload.channel === 'watch'
@@ -2336,7 +2357,7 @@ export class RealtimeService {
       internal_activity: payload.internal_activity,
       elapsed: payload.elapsed,
     })
-    this.#publishCodexState()
+    this.#publishExecutorState()
     if (
       payload.phase === 'started'
       && this.#semanticAcknowledgements.has(`background:${payload.delegate_id}`)
@@ -2414,7 +2435,7 @@ export class RealtimeService {
     })
     // CP1: a settled delegate leaves no dedup residue behind.
     this.#lastProgressSummary.delete(payload.delegate_id)
-    this.#publishCodexState()
+    this.#publishExecutorState()
     if (suppressUnselectedSuggestion) return
 
     const successfulMonitorStop = (payload.channel === 'watch' || payload.channel === 'guard')
@@ -2425,8 +2446,8 @@ export class RealtimeService {
       )
     if (successfulMonitorStop) return
 
-    const finalView = payload.channel === 'codex'
-      ? finalSpeechView(payload.outcome, payload.content)
+    const finalView = payload.channel === this.#coding?.channel
+      ? finalSpeechView(payload.outcome, payload.content, this.#coding.display_name)
       : genericFinalSpeechView(displayName, payload.outcome, payload.content)
     const content = [...finalView].slice(0, MAX_HOST_FACT_CHARS).join('')
     const hit = payload.outcome === 'ok' && payload.content.hit === true
@@ -2568,7 +2589,7 @@ export class RealtimeService {
         this.#clearCaptions()
       } else {
         this.#providerFailed = true
-        this.#invalidateCodexApproval('provider_failed')
+        this.#invalidateExecutorApproval('provider_failed')
         this.#urgentHostResponseOwner = null
         this.#guardPreemption = null
         this.#stop.abort()
@@ -2576,24 +2597,24 @@ export class RealtimeService {
       return
     }
 
-    const codexEventResponseId = 'response_id' in event ? event.response_id : null
-    const pendingCodexResponseQuarantineAtStart = event.kind === 'response_started'
-      && this.#codexApprovalPendingResponseQuarantine?.sessionEpoch === event.session_epoch
-      && this.#codexApprovalPendingResponseQuarantine.responseId === null
+    const executorEventResponseId = 'response_id' in event ? event.response_id : null
+    const pendingExecutorResponseQuarantineAtStart = event.kind === 'response_started'
+      && this.#executorApprovalPendingResponseQuarantine?.sessionEpoch === event.session_epoch
+      && this.#executorApprovalPendingResponseQuarantine.responseId === null
     if (
       event.kind !== 'response_started'
       && (
-        codexEventResponseId === null
-        || this.session.responseEventIds(codexEventResponseId).length === 0
+        executorEventResponseId === null
+        || this.session.responseEventIds(executorEventResponseId).length === 0
       )
     ) {
-      this.#claimPendingCodexApprovalResponseQuarantine(
+      this.#claimPendingExecutorApprovalResponseQuarantine(
         event.session_epoch,
-        codexEventResponseId,
+        executorEventResponseId,
       )
     }
-    let codexQuarantinedResponse = codexEventResponseId !== null
-      && this.#isCodexApprovalResponseQuarantined(event.session_epoch, codexEventResponseId)
+    let executorQuarantinedResponse = executorEventResponseId !== null
+      && this.#isExecutorApprovalResponseQuarantined(event.session_epoch, executorEventResponseId)
 
     if (this.#telemetry !== undefined) {
       if (event.kind === 'response_audio_delta') {
@@ -2618,15 +2639,15 @@ export class RealtimeService {
     // session sees it: letting it through would have the model acting inside the very turn whose answer
     // it is supposed to be waiting for.
     const isConfirmationDecision = event.kind === 'tool_call_ready'
-      && event.name === PROJECT_CONFIRMATION_TOOL
+      && event.name === this.#projectConfirmationTool
     const blockedConfirmationTool = event.kind === 'tool_call_ready'
       && this.#blocksProjectConfirmationTool(event)
       && !isConfirmationDecision
-    const isCodexApprovalDecision = event.kind === 'tool_call_ready'
-      && event.name === CODEX_APPROVAL_TOOL
-    const blockedCodexApprovalTool = event.kind === 'tool_call_ready'
-      && this.#blocksCodexApprovalTool(event)
-      && !isCodexApprovalDecision
+    const isExecutorApprovalDecision = event.kind === 'tool_call_ready'
+      && event.name === this.#approvalTool
+    const blockedExecutorApprovalTool = event.kind === 'tool_call_ready'
+      && this.#blocksExecutorApprovalTool(event)
+      && !isExecutorApprovalDecision
     // Qwen may create the response that will emit the confirmation function before VAD reports
     // speech end. That response is an authorization carrier, not an audible assistant turn. Let it
     // acquire an origin while the user still owns the floor, but never bypass the one-shot fence for
@@ -2637,80 +2658,80 @@ export class RealtimeService {
       && this.session.floor.state === 'user_speaking'
       && !this.#projectConfirmationIsolation.responseFencePending
       && this.#projectConfirmationIsolation.reservation?.sessionEpoch === event.session_epoch
-    const codexFencePendingAtStart = this.#codexApprovalIsolation.responseFencePending
-    const codexResponseCandidate = event.kind === 'response_started'
+    const executorFencePendingAtStart = this.#executorApprovalIsolation.responseFencePending
+    const executorResponseCandidate = event.kind === 'response_started'
       && event.session_epoch === this.session.sessionEpoch
-      && !codexFencePendingAtStart
-      && this.#codexApproval?.pending === true
-      && this.#codexApprovalIsolation.authority?.sessionEpoch === event.session_epoch
-      && !pendingCodexResponseQuarantineAtStart
+      && !executorFencePendingAtStart
+      && this.#executorApproval?.pending === true
+      && this.#executorApprovalIsolation.authority?.sessionEpoch === event.session_epoch
+      && !pendingExecutorResponseQuarantineAtStart
       && this.session.userInputRevision
-        > (this.#codexApprovalIsolation.authority?.createdUserRevision ?? Number.MAX_SAFE_INTEGER)
+        > (this.#executorApprovalIsolation.authority?.createdUserRevision ?? Number.MAX_SAFE_INTEGER)
     const codexProvisionalCandidate = event.kind === 'response_started'
       && event.session_epoch === this.session.sessionEpoch
-      && !codexFencePendingAtStart
-      && this.#codexApproval?.pending === true
-      && this.#codexApprovalIsolation.reservation === null
-      && !pendingCodexResponseQuarantineAtStart
+      && !executorFencePendingAtStart
+      && this.#executorApproval?.pending === true
+      && this.#executorApprovalIsolation.reservation === null
+      && !pendingExecutorResponseQuarantineAtStart
       && this.session.userInputRevision
-        === this.#codexApprovalIsolation.authority?.createdUserRevision
-    const codexResponseStartsDuringSpeech = codexResponseCandidate
+        === this.#executorApprovalIsolation.authority?.createdUserRevision
+    const codexResponseStartsDuringSpeech = executorResponseCandidate
       && this.session.floor.state === 'user_speaking'
-    const orphanedCodexRetryCandidate = event.kind === 'response_started'
-      && (codexQuarantinedResponse || pendingCodexResponseQuarantineAtStart)
-    const accepted = blockedConfirmationTool || blockedCodexApprovalTool
+    const orphanedExecutorRetryCandidate = event.kind === 'response_started'
+      && (executorQuarantinedResponse || pendingExecutorResponseQuarantineAtStart)
+    const accepted = blockedConfirmationTool || blockedExecutorApprovalTool
       ? false
       : await this.session.accept(event, {
           allowResponseStartDuringUserSpeech: confirmationResponseStartsDuringSpeech
             || codexResponseStartsDuringSpeech
-            || orphanedCodexRetryCandidate,
+            || orphanedExecutorRetryCandidate,
         })
     if (
       event.kind === 'response_started'
       && accepted
-      && pendingCodexResponseQuarantineAtStart
+      && pendingExecutorResponseQuarantineAtStart
       && this.session.responseEventIds(event.response_id).length === 0
     ) {
-      this.#claimPendingCodexApprovalResponseQuarantine(
+      this.#claimPendingExecutorApprovalResponseQuarantine(
         event.session_epoch,
         event.response_id,
       )
-      codexQuarantinedResponse = true
+      executorQuarantinedResponse = true
     }
-    const codexHostOwnedResponse = event.kind === 'response_started'
+    const executorHostOwnedResponse = event.kind === 'response_started'
       && accepted
-      && this.#isCodexApprovalHostResponse(event.response_id)
-    if (event.kind === 'response_started' && codexFencePendingAtStart) {
-      this.#codexApprovalIsolation.setResponseFencePending(false)
+      && this.#isExecutorApprovalHostResponse(event.response_id)
+    if (event.kind === 'response_started' && executorFencePendingAtStart) {
+      this.#executorApprovalIsolation.setResponseFencePending(false)
     }
-    if (event.kind === 'response_started' && accepted && codexQuarantinedResponse) {
+    if (event.kind === 'response_started' && accepted && executorQuarantinedResponse) {
       this.session.suppressResponse(event.response_id)
-      this.#cancelCodexApprovalPromptResponse(event.session_epoch, event.response_id)
+      this.#cancelExecutorApprovalPromptResponse(event.session_epoch, event.response_id)
     }
     if (
       event.kind === 'response_started'
       && accepted
-      && codexResponseCandidate
-      && !codexHostOwnedResponse
-      && !orphanedCodexRetryCandidate
+      && executorResponseCandidate
+      && !executorHostOwnedResponse
+      && !orphanedExecutorRetryCandidate
     ) {
-      this.#codexApprovalIsolation.markBlockedResponse({
+      this.#executorApprovalIsolation.markBlockedResponse({
         sessionEpoch: event.session_epoch,
         responseId: event.response_id,
       })
       this.session.suppressResponse(event.response_id)
-      await this.#bindCodexApprovalResponse(event.session_epoch, event.response_id)
+      await this.#bindExecutorApprovalResponse(event.session_epoch, event.response_id)
     }
     if (
       event.kind === 'response_started'
       && accepted
       && codexProvisionalCandidate
-      && !codexHostOwnedResponse
-      && !orphanedCodexRetryCandidate
+      && !executorHostOwnedResponse
+      && !orphanedExecutorRetryCandidate
       && this.session.responseEventIds(event.response_id).length === 0
     ) {
-      const authority = this.#codexApprovalIsolation.authority
-      const tracked = authority === null ? 'stale' : this.#codexApprovalIsolation.trackProvisionalResponse({
+      const authority = this.#executorApprovalIsolation.authority
+      const tracked = authority === null ? 'stale' : this.#executorApprovalIsolation.trackProvisionalResponse({
         sessionEpoch: event.session_epoch,
         userRevision: authority.createdUserRevision + 1,
         responseId: event.response_id,
@@ -2718,7 +2739,7 @@ export class RealtimeService {
       if (tracked === 'tracked' || tracked === 'idempotent') {
         this.session.suppressResponse(event.response_id)
       } else if (tracked === 'overflow') {
-        await this.#retireCodexApprovalVoiceAuthority()
+        await this.#retireExecutorApprovalVoiceAuthority()
       }
     }
     if (
@@ -2869,13 +2890,13 @@ export class RealtimeService {
           event.provider_item_id,
         )
       }
-      this.#noteCodexApprovalOnsetBeforeContext()
-      const approvalId = this.#codexApprovalAuthority?.approvalId
+      this.#noteExecutorApprovalOnsetBeforeContext()
+      const approvalId = this.#executorApprovalAuthority?.approvalId
       if (approvalId !== undefined) {
-        this.#removeQueuedCodexApprovalPrompt(approvalId)
-        this.#releaseCodexApprovalQuestion(approvalId)
+        this.#removeQueuedExecutorApprovalPrompt(approvalId)
+        this.#releaseExecutorApprovalQuestion(approvalId)
       }
-      await this.#reserveCodexApprovalItem(event.session_epoch, event.provider_item_id)
+      await this.#reserveExecutorApprovalItem(event.session_epoch, event.provider_item_id)
       this.#reserveProjectConfirmation(event)
     }
     if (
@@ -2888,18 +2909,18 @@ export class RealtimeService {
         this.session.userInputRevision,
         event.provider_item_id,
       )
-      await this.#reserveCodexApprovalItem(event.session_epoch, event.provider_item_id)
-      await this.#maybeRequestFreshCodexApprovalResponse()
+      await this.#reserveExecutorApprovalItem(event.session_epoch, event.provider_item_id)
+      await this.#maybeRequestFreshExecutorApprovalResponse()
     }
 
     if (event.kind === 'response_terminal' && accepted) {
-      const codexCarrierKey = callKey(event.session_epoch, event.response_id)
-      const codexCarrierAttempt = this.#codexApprovalCarrierAttempts.get(codexCarrierKey)
-      if (codexCarrierAttempt !== undefined) {
-        this.#codexApprovalCarrierAttempts.delete(codexCarrierKey)
-        this.#telemetry?.record('codex_approval.carrier', {
+      const executorCarrierKey = callKey(event.session_epoch, event.response_id)
+      const executorCarrierAttempt = this.#executorApprovalCarrierAttempts.get(executorCarrierKey)
+      if (executorCarrierAttempt !== undefined) {
+        this.#executorApprovalCarrierAttempts.delete(executorCarrierKey)
+        this.#telemetry?.record('approval.carrier', {
           session_epoch: event.session_epoch,
-          attempt: codexCarrierAttempt,
+          attempt: executorCarrierAttempt,
           action: 'terminal',
         })
       }
@@ -2973,28 +2994,28 @@ export class RealtimeService {
           }
         }
       }
-      const codexCarrier = this.#codexApprovalIsolation.responseState({
+      const codexCarrier = this.#executorApprovalIsolation.responseState({
         sessionEpoch: event.session_epoch,
         responseId: event.response_id,
       })
       if (
         codexCarrier?.authorizationCarrier === true
         && !this.session.responseHasSpoken(event.response_id)
-        && this.#codexApproval?.pending === true
+        && this.#executorApproval?.pending === true
       ) {
-        const reservation = this.#codexApprovalIsolation.reservation
-        const retry = this.#codexApprovalDecisionRetry
+        const reservation = this.#executorApprovalIsolation.reservation
+        const retry = this.#executorApprovalDecisionRetry
         const isRetryTerminal = retry?.retry_response_id === event.response_id
         if (reservation !== null && !isRetryTerminal) {
-          this.#codexApprovalDecisionRetry ??= {
+          this.#executorApprovalDecisionRetry ??= {
             item_key: callKey(reservation.sessionEpoch, reservation.itemId),
             source_response_id: event.response_id,
             requested: false,
             retry_response_id: null,
           }
-          await this.#maybeRequestCodexApprovalDecisionRetry()
+          await this.#maybeRequestExecutorApprovalDecisionRetry()
         } else if (reservation !== null && isRetryTerminal) {
-          await this.#exhaustCodexApprovalAttempt()
+          await this.#exhaustExecutorApprovalAttempt()
         }
       }
       if (itemId !== undefined) {
@@ -3010,8 +3031,8 @@ export class RealtimeService {
       }
       this.#markGuardReplacementTerminal(terminalOwner)
     }
-    if (event.kind === 'response_terminal' && codexQuarantinedResponse) {
-      await this.#finishPendingCodexApprovalResponseQuarantine(
+    if (event.kind === 'response_terminal' && executorQuarantinedResponse) {
+      await this.#finishPendingExecutorApprovalResponseQuarantine(
         event.session_epoch,
         event.response_id,
       )
@@ -3033,8 +3054,8 @@ export class RealtimeService {
             event.item_id,
           )
         }
-        await this.#reserveCodexApprovalItem(event.session_epoch, event.item_id)
-        await this.#maybeRequestFreshCodexApprovalResponse()
+        await this.#reserveExecutorApprovalItem(event.session_epoch, event.item_id)
+        await this.#maybeRequestFreshExecutorApprovalResponse()
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
         this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
         this.#intakeUser = {text: event.text, origin_ref: originRef, epoch: event.session_epoch}
@@ -3068,8 +3089,8 @@ export class RealtimeService {
             event.item_id,
           )
         }
-        await this.#reserveCodexApprovalItem(event.session_epoch, event.item_id)
-        await this.#maybeRequestFreshCodexApprovalResponse()
+        await this.#reserveExecutorApprovalItem(event.session_epoch, event.item_id)
+        await this.#maybeRequestFreshExecutorApprovalResponse()
         // The transcript will never arrive, so anything waiting on it is waiting forever. Released
         // with a null ref: the calls still need an answer, and the bridge refuses them for want of
         // evidence rather than this layer dropping them silently.
@@ -3092,12 +3113,12 @@ export class RealtimeService {
         // A refused confirmation tool still owes the provider a terminal result, or the protocol stalls
         // waiting for one that will never come.
         if (blockedConfirmationTool) await this.#closeProjectConfirmationTool(event)
-        else if (blockedCodexApprovalTool) await this.#closeCodexApprovalCarrierTool(event)
+        else if (blockedExecutorApprovalTool) await this.#closeExecutorApprovalCarrierTool(event)
         else if (
-          isCodexApprovalDecision
+          isExecutorApprovalDecision
           && event.session_epoch === this.session.sessionEpoch
         ) {
-          await this.#handleCodexApprovalDecision(event, {
+          await this.#handleExecutorApprovalDecision(event, {
             observedProviderResponseId: event.response_id,
             originItemId: null,
             originRef: null,
@@ -3118,11 +3139,11 @@ export class RealtimeService {
       if (this.#projectConfirmationPendingQuarantineEpoch === event.session_epoch) {
         this.#projectConfirmationPendingQuarantineEpoch = null
       }
-      if (!this.#codexApprovalIsolation.markProvisionalTerminal({
+      if (!this.#executorApprovalIsolation.markProvisionalTerminal({
         sessionEpoch: event.session_epoch,
         responseId: event.response_id,
       })) {
-        this.#codexApprovalIsolation.clearResponse({
+        this.#executorApprovalIsolation.clearResponse({
           sessionEpoch: event.session_epoch,
           responseId: event.response_id,
         })
@@ -3150,8 +3171,8 @@ export class RealtimeService {
     const activeResponseId = this.session.activeProviderResponseId
     const observedResponseId = event.response_id ?? activeResponseId
 
-    if (event.name === CODEX_APPROVAL_TOOL) {
-      await this.#routeCodexApprovalCall(event, observedResponseId)
+    if (event.name === this.#approvalTool) {
+      await this.#routeExecutorApprovalCall(event, observedResponseId)
       return
     }
     const originItemId = observedResponseId === null
@@ -3189,7 +3210,7 @@ export class RealtimeService {
       return
     }
 
-    if (event.name === PROJECT_CONFIRMATION_TOOL) {
+    if (event.name === this.#projectConfirmationTool) {
       await this.#handleProjectConfirmationDecision(event, {
         observedProviderResponseId: observedResponseId,
         originItemId: null,
@@ -3232,30 +3253,30 @@ export class RealtimeService {
   }
 
   /** Route Codex's typed carrier without making transcript success or text an authority gate. */
-  async #routeCodexApprovalCall(
+  async #routeExecutorApprovalCall(
     event: ToolCallReady,
     observedResponseId: string | null,
   ): Promise<void> {
     if (
       event.response_id !== null
-      && this.#isCodexApprovalResponseQuarantined(event.session_epoch, event.response_id)
+      && this.#isExecutorApprovalResponseQuarantined(event.session_epoch, event.response_id)
     ) {
-      await this.#handleCodexApprovalDecision(event, {
+      await this.#handleExecutorApprovalDecision(event, {
         observedProviderResponseId: observedResponseId,
         originItemId: null,
         originRef: null,
       })
       return
     }
-    const authority = this.#codexApprovalIsolation.authority
+    const authority = this.#executorApprovalIsolation.authority
     const responseId = event.response_id
     const providerRevision = responseId === null
       ? undefined
       : this.session.providerTurnUserInputRevision(responseId)
-    const reservation = this.#codexApprovalIsolation.reservation
+    const reservation = this.#executorApprovalIsolation.reservation
     const revision = responseId !== null
       && reservation !== null
-      && this.#codexApprovalIsolation.isAuthorizationCarrier({
+      && this.#executorApprovalIsolation.isAuthorizationCarrier({
         sessionEpoch: event.session_epoch,
         userRevision: reservation.userRevision,
         responseId,
@@ -3271,20 +3292,20 @@ export class RealtimeService {
       && revision > authority.createdUserRevision
       && revision === this.session.userInputRevision
     ) {
-      const reservation = this.#codexApprovalIsolation.reservation
-      if (this.#codexApprovalIsolation.isAuthorizationCarrier({
+      const reservation = this.#executorApprovalIsolation.reservation
+      if (this.#executorApprovalIsolation.isAuthorizationCarrier({
         sessionEpoch: event.session_epoch,
         userRevision: revision,
         responseId,
       })) {
-        await this.#handleCodexApprovalDecision(event, {
+        await this.#handleExecutorApprovalDecision(event, {
           observedProviderResponseId: responseId,
           originItemId: reservation?.itemId ?? null,
           originRef: null,
         })
         return
       }
-      const deferred = this.#codexApprovalIsolation.deferCall({
+      const deferred = this.#executorApprovalIsolation.deferCall({
         sessionEpoch: event.session_epoch,
         userRevision: revision,
         responseId,
@@ -3292,25 +3313,25 @@ export class RealtimeService {
       })
       if (deferred === 'deferred') return
     }
-    const decision = codexApprovalDecisionArguments(event.arguments)
+    const decision = executorApprovalDecisionArguments(event.arguments)
     if (
       authority !== null
       && responseId !== null
       && observedResponseId === responseId
       && authority.sessionEpoch === event.session_epoch
       && providerRevision === authority.createdUserRevision
-      && this.#codexApproval?.pending === true
+      && this.#executorApproval?.pending === true
       && this.#clock.now() < authority.expiresAt
       && decision?.approvalId === authority.authorityId
     ) {
-      const deferred = this.#codexApprovalIsolation.deferProvisionalCall({
+      const deferred = this.#executorApprovalIsolation.deferProvisionalCall({
         sessionEpoch: event.session_epoch,
         responseId,
         call: event,
       })
       if (deferred === 'deferred') return
     }
-    await this.#handleCodexApprovalDecision(event, {
+    await this.#handleExecutorApprovalDecision(event, {
       observedProviderResponseId: observedResponseId,
       originItemId: null,
       originRef: null,
@@ -3348,7 +3369,7 @@ export class RealtimeService {
       return
     }
     this.#providerFailed = true
-    this.#invalidateCodexApproval('task_failed')
+    this.#invalidateExecutorApproval('task_failed')
     this.#urgentHostResponseOwner = null
     this.#guardPreemption = null
     this.#stop.abort()
@@ -3491,12 +3512,12 @@ export class RealtimeService {
   }
 
   async #handleBoundToolCall(event: ToolCallReady, origin: BoundToolOrigin): Promise<void> {
-    if (event.name === PROJECT_CONFIRMATION_TOOL) {
+    if (event.name === this.#projectConfirmationTool) {
       await this.#handleProjectConfirmationDecision(event, origin)
       return
     }
-    if (event.name === CODEX_APPROVAL_TOOL) {
-      await this.#handleCodexApprovalDecision(event, origin)
+    if (event.name === this.#approvalTool) {
+      await this.#handleExecutorApprovalDecision(event, origin)
       return
     }
     await this.#handleToolCall(event, {
@@ -3613,7 +3634,7 @@ export class RealtimeService {
       && typeof binding.executor === 'string'
       && typeof binding.op === 'string'
       && requiresSynchronousResult(
-        binding.executor,
+        this.#runtime.executors.get(binding.executor),
         binding.op,
         event.arguments,
         binding.sync_result === true,
@@ -3756,10 +3777,10 @@ export class RealtimeService {
         state: 'running',
         channel: acceptance.executor,
       })
-      if (acceptance.executor === 'codex') {
-        this.#telemetry?.record('codex.dispatch', {delegate_id: acceptance.delegate_id})
+      if (acceptance.executor === this.#coding?.channel) {
+        this.#telemetry?.record('executor.dispatch', {delegate_id: acceptance.delegate_id})
       }
-      this.#publishCodexState()
+      this.#publishExecutorState()
     }
   }
 
@@ -3821,17 +3842,17 @@ export class RealtimeService {
   }
 
   #interceptIntake(event: ToolCallReady, originRef: string | null): ToolAcceptance | null {
-    if (this.#intake === undefined || event.name !== 'codex__project') return null
+    if (this.#intake === undefined || this.#coding === null || event.name !== `${this.#coding.channel}__project`) return null
     const request = {...event.arguments}
     delete request.origin_ref
     if (!isIntakeAction(request)) return null
-    const validated = validateCodexRequest('project', 'project', request)
-    if (!validated.ok) return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
+    const validated = this.#runtime.executors.get(this.#coding.channel)?.admitRequest?.('project', request) ?? null
+    if (!validated?.ok) return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
     const user = this.#intakeUser
     if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref) {
       return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
     }
-    const code = this.#intake.open(validated.value as Readonly<Record<string, JsonValue>>, user.text, user.origin_ref, String(event.session_epoch))
+    const code = this.#intake.open(validated.request, user.text, user.origin_ref, String(event.session_epoch))
     const result = this.#refusalAcceptance(event, code, JSON.stringify({
       code, state: this.#intake.view?.state, message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
     }))
@@ -3865,10 +3886,10 @@ export class RealtimeService {
   }
 
   #executorDisplayName(channel: string): string {
-    if (channel === 'codex') return 'Codex'
     if (channel === 'guard') return '监控'
     if (channel === 'watch') return '观察'
-    return channel
+    const manifest = this.#runtime.executors.get(channel)?.manifest
+    return manifest?.display_name ?? channel
   }
 
   /**
@@ -3878,7 +3899,7 @@ export class RealtimeService {
    * when one finishes, and a separate counter would drift the moment a delegate ended by any route
    * this layer does not see.
    */
-  #publishCodexState(): void {
+  #publishExecutorState(): void {
     const delegates = this.session.snapshot().active_delegates
     const fingerprint = canonicalJson(activeExecutorContextData(delegates))
     if (fingerprint !== this.#activeWorkFingerprint) {
@@ -3891,13 +3912,13 @@ export class RealtimeService {
         )
       }
     }
-    const next: CodexState = delegates.some(([, record]) => record.channel === 'codex')
+    const next: ExecutorState = delegates.some(([, record]) => record.channel === this.#coding?.channel)
       ? 'running'
       : 'idle'
-    if (next === this.#codexState) return
-    this.#codexState = next
+    if (next === this.#executorState) return
+    this.#executorState = next
     try {
-      this.#onCodexState(next)
+      this.#onExecutorState(next)
     } catch (cause) {
       // A renderer that cannot accept the state must not stop the service that produced it.
       this.#onDiagnostic(`[realtime-diagnostic] codex_state_observer_failed type=${diagnosticName(cause)}`)
@@ -3919,8 +3940,8 @@ export class RealtimeService {
       || lifecycleId === undefined
       || sessionEpoch < 1
     ) return
-    if (this.#codexApproval?.pending === true) {
-      this.#codexApproval.invalidate('confirmation_overlap')
+    if (this.#executorApproval?.pending === true) {
+      this.#executorApproval.invalidate('confirmation_overlap')
     }
     const current = this.#projectConfirmationIsolation.authority
     if (current?.authorityId === lifecycleId && current.sessionEpoch === sessionEpoch) return
@@ -4070,7 +4091,7 @@ export class RealtimeService {
   // authorize the dedicated provider function. Renderer clicks call the same controller directly.
   // ---------------------------------------------------------------------------------------------
 
-  #syncCodexApproval(view: CodexApprovalView): void {
+  #syncExecutorApproval(view: ExecutorApprovalView): void {
     if (
       view.pending_approval
       && !view.pending_approval_busy
@@ -4079,70 +4100,70 @@ export class RealtimeService {
       && view.operation_summary !== null
     ) {
       if (this.#projectConfirmation?.pending === true || this.#projectConfirmation?.committing === true) {
-        this.#codexApproval?.invalidate('confirmation_overlap')
+        this.#executorApproval?.invalidate('confirmation_overlap')
         return
       }
       if (this.session.sessionEpoch < 1 || view.expires_at === null) return
-      this.#codexApprovalObservedIdentity = {
+      this.#executorApprovalObservedIdentity = {
         approvalId: view.pending_approval_id,
         sessionEpoch: this.session.sessionEpoch,
         expiresAt: view.expires_at,
       }
       if (
-        this.#codexApprovalAuthority?.approvalId === view.pending_approval_id
-        && this.#codexApprovalAuthority.sessionEpoch === this.session.sessionEpoch
+        this.#executorApprovalAuthority?.approvalId === view.pending_approval_id
+        && this.#executorApprovalAuthority.sessionEpoch === this.session.sessionEpoch
       ) return
-      this.#codexApprovalExpiredIdentity = null
-      if (this.#codexApprovalAuthority !== null) this.#clearCodexApprovalVoiceState()
-      this.#codexApprovalLifecycleToken += 1
+      this.#executorApprovalExpiredIdentity = null
+      if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
+      this.#executorApprovalLifecycleToken += 1
       const contextItem = hostFactIntent({
         kind: 'final',
         host_item_id: this.#idFactory(),
-        event_id: `codex-approval:${view.pending_approval_id}:requested`,
+        event_id: `approval:${view.pending_approval_id}:requested`,
         content: JSON.stringify({
           approval_id: view.pending_approval_id,
           kind: view.kind,
           operation_summary: view.operation_summary,
         }),
       }).item
-      const authority: CodexApprovalAuthorityState = {
+      const authority: ExecutorApprovalAuthorityState = {
         approvalId: view.pending_approval_id,
         sessionEpoch: this.session.sessionEpoch,
         expiresAt: view.expires_at,
-        lifecycleToken: this.#codexApprovalLifecycleToken,
+        lifecycleToken: this.#executorApprovalLifecycleToken,
         contextItem,
         contextReady: false,
         preContextOnset: false,
         attempt: 0,
         clarificationQueued: false,
       }
-      this.#codexApprovalAuthority = authority
-      this.#codexApprovalDecisionRetry = null
+      this.#executorApprovalAuthority = authority
+      this.#executorApprovalDecisionRetry = null
       if (
-        this.#codexApprovalPendingResponseQuarantine?.sessionEpoch
+        this.#executorApprovalPendingResponseQuarantine?.sessionEpoch
         !== this.session.sessionEpoch
-      ) this.#codexApprovalPendingResponseQuarantine = null
-      this.#codexApprovalNeedsFreshResponse = false
-      this.#codexApprovalIsolation.invalidate()
-      this.#trackCodexApprovalTask(this.#prepareCodexApprovalContext(authority))
+      ) this.#executorApprovalPendingResponseQuarantine = null
+      this.#executorApprovalNeedsFreshResponse = false
+      this.#executorApprovalIsolation.invalidate()
+      this.#trackExecutorApprovalTask(this.#prepareExecutorApprovalContext(authority))
       return
     }
-    const observed = this.#codexApprovalObservedIdentity
+    const observed = this.#executorApprovalObservedIdentity
     if (observed !== null) {
-      this.#codexApprovalExpiredIdentity = this.#clock.now() >= observed.expiresAt
+      this.#executorApprovalExpiredIdentity = this.#clock.now() >= observed.expiresAt
         ? {
             approvalId: observed.approvalId,
             sessionEpoch: observed.sessionEpoch,
           }
         : null
-      this.#codexApprovalObservedIdentity = null
+      this.#executorApprovalObservedIdentity = null
     }
-    this.#clearCodexApprovalVoiceState()
+    this.#clearExecutorApprovalVoiceState()
     this.#deliveryReady.set()
   }
 
   /** Confirm the neutral ID-bearing fact before any provider response may answer it aloud. */
-  async #prepareCodexApprovalContext(authority: CodexApprovalAuthorityState): Promise<void> {
+  async #prepareExecutorApprovalContext(authority: ExecutorApprovalAuthorityState): Promise<void> {
     let injected = false
     try {
       injected = await this.session.injectHostContext(authority.contextItem)
@@ -4151,8 +4172,8 @@ export class RealtimeService {
         ? failure
         : new RealtimeDeliveryError(String(failure)))
     }
-    if (!this.#codexApprovalAuthorityIsCurrent(authority)) {
-      this.#telemetry?.record('codex_approval.context', {
+    if (!this.#executorApprovalAuthorityIsCurrent(authority)) {
+      this.#telemetry?.record('approval.context', {
         session_epoch: authority.sessionEpoch,
         outcome: 'stale',
       })
@@ -4160,7 +4181,7 @@ export class RealtimeService {
       return
     }
     if (!injected) {
-      this.#telemetry?.record('codex_approval.context', {
+      this.#telemetry?.record('approval.context', {
         session_epoch: authority.sessionEpoch,
         outcome: 'failed',
       })
@@ -4168,26 +4189,26 @@ export class RealtimeService {
       // controller pending, but release the foreground so an existing task receipt is not held until
       // the approval TTL. Uncertain injection is intentionally not retried: the provider may already
       // have accepted the fact even though this session could not confirm it.
-      this.#clearCodexApprovalVoiceState()
+      this.#clearExecutorApprovalVoiceState()
       this.#deliveryReady.set()
       return
     }
     authority.contextReady = true
-    this.#telemetry?.record('codex_approval.context', {
+    this.#telemetry?.record('approval.context', {
       session_epoch: authority.sessionEpoch,
       outcome: 'ready',
     })
     if (authority.preContextOnset) {
-      this.#beginCodexApprovalAttempt(
+      this.#beginExecutorApprovalAttempt(
         authority,
         2,
         this.session.userInputRevision,
         'rotated',
       )
-      this.#queueCodexApprovalClarification(authority)
+      this.#queueExecutorApprovalClarification(authority)
       return
     }
-    this.#beginCodexApprovalAttempt(authority, 1, this.session.userInputRevision, 'begun')
+    this.#beginExecutorApprovalAttempt(authority, 1, this.session.userInputRevision, 'begun')
     // The fact is already in provider context. This queued delivery therefore only creates its
     // host-owned audible response and cannot expose a response before context confirmation.
     this.queueHostItem({
@@ -4201,37 +4222,37 @@ export class RealtimeService {
     })
   }
 
-  #codexApprovalAuthorityIsCurrent(authority: CodexApprovalAuthorityState): boolean {
-    return this.#codexApprovalAuthority === authority
-      && authority.lifecycleToken === this.#codexApprovalLifecycleToken
+  #executorApprovalAuthorityIsCurrent(authority: ExecutorApprovalAuthorityState): boolean {
+    return this.#executorApprovalAuthority === authority
+      && authority.lifecycleToken === this.#executorApprovalLifecycleToken
       && authority.sessionEpoch === this.session.sessionEpoch
-      && this.#codexApproval?.pending === true
+      && this.#executorApproval?.pending === true
       && this.#clock.now() < authority.expiresAt
   }
 
-  #trackCodexApprovalTask(work: Promise<void>): void {
+  #trackExecutorApprovalTask(work: Promise<void>): void {
     const task = work.finally(() => {
-      this.#codexApprovalPromptReleaseTasks.delete(task)
+      this.#executorApprovalPromptReleaseTasks.delete(task)
     })
-    this.#codexApprovalPromptReleaseTasks.add(task)
+    this.#executorApprovalPromptReleaseTasks.add(task)
   }
 
-  #beginCodexApprovalAttempt(
-    authority: CodexApprovalAuthorityState,
+  #beginExecutorApprovalAttempt(
+    authority: ExecutorApprovalAuthorityState,
     attempt: 1 | 2,
     createdUserRevision: number,
     action: 'begun' | 'rotated',
   ): void {
-    if (!this.#codexApprovalAuthorityIsCurrent(authority)) return
+    if (!this.#executorApprovalAuthorityIsCurrent(authority)) return
     authority.attempt = attempt
-    this.#codexApprovalDecisionRetry = null
-    this.#codexApprovalIsolation.beginAuthority({
+    this.#executorApprovalDecisionRetry = null
+    this.#executorApprovalIsolation.beginAuthority({
       authorityId: authority.approvalId,
       sessionEpoch: authority.sessionEpoch,
       createdUserRevision,
       expiresAt: authority.expiresAt,
     })
-    this.#telemetry?.record('codex_approval.attempt', {
+    this.#telemetry?.record('approval.attempt', {
       session_epoch: authority.sessionEpoch,
       attempt,
       action,
@@ -4239,41 +4260,41 @@ export class RealtimeService {
   }
 
   /** The only extra audible prompt; it uses host createResponse, never a free provider retry. */
-  #queueCodexApprovalClarification(authority: CodexApprovalAuthorityState): void {
-    if (!this.#codexApprovalAuthorityIsCurrent(authority) || authority.clarificationQueued) return
+  #queueExecutorApprovalClarification(authority: ExecutorApprovalAuthorityState): void {
+    if (!this.#executorApprovalAuthorityIsCurrent(authority) || authority.clarificationQueued) return
     authority.clarificationQueued = true
     this.queueHostItem(hostFactIntent({
       kind: 'final',
       host_item_id: this.#idFactory(),
-      event_id: `codex-approval:${authority.approvalId}:clarification`,
+      event_id: `approval:${authority.approvalId}:clarification`,
       content: CODEX_APPROVAL_CLARIFICATION,
     }), {priority: USER_PRIORITY - 1, preemptive: true})
   }
 
-  #noteCodexApprovalOnsetBeforeContext(): void {
-    const authority = this.#codexApprovalAuthority
+  #noteExecutorApprovalOnsetBeforeContext(): void {
+    const authority = this.#executorApprovalAuthority
     if (authority !== null && !authority.contextReady) authority.preContextOnset = true
   }
 
   /** Retain one provider inference whose response id has not arrived yet across lifecycle changes. */
-  #capturePendingCodexApprovalResponse(requestFreshResponse: boolean): void {
-    const retry = this.#codexApprovalDecisionRetry
-    const reservation = this.#codexApprovalIsolation.reservation
+  #capturePendingExecutorApprovalResponse(requestFreshResponse: boolean): void {
+    const retry = this.#executorApprovalDecisionRetry
+    const reservation = this.#executorApprovalIsolation.reservation
     const pendingRetry = retry?.requested === true && retry.retry_response_id === null
     const pendingInitial = !pendingRetry
       && reservation !== null
-      && !this.#codexApprovalIsolation.blockedResponses.some(response => (
+      && !this.#executorApprovalIsolation.blockedResponses.some(response => (
         response.authorizationCarrier && response.userRevision === reservation.userRevision
       ))
     if (!pendingRetry && !pendingInitial) return
-    const current = this.#codexApprovalPendingResponseQuarantine
+    const current = this.#executorApprovalPendingResponseQuarantine
     if (current !== null) {
       if (current.sessionEpoch === this.session.sessionEpoch) {
         current.requestFreshResponse ||= requestFreshResponse
       }
       return
     }
-    this.#codexApprovalPendingResponseQuarantine = {
+    this.#executorApprovalPendingResponseQuarantine = {
       sessionEpoch: this.session.sessionEpoch,
       sourceRetry: pendingRetry ? retry : null,
       requestFreshResponse,
@@ -4283,81 +4304,81 @@ export class RealtimeService {
   }
 
   /** The first response identity observed for the retained one-inference provider slot owns it. */
-  #claimPendingCodexApprovalResponseQuarantine(
+  #claimPendingExecutorApprovalResponseQuarantine(
     sessionEpoch: number,
     responseId: string | null,
   ): void {
-    const pending = this.#codexApprovalPendingResponseQuarantine
+    const pending = this.#executorApprovalPendingResponseQuarantine
     if (
       responseId === null
       || pending?.sessionEpoch !== sessionEpoch
       || pending.responseId !== null
     ) return
     pending.responseId = responseId
-    this.#rememberCodexApprovalQuarantinedResponse(sessionEpoch, responseId)
+    this.#rememberExecutorApprovalQuarantinedResponse(sessionEpoch, responseId)
     this.session.suppressResponse(responseId)
   }
 
-  #isCodexApprovalResponseQuarantined(sessionEpoch: number, responseId: string): boolean {
-    return this.#codexApprovalQuarantinedResponses.has(callKey(sessionEpoch, responseId))
+  #isExecutorApprovalResponseQuarantined(sessionEpoch: number, responseId: string): boolean {
+    return this.#executorApprovalQuarantinedResponses.has(callKey(sessionEpoch, responseId))
   }
 
-  #rememberCodexApprovalQuarantinedResponse(sessionEpoch: number, responseId: string): void {
+  #rememberExecutorApprovalQuarantinedResponse(sessionEpoch: number, responseId: string): void {
     const key = callKey(sessionEpoch, responseId)
-    this.#codexApprovalQuarantinedResponses.delete(key)
-    this.#codexApprovalQuarantinedResponses.set(key, null)
-    while (this.#codexApprovalQuarantinedResponses.size > MAX_TRACKED_TOOL_CALLS) {
-      const oldest = this.#codexApprovalQuarantinedResponses.keys().next()
+    this.#executorApprovalQuarantinedResponses.delete(key)
+    this.#executorApprovalQuarantinedResponses.set(key, null)
+    while (this.#executorApprovalQuarantinedResponses.size > MAX_TRACKED_TOOL_CALLS) {
+      const oldest = this.#executorApprovalQuarantinedResponses.keys().next()
       if (oldest.done) break
-      this.#codexApprovalQuarantinedResponses.delete(oldest.value)
+      this.#executorApprovalQuarantinedResponses.delete(oldest.value)
     }
   }
 
-  async #finishPendingCodexApprovalResponseQuarantine(
+  async #finishPendingExecutorApprovalResponseQuarantine(
     sessionEpoch: number,
     responseId: string,
   ): Promise<void> {
-    const pending = this.#codexApprovalPendingResponseQuarantine
+    const pending = this.#executorApprovalPendingResponseQuarantine
     if (
       pending?.sessionEpoch !== sessionEpoch
       || pending.responseId !== responseId
     ) return
     pending.terminal = true
-    if (pending.requestFreshResponse) this.#codexApprovalNeedsFreshResponse = true
-    this.#codexApprovalPendingResponseQuarantine = null
-    await this.#maybeRequestFreshCodexApprovalResponse()
+    if (pending.requestFreshResponse) this.#executorApprovalNeedsFreshResponse = true
+    this.#executorApprovalPendingResponseQuarantine = null
+    await this.#maybeRequestFreshExecutorApprovalResponse()
     this.#deliveryReady.set()
   }
 
   /** A failed stale request proves that its not-yet-identified response can no longer arrive. */
-  #releaseFailedCodexApprovalResponseRequest(retry: CodexApprovalDecisionRetry): void {
-    const pending = this.#codexApprovalPendingResponseQuarantine
+  #releaseFailedExecutorApprovalResponseRequest(retry: ExecutorApprovalDecisionRetry): void {
+    const pending = this.#executorApprovalPendingResponseQuarantine
     if (pending?.sourceRetry === retry && pending.responseId === null) {
-      this.#codexApprovalPendingResponseQuarantine = null
+      this.#executorApprovalPendingResponseQuarantine = null
     }
   }
 
-  #clearCodexApprovalVoiceState(): void {
-    const authority = this.#codexApprovalAuthority
-    this.#codexApprovalLifecycleToken += 1
-    this.#capturePendingCodexApprovalResponse(false)
-    const abandonedCalls = this.#codexApprovalIsolation.takeAbandonedCalls()
+  #clearExecutorApprovalVoiceState(): void {
+    const authority = this.#executorApprovalAuthority
+    this.#executorApprovalLifecycleToken += 1
+    this.#capturePendingExecutorApprovalResponse(false)
+    const abandonedCalls = this.#executorApprovalIsolation.takeAbandonedCalls()
     if (authority !== null) {
-      this.#removeQueuedCodexApprovalPrompt(authority.approvalId)
-      this.#releaseCodexApprovalQuestion(authority.approvalId)
-      this.#quarantineCodexApprovalCarriers()
-      this.#retireCodexApprovalProviderContext(authority.approvalId)
+      this.#removeQueuedExecutorApprovalPrompt(authority.approvalId)
+      this.#releaseExecutorApprovalQuestion(authority.approvalId)
+      this.#quarantineExecutorApprovalCarriers()
+      this.#retireExecutorApprovalProviderContext(authority.approvalId)
     }
-    this.#codexApprovalAuthority = null
-    this.#codexApprovalDecisionRetry = null
-    this.#codexApprovalNeedsFreshResponse = false
-    this.#codexApprovalIsolation.invalidate()
-    this.#scheduleCodexApprovalRefusals(abandonedCalls)
+    this.#executorApprovalAuthority = null
+    this.#executorApprovalDecisionRetry = null
+    this.#executorApprovalNeedsFreshResponse = false
+    this.#executorApprovalIsolation.invalidate()
+    this.#scheduleExecutorApprovalRefusals(abandonedCalls)
   }
 
   /** Remove only the undelivered local queue entry; provider context is a separate lifecycle. */
-  #removeQueuedCodexApprovalPrompt(approvalId: string): void {
-    const prefix = `codex-approval:${approvalId}:`
+  #removeQueuedExecutorApprovalPrompt(approvalId: string): void {
+    const prefix = `approval:${approvalId}:`
     const retained = this.#hostItems.filter(queued => (
       !queued.intent.item.event_id.startsWith(prefix)
     ))
@@ -4370,43 +4391,43 @@ export class RealtimeService {
   }
 
   /** Stop/fence only the exact spoken question response while preserving its provider host fact. */
-  #releaseCodexApprovalQuestion(approvalId: string): void {
-    const prefix = `codex-approval:${approvalId}:`
+  #releaseExecutorApprovalQuestion(approvalId: string): void {
+    const prefix = `approval:${approvalId}:`
     const owner = this.#urgentHostResponseOwner
     if (owner?.event_id.startsWith(prefix) === true) {
       if (owner.response_id === null) {
-        this.#codexApprovalIsolation.setResponseFencePending(
+        this.#executorApprovalIsolation.setResponseFencePending(
           this.session.armPendingResponseFence(),
         )
       } else {
         this.session.suppressResponse(owner.response_id)
-        this.#cancelCodexApprovalPromptResponse(owner.session_epoch, owner.response_id)
+        this.#cancelExecutorApprovalPromptResponse(owner.session_epoch, owner.response_id)
       }
       this.#releaseUrgentHostResponse(owner)
     }
   }
 
-  #retireCodexApprovalProviderContext(approvalId: string): void {
-    this.#retireProviderHostEvent(`codex-approval:${approvalId}:requested`)
-    this.#retireProviderHostEvent(`codex-approval:${approvalId}:clarification`)
+  #retireExecutorApprovalProviderContext(approvalId: string): void {
+    this.#retireProviderHostEvent(`approval:${approvalId}:requested`)
+    this.#retireProviderHostEvent(`approval:${approvalId}:clarification`)
   }
 
-  #isCodexApprovalHostResponse(responseId: string): boolean {
+  #isExecutorApprovalHostResponse(responseId: string): boolean {
     return this.session.responseEventIds(responseId).some(eventId => (
-      eventId.startsWith('codex-approval:')
+      eventId.startsWith('approval:')
       && (eventId.endsWith(':requested') || eventId.endsWith(':clarification'))
     ))
   }
 
   /** Quarantine only exact initial/retry/provisional responses recorded by Codex isolation. */
-  #quarantineCodexApprovalCarriers(): void {
-    for (const response of this.#codexApprovalIsolation.blockedResponses) {
-      this.#cancelCodexApprovalPromptResponse(response.sessionEpoch, response.responseId)
+  #quarantineExecutorApprovalCarriers(): void {
+    for (const response of this.#executorApprovalIsolation.blockedResponses) {
+      this.#cancelExecutorApprovalPromptResponse(response.sessionEpoch, response.responseId)
     }
   }
 
   /** Fence one exact already-audible approval response without ever targeting a newer user turn. */
-  #cancelCodexApprovalPromptResponse(sessionEpoch: number, responseId: string): void {
+  #cancelExecutorApprovalPromptResponse(sessionEpoch: number, responseId: string): void {
     const cancellation = (async (): Promise<void> => {
       if (sessionEpoch !== this.session.sessionEpoch) return
       try {
@@ -4420,26 +4441,26 @@ export class RealtimeService {
       }
     })()
     const task = cancellation.finally(() => {
-      this.#codexApprovalPromptReleaseTasks.delete(task)
+      this.#executorApprovalPromptReleaseTasks.delete(task)
     })
-    this.#codexApprovalPromptReleaseTasks.add(task)
+    this.#executorApprovalPromptReleaseTasks.add(task)
   }
 
   /** Reserve one exact item in the current attempt; one newer revision gets a fresh isolation. */
-  async #reserveCodexApprovalItem(sessionEpoch: number, itemId: string | null): Promise<void> {
-    const state = this.#codexApprovalAuthority
-    let authority = this.#codexApprovalIsolation.authority
+  async #reserveExecutorApprovalItem(sessionEpoch: number, itemId: string | null): Promise<void> {
+    const state = this.#executorApprovalAuthority
+    let authority = this.#executorApprovalIsolation.authority
     if (
       itemId === null
-      || this.#codexApproval?.pending !== true
+      || this.#executorApproval?.pending !== true
       || state === null
       || !state.contextReady
       || authority?.sessionEpoch !== sessionEpoch
     ) return
     const userRevision = this.session.userInputRevision
-    const existing = this.#codexApprovalIsolation.reservation
+    const existing = this.#executorApprovalIsolation.reservation
     const supersedesTrackedCarrier = existing === null
-      && this.#codexApprovalIsolation.blockedResponses.some(response => (
+      && this.#executorApprovalIsolation.blockedResponses.some(response => (
         response.userRevision !== null && response.userRevision < userRevision
       ))
     if (
@@ -4447,92 +4468,92 @@ export class RealtimeService {
       || supersedesTrackedCarrier
     ) {
       if (state.attempt !== 1) {
-        await this.#retireCodexApprovalVoiceAuthority()
+        await this.#retireExecutorApprovalVoiceAuthority()
         return
       }
-      this.#rotateCodexApprovalAttempt(state, userRevision - 1)
-      authority = this.#codexApprovalIsolation.authority
+      this.#rotateExecutorApprovalAttempt(state, userRevision - 1)
+      authority = this.#executorApprovalIsolation.authority
       if (authority?.sessionEpoch !== sessionEpoch) return
     }
-    const abandonedCalls = this.#codexApprovalIsolation.takeAbandonedCalls({
+    const abandonedCalls = this.#executorApprovalIsolation.takeAbandonedCalls({
       sessionEpoch,
       userRevision,
     })
     if (abandonedCalls.length > 0) {
-      await this.#refuseCodexApprovalCalls(abandonedCalls)
+      await this.#refuseExecutorApprovalCalls(abandonedCalls)
     }
-    const result = this.#codexApprovalIsolation.reserveUserItem({
+    const result = this.#executorApprovalIsolation.reserveUserItem({
       sessionEpoch,
       itemId,
       userRevision,
     })
     if (result === 'stale') {
-      await this.#retireCodexApprovalVoiceAuthority()
+      await this.#retireExecutorApprovalVoiceAuthority()
       return
     }
     if (result !== 'reserved' && result !== 'idempotent') return
-    const provisional = this.#codexApprovalIsolation.bindProvisionalResponse()
+    const provisional = this.#executorApprovalIsolation.bindProvisionalResponse()
     if (provisional.kind === 'ambiguous') {
-      await this.#exhaustCodexApprovalAttempt()
+      await this.#exhaustExecutorApprovalAttempt()
       return
     }
     if (provisional.kind === 'bound') {
-      await this.#bindCodexApprovalResponse(sessionEpoch, provisional.responseId, userRevision)
-      if (provisional.terminal && this.#codexApproval?.pending === true) {
-        this.#codexApprovalDecisionRetry ??= {
+      await this.#bindExecutorApprovalResponse(sessionEpoch, provisional.responseId, userRevision)
+      if (provisional.terminal && this.#executorApproval?.pending === true) {
+        this.#executorApprovalDecisionRetry ??= {
           item_key: callKey(sessionEpoch, itemId),
           source_response_id: provisional.responseId,
           requested: false,
           retry_response_id: null,
         }
-        await this.#maybeRequestCodexApprovalDecisionRetry()
+        await this.#maybeRequestExecutorApprovalDecisionRetry()
       }
       return
     }
     const responseId = this.session.activeProviderResponseId
-    if (responseId !== null) await this.#bindCodexApprovalResponse(sessionEpoch, responseId)
+    if (responseId !== null) await this.#bindExecutorApprovalResponse(sessionEpoch, responseId)
   }
 
   /** Replace attempt one before any await so old calls/responses cannot enter attempt two. */
-  #rotateCodexApprovalAttempt(
-    state: CodexApprovalAuthorityState,
+  #rotateExecutorApprovalAttempt(
+    state: ExecutorApprovalAuthorityState,
     createdUserRevision: number,
   ): void {
-    if (!this.#codexApprovalAuthorityIsCurrent(state) || state.attempt !== 1) return
-    this.#capturePendingCodexApprovalResponse(true)
-    this.#quarantineCodexApprovalCarriers()
-    const abandoned = this.#codexApprovalIsolation.takeAbandonedCalls()
-    this.#beginCodexApprovalAttempt(state, 2, createdUserRevision, 'rotated')
-    this.#scheduleCodexApprovalRefusals(abandoned)
+    if (!this.#executorApprovalAuthorityIsCurrent(state) || state.attempt !== 1) return
+    this.#capturePendingExecutorApprovalResponse(true)
+    this.#quarantineExecutorApprovalCarriers()
+    const abandoned = this.#executorApprovalIsolation.takeAbandonedCalls()
+    this.#beginExecutorApprovalAttempt(state, 2, createdUserRevision, 'rotated')
+    this.#scheduleExecutorApprovalRefusals(abandoned)
     this.#deliveryReady.set()
   }
 
   /** Spend one attempt; only the first exhaustion may create the single host clarification. */
-  async #exhaustCodexApprovalAttempt(): Promise<void> {
-    const state = this.#codexApprovalAuthority
-    if (state === null || !this.#codexApprovalAuthorityIsCurrent(state)) return
+  async #exhaustExecutorApprovalAttempt(): Promise<void> {
+    const state = this.#executorApprovalAuthority
+    if (state === null || !this.#executorApprovalAuthorityIsCurrent(state)) return
     const attempt = state.attempt
     if (attempt === 1 || attempt === 2) {
-      this.#telemetry?.record('codex_approval.attempt', {
+      this.#telemetry?.record('approval.attempt', {
         session_epoch: state.sessionEpoch,
         attempt,
         action: 'exhausted',
       })
     }
-    this.#quarantineCodexApprovalCarriers()
-    const abandoned = this.#codexApprovalIsolation.takeAbandonedCalls()
-    this.#codexApprovalDecisionRetry = null
-    this.#codexApprovalIsolation.invalidate()
-    await this.#refuseCodexApprovalCalls(abandoned)
-    if (!this.#codexApprovalAuthorityIsCurrent(state)) return
+    this.#quarantineExecutorApprovalCarriers()
+    const abandoned = this.#executorApprovalIsolation.takeAbandonedCalls()
+    this.#executorApprovalDecisionRetry = null
+    this.#executorApprovalIsolation.invalidate()
+    await this.#refuseExecutorApprovalCalls(abandoned)
+    if (!this.#executorApprovalAuthorityIsCurrent(state)) return
     if (attempt === 1 && !state.clarificationQueued) {
-      this.#beginCodexApprovalAttempt(
+      this.#beginExecutorApprovalAttempt(
         state,
         2,
         this.session.userInputRevision,
         'rotated',
       )
-      this.#queueCodexApprovalClarification(state)
+      this.#queueExecutorApprovalClarification(state)
       this.#deliveryReady.set()
       return
     }
@@ -4541,12 +4562,12 @@ export class RealtimeService {
   }
 
   /** Bind initial/retry carrier solely through exact authority/item/response/revision identity. */
-  async #bindCodexApprovalResponse(
+  async #bindExecutorApprovalResponse(
     sessionEpoch: number,
     responseId: string,
     correlatedRevision?: number,
   ): Promise<boolean> {
-    const reservation = this.#codexApprovalIsolation.reservation
+    const reservation = this.#executorApprovalIsolation.reservation
     const revision = correlatedRevision ?? this.session.providerTurnUserInputRevision(responseId)
     if (
       reservation?.sessionEpoch !== sessionEpoch
@@ -4554,21 +4575,21 @@ export class RealtimeService {
       || revision !== reservation.userRevision
       || revision !== this.session.userInputRevision
     ) return false
-    await this.#refuseCodexApprovalCalls(this.#codexApprovalIsolation.takeAbandonedCalls({
+    await this.#refuseExecutorApprovalCalls(this.#executorApprovalIsolation.takeAbandonedCalls({
       sessionEpoch,
       userRevision: revision,
       responseId,
     }))
-    const retry = this.#codexApprovalDecisionRetry
+    const retry = this.#executorApprovalDecisionRetry
     const result = retry?.requested === true
       && retry.retry_response_id === null
-      ? this.#codexApprovalIsolation.bindRetryResponse({
+      ? this.#executorApprovalIsolation.bindRetryResponse({
           sessionEpoch,
           itemId: reservation.itemId,
           userRevision: revision,
           responseId,
         })
-      : this.#codexApprovalIsolation.bindResponse({
+      : this.#executorApprovalIsolation.bindResponse({
           sessionEpoch,
           itemId: reservation.itemId,
           userRevision: revision,
@@ -4578,33 +4599,33 @@ export class RealtimeService {
     if (retry?.requested === true && retry.retry_response_id === null) {
       retry.retry_response_id = responseId
     }
-    this.#codexApprovalIsolation.markBlockedResponse({sessionEpoch, responseId})
+    this.#executorApprovalIsolation.markBlockedResponse({sessionEpoch, responseId})
     this.session.suppressResponse(responseId)
     if (result === 'bound') {
-      const attempt = this.#codexApprovalAuthority?.attempt
+      const attempt = this.#executorApprovalAuthority?.attempt
       if (attempt === 1 || attempt === 2) {
         const key = callKey(sessionEpoch, responseId)
-        this.#codexApprovalCarrierAttempts.delete(key)
-        this.#codexApprovalCarrierAttempts.set(key, attempt)
-        while (this.#codexApprovalCarrierAttempts.size > MAX_TRACKED_TOOL_CALLS) {
-          const oldest = this.#codexApprovalCarrierAttempts.keys().next()
+        this.#executorApprovalCarrierAttempts.delete(key)
+        this.#executorApprovalCarrierAttempts.set(key, attempt)
+        while (this.#executorApprovalCarrierAttempts.size > MAX_TRACKED_TOOL_CALLS) {
+          const oldest = this.#executorApprovalCarrierAttempts.keys().next()
           if (oldest.done) break
-          this.#codexApprovalCarrierAttempts.delete(oldest.value)
+          this.#executorApprovalCarrierAttempts.delete(oldest.value)
         }
-        this.#telemetry?.record('codex_approval.carrier', {
+        this.#telemetry?.record('approval.carrier', {
           session_epoch: sessionEpoch,
           attempt,
           action: 'bound',
         })
       }
     }
-    const calls = this.#codexApprovalIsolation.releaseCallsForResponse({
+    const calls = this.#executorApprovalIsolation.releaseCallsForResponse({
       sessionEpoch,
       userRevision: revision,
       responseId,
     })
     for (const call of calls) {
-      await this.#handleCodexApprovalDecision(call, {
+      await this.#handleExecutorApprovalDecision(call, {
         observedProviderResponseId: responseId,
         originItemId: reservation.itemId,
         originRef: null,
@@ -4614,11 +4635,11 @@ export class RealtimeService {
   }
 
   /** One exact silent carrier may request one same-reservation structured-decision retry. */
-  async #maybeRequestCodexApprovalDecisionRetry(): Promise<void> {
-    const retry = this.#codexApprovalDecisionRetry
-    const reservation = this.#codexApprovalIsolation.reservation
-    const authority = this.#codexApprovalIsolation.authority
-    const state = this.#codexApprovalAuthority
+  async #maybeRequestExecutorApprovalDecisionRetry(): Promise<void> {
+    const retry = this.#executorApprovalDecisionRetry
+    const reservation = this.#executorApprovalIsolation.reservation
+    const authority = this.#executorApprovalIsolation.authority
+    const state = this.#executorApprovalAuthority
     if (
       retry === null
       || retry.requested
@@ -4626,13 +4647,13 @@ export class RealtimeService {
       || authority === null
       || state === null
       || retry.item_key !== callKey(reservation.sessionEpoch, reservation.itemId)
-      || this.#codexApproval?.pending !== true
+      || this.#executorApproval?.pending !== true
       || this.#clock.now() >= authority.expiresAt
     ) return
     const attempt = state.attempt
     retry.requested = true
     if (attempt === 1 || attempt === 2) {
-      this.#telemetry?.record('codex_approval.carrier', {
+      this.#telemetry?.record('approval.carrier', {
         session_epoch: state.sessionEpoch,
         attempt,
         action: 'retry_requested',
@@ -4647,34 +4668,34 @@ export class RealtimeService {
         : new RealtimeDeliveryError(String(failure)))
     }
     if (!requested && (attempt === 1 || attempt === 2)) {
-      this.#telemetry?.record('codex_approval.carrier', {
+      this.#telemetry?.record('approval.carrier', {
         session_epoch: state.sessionEpoch,
         attempt,
         action: 'retry_failed',
       })
     }
-    const stillCurrent = this.#codexApprovalAuthorityIsCurrent(state)
+    const stillCurrent = this.#executorApprovalAuthorityIsCurrent(state)
       && state.attempt === attempt
-      && this.#codexApprovalDecisionRetry === retry
-      && this.#codexApprovalIsolation.authority === authority
-      && this.#codexApprovalIsolation.reservation === reservation
+      && this.#executorApprovalDecisionRetry === retry
+      && this.#executorApprovalIsolation.authority === authority
+      && this.#executorApprovalIsolation.reservation === reservation
     if (!stillCurrent) {
-      if (!requested) this.#releaseFailedCodexApprovalResponseRequest(retry)
+      if (!requested) this.#releaseFailedExecutorApprovalResponseRequest(retry)
       return
     }
     if (requested) return
-    await this.#exhaustCodexApprovalAttempt()
+    await this.#exhaustExecutorApprovalAttempt()
   }
 
   /** Replace one ambiguous old retry with an initial carrier request for the fresh attempt. */
-  async #maybeRequestFreshCodexApprovalResponse(): Promise<void> {
-    const state = this.#codexApprovalAuthority
+  async #maybeRequestFreshExecutorApprovalResponse(): Promise<void> {
+    const state = this.#executorApprovalAuthority
     if (
-      !this.#codexApprovalNeedsFreshResponse
+      !this.#executorApprovalNeedsFreshResponse
       || state === null
-      || !this.#codexApprovalAuthorityIsCurrent(state)
+      || !this.#executorApprovalAuthorityIsCurrent(state)
       || state.attempt !== 2
-      || this.#codexApprovalIsolation.reservation === null
+      || this.#executorApprovalIsolation.reservation === null
     ) return
     let requested = false
     try {
@@ -4684,24 +4705,24 @@ export class RealtimeService {
         ? failure
         : new RealtimeDeliveryError(String(failure)))
     }
-    if (requested) this.#codexApprovalNeedsFreshResponse = false
+    if (requested) this.#executorApprovalNeedsFreshResponse = false
   }
 
-  #blocksCodexApprovalTool(event: {
+  #blocksExecutorApprovalTool(event: {
     readonly session_epoch: number
     readonly response_id: string | null
   }): boolean {
     if (
       event.response_id !== null
-      && this.#isCodexApprovalResponseQuarantined(event.session_epoch, event.response_id)
+      && this.#isExecutorApprovalResponseQuarantined(event.session_epoch, event.response_id)
     ) return true
-    return event.response_id !== null && this.#codexApprovalIsolation.responseState({
+    return event.response_id !== null && this.#executorApprovalIsolation.responseState({
         sessionEpoch: event.session_epoch,
         responseId: event.response_id,
       })?.blocked === true
   }
 
-  async #closeCodexApprovalCarrierTool(event: ToolCallReady): Promise<void> {
+  async #closeExecutorApprovalCarrierTool(event: ToolCallReady): Promise<void> {
     await this.session.injectToolOutput({
       kind: 'tool_output',
       host_item_id: this.#idFactory(),
@@ -4712,7 +4733,7 @@ export class RealtimeService {
   }
 
   /** Complete every abandoned current-session function without routing output to a retired epoch. */
-  async #refuseCodexApprovalCalls(calls: readonly ToolCallReady[]): Promise<void> {
+  async #refuseExecutorApprovalCalls(calls: readonly ToolCallReady[]): Promise<void> {
     for (const call of calls) {
       if (call.session_epoch !== this.session.sessionEpoch) continue
       try {
@@ -4732,52 +4753,52 @@ export class RealtimeService {
   }
 
   /** A controller observer is synchronous, so own its protocol-completion work as a tracked task. */
-  #scheduleCodexApprovalRefusals(calls: readonly ToolCallReady[]): void {
+  #scheduleExecutorApprovalRefusals(calls: readonly ToolCallReady[]): void {
     if (calls.length === 0) return
-    const refusal = this.#refuseCodexApprovalCalls(calls)
+    const refusal = this.#refuseExecutorApprovalCalls(calls)
     const task = refusal.finally(() => {
-      this.#codexApprovalPromptReleaseTasks.delete(task)
+      this.#executorApprovalPromptReleaseTasks.delete(task)
     })
-    this.#codexApprovalPromptReleaseTasks.add(task)
+    this.#executorApprovalPromptReleaseTasks.add(task)
   }
 
   /** Permanently retire voice authority while leaving renderer/controller/provider-fact policy intact. */
-  async #retireCodexApprovalVoiceAuthority(): Promise<void> {
-    const state = this.#codexApprovalAuthority
+  async #retireExecutorApprovalVoiceAuthority(): Promise<void> {
+    const state = this.#executorApprovalAuthority
     if (state?.attempt === 1 || state?.attempt === 2) {
-      this.#telemetry?.record('codex_approval.attempt', {
+      this.#telemetry?.record('approval.attempt', {
         session_epoch: state.sessionEpoch,
         attempt: state.attempt,
         action: 'exhausted',
       })
     }
-    this.#capturePendingCodexApprovalResponse(false)
-    this.#quarantineCodexApprovalCarriers()
-    const abandonedCalls = this.#codexApprovalIsolation.takeAbandonedCalls()
-    await this.#refuseCodexApprovalCalls(abandonedCalls)
-    this.#codexApprovalDecisionRetry = null
-    this.#codexApprovalNeedsFreshResponse = false
-    this.#codexApprovalIsolation.invalidate()
+    this.#capturePendingExecutorApprovalResponse(false)
+    this.#quarantineExecutorApprovalCarriers()
+    const abandonedCalls = this.#executorApprovalIsolation.takeAbandonedCalls()
+    await this.#refuseExecutorApprovalCalls(abandonedCalls)
+    this.#executorApprovalDecisionRetry = null
+    this.#executorApprovalNeedsFreshResponse = false
+    this.#executorApprovalIsolation.invalidate()
     if (state !== null) state.attempt = 0
     this.#deliveryReady.set()
   }
 
-  async #handleCodexApprovalDecision(
+  async #handleExecutorApprovalDecision(
     event: ToolCallReady,
     origin: BoundToolOrigin,
   ): Promise<void> {
-    const controller = this.#codexApproval
-    const authority = this.#codexApprovalIsolation.authority
-    const reservation = this.#codexApprovalIsolation.reservation
-    const decision = codexApprovalDecisionArguments(event.arguments)
-    const voiceState = this.#codexApprovalAuthority
+    const controller = this.#executorApproval
+    const authority = this.#executorApprovalIsolation.authority
+    const reservation = this.#executorApprovalIsolation.reservation
+    const decision = executorApprovalDecisionArguments(event.arguments)
+    const voiceState = this.#executorApprovalAuthority
     let code = decision === null
       ? 'approval_invalid'
       : controller?.pending === true ? 'approval_not_authorized' : 'approval_not_pending'
     let state = 'refused'
     let telemetryOutcome: 'accepted' | 'refused' = 'refused'
-    let telemetryReason: CodexApprovalDecisionReason | undefined
-    const expired = this.#codexApprovalExpiredIdentity
+    let telemetryReason: ExecutorApprovalDecisionReason | undefined
+    const expired = this.#executorApprovalExpiredIdentity
     if (decision === null) telemetryReason = 'malformed_arguments'
     else if (controller?.pending !== true) {
       telemetryReason = expired?.sessionEpoch === event.session_epoch
@@ -4812,7 +4833,7 @@ export class RealtimeService {
         : this.session.providerTurnUserInputRevision(responseId)
       const revision = responseId !== null
         && reservation !== null
-        && this.#codexApprovalIsolation.isAuthorizationCarrier({
+        && this.#executorApprovalIsolation.isAuthorizationCarrier({
           sessionEpoch: event.session_epoch,
           userRevision: reservation.userRevision,
           responseId,
@@ -4830,7 +4851,7 @@ export class RealtimeService {
         && revision === reservation.userRevision
         && revision > authority.createdUserRevision
         && revision === this.session.userInputRevision
-        && this.#codexApprovalIsolation.isAuthorizationCarrier({
+        && this.#executorApprovalIsolation.isAuthorizationCarrier({
           sessionEpoch: event.session_epoch,
           userRevision: revision,
           responseId,
@@ -4857,7 +4878,7 @@ export class RealtimeService {
         telemetryReason = 'not_pending'
       }
     }
-    this.#recordCodexApprovalDecision(
+    this.#recordExecutorApprovalDecision(
       event.session_epoch,
       'function',
       telemetryOutcome,
@@ -4872,20 +4893,20 @@ export class RealtimeService {
     })
   }
 
-  #recordCodexApprovalDecision(
+  #recordExecutorApprovalDecision(
     sessionEpoch: number,
     source: 'function' | 'renderer',
     outcome: 'accepted' | 'refused',
-    reason?: CodexApprovalDecisionReason,
+    reason?: ExecutorApprovalDecisionReason,
   ): void {
-    this.#telemetry?.record('codex_approval.decision', reason === undefined
+    this.#telemetry?.record('approval.decision', reason === undefined
       ? {session_epoch: sessionEpoch, source, outcome}
       : {session_epoch: sessionEpoch, source, outcome, reason})
   }
 
-  #invalidateCodexApproval(reason: string): void {
-    this.#codexApproval?.invalidate(reason)
-    if (this.#codexApprovalAuthority !== null) this.#clearCodexApprovalVoiceState()
+  #invalidateExecutorApproval(reason: string): void {
+    this.#executorApproval?.invalidate(reason)
+    if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -7112,9 +7133,9 @@ export class RealtimeService {
     readonly semanticAcknowledgements: ReadonlyMap<string, SemanticAcknowledgement>
     readonly audioStarted: ReadonlySet<string>
     readonly onProviderTerminal: (generation: PlaybackGeneration) => void
-    readonly onCodexState: (state: CodexState) => void
+    readonly onExecutorState: (state: ExecutorState) => void
     readonly clearCaptions: () => void
-    readonly setCodexState: (state: CodexState) => void
+    readonly setExecutorState: (state: ExecutorState) => void
   } {
     return {
       reconnectLock: this.#reconnectLock,
@@ -7140,13 +7161,13 @@ export class RealtimeService {
       semanticAcknowledgements: this.#semanticAcknowledgements,
       audioStarted: this.#audioStarted,
       onProviderTerminal: this.#onProviderTerminal,
-      onCodexState: this.#onCodexState,
+      onExecutorState: this.#onExecutorState,
       clearCaptions: () => {
         this.#clearCaptions()
       },
-      setCodexState: (state: CodexState) => {
-        this.#codexState = state
-        this.#onCodexState(state)
+      setExecutorState: (state: ExecutorState) => {
+        this.#executorState = state
+        this.#onExecutorState(state)
       },
     }
   }

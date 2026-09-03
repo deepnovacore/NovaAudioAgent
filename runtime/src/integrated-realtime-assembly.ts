@@ -48,7 +48,7 @@ export function buildIntegratedRealtimeAssembly(
     idFactory: () => ids.next('qwen'),
     now: () => clock.now(),
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
-    codexApproval: options.codexResource?.approvalController !== null
+    executorApproval: options.codexResource?.approvalController !== null
       && options.codexResource?.approvalController !== undefined,
   })
   return buildQwenRealtimeAssembly({

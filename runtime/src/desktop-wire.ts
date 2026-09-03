@@ -16,13 +16,13 @@
 import type { PlaybackCompletion, PlaybackFrame } from './playback.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 import type { CaptionFrame } from './realtime/session-state.js'
-import type { CodexState } from './realtime/service-state.js'
-import {PROJECT_CONFIRMATION_TTL_SECONDS} from './realtime/project-confirmation.js'
+import type { ExecutorState } from './realtime/service-state.js'
+import {PROJECT_CONFIRMATION_TTL_SECONDS} from './project-confirmation.js'
 import {
-  CODEX_APPROVAL_TTL_SECONDS,
-  type CodexApprovalLocalDetail,
-  type CodexApprovalView,
-} from './executors/codex/approval.js'
+  APPROVAL_TTL_SECONDS,
+  type ApprovalLocalDetail as ExecutorApprovalLocalDetail,
+  type ApprovalView as ExecutorApprovalView,
+} from './approval-port.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1_024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1_024
@@ -199,11 +199,28 @@ export function playbackTerminalMessage(utteranceId: string, generationEpoch: nu
   })
 }
 
-export function codexStateMessage(state: CodexState): string {
+/** Which executor a state or approval frame is about; the renderer labels with `display_name`. */
+export interface ExecutorIdentity {
+  readonly executor: string
+  readonly display_name: string
+}
+
+function executorIdentity(identity: ExecutorIdentity): ExecutorIdentity {
+  const executor = plainIdentifier(identity.executor)
+  const displayName = identity.display_name
+  if (
+    typeof displayName !== 'string'
+    || stripLikePython(displayName) === ''
+    || codePointLengthLikePython(displayName) > 40
+  ) throw new DesktopProtocolError('desktop executor identity is invalid')
+  return {executor, display_name: displayName}
+}
+
+export function executorStateMessage(state: ExecutorState, identity: ExecutorIdentity): string {
   if (state !== 'idle' && state !== 'running') {
-    throw new DesktopProtocolError('desktop Codex state is invalid')
+    throw new DesktopProtocolError('desktop executor state is invalid')
   }
-  return asciiJson({type: 'codex.state', state})
+  return unicodeJson({type: 'executor.state', ...executorIdentity(identity), state})
 }
 
 /**
@@ -212,7 +229,7 @@ export function codexStateMessage(state: CodexState): string {
  * Non-ASCII is left literal here: these are names a person reads, and escaping every CJK character
  * would triple the frame to no benefit.
  */
-export function codexProjectMessage(view: PublicProjectView): string {
+export function projectStateMessage(view: PublicProjectView): string {
   const pendingConfirmationId = view.pending_confirmation_id
   const pendingAction = view.pending_action ?? null
   const pendingWorkspace = view.pending_workspace_display_name ?? null
@@ -226,7 +243,7 @@ export function codexProjectMessage(view: PublicProjectView): string {
   ]) {
     if (value === null) continue
     if (typeof value !== 'string' || value === '' || codePointLengthLikePython(value) > 120) {
-      throw new DesktopProtocolError('desktop Codex project view is invalid')
+      throw new DesktopProtocolError('desktop project view is invalid')
     }
   }
   if (
@@ -234,7 +251,7 @@ export function codexProjectMessage(view: PublicProjectView): string {
     || typeof view.pending_confirmation_busy !== 'boolean'
     || (!view.pending_confirmation && view.pending_confirmation_busy)
   ) {
-    throw new DesktopProtocolError('desktop Codex project view is invalid')
+    throw new DesktopProtocolError('desktop project view is invalid')
   }
   if (
     pendingConfirmationId !== undefined
@@ -243,7 +260,7 @@ export function codexProjectMessage(view: PublicProjectView): string {
       || pendingConfirmationId === ''
       || codePointLengthLikePython(pendingConfirmationId) > 128
     )
-  ) throw new DesktopProtocolError('desktop Codex project view is invalid')
+  ) throw new DesktopProtocolError('desktop project view is invalid')
   if (
     pendingAction !== null
     && pendingAction !== 'create_workspace'
@@ -251,7 +268,7 @@ export function codexProjectMessage(view: PublicProjectView): string {
     && pendingAction !== 'select_workspace'
     && pendingAction !== 'resume_session'
   ) {
-    throw new DesktopProtocolError('desktop Codex project view is invalid')
+    throw new DesktopProtocolError('desktop project view is invalid')
   }
   if (
     pendingExpires !== null
@@ -262,27 +279,27 @@ export function codexProjectMessage(view: PublicProjectView): string {
       || pendingExpires > PROJECT_CONFIRMATION_TTL_SECONDS
     )
   ) {
-    throw new DesktopProtocolError('desktop Codex project view is invalid')
+    throw new DesktopProtocolError('desktop project view is invalid')
   }
   const hasPendingMetadata = pendingAction !== null
     || pendingWorkspace !== null
     || pendingSession !== null
     || pendingExpires !== null
   if (!view.pending_confirmation && (hasPendingMetadata || pendingConfirmationId !== undefined)) {
-    throw new DesktopProtocolError('desktop Codex project view is invalid')
+    throw new DesktopProtocolError('desktop project view is invalid')
   }
   if (
     view.pending_confirmation
     && hasPendingMetadata
     && (pendingAction === null || pendingWorkspace === null || pendingExpires === null)
   ) {
-    throw new DesktopProtocolError('desktop Codex project view is invalid')
+    throw new DesktopProtocolError('desktop project view is invalid')
   }
   if (pendingAction === 'resume_session' && pendingSession === null) {
-    throw new DesktopProtocolError('desktop Codex project view is invalid')
+    throw new DesktopProtocolError('desktop project view is invalid')
   }
   return unicodeJson({
-    type: 'codex.project',
+    type: 'project.state',
     workspace_display_name: view.workspace_display_name,
     session_title: view.session_title,
     pending_confirmation: view.pending_confirmation,
@@ -298,13 +315,14 @@ export function codexProjectMessage(view: PublicProjectView): string {
 }
 
 /** Independent foreground permission view; raw protocol request fields never enter this frame. */
-export function codexApprovalMessage(view: CodexApprovalView, now: number): string {
-  if (!Number.isFinite(now)) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+export function executorApprovalMessage(view: ExecutorApprovalView, now: number, identity: ExecutorIdentity): string {
+  const executor = executorIdentity(identity)
+  if (!Number.isFinite(now)) throw new DesktopProtocolError('desktop executor approval view is invalid')
   if (
     typeof view.pending_approval !== 'boolean'
     || typeof view.pending_approval_busy !== 'boolean'
     || (!view.pending_approval && view.pending_approval_busy)
-  ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  ) throw new DesktopProtocolError('desktop executor approval view is invalid')
   const approvalId = view.pending_approval_id
   if (!view.pending_approval) {
     if (
@@ -313,9 +331,10 @@ export function codexApprovalMessage(view: CodexApprovalView, now: number): stri
       || view.local_detail !== null
       || view.operation_summary !== null
       || view.expires_at !== null
-    ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    ) throw new DesktopProtocolError('desktop executor approval view is invalid')
     return unicodeJson({
-      type: 'codex.approval',
+      type: 'executor.approval',
+      ...executor,
       pending_approval: false,
       pending_approval_busy: false,
       kind: null,
@@ -336,18 +355,19 @@ export function codexApprovalMessage(view: CodexApprovalView, now: number): stri
     || codePointLengthLikePython(view.operation_summary) > 256
     || typeof view.expires_at !== 'number'
     || !Number.isFinite(view.expires_at)
-  ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
-  const localDetail = validateCodexApprovalLocalDetail(detail)
+  ) throw new DesktopProtocolError('desktop executor approval view is invalid')
+  const localDetail = validateExecutorApprovalLocalDetail(detail)
   const allowed = view.allowed_decisions
   if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length === 0 || allowed.length > 3
     || allowed.some((value: unknown) => typeof value !== 'string' || !['accept', 'acceptForSession', 'decline'].includes(value))
-    || !allowed.includes('decline'))) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    || !allowed.includes('decline'))) throw new DesktopProtocolError('desktop executor approval view is invalid')
   const expiresInSeconds = Math.min(
-    CODEX_APPROVAL_TTL_SECONDS,
+    APPROVAL_TTL_SECONDS,
     Math.max(0, view.expires_at - now),
   )
   const message = unicodeJson({
-    type: 'codex.approval',
+    type: 'executor.approval',
+    ...executor,
     pending_approval: true,
     pending_approval_busy: view.pending_approval_busy,
     pending_approval_id: approvalId,
@@ -358,19 +378,19 @@ export function codexApprovalMessage(view: CodexApprovalView, now: number): stri
     ...(allowed === undefined ? {} : {allowed_decisions: allowed}),
   })
   if (new TextEncoder().encode(message).length > MAX_DESKTOP_JSON_BYTES) {
-    throw new DesktopProtocolError('desktop Codex approval view is too large')
+    throw new DesktopProtocolError('desktop executor approval view is too large')
   }
   return message
 }
 
-function validateCodexApprovalLocalDetail(
-  detail: CodexApprovalLocalDetail,
-): CodexApprovalLocalDetail {
+function validateExecutorApprovalLocalDetail(
+  detail: ExecutorApprovalLocalDetail,
+): ExecutorApprovalLocalDetail {
   if ('scope' in detail && (typeof detail.scope !== 'string' || stripLikePython(detail.scope) === '' || codePointLengthLikePython(detail.scope) > 1024)) {
-    throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    throw new DesktopProtocolError('desktop executor approval view is invalid')
   }
   if (detail.kind === 'permissions') {
-    if (Object.keys(detail).sort().join(',') !== 'kind,scope') throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    if (Object.keys(detail).sort().join(',') !== 'kind,scope') throw new DesktopProtocolError('desktop executor approval view is invalid')
     return detail
   }
   if (detail.kind === 'command_execution' || detail.kind === 'network') {
@@ -382,20 +402,20 @@ function validateCodexApprovalLocalDetail(
       || typeof detail.cwd !== 'string'
       || stripLikePython(detail.cwd) === ''
       || codePointLengthLikePython(detail.cwd) > 4096
-    ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    ) throw new DesktopProtocolError('desktop executor approval view is invalid')
     return detail
   }
-  if (detail.kind !== 'file_change') throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  if (detail.kind !== 'file_change') throw new DesktopProtocolError('desktop executor approval view is invalid')
   const rawChanges: unknown = detail.changes
   if (
     Object.keys(detail).sort().join(',') !== 'changes,kind'
     || !Array.isArray(rawChanges)
     || rawChanges.length === 0
     || rawChanges.length > 64
-  ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  ) throw new DesktopProtocolError('desktop executor approval view is invalid')
   for (const candidate of rawChanges) {
     if (!isPlainObject(candidate)) {
-      throw new DesktopProtocolError('desktop Codex approval view is invalid')
+      throw new DesktopProtocolError('desktop executor approval view is invalid')
     }
     const change = candidate
     if (
@@ -409,7 +429,7 @@ function validateCodexApprovalLocalDetail(
         || stripLikePython(change.move_path) === ''
         || codePointLengthLikePython(change.move_path) > 4096
       )
-    ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    ) throw new DesktopProtocolError('desktop executor approval view is invalid')
   }
   return detail
 }

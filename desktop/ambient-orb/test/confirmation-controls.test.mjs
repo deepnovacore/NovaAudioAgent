@@ -86,33 +86,33 @@ test('Codex approval controls send their independent exact one-shot frame', () =
     sent.push(frame)
     return true
   }})
-  controller.sync({pending: true, approvalId: 'approval-1'})
+  controller.sync({pending: true, approvalId: 'approval-1', executor: 'codex'})
   assert.equal(controller.decide(false), true)
   assert.equal(controller.decide(true), false)
   assert.deepEqual(sent, [{
-    type: 'codex.approval_decision', approval_id: 'approval-1', approved: false,
+    type: 'executor.approval_decision', executor: 'codex', approval_id: 'approval-1', approved: false,
   }])
 })
 
 test('session grants require the advertised decision and never change the boolean accept path', () => {
   const sent = []
   const controller = new CodexApprovalDecisionController({send: frame => { sent.push(frame); return true }})
-  controller.sync({pending: true, approvalId: 'approval', allowedDecisions: ['accept', 'decline']})
+  controller.sync({pending: true, approvalId: 'approval', executor: 'codex', allowedDecisions: ['accept', 'decline']})
   assert.equal(controller.canAcceptForSession, false)
   assert.equal(controller.decide(true, 'session'), false)
   assert.equal(controller.decide(true), true)
   assert.equal(sent[0].scope, undefined)
-  controller.sync({pending: true, approvalId: 'next', allowedDecisions: ['acceptForSession', 'decline']})
+  controller.sync({pending: true, approvalId: 'next', executor: 'codex', allowedDecisions: ['acceptForSession', 'decline']})
   assert.equal(controller.canAccept, false)
   assert.equal(controller.canAcceptForSession, true)
   assert.equal(controller.decide(true), false)
   assert.equal(controller.decide(false, 'session'), false)
   assert.equal(controller.decide(true, 'session'), true)
-  assert.deepEqual(sent.at(-1), {type: 'codex.approval_decision', approval_id: 'next', approved: true, scope: 'session'})
+  assert.deepEqual(sent.at(-1), {type: 'executor.approval_decision', executor: 'codex', approval_id: 'next', approved: true, scope: 'session'})
 })
 
 test('permission scope and allowed buttons survive the wire while unknown authority is rejected', () => {
-  const frame = {type: 'codex.approval', pending_approval: true, pending_approval_busy: false,
+  const frame = {type: 'executor.approval', executor: 'codex', display_name: 'Codex', pending_approval: true, pending_approval_busy: false,
     pending_approval_id: 'p', kind: 'permissions', local_detail: {kind: 'permissions', scope: 'write: 工作区外；网络：请求访问'},
     operation_summary: 'Codex 请求提升权限。', expires_in_seconds: 60,
     allowed_decisions: ['accept', 'acceptForSession', 'decline']}
@@ -129,7 +129,7 @@ test('the pending loser is promoted after the visible Codex confirmation settles
     return true
   }})
   const codex = new CodexApprovalDecisionController({send: () => true})
-  codex.sync({pending: true, approvalId: 'approval-1'})
+  codex.sync({pending: true, approvalId: 'approval-1', executor: 'codex'})
   project.sync({pending: true, proposalId: 'proposal-1'})
 
   assert.equal(presentation.sync('codex', true), true)
@@ -154,7 +154,7 @@ test('the pending Codex loser is promoted after the visible project confirmation
     return true
   }})
   project.sync({pending: true, proposalId: 'proposal-1'})
-  codex.sync({pending: true, approvalId: 'approval-1'})
+  codex.sync({pending: true, approvalId: 'approval-1', executor: 'codex'})
   assert.equal(presentation.sync('project', true), true)
   assert.equal(presentation.sync('codex', true), false)
   assert.equal(presentation.activeKind, 'project')
@@ -164,7 +164,7 @@ test('the pending Codex loser is promoted after the visible project confirmation
   assert.equal(codex.enabled, true)
   assert.equal(codex.decide(false), true)
   assert.deepEqual(sent, [{
-    type: 'codex.approval_decision', approval_id: 'approval-1', approved: false,
+    type: 'executor.approval_decision', executor: 'codex', approval_id: 'approval-1', approved: false,
   }])
   assert.equal(presentation.sync('codex', false), true)
   assert.equal(presentation.activeKind, null)
@@ -172,7 +172,9 @@ test('the pending Codex loser is promoted after the visible project confirmation
 
 test('Codex approval renderer schema is strict, bounded, and keeps detail local', () => {
   const valid = parseCodexApprovalMessage({
-    type: 'codex.approval',
+    type: 'executor.approval',
+    executor: 'codex',
+    display_name: 'Codex',
     pending_approval: true,
     pending_approval_busy: false,
     pending_approval_id: 'approval-1',
@@ -183,15 +185,17 @@ test('Codex approval renderer schema is strict, bounded, and keeps detail local'
   })
   assert.equal(valid?.operation, '执行命令：npm test')
   for (const malformed of [
-    {...valid, type: 'codex.approval', extra: true},
+    {...valid, type: 'executor.approval', extra: true},
+    {...valid, type: 'codex.approval'},
+    {...valid, display_name: ''},
     {
-      type: 'codex.approval', pending_approval: true, pending_approval_busy: false,
+      type: 'executor.approval', executor: 'codex', display_name: 'Codex', pending_approval: true, pending_approval_busy: false,
       pending_approval_id: 'approval-1', kind: 'command_execution',
       local_detail: {kind: 'command_execution', command: '', cwd: 'C:\\workspace'},
       operation_summary: 'summary', expires_in_seconds: 60,
     },
     {
-      type: 'codex.approval', pending_approval: true, pending_approval_busy: false,
+      type: 'executor.approval', executor: 'codex', display_name: 'Codex', pending_approval: true, pending_approval_busy: false,
       pending_approval_id: 'approval-1', kind: 'command_execution',
       local_detail: {kind: 'command_execution', command: '\u001c', cwd: 'C:\\workspace'},
       operation_summary: 'summary', expires_in_seconds: 60,

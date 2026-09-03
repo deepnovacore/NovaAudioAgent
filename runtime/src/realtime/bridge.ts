@@ -17,12 +17,13 @@
 
 import { createHmac, randomBytes } from 'node:crypto'
 import { canonicalJson } from '../canonical-json.js'
-import {validateCodexRequest} from '../executors/codex/contract.js'
+import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { JsonValue } from '../events.js'
 import { USER_PRIORITY } from '../memory.js'
 import type { DelegateRequest, UpdateSpec } from '../ports.js'
 import type { WakeReason } from '../slots.js'
 import type { CompiledTools } from '../tool-schema.js'
+import type {CodingChannel} from './evidence.js'
 import type { HostContextItem, HostResponseIntent } from './protocol.js'
 import type { toolCallReadySchema } from './protocol.js'
 import type { z } from 'zod'
@@ -42,7 +43,7 @@ import {
 export interface BridgeRuntime {
   readonly clock: {now(): number}
   readonly memory: Parameters<typeof compileMemoryRecall>[0]
-  readonly executors: ReadonlyMap<string, {readonly manifest: ExecutorManifestLike}>
+  readonly executors: ReadonlyMap<string, ExecutorAdapterLike>
   ingestUserInput(input: {readonly text: string}): Promise<string>
   updateExternal(spec: UpdateSpec, reason: WakeReason): boolean
   dispatchExternal(
@@ -58,8 +59,16 @@ interface OpSpecLike {
 }
 
 interface ExecutorManifestLike {
+  readonly name: string
+  readonly display_name?: string | undefined
+  readonly roles?: readonly string[]
   readonly ops: readonly OpSpecLike[]
   readonly policy: {readonly suggest?: boolean}
+}
+
+export interface ExecutorAdapterLike {
+  readonly manifest: ExecutorManifestLike
+  admitRequest?(op: string, request: Readonly<Record<string, JsonValue>>): ExecutorAdmission | null
 }
 
 export interface ToolAcceptance {
@@ -83,30 +92,19 @@ export interface ToolAcceptance {
 const MAX_TASK_SUMMARY = 240
 
 /**
- * `codex.project` multiplexes short project-boundary operations and long-running task execution.
- * The former can produce a confirmation proposal, so acknowledging them as delegated work would
- * let the model speak before it has seen the confirmation question. Keep only `start_session`
- * asynchronous; every immediate project action must resolve through its correlated Handoff.
+ * An op declared `sync_result` always holds the protocol open; otherwise the adapter's own
+ * admission hook may decide per call (an op that multiplexes short and long actions needs this so
+ * the model cannot speak before it has seen a confirmation question).
  */
-const SYNCHRONOUS_PROJECT_ACTIONS = new Set([
-  'list_workspaces',
-  'create_workspace',
-  'select_workspace',
-  'list_sessions',
-  'resume_session',
-])
-
 export function requiresSynchronousResult(
-  executor: string,
+  adapter: Pick<ExecutorAdapterLike, 'admitRequest'> | undefined,
   op: string,
   arguments_: Readonly<Record<string, JsonValue>>,
   declaredSyncResult: boolean,
 ): boolean {
   if (declaredSyncResult) return true
-  return executor === 'codex'
-    && op === 'project'
-    && typeof arguments_.action === 'string'
-    && SYNCHRONOUS_PROJECT_ACTIONS.has(arguments_.action)
+  const admission = adapter?.admitRequest?.(op, arguments_) ?? null
+  return admission?.ok === true && admission.sync_result
 }
 
 export class RealtimeRuntimeBridge {
@@ -135,6 +133,16 @@ export class RealtimeRuntimeBridge {
     this.#tools = options.tools
     this.#idFactory = options.idFactory
     this.#queryDigestKey = options.queryDigestKey ?? randomBytes(32)
+  }
+
+  #codingChannel(): CodingChannel | null {
+    for (const adapter of this.#runtime.executors.values()) {
+      const manifest = adapter.manifest
+      if (manifest.roles?.includes('coding') === true) {
+        return {channel: manifest.name, display_name: manifest.display_name ?? manifest.name}
+      }
+    }
+    return null
   }
 
   /** Apply provider transcript evidence before it can authorize a tool proposal. */
@@ -207,10 +215,10 @@ export class RealtimeRuntimeBridge {
     const adapter = this.#runtime.executors.get(binding.executor)
     const op = adapter?.manifest.ops.find(candidate => candidate.name === binding.op) ?? null
     if (op === null) return this.#refused(call, 'invalid_params')
-    if (binding.executor === 'codex' && binding.op === 'project') {
-      const normalized = validateCodexRequest('project', 'project', arguments_)
-      if (!normalized.ok) return this.#refused(call, 'invalid_params')
-      arguments_ = normalized.value as Readonly<Record<string, JsonValue>>
+    const adapterAdmission = adapter?.admitRequest?.(binding.op, arguments_) ?? null
+    if (adapterAdmission !== null) {
+      if (!adapterAdmission.ok) return this.#refused(call, 'invalid_params')
+      arguments_ = adapterAdmission.request
     } else if (!validParams(arguments_, op.params)) {
       return this.#refused(call, 'invalid_params')
     }
@@ -231,12 +239,7 @@ export class RealtimeRuntimeBridge {
     )
     if (summary === '') return this.#refused(call, 'invalid_params')
 
-    const syncResult = requiresSynchronousResult(
-      binding.executor,
-      binding.op,
-      arguments_,
-      op.sync_result === true,
-    )
+    const syncResult = op.sync_result === true || (adapterAdmission?.ok === true && adapterAdmission.sync_result)
     let hostItem: HostContextItem
     let responseIntent: HostResponseIntent
     if (syncResult) {
@@ -312,6 +315,7 @@ export class RealtimeRuntimeBridge {
         query,
         scope: scope as RecallScope,
         beforeRef: resolvedOriginRef,
+        coding: this.#codingChannel(),
       })
     } catch (cause) {
       if (cause instanceof RecallOriginError) return this.#refused(call, 'missing_origin_ref')

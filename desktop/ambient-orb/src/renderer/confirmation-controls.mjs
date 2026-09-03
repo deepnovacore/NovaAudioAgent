@@ -58,6 +58,7 @@ export class ConfirmationDecisionController {
 export class CodexApprovalDecisionController {
   #send
   #approvalId = null
+  #executor = null
   #busy = false
   #hostBusy = false
   #allowed = ['accept', 'decline']
@@ -67,10 +68,11 @@ export class CodexApprovalDecisionController {
     this.#send = send
   }
 
-  sync({pending, approvalId, busy = false, allowedDecisions = ['accept', 'decline']}) {
+  sync({pending, approvalId, executor = null, busy = false, allowedDecisions = ['accept', 'decline']}) {
     const next = pending === true && validProposalId(approvalId) ? approvalId : null
     if (next !== this.#approvalId) this.#busy = false
     this.#approvalId = next
+    this.#executor = next === null ? null : executor
     this.#hostBusy = busy === true
     this.#allowed = Array.isArray(allowedDecisions) ? [...allowedDecisions] : ['decline']
     if (next === null || busy === false) this.#busy = false
@@ -88,7 +90,8 @@ export class CodexApprovalDecisionController {
     if (scope !== undefined && (scope !== 'session' || !approved)) return false
     if (!this.#allowed.includes(approved ? scope === 'session' ? 'acceptForSession' : 'accept' : 'decline')) return false
     const sent = this.#send({
-      type: 'codex.approval_decision',
+      type: 'executor.approval_decision',
+      executor: this.#executor,
       approval_id: this.#approvalId,
       approved,
       ...(scope === undefined ? {} : {scope}),
@@ -131,7 +134,7 @@ export class ConfirmationPresentationController {
 }
 
 const APPROVAL_BASE_KEYS = [
-  'expires_in_seconds', 'kind', 'local_detail', 'operation_summary',
+  'display_name', 'executor', 'expires_in_seconds', 'kind', 'local_detail', 'operation_summary',
   'pending_approval', 'pending_approval_busy', 'type',
 ]
 
@@ -145,7 +148,9 @@ export function parseCodexApprovalMessage(message) {
     : [...APPROVAL_BASE_KEYS].sort().join(',')
   if (
     keys !== expectedKeys
-    || message.type !== 'codex.approval'
+    || message.type !== 'executor.approval'
+    || !validText(message.executor, 256)
+    || !validText(message.display_name, 40)
     || typeof pending !== 'boolean'
     || typeof message.pending_approval_busy !== 'boolean'
     || (!pending && message.pending_approval_busy)

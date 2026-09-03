@@ -87,6 +87,7 @@ function runScenario(scenario: Scenario): Record<string, unknown> {
       query: scenario.query,
       scope: scenario.scope,
       beforeRef: scenario.before_ref,
+      coding: {channel: 'codex', display_name: 'Codex'},
     })
   } catch (cause) {
     // The oracle distinguishes an origin rejection from a plain value error, because they mean

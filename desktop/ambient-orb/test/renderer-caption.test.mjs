@@ -40,7 +40,7 @@ test('renderer stops the guard tone before replacement PCM and local onset', asy
 test('renderer accepts the closed public Codex project message', async () => {
   const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /message\.type === 'codex\.project'/)
+  assert.match(source, /message\.type === 'project\.state'/)
   assert.match(source, /workspace_display_name/)
   assert.match(source, /pending_confirmation/)
   assert.match(source, /pending_confirmation_id/)

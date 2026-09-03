@@ -76,7 +76,7 @@ test('the force command is fixed and Windows fails closed without a packaged hel
     signal: new AbortController().signal,
     expiresAtMs: Date.now() + 5000,
   }), (error: unknown) => {
-    assert.equal(String(error), 'CodexProcessOwnerError: spawn_failed')
+    assert.equal(String(error), 'HostPathError: spawn_failed')
     assert.equal(String(error).includes('taskkill'), false)
     return true
   })
@@ -284,7 +284,7 @@ test('packaged Windows guardian owns the fixed app-server command and rejects a 
     await assert.rejects(factory!.spawn(spec, {
       signal: new AbortController().signal,
       expiresAtMs: Date.now() + 5000,
-    }), (caught: unknown) => String(caught) === 'CodexProcessOwnerError: spawn_failed')
+    }), (caught: unknown) => String(caught) === 'HostPathError: spawn_failed')
   } finally {
     await rm(root, {recursive: true, force: true})
   }

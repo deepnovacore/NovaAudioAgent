@@ -17,9 +17,9 @@ import { canonicalJson } from '../src/canonical-json.js'
 import {
   DesktopProtocolError,
   captionMessage,
-  codexApprovalMessage,
-  codexProjectMessage,
-  codexStateMessage,
+  executorApprovalMessage,
+  projectStateMessage,
+  executorStateMessage,
   decodeAudioFrame,
   deliveryToEvent,
   encodeAudioFrame,
@@ -30,8 +30,9 @@ import {
 } from '../src/desktop-wire.js'
 import { parseClientMessage } from '../src/desktop-bridge.js'
 import type { PlaybackCompletion } from '../src/playback.js'
-import type { CodexState } from '../src/realtime/service-state.js'
+import type { ExecutorState } from '../src/realtime/service-state.js'
 
+const CODEX = {executor: 'codex', display_name: 'Codex'} as const
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/desktop/wire/v1')
 
 interface Case {
@@ -124,11 +125,11 @@ function runCase(spec: Case): Record<string, unknown> {
         }
       case 'playback_terminal':
         return {text: playbackTerminalMessage(spec.utterance_id!, spec.generation_epoch!)}
-      case 'codex_state':
-        return {text: codexStateMessage(spec.state as CodexState)}
-      case 'codex_project':
+      case 'executor_state':
+        return {text: executorStateMessage(spec.state as ExecutorState, CODEX)}
+      case 'project_state':
         return {
-          text: codexProjectMessage({
+          text: projectStateMessage({
             workspace_display_name: spec.workspace_display_name ?? null,
             session_title: spec.session_title ?? null,
             pending_confirmation: spec.pending_confirmation!,
@@ -165,7 +166,7 @@ function runCase(spec: Case): Record<string, unknown> {
 
 test('Codex project view bounds Python code points rather than UTF-16 units', () => {
   const workspace = '𐐀'.repeat(61)
-  const parsed = JSON.parse(codexProjectMessage({
+  const parsed = JSON.parse(projectStateMessage({
     workspace_display_name: workspace,
     session_title: null,
     pending_confirmation: false,
@@ -173,7 +174,7 @@ test('Codex project view bounds Python code points rather than UTF-16 units', ()
   })) as {readonly workspace_display_name: string}
   assert.equal(parsed.workspace_display_name, workspace)
 
-  assert.throws(() => codexProjectMessage({
+  assert.throws(() => projectStateMessage({
     workspace_display_name: '𐐀'.repeat(121),
     session_title: null,
     pending_confirmation: false,
@@ -182,7 +183,7 @@ test('Codex project view bounds Python code points rather than UTF-16 units', ()
 })
 
 test('Codex project view carries a bounded public confirmation description', () => {
-  const parsed = JSON.parse(codexProjectMessage({
+  const parsed = JSON.parse(projectStateMessage({
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
@@ -194,7 +195,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     pending_expires_in_seconds: 89.25,
   })) as Readonly<Record<string, unknown>>
   assert.deepEqual(parsed, {
-    type: 'codex.project',
+    type: 'project.state',
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
@@ -205,7 +206,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     pending_session_title: null,
     pending_expires_in_seconds: 89.25,
   })
-  assert.throws(() => codexProjectMessage({
+  assert.throws(() => projectStateMessage({
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: false,
@@ -220,7 +221,7 @@ test('Codex project view carries a bounded public confirmation description', () 
 
 test('Codex project view rejects an invalid banner decision binding', () => {
   for (const pendingConfirmationId of ['', 'x'.repeat(129)]) {
-    assert.throws(() => codexProjectMessage({
+    assert.throws(() => projectStateMessage({
       workspace_display_name: 'alpha',
       session_title: null,
       pending_confirmation: true,
@@ -235,7 +236,7 @@ test('Codex project view rejects an invalid banner decision binding', () => {
 })
 
 test('Codex project view accepts the full confirmation ttl', () => {
-  const parsed = JSON.parse(codexProjectMessage({
+  const parsed = JSON.parse(projectStateMessage({
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
@@ -248,7 +249,7 @@ test('Codex project view accepts the full confirmation ttl', () => {
   })) as Readonly<Record<string, unknown>>
   assert.equal(parsed.pending_expires_in_seconds, 360)
 
-  assert.throws(() => codexProjectMessage({
+  assert.throws(() => projectStateMessage({
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
@@ -261,7 +262,7 @@ test('Codex project view accepts the full confirmation ttl', () => {
 })
 
 test('Codex project view carries workspace reuse confirmation', () => {
-  const parsed = JSON.parse(codexProjectMessage({
+  const parsed = JSON.parse(projectStateMessage({
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
@@ -276,7 +277,7 @@ test('Codex project view carries workspace reuse confirmation', () => {
 })
 
 test('Codex approval wire carries only bounded local display detail and relative expiry', () => {
-  const parsed: unknown = JSON.parse(codexApprovalMessage({
+  const parsed: unknown = JSON.parse(executorApprovalMessage({
     pending_approval: true,
     pending_approval_busy: false,
     pending_approval_id: 'approval-1',
@@ -284,9 +285,11 @@ test('Codex approval wire carries only bounded local display detail and relative
     local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
     operation_summary: 'Codex 请求执行一条工作区命令。',
     expires_at: 70,
-  }, 10))
+  }, 10, CODEX))
   assert.deepEqual(parsed, {
-    type: 'codex.approval',
+    type: 'executor.approval',
+    executor: 'codex',
+    display_name: 'Codex',
     pending_approval: true,
     pending_approval_busy: false,
     pending_approval_id: 'approval-1',
@@ -295,7 +298,7 @@ test('Codex approval wire carries only bounded local display detail and relative
     operation_summary: 'Codex 请求执行一条工作区命令。',
     expires_in_seconds: 60,
   })
-  assert.throws(() => codexApprovalMessage({
+  assert.throws(() => executorApprovalMessage({
     pending_approval: true,
     pending_approval_busy: false,
     pending_approval_id: 'approval-1',
@@ -303,7 +306,7 @@ test('Codex approval wire carries only bounded local display detail and relative
     local_detail: {kind: 'command_execution', command: 'x'.repeat(4097), cwd: 'C:\\workspace'},
     operation_summary: 'summary',
     expires_at: 70,
-  }, 10), DesktopProtocolError)
+  }, 10, CODEX), DesktopProtocolError)
 })
 
 test('every desktop wire case matches the Python-exported golden, byte for byte', () => {

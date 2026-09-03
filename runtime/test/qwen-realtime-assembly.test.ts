@@ -44,7 +44,7 @@ import {
 } from '../src/realtime/qwen.js'
 import type { CompiledTools } from '../src/tool-schema.js'
 import {CodexLiveAdapter} from '../src/executors/codex/adapter-live.js'
-import {ProjectConfirmationController} from '../src/realtime/project-confirmation.js'
+import {ProjectConfirmationController} from '../src/project-confirmation.js'
 import {CodexApprovalController} from '../src/executors/codex/approval.js'
 
 async function settleNamed<T>(
@@ -450,7 +450,7 @@ test('Qwen realtime composition rejects a live Codex fallback', () => {
     }), recordingConnector().connector),
     codexResource: resource,
   }), error => error instanceof AssemblyError
-    && error.message === 'realtime Codex project mode mismatch')
+    && error.message === 'realtime coding resource project mode mismatch')
 })
 
 test('desktop entry leaves Codex prewarm to the realtime owner instead of blocking readiness', async () => {
@@ -717,7 +717,7 @@ test('Qwen factory forwards only the reviewed provider tool subset', async () =>
   const realtime = buildQwenRealtimeAssembly(qwenOptions(
     settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
     connector.connector,
-    {providerToolView: tools => ({schemas: tools.schemas.slice(0, 2), bindings: tools.bindings})},
+    {providerToolView: tools => ({...tools, schemas: tools.schemas.slice(0, 2)})},
   ))
   await settleNamed('subset Qwen start', realtime.start())
   const update = JSON.parse(connector.sockets[0]?.sent[0] ?? '{}') as {
@@ -728,7 +728,7 @@ test('Qwen factory forwards only the reviewed provider tool subset', async () =>
   await settleNamed('subset Qwen stop', realtime.stop())
 
   const copiedBindings = (tools: CompiledTools): CompiledTools => ({
-    schemas: tools.schemas,
+    ...tools,
     bindings: new Map(tools.bindings),
   })
   assert.throws(

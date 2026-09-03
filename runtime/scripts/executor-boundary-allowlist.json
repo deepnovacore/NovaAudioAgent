@@ -1,0 +1,27 @@
+[
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_bin: z.string().default('codex')",
+    "reason": "Settings key names and defaults are user-facing and unchanged by spec 07; the codex_* settings slice stays parsed here (ownership already gated by EXECUTOR_OWNED_SETTINGS)."
+  },
+  {
+    "path": "runtime/src/desktop.ts",
+    "pattern": "export {admitCodexCliVersion} from './executors/index.js'",
+    "reason": "Public @nova-audio-agent/runtime/desktop re-export consumed by the ambient-orb main process; reached through the executor registry, not the package."
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "'codex'",
+    "reason": "Executor-owned environment rows: user-facing NOVA_AUDIO_AGENT_CODEX_* names and their owner tag are explicitly allowed residue in spec 07."
+  },
+  {
+    "path": "runtime/src/realtime/intake.ts",
+    "pattern": "codex__confirm_project_action",
+    "reason": "Model-visible tool name; the whole model-facing surface is renamed once in spec 08."
+  },
+  {
+    "path": "runtime/src/realtime/qwen.ts",
+    "pattern": "codex__",
+    "reason": "Prompt text naming model-visible tools; rewritten once in spec 08."
+  }
+]

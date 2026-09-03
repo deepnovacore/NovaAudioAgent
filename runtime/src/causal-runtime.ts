@@ -51,8 +51,19 @@ export interface ExecutorDispatchContext {
   readonly observe?: (payload: ExecutorObservation) => void
 }
 
+/** Result of an adapter's own admission hook; `null` from the hook means "apply the defaults". */
+export type ExecutorAdmission =
+  | {readonly ok: true; readonly request: Readonly<Record<string, JsonValue>>; readonly sync_result: boolean}
+  | {readonly ok: false}
+
 export interface ExecutorAdapter {
   readonly manifest: ExecutorManifest
+  /**
+   * Optional per-op admission for ops whose params outgrow plain JSON-schema validation (oneOf
+   * branches) or whose synchronous-result decision depends on the arguments. Absent or `null`:
+   * the op's `params` schema and `sync_result` flag apply.
+   */
+  admitRequest?(op: string, request: Readonly<Record<string, JsonValue>>): ExecutorAdmission | null
   dispatch(
     op: string,
     request: Readonly<Record<string, JsonValue>>,

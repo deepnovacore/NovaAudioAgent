@@ -3,9 +3,11 @@
 import {randomUUID} from 'node:crypto'
 
 import {loadSettings} from './config.js'
-import {createCodexAssemblyResource} from './executors/codex/factory.js'
-import {resolveCodexHostConfig} from './executors/codex/host-config.js'
-import {createProductionCodexHost} from './executors/codex/production-host.js'
+import {
+  createCodexAssemblyResource,
+  createProductionCodexHost,
+  resolveCodexHostConfig,
+} from './executors/codex/host.js'
 import {
   buildDesktopRealtimeComposition,
   runDesktopEntryWithStopSources,
@@ -20,7 +22,7 @@ import {
   type BuildProductionRealtimeAssemblyOptions,
 } from './production-realtime-assembly.js'
 import {createRealtimeTelemetry} from './realtime/telemetry.js'
-import type {CodexApprovalView} from './executors/codex/approval.js'
+import type {ApprovalView as ExecutorApprovalView} from './approval-port.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource}
 
@@ -54,7 +56,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
       onDiagnostic: code => onDiagnostic(`[runtime-diagnostic] ${code}`),
     })
     const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
-    let publishCodexApproval: (view: CodexApprovalView) => void = () => undefined
+    let publishExecutorApproval: (view: ExecutorApprovalView) => void = () => undefined
     const codexResource = codexConfig === null
       ? null
       : await createCodexAssemblyResource({
@@ -65,7 +67,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
           idFactory: () => randomUUID().replaceAll('-', ''),
           onDiagnostic,
           codexApprovalBroker: {
-            publish: view => { publishCodexApproval(view) },
+            publish: view => { publishExecutorApproval(view) },
           },
           ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
         })
@@ -100,7 +102,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
         return buildProductionRealtimeAssembly(realtimeOptions)
       },
     })
-    publishCodexApproval = view => { composition.desktop.bridge.onCodexApproval(view) }
+    publishExecutorApproval = view => { composition.desktop.bridge.onExecutorApproval(view) }
     return {
       ...composition,
       closeAuxiliary: () => telemetry.close(),

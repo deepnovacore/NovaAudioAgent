@@ -15,15 +15,16 @@ import {
   type DesktopReadiness,
 } from './desktop.js'
 import type {CameraPermissionStatus} from './desktop-camera.js'
-import {deliveryToEvent} from './desktop-wire.js'
+import {deliveryToEvent, type ExecutorIdentity} from './desktop-wire.js'
+import {executorDisplayName, executorWithRole} from './coding-executor.js'
 import type {PlaybackCompletion, PlaybackFrame} from './playback.js'
 import type {RealtimeAssembly} from './realtime-assembly.js'
 import {memoryBoardMessage} from './realtime/memory-board.js'
 import {workspaceGraphBoardMessage} from './realtime/workspace-graph-board.js'
-import type {ProjectConfirmationView} from './realtime/project-confirmation.js'
-import type {CodexApprovalView} from './executors/codex/approval.js'
+import type {ProjectConfirmationView} from './project-confirmation.js'
+import type {ApprovalView as ExecutorApprovalView} from './approval-port.js'
 import type {CaptionFrame} from './realtime/session-state.js'
-import type {CodexState} from './realtime/service-state.js'
+import type {ExecutorState} from './realtime/service-state.js'
 import type {RealtimeTelemetry} from './realtime/telemetry.js'
 import type {Suggestion} from './suggestions.js'
 import {projectExecutorEvent, projectExecutorSuggestion, type ProgressMode} from './desktop-progress.js'
@@ -48,7 +49,7 @@ export interface DesktopOutputCallbacks {
   readonly onAudioTerminal: (utteranceId: string, generationEpoch: number) => void
   readonly onDelivery: (completion: PlaybackCompletion) => void
   readonly onCaption: (frame: CaptionFrame) => void
-  readonly onCodexState: (state: CodexState) => void
+  readonly onExecutorState: (state: ExecutorState) => void
   readonly onProjectView: (view: ProjectConfirmationView) => void
 }
 
@@ -62,7 +63,7 @@ export interface BuildDesktopRealtimeCompositionOptions {
   ) => RealtimeAssembly
   readonly telemetry?: RealtimeTelemetry
   readonly projectView?: ProjectConfirmationView
-  readonly approvalView?: CodexApprovalView
+  readonly approvalView?: ExecutorApprovalView
   readonly createServer?: DesktopRealtimeOptions['createServer']
 }
 
@@ -139,13 +140,14 @@ export function buildDesktopRealtimeComposition(
       if (payload !== null) requireRealtime().runtime.post({kind: 'assistant_spoken', payload})
     },
     onCaption: frame => requireDesktop().bridge.onCaption(frame),
-    onCodexState: state => requireDesktop().bridge.onCodexState(state),
-    onProjectView: view => requireDesktop().bridge.onCodexProject(view),
+    onExecutorState: state => requireDesktop().bridge.onExecutorState(state),
+    onProjectView: view => requireDesktop().bridge.onProjectView(view),
   }, cameraTransport)
   holder.realtime = realtime
   const desktop = new DesktopRealtime({
     token: options.token,
     service: realtime.service,
+    executor: codingExecutorIdentity(realtime),
     stop: options.stop,
     memoryBoard: (requestId, detail) => memoryBoardMessage(
       requestId,
@@ -169,6 +171,15 @@ export function buildDesktopRealtimeComposition(
   if (options.stop.signal.aborted) unsubscribeProgress()
   else options.stop.signal.addEventListener('abort', unsubscribeProgress, {once: true})
   return {realtime, desktop}
+}
+
+/** The frame identity of the configured coding executor, or `null` when there is none. */
+export function codingExecutorIdentity(realtime: Pick<RealtimeAssembly, 'runtime'>): ExecutorIdentity | null {
+  const manifest = executorWithRole(
+    [...realtime.runtime.executors.values()].map(adapter => adapter.manifest),
+    'coding',
+  )
+  return manifest === null ? null : {executor: manifest.name, display_name: executorDisplayName(manifest)}
 }
 
 /** Project one already-published graph snapshot without opening any graph capability. */
@@ -551,9 +562,8 @@ function desktopEntryFailureCode(error: unknown): string {
       'binary_missing', 'spawn_failed', 'codex_host_unavailable',
       'codex_project_host_unsupported', 'backend_unavailable',
     ]).has(String(value.code))) return 'backend_unavailable'
-    if (value.name === 'ConfigurationError'
-      || value.name === 'CodexHostConfigurationError'
-      || value.name === 'DesktopCameraConfigurationError') return 'configuration_required'
+    // Every configuration error class (core, camera, any executor's host config) ends in this suffix.
+    if (typeof value.name === 'string' && value.name.endsWith('ConfigurationError')) return 'configuration_required'
   }
   return 'assembly_failed'
 }

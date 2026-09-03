@@ -205,7 +205,7 @@ function nextFrames(socket: WebSocket, count: number): Promise<readonly Received
   })
 }
 
-async function authenticate(socket: WebSocket, bootstrapCount = 2): Promise<void> {
+async function authenticate(socket: WebSocket, bootstrapCount = 1): Promise<void> {
   const bootstrap = nextFrames(socket, bootstrapCount)
   socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
   await settleWithin('desktop authentication bootstrap', bootstrap)
@@ -314,15 +314,17 @@ test('desktop accepts only an exact bounded project confirmation decision', () =
 
 test('desktop accepts only an exact bounded Codex approval decision', () => {
   assert.deepEqual(parseDesktopControl(JSON.stringify({
-    type: 'codex.approval_decision', approval_id: 'approval-1', approved: false,
+    type: 'executor.approval_decision', executor: 'codex', approval_id: 'approval-1', approved: false,
   })), {
-    type: 'codex.approval_decision', approval_id: 'approval-1', approved: false,
+    type: 'executor.approval_decision', executor: 'codex', approval_id: 'approval-1', approved: false,
   })
   for (const decision of [
-    {type: 'codex.approval_decision', approval_id: '', approved: true},
-    {type: 'codex.approval_decision', approval_id: 'x'.repeat(129), approved: true},
-    {type: 'codex.approval_decision', approval_id: 'approval-1', approved: 'true'},
-    {type: 'codex.approval_decision', approval_id: 'approval-1', approved: true, extra: 1},
+    {type: 'executor.approval_decision', executor: 'codex', approval_id: '', approved: true},
+    {type: 'executor.approval_decision', executor: 'codex', approval_id: 'x'.repeat(129), approved: true},
+    {type: 'executor.approval_decision', executor: 'codex', approval_id: 'approval-1', approved: 'true'},
+    {type: 'executor.approval_decision', executor: 'codex', approval_id: 'approval-1', approved: true, extra: 1},
+    {type: 'executor.approval_decision', approval_id: 'approval-1', approved: true},
+    {type: 'codex.approval_decision', approval_id: 'approval-1', approved: true},
   ]) assert.throws(() => parseDesktopControl(JSON.stringify(decision)), /unsupported/u)
 })
 
@@ -559,12 +561,9 @@ test('authenticated desktop client receives bootstrap and forwards validated inp
   const socket = await connect(readiness.port)
 
   try {
-    const bootstrap = nextTextFrames(socket, 2)
+    const bootstrap = nextTextFrames(socket, 1)
     socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
-    assert.deepEqual(await bootstrap, [
-      '{"type":"desktop.ready"}',
-      '{"type":"codex.state","state":"idle"}',
-    ])
+    assert.deepEqual(await bootstrap, ['{"type":"desktop.ready"}'])
 
     socket.send(Buffer.from([0, 1, 2, 3]))
     socket.send(JSON.stringify({type: 'speech.onset', speech_id: 'speech-1'}))
@@ -1191,7 +1190,7 @@ test('invalid credentials and malformed PCM fail closed with no credential discl
   assert.deepEqual(invalidVerdict, {code: 4003, reason: 'desktop protocol rejected'})
 
   const malformed = await connect(readiness.port)
-  const bootstrap = nextTextFrames(malformed, 2)
+  const bootstrap = nextTextFrames(malformed, 1)
   malformed.send(JSON.stringify({type: 'hello', token: TOKEN}))
   await bootstrap
   const malformedClosed = waitForClose(malformed)
@@ -1204,7 +1203,7 @@ test('a second desktop client cannot take over the active connection', async () 
   const server = new NodeDesktopServer({token: TOKEN})
   const readiness = await server.start()
   const primary = await connect(readiness.port)
-  const bootstrap = nextTextFrames(primary, 2)
+  const bootstrap = nextTextFrames(primary, 1)
   primary.send(JSON.stringify({type: 'hello', token: TOKEN}))
   await bootstrap
 
@@ -1288,7 +1287,7 @@ test('oversized PCM is rejected by the application PCM bound', async () => {
   const server = new NodeDesktopServer({token: TOKEN})
   const readiness = await server.start()
   const socket = await connect(readiness.port)
-  const bootstrap = nextTextFrames(socket, 2)
+  const bootstrap = nextTextFrames(socket, 1)
   socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
   await bootstrap
 
@@ -1315,7 +1314,7 @@ test('a renderer that disconnects can reconnect to the same live runtime', async
 
   try {
     const first = await connect(readiness.port)
-    const firstBootstrap = nextTextFrames(first, 2)
+    const firstBootstrap = nextTextFrames(first, 1)
     first.send(JSON.stringify({type: 'hello', token: TOKEN}))
     await firstBootstrap
     await closeClient(first)
@@ -1326,12 +1325,9 @@ test('a renderer that disconnects can reconnect to the same live runtime', async
     assert.equal(disconnects, 1)
 
     const second = await connect(readiness.port)
-    const secondBootstrap = nextTextFrames(second, 2)
+    const secondBootstrap = nextTextFrames(second, 1)
     second.send(JSON.stringify({type: 'hello', token: TOKEN}))
-    assert.deepEqual(await secondBootstrap, [
-      '{"type":"desktop.ready"}',
-      '{"type":"codex.state","state":"idle"}',
-    ])
+    assert.deepEqual(await secondBootstrap, ['{"type":"desktop.ready"}'])
     await closeClient(second)
   } finally {
     await server.close()
@@ -1632,7 +1628,7 @@ test('forwarded PCM is a copy that a later frame cannot overwrite', async () => 
   const socket = await connect(readiness.port)
 
   try {
-    const bootstrap = nextTextFrames(socket, 2)
+    const bootstrap = nextTextFrames(socket, 1)
     socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
     await bootstrap
 
@@ -1734,7 +1730,7 @@ test('desktop shutdown terminates a peer that does not acknowledge close', async
   const server = new NodeDesktopServer({token: TOKEN, closeGraceMs: 25})
   const readiness = await server.start()
   const socket = await connect(readiness.port)
-  const bootstrap = nextTextFrames(socket, 2)
+  const bootstrap = nextTextFrames(socket, 1)
   socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
   await bootstrap
 

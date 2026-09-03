@@ -20,7 +20,7 @@ import {
   type DesktopBridgeOptions,
 } from '../src/desktop-bridge.js'
 import { DesktopProtocolError, encodeAudioFrame } from '../src/desktop-wire.js'
-import type { CodexState } from '../src/realtime/service-state.js'
+import type { ExecutorState } from '../src/realtime/service-state.js'
 import type { JsonValue } from '../src/events.js'
 import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
 import {JsonlTelemetry} from '../src/realtime/telemetry.js'
@@ -106,7 +106,7 @@ interface Harness {
 
 function harness(
   overrides: Partial<DesktopBridgeOptions> & {
-    readonly codexState?: CodexState
+    readonly executorState?: ExecutorState
     /** Drop the clock entirely, which is what makes telemetry inert. */
     readonly withoutClock?: boolean
   } = {},
@@ -116,7 +116,7 @@ function harness(
   const clock = new VirtualClock()
   const telemetry = new RecordingTelemetry()
   const service: BridgeService = {
-    codexState: overrides.codexState ?? 'idle',
+    executorState: overrides.executorState ?? 'idle',
     sendAudio: (pcm) => {
       calls.push(`sendAudio:${pcm.length}`)
       return Promise.resolve()
@@ -149,14 +149,14 @@ function harness(
       calls.push(`project-decision:${proposalId}:${confirmed}`)
       return Promise.resolve()
     },
-    codexApprovalDecision: (approvalId, approved) => {
-      calls.push(`codex-approval:${approvalId}:${approved}`)
+    executorApprovalDecision: (approvalId, approved) => {
+      calls.push(`approval:${approvalId}:${approved}`)
       return true
     },
   }
-  const {withoutClock, codexState, ...bridgeOverrides} = overrides
+  const {withoutClock, executorState, ...bridgeOverrides} = overrides
   // Consumed above as the service's initial state; not a bridge option.
-  void codexState
+  void executorState
   const bridge = new DesktopSocketBridge({
     token: TOKEN,
     service,
@@ -167,6 +167,7 @@ function harness(
     // optional from one explicitly undefined, and "no clock" is the former.
     ...(withoutClock === true ? {} : {clock}),
     telemetry,
+    executor: {executor: 'codex', display_name: 'Codex'},
     ...bridgeOverrides,
   })
   return {bridge, stopped: () => aborted, calls, clock, telemetry}
@@ -359,29 +360,29 @@ test('the Codex state queue holds only the latest', () => {
   // finished, briefly, for no reason.
   const {bridge} = harness()
   bridge.markAuthenticated()
-  bridge.onCodexState('running')
-  bridge.onCodexState('idle')
-  bridge.onCodexState('running')
-  assert.equal(bridge.pendingCounts.codex, true)
-  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"running"}')
+  bridge.onExecutorState('running')
+  bridge.onExecutorState('idle')
+  bridge.onExecutorState('running')
+  assert.equal(bridge.pendingCounts.executor, true)
+  assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}')
   assert.equal(bridge.takeNextFrame(), null, 'the intermediate states are not sent')
 })
 
 test('nothing is queued for an unauthenticated connection', () => {
   // Until the renderer has proven itself, it gets no state at all.
   const {bridge} = harness()
-  bridge.onCodexState('running')
-  assert.equal(bridge.pendingCounts.codex, false)
+  bridge.onExecutorState('running')
+  assert.equal(bridge.pendingCounts.executor, false)
   bridge.markAuthenticated()
-  assert.equal(bridge.pendingCounts.codex, true, 'and then it does')
+  assert.equal(bridge.pendingCounts.executor, true, 'and then it does')
 })
 
 test('a state already sent is not sent again', () => {
   const {bridge} = harness()
   bridge.markAuthenticated()
-  bridge.onCodexState('running')
-  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"running"}')
-  bridge.onCodexState('running')
+  bridge.onExecutorState('running')
+  assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}')
+  bridge.onExecutorState('running')
   assert.equal(bridge.takeNextFrame(), null)
 })
 
@@ -390,14 +391,14 @@ test('releasing forgets what the previous renderer was told', () => {
   // state, having "already been sent" it.
   const {bridge} = harness()
   bridge.markAuthenticated()
-  bridge.onCodexState('running')
+  bridge.onExecutorState('running')
   assert.ok(bridge.takeNextFrame() !== null)
   bridge.release()
   assert.equal(bridge.claim(), true, 'a new renderer may connect')
   bridge.markAuthenticated()
   assert.equal(
     bridge.takeNextFrame(),
-    '{"type":"codex.state","state":"running"}',
+    '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}',
     'and is told the current state',
   )
 })
@@ -405,7 +406,7 @@ test('releasing forgets what the previous renderer was told', () => {
 test('releasing drops transient playback and does not queue partial audio while disconnected', () => {
   const {bridge, calls, stopped} = harness()
   bridge.markAuthenticated()
-  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
+  assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
   bridge.onAudioFrame(frame(4, 0))
   bridge.onCaption({role: 'assistant', text: 'old socket', final: false})
   bridge.onAudioTerminal('u-4', 4)
@@ -430,7 +431,7 @@ test('releasing drops transient playback and does not queue partial audio while 
   )
   assert.equal(
     bridge.takeNextFrame(),
-    '{"type":"codex.state","state":"idle"}',
+    '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}',
     'the new renderer receives only reconstructable current state',
   )
   assert.equal(bridge.takeNextFrame(), null, 'no old or partial playback crosses the generation')
@@ -454,22 +455,22 @@ test('the project view is deduplicated by value, not by identity', () => {
   bridge.markAuthenticated()
   // Authenticating queues the current Codex state, and the state queue is drained before the project
   // one -- so it has to come out first before this test can see the project frames at all.
-  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
-  bridge.onCodexProject({
+  assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
+  bridge.onProjectView({
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: false,
     pending_confirmation_busy: false,
   })
-  assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"codex.project"'))
-  bridge.onCodexProject({
+  assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"project.state"'))
+  bridge.onProjectView({
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: false,
     pending_confirmation_busy: false,
   })
   assert.equal(bridge.takeNextFrame(), null, 'an equal view is not resent')
-  bridge.onCodexProject({
+  bridge.onProjectView({
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: true,
@@ -483,7 +484,7 @@ test('the project view is deduplicated by value, not by identity', () => {
     String(bridge.takeNextFrame()).includes('"pending_confirmation":true'),
     'a changed one is',
   )
-  bridge.onCodexProject({
+  bridge.onProjectView({
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: true,
@@ -570,8 +571,8 @@ test('a banner decision carries the exact proposal binding to the service', asyn
 test('a Codex approval frame and click use an independent strict bridge path', async () => {
   const {bridge, calls, clock} = harness()
   bridge.markAuthenticated()
-  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
-  bridge.onCodexApproval({
+  assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
+  bridge.onExecutorApproval({
     pending_approval: true,
     pending_approval_busy: false,
     pending_approval_id: 'approval-1',
@@ -582,14 +583,14 @@ test('a Codex approval frame and click use an independent strict bridge path', a
     operation_summary: 'Codex 请求修改工作区文件。',
     expires_at: clock.now() + 60,
   })
-  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"src\/a\.ts"/u)
+  assert.match(String(bridge.takeNextFrame()), /"type":"executor\.approval".*"src\/a\.ts"/u)
   await bridge.receive(
-    '{"type":"codex.approval_decision","approval_id":"approval-1","approved":true}',
+    '{"type":"executor.approval_decision","executor":"codex","approval_id":"approval-1","approved":true}',
     {authenticated: true},
   )
-  assert.deepEqual(calls, ['codex-approval:approval-1:true'])
+  assert.deepEqual(calls, ['approval:approval-1:true'])
   await assert.rejects(() => bridge.receive(
-    '{"type":"codex.approval_decision","approval_id":"approval-1","approved":true,"extra":1}',
+    '{"type":"executor.approval_decision","executor":"codex","approval_id":"approval-1","approved":true,"extra":1}',
     {authenticated: true},
   ), DesktopProtocolError)
 })
@@ -597,8 +598,8 @@ test('a Codex approval frame and click use an independent strict bridge path', a
 test('independent latest slots deliver both overlapping confirmation views before settlement', () => {
   const {bridge, clock} = harness()
   bridge.markAuthenticated()
-  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
-  bridge.onCodexApproval({
+  assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
+  bridge.onExecutorApproval({
     pending_approval: true,
     pending_approval_busy: false,
     pending_approval_id: 'approval-1',
@@ -607,7 +608,7 @@ test('independent latest slots deliver both overlapping confirmation views befor
     operation_summary: 'Codex 请求执行一条工作区命令。',
     expires_at: clock.now() + 60,
   })
-  bridge.onCodexProject({
+  bridge.onProjectView({
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: true,
@@ -618,9 +619,9 @@ test('independent latest slots deliver both overlapping confirmation views befor
     pending_session_title: null,
     pending_expires_in_seconds: 75,
   })
-  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.project".*"proposal-1"/u)
-  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"approval-1"/u)
-  bridge.onCodexApproval({
+  assert.match(String(bridge.takeNextFrame()), /"type":"project\.state".*"proposal-1"/u)
+  assert.match(String(bridge.takeNextFrame()), /"type":"executor\.approval".*"approval-1"/u)
+  bridge.onExecutorApproval({
     pending_approval: false,
     pending_approval_busy: false,
     kind: null,
@@ -628,7 +629,7 @@ test('independent latest slots deliver both overlapping confirmation views befor
     operation_summary: null,
     expires_at: null,
   })
-  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"pending_approval":false/u)
+  assert.match(String(bridge.takeNextFrame()), /"type":"executor\.approval".*"pending_approval":false/u)
 })
 
 test('voice bridge rejects debug board requests', async () => {
@@ -885,12 +886,12 @@ test('a state that returns to what was already sent clears the queued one', () =
   // latch would think it was up to date.
   const {bridge} = harness()
   bridge.markAuthenticated()
-  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
-  bridge.onCodexState('running')
-  assert.equal(bridge.pendingCounts.codex, true)
-  bridge.onCodexState('idle')
+  assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
+  bridge.onExecutorState('running')
+  assert.equal(bridge.pendingCounts.executor, true)
+  bridge.onExecutorState('idle')
   assert.equal(
-    bridge.pendingCounts.codex,
+    bridge.pendingCounts.executor,
     false,
     'the stale queued state is dropped, not left to be sent',
   )
@@ -898,7 +899,7 @@ test('a state that returns to what was already sent clears the queued one', () =
 })
 
 test('the project dedup is value-based in both places it is checked', () => {
-  // The outer check in `onCodexProject` and the inner one in the delivery sync are the same comparison,
+  // The outer check in `onProjectView` and the inner one in the delivery sync are the same comparison,
   // so a mutation making the outer one identity-based is correctly undetectable -- the inner one still
   // refuses. Both are value-based on purpose: the service rebuilds the view object on every change, and
   // identity would make every publish look new.
@@ -911,10 +912,10 @@ test('the project dedup is value-based in both places it is checked', () => {
     pending_confirmation: false,
     pending_confirmation_busy: false,
   }
-  bridge.onCodexProject(view)
-  assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"codex.project"'))
+  bridge.onProjectView(view)
+  assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"project.state"'))
   // A structurally equal but distinct object queues nothing, whichever check catches it.
-  bridge.onCodexProject({...view})
+  bridge.onProjectView({...view})
   assert.equal(bridge.pendingCounts.project, false)
   assert.equal(bridge.takeNextFrame(), null)
 })

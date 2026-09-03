@@ -11,8 +11,9 @@ const cascadedLlmProviderNameSchema = z.enum(['qwen', 'ark'])
 const cascadedTtsProviderNameSchema = z.enum(['volcengine'])
 const qwenGuardHistoryRecoverySchema = z.enum(['none', 'packed'])
 const qwenGuardHistoryPairsSchema = z.union([z.literal(1), z.literal(2), z.literal(4)])
-const executorNameSchema = z.enum(['fast_sim', 'slow_sim', 'codex'])
-const codexApprovalModeSchema = z.enum(['ask', 'yolo'])
+/** Validity of a name is decided by assembly (`resolveExecutors`), which knows the registered adapters. */
+const executorNameSchema = z.string().min(1)
+const executorApprovalModeSchema = z.enum(['ask', 'yolo'])
 const clarificationDepthSchema = z.enum(['minimal', 'balanced', 'thorough'])
 const planReadbackSchema = z.enum(['summary', 'confirm', 'silent'])
 const progressBubblesSchema = z.enum(['off', 'milestones', 'all'])
@@ -97,7 +98,7 @@ export const settingsSchema = z.object({
   codex_working_interval: z.number().finite().min(5).max(600).default(30),
   suggestion_cooldown: z.number().finite().nonnegative().nullable().default(null),
   fresh_window: z.number().finite().nonnegative().nullable().default(null),
-  codex_approval_mode: codexApprovalModeSchema.default('ask'),
+  codex_approval_mode: executorApprovalModeSchema.default('ask'),
   clarification_depth: clarificationDepthSchema.default('balanced'),
   plan_readback: planReadbackSchema.default('summary'),
   planner_model: z.string().default(''),
@@ -237,7 +238,6 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     ? 'fast_sim'
     : configuredExecutor
   const executors = parseExecutors(environment.NOVA_AUDIO_AGENT_EXECUTORS, executor)
-  const codexSelected = executors.includes('codex')
   const candidate = {
     model_base_url: optionalString(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL),
     model_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_MODEL_API_KEY),
@@ -312,19 +312,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     }),
     executor,
     executors,
-    ...(codexSelected ? {
-      codex_workspace: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_WORKSPACE),
-      codex_bin: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_BIN),
-      codex_prefix_args: optionalJsonStringArray(
-        environment.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS,
-      ),
-      codex_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_API_KEY),
-      codex_prewarm: optionalBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PREWARM),
-      codex_managed_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT),
-      codex_project_state_root: optionalString(
-        environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,
-      ),
-    } : {}),
+    ...executorOwnedSettings(environment, executors),
     proactivity_preset: optionalString(environment.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET),
     codex_working_interval: optionalPydanticFloat(
       environment.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL,
@@ -333,7 +321,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
       environment.NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN,
     ),
     fresh_window: optionalPydanticFloat(environment.NOVA_AUDIO_AGENT_FRESH_WINDOW),
-    codex_approval_mode: parseCodexApprovalMode(
+    codex_approval_mode: parseExecutorApprovalMode(
       environment.NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE,
     ),
     clarification_depth: parseClarificationDepth(
@@ -541,6 +529,31 @@ export function requireVolcengineRealtime(settings: Settings): VolcengineRealtim
   })
 }
 
+/**
+ * Settings an executor owns are read only when that executor is selected, so its secrets stay
+ * lazy. Keyed by executor name as data (like `owner` in the environment contract), not branched on.
+ */
+const EXECUTOR_OWNED_SETTINGS: Readonly<Record<string, (environment: NodeJS.ProcessEnv) => Record<string, unknown>>> = {
+  codex: environment => ({
+    codex_workspace: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_WORKSPACE),
+    codex_bin: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_BIN),
+    codex_prefix_args: optionalJsonStringArray(environment.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS),
+    codex_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_API_KEY),
+    codex_prewarm: optionalBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PREWARM),
+    codex_managed_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT),
+    codex_project_state_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT),
+  }),
+}
+
+function executorOwnedSettings(environment: NodeJS.ProcessEnv, executors: readonly string[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const name of executors) {
+    const read = Object.hasOwn(EXECUTOR_OWNED_SETTINGS, name) ? EXECUTOR_OWNED_SETTINGS[name] : undefined
+    if (read !== undefined) Object.assign(result, read(environment))
+  }
+  return result
+}
+
 function parseExecutors(raw: string | undefined, fallback: string): string[] {
   if (raw === undefined || raw === '') return [fallback]
   const names = raw.split(',').map(stripLikePython)
@@ -602,8 +615,8 @@ function parseCascadedTtsProvider(value: string | undefined): CascadedTtsProvide
   )
 }
 
-function parseCodexApprovalMode(value: string | undefined): z.infer<typeof codexApprovalModeSchema> {
-  return parseSafeSelector(codexApprovalModeSchema, value, 'ask')
+function parseExecutorApprovalMode(value: string | undefined): z.infer<typeof executorApprovalModeSchema> {
+  return parseSafeSelector(executorApprovalModeSchema, value, 'ask')
 }
 
 function parseClarificationDepth(value: string | undefined): z.infer<typeof clarificationDepthSchema> {

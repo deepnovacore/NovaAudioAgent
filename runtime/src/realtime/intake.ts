@@ -1,16 +1,10 @@
 import type {JsonValue} from '../events.js'
 import {assessSchema, planSchema, type IntakeModels, type IntakeSlots} from './intake-model.js'
-import type {ConfirmedProjectOperation, ProjectProposal} from './project-confirmation.js'
+import type {ConfirmedProjectOperation, ProjectProposal} from '../project-confirmation.js'
 import {renderWorkOrder, type WorkOrder} from './work-order.js'
 
-export interface IntakeTarget {
-  readonly workspace: string
-  readonly action: 'create' | 'reuse' | 'resume'
-  readonly workspace_display_name: string
-  readonly workspace_id: string | null
-  readonly session_title: string | null
-  readonly session_id: string | null
-}
+import type {IntakeTarget} from '../coding-executor.js'
+export type {IntakeTarget}
 export interface IntakeSettings {
   readonly clarification_depth: 'minimal' | 'balanced' | 'thorough'
   readonly plan_readback: 'summary' | 'confirm' | 'silent'

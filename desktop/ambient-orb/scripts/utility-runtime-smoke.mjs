@@ -64,7 +64,7 @@ async function run() {
     socket.send(JSON.stringify({ type: 'hello', token: TOKEN }))
     assert.deepEqual(await bootstrap, [
       '{"type":"desktop.ready"}',
-      '{"type":"codex.state","state":"idle"}',
+      '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}',
     ])
 
     await shutdownBackend(child, { graceMs: 2000 })

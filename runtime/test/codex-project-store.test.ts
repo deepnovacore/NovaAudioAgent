@@ -32,7 +32,7 @@ import {test} from 'node:test'
 
 import {VirtualClock, type Clock} from '../src/clock.js'
 import {
-  CodexProjectStore,
+  ProjectStore,
   PROJECT_MAINTENANCE_JOURNAL_FILE,
   ProjectStateError,
   hostManagedProjectRootForTest,
@@ -863,20 +863,20 @@ test('native lock unsupported and busy results fail closed without a PID or path
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
   }
-  let store: CodexProjectStore | null = null
+  let store: ProjectStore | null = null
   try {
-    store = await CodexProjectStore.open({...roots, nativeLocks: unsupportedNativeFileLocks})
+    store = await ProjectStore.open({...roots, nativeLocks: unsupportedNativeFileLocks})
     await assert.rejects(
       store.snapshot(),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_lock_failed',
     )
     await assert.rejects(
-      CodexProjectStore.open({...roots, nativeLocks: unsupportedNativeFileLocks, live: true}),
+      ProjectStore.open({...roots, nativeLocks: unsupportedNativeFileLocks, live: true}),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_lock_failed',
     )
     const busy: NativeFileLockAuthority = {acquire: () => ({status: 'busy'})}
     const busyClock = new AdvancingClock()
-    const contended = await CodexProjectStore.open({...roots, nativeLocks: busy, lockClock: busyClock})
+    const contended = await ProjectStore.open({...roots, nativeLocks: busy, lockClock: busyClock})
     await assert.rejects(
       contended.snapshot(),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_busy',
@@ -887,7 +887,7 @@ test('native lock unsupported and busy results fail closed without a PID or path
     const transientLocks = new BusyThenDescriptorLockAuthority()
     transientLocks.busyAttempts = 2
     const transientClock = new AdvancingClock()
-    const transient = await CodexProjectStore.open({
+    const transient = await ProjectStore.open({
       ...roots, nativeLocks: transientLocks, lockClock: transientClock,
     })
     await transient.snapshot()
@@ -898,7 +898,7 @@ test('native lock unsupported and busy results fail closed without a PID or path
       {acquire: (): NativeFileLockResult => { throw new Error('native sentinel') }},
       {acquire: (): NativeFileLockResult => null as unknown as NativeFileLockResult},
     ]) {
-      const failed = await CodexProjectStore.open({...roots, nativeLocks})
+      const failed = await ProjectStore.open({...roots, nativeLocks})
       await assert.rejects(
         failed.snapshot(),
         (error: unknown) => error instanceof ProjectStateError
@@ -949,7 +949,7 @@ test('native lock results require exact plain data without invoking getters', as
     const managedRoot = join(root, 'managed')
     await mkdir(stateRoot, {mode: 0o700})
     await mkdir(managedRoot, {mode: 0o700})
-    const store = await CodexProjectStore.open({
+    const store = await ProjectStore.open({
       stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
       nativeLocks: {acquire: () => factory() as NativeFileLockResult},
@@ -1014,12 +1014,12 @@ test('missing, unsupported, asynchronous, and malformed root-file authority fail
   ]
   try {
     for (const rootFiles of authorities) {
-      let unexpected: CodexProjectStore | null = null
+      let unexpected: ProjectStore | null = null
       try {
         const options = rootFiles === undefined ? roots : {...roots, rootFiles}
         unexpected = await within(
           'root-file authority open failure',
-          CodexProjectStore.open(options),
+          ProjectStore.open(options),
           200,
         )
         assert.fail('root-file authority unexpectedly opened')
@@ -1043,7 +1043,7 @@ test('state lock and temp creation use only descriptor-relative fixed basenames'
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(workspace, {mode: 0o700})
   const rootFiles = new RecordingRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -1098,7 +1098,7 @@ test('malformed descriptor creation fails before native acquire without awaiting
       delegate.removeTreeAt(descriptor, name, expected),
   } satisfies ProjectRootFileAuthority
   let acquireCalls = 0
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: {acquire: () => {
@@ -1127,7 +1127,7 @@ test('a descriptor child mismatch fails before native lock acquisition', async (
   await mkdir(managedRoot, {mode: 0o700})
   let acquireCalls = 0
   const rootFiles = new RejectLockMatchRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: {acquire: () => {
@@ -1161,7 +1161,7 @@ test('a newly-created lock must retain its exact descriptor identity before nati
   await mkdir(managedRoot, {mode: 0o700})
   let acquireCalls = 0
   const rootFiles = new ReplaceCreatedLockRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: {acquire: () => {
@@ -1204,7 +1204,7 @@ test('swap-away-and-back descriptor operations never write or delete replacement
     managed: {live: managedRoot, away: managedAway, replacement: externalManaged},
   })
   const ids = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -1251,7 +1251,7 @@ test('state-root replacement during descriptor acquire cannot redirect state wri
       return {status: 'acquired', release: () => undefined}
     },
   }
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
@@ -1304,7 +1304,7 @@ test('live owner acquisition validates the retained state-root identity before o
   }
   try {
     await assert.rejects(
-      CodexProjectStore.open({
+      ProjectStore.open({
         stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
         managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
         nativeLocks,
@@ -1334,7 +1334,7 @@ test('state-root replacement after atomic replace is detected and permanently po
   await mkdir(workspacePath, {mode: 0o700})
   let swapped = false
   const durability: string[] = []
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -1376,7 +1376,7 @@ test('an asynchronous or never-settling native acquire is malformed and fails im
   const nativeLocks = {
     acquire: () => never,
   } as unknown as NativeFileLockAuthority
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
@@ -1396,7 +1396,7 @@ test('an asynchronous or never-settling native acquire is malformed and fails im
     const thenableLocks = {
       acquire: () => ({status: 'busy', then: () => undefined}),
     } as unknown as NativeFileLockAuthority
-    const thenableStore = await CodexProjectStore.open({
+    const thenableStore = await ProjectStore.open({
       stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
       nativeLocks: thenableLocks,
@@ -1429,7 +1429,7 @@ test('a transaction joins asynchronous native unlock before its promise settles'
   let releaseStartedResolve: (() => void) | null = null
   const releaseStarted = new Promise<void>(resolveStarted => { releaseStartedResolve = resolveStarted })
   nativeLocks.releaseStarted = () => { releaseStartedResolve?.() }
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
@@ -1473,11 +1473,11 @@ test('rollback and first-live recovery use one bounded abort-aware descriptor-lo
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
     lockClock: clock,
-  } as Parameters<typeof CodexProjectStore.open>[0]
-  let ordinary: CodexProjectStore | null = null
-  let live: CodexProjectStore | null = null
+  } as Parameters<typeof ProjectStore.open>[0]
+  let ordinary: ProjectStore | null = null
+  let live: ProjectStore | null = null
   try {
-    ordinary = await CodexProjectStore.open(options)
+    ordinary = await ProjectStore.open(options)
     const workspace = await ordinary.ensureImported(
       'alpha',
       hostWorkspaceForTest(await realpath(workspacePath)),
@@ -1496,7 +1496,7 @@ test('rollback and first-live recovery use one bounded abort-aware descriptor-lo
     const crashed = await ordinary.beginSession(workspace.workspace_id, 'crashed')
     await ordinary.close()
     ordinary = null
-    live = await CodexProjectStore.open({...options, live: true})
+    live = await ProjectStore.open({...options, live: true})
     nativeLocks.busyAttempts = 2
     assert.equal((await live.resolveSession(workspace.workspace_id, crashed.display_title)).state, 'unavailable')
     assert.deepEqual(clock.sleeps, [0.025, 0.025, 0.025, 0.025])
@@ -1515,7 +1515,7 @@ test('managed-create rollback opts into the same bounded descriptor-lock wait', 
   await mkdir(managedRoot, {mode: 0o700})
   const nativeLocks = new BusyThenDescriptorLockAuthority()
   const clock = new AdvancingClock()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
@@ -1549,7 +1549,7 @@ test('ready and unavailable finalization opt into the same bounded descriptor-lo
   const nativeLocks = new BusyThenDescriptorLockAuthority()
   const clock = new AdvancingClock()
   const ids = ['workspace-0001', 'session-0001'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
@@ -1598,8 +1598,8 @@ test('an aborted bounded lock wait settles and is joined before store close retu
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
     lockClock: clock,
-  } as Parameters<typeof CodexProjectStore.open>[0]
-  const store = await CodexProjectStore.open(options)
+  } as Parameters<typeof ProjectStore.open>[0]
+  const store = await ProjectStore.open(options)
   try {
     const workspace = await store.ensureImported(
       'alpha',
@@ -1641,7 +1641,7 @@ test('a bounded lock wait exhausts one fixed deadline and returns stable state_b
   const nativeLocks = new BusyThenDescriptorLockAuthority()
   const clock = new AdvancingClock()
   const ids = ['workspace-0001', 'session-0001'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
@@ -1694,27 +1694,27 @@ test('live owner exclusion and first-transaction recovery are crash-safe and ord
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
   }
-  let first: CodexProjectStore | null = null
-  let ordinary: CodexProjectStore | null = null
-  let restarted: CodexProjectStore | null = null
+  let first: ProjectStore | null = null
+  let ordinary: ProjectStore | null = null
+  let restarted: ProjectStore | null = null
   try {
-    first = await CodexProjectStore.open({...options, live: true})
+    first = await ProjectStore.open({...options, live: true})
     const workspace = await first.ensureImported(
       'alpha',
       hostWorkspaceForTest(await realpath(workspacePath)),
     )
     const starting = await first.beginSession(workspace.workspace_id, 'Task 1')
     await assert.rejects(
-      CodexProjectStore.open({...options, live: true}),
+      ProjectStore.open({...options, live: true}),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_busy',
     )
-    ordinary = await CodexProjectStore.open(options)
+    ordinary = await ProjectStore.open(options)
     assert.equal((await ordinary.resolveSession(workspace.workspace_id, 'Task 1')).state, 'starting')
     await ordinary.close()
     ordinary = null
     await first.close()
     first = null
-    restarted = await CodexProjectStore.open({...options, live: true})
+    restarted = await ProjectStore.open({...options, live: true})
     const recovered = await restarted.resolveSession(workspace.workspace_id, starting.display_title)
     assert.equal(recovered.state, 'unavailable')
   } finally {
@@ -1739,7 +1739,7 @@ test('registry no-follow, owner mode, byte cap, strict decode, and corrupt-byte 
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
   }
   const expectCode = async (code: string): Promise<void> => {
-    const store = await CodexProjectStore.open(options)
+    const store = await ProjectStore.open(options)
     try {
       await assert.rejects(
         store.snapshot(),
@@ -1767,7 +1767,7 @@ test('registry no-follow, owner mode, byte cap, strict decode, and corrupt-byte 
       emptyState,
       Buffer.alloc(1024 * 1024 - emptyState.byteLength, 0x20),
     ]), {mode: 0o600})
-    const exactLimit = await CodexProjectStore.open(options)
+    const exactLimit = await ProjectStore.open(options)
     try {
       assert.deepEqual(await exactLimit.snapshot(), {
         version: 1, state_revision: 0, active_binding_revision: 0,
@@ -1834,7 +1834,7 @@ test('state revision increments once per mutation and maintenance snapshots pin 
     now: () => 100,
     idFactory: () => identifiers.next().value ?? 'unused-id',
   }
-  let store = await CodexProjectStore.open(storeOptions)
+  let store = await ProjectStore.open(storeOptions)
   try {
     assert.equal((await store.snapshot()).state_revision, 0)
     const workspace = await store.createManaged('Alpha')
@@ -1890,7 +1890,7 @@ test('state revision increments once per mutation and maintenance snapshots pin 
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'cleanup_pending'})
     assert.equal((await store.loadManagedMaintenanceJournal())?.operation_id, 'operation-0001')
     await store.close()
-    store = await CodexProjectStore.open(storeOptions)
+    store = await ProjectStore.open(storeOptions)
     assert.equal((await store.loadManagedMaintenanceJournal())?.operation_id, 'operation-0001')
     rootFiles.failRemoveTree = false
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
@@ -1909,7 +1909,7 @@ test('all managed originals are detached before any replacement is created', asy
   await mkdir(managedRoot, {mode: 0o700})
   const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
   const rootFiles = new MaintenanceOrderRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -1953,7 +1953,7 @@ test('maintenance rename never overwrites a destination raced into the managed r
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const rootFiles = new MaintenanceCollisionRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -1998,7 +1998,7 @@ test('managed-root metadata is durable before commit and cleanup journal advance
   await mkdir(managedRoot, {mode: 0o700})
   const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
   const rootFiles = new MaintenanceDurabilityRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2057,7 +2057,7 @@ test('managed-root rollback is durable before its journal is cleared', async () 
   await mkdir(managedRoot, {mode: 0o700})
   const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
   const rootFiles = new MaintenanceDurabilityRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2103,7 +2103,7 @@ test('a later replacement failure restores every original in the prepared set', 
   await mkdir(managedRoot, {mode: 0o700})
   const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
   const rootFiles = new FailNthMaintenanceMkdirAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2150,7 +2150,7 @@ test('a prepared journal rolls back after restart without deleting a populated r
     rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
     idFactory: () => 'workspace-0001',
   }
-  let store = await CodexProjectStore.open(options)
+  let store = await ProjectStore.open(options)
   try {
     const workspace = await store.createManaged('Alpha')
     await writeFile(join(workspace.canonical_path, 'original.txt'), 'preserve me')
@@ -2181,7 +2181,7 @@ test('a prepared journal rolls back after restart without deleting a populated r
       phase: 'prepared',
       version: 1,
     }), {mode: 0o600})
-    store = await CodexProjectStore.open(options)
+    store = await ProjectStore.open(options)
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'rollback_pending'})
     assert.equal(await readFile(join(workspace.canonical_path, 'unknown.txt'), 'utf8'), 'do not delete')
     assert.equal(await readFile(join(managedRoot, tombstoneName, 'original.txt'), 'utf8'), 'preserve me')
@@ -2208,7 +2208,7 @@ test('prepared recovery never deletes an empty replacement with an unbound ident
     rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
     idFactory: () => 'workspace-0001',
   }
-  let store = await CodexProjectStore.open(options)
+  let store = await ProjectStore.open(options)
   try {
     const workspace = await store.createManaged('Alpha')
     await writeFile(join(workspace.canonical_path, 'original.txt'), 'preserve me')
@@ -2234,7 +2234,7 @@ test('prepared recovery never deletes an empty replacement with an unbound ident
     await rename(workspace.canonical_path, join(managedRoot, 'substituted-away'))
     await mkdir(workspace.canonical_path, {mode: 0o700})
     const substitute = await lstat(workspace.canonical_path, {bigint: true})
-    store = await CodexProjectStore.open(options)
+    store = await ProjectStore.open(options)
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'rollback_pending'})
     const stillPresent = await lstat(workspace.canonical_path, {bigint: true})
     assert.equal(stillPresent.ino, substitute.ino)
@@ -2259,7 +2259,7 @@ test('a partially recovered prepared v1 maintenance journal remains decodable', 
     rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
     idFactory: () => identifiers.next().value ?? 'unused-id',
   }
-  let store = await CodexProjectStore.open(options)
+  let store = await ProjectStore.open(options)
   try {
     const alpha = await store.createManaged('Alpha')
     const beta = await store.createManaged('Beta')
@@ -2308,7 +2308,7 @@ test('a partially recovered prepared v1 maintenance journal remains decodable', 
       version: 1,
     }), {mode: 0o600})
 
-    store = await CodexProjectStore.open(options)
+    store = await ProjectStore.open(options)
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'rollback_pending'})
     const persisted = JSON.parse(await readFile(
       join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE), 'utf8',
@@ -2316,7 +2316,7 @@ test('a partially recovered prepared v1 maintenance journal remains decodable', 
     assert.equal(persisted.version, 1)
     await store.close()
 
-    store = await CodexProjectStore.open(options)
+    store = await ProjectStore.open(options)
     assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'prepared')
     await rm(join(beta.canonical_path, 'busy.txt'))
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
@@ -2341,7 +2341,7 @@ test('a partially cleaned committed v1 maintenance journal remains decodable', a
     rootFiles,
     idFactory: () => identifiers.next().value ?? 'unused-id',
   }
-  let store = await CodexProjectStore.open(options)
+  let store = await ProjectStore.open(options)
   try {
     await store.createManaged('Alpha')
     await store.createManaged('Beta')
@@ -2390,7 +2390,7 @@ test('a partially cleaned committed v1 maintenance journal remains decodable', a
     await store.close()
 
     rootFiles.failCleanupName = null
-    store = await CodexProjectStore.open(options)
+    store = await ProjectStore.open(options)
     assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'committed')
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
   } finally {
@@ -2423,7 +2423,7 @@ test('replacement crash boundaries recover the operation-owned temporary in eith
         ...baseOptions,
         maintenanceFault: (step: string) => step === crashPoint,
       } as typeof baseOptions & {readonly maintenanceFault: (step: string) => boolean}
-      let store = await CodexProjectStore.open(crashOptions)
+      let store = await ProjectStore.open(crashOptions)
       try {
         const workspace = await store.createManaged('Alpha')
         await writeFile(join(workspace.canonical_path, 'original.txt'), 'preserve me')
@@ -2442,7 +2442,7 @@ test('replacement crash boundaries recover the operation-owned temporary in eith
         assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'prepared')
         await store.close()
 
-        store = await CodexProjectStore.open(baseOptions)
+        store = await ProjectStore.open(baseOptions)
         assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
         assert.equal(await readFile(join(workspace.canonical_path, 'original.txt'), 'utf8'), 'preserve me')
         assert.equal(
@@ -2476,7 +2476,7 @@ test('crash after tombstone deletion is idempotently completed from the committe
     ...baseOptions,
     maintenanceFault: (step: string) => step === 'cleanup_entry_deleted',
   } as typeof baseOptions & {readonly maintenanceFault: (step: string) => boolean}
-  let store = await CodexProjectStore.open(crashOptions)
+  let store = await ProjectStore.open(crashOptions)
   try {
     const workspace = await store.createManaged('Alpha')
     await writeFile(join(workspace.canonical_path, 'original.txt'), 'delete me')
@@ -2497,7 +2497,7 @@ test('crash after tombstone deletion is idempotently completed from the committe
     assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'committed')
     await store.close()
 
-    store = await CodexProjectStore.open(baseOptions)
+    store = await ProjectStore.open(baseOptions)
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
     assert.equal(await store.loadManagedMaintenanceJournal(), null)
     assert.deepEqual(await readdir(workspace.canonical_path), [])
@@ -2513,7 +2513,7 @@ test('committed cleanup treats an already missing tombstone as completed', async
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2551,7 +2551,7 @@ test('current managed open detects a same-path substitution around the host call
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2580,7 +2580,7 @@ test('current maintenance snapshot ignores invalid detached managed records', as
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2616,7 +2616,7 @@ test('external managed cleanup recreates empty roots and clears the active selec
     'workspace-0001', 'session-000001',
     'workspace-0002', 'session-000002',
   ][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2666,7 +2666,7 @@ test('complete external managed cleanup keeps an existing imported workspace uns
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(importedRoot, {mode: 0o700})
   const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2708,7 +2708,7 @@ test('external cleanup reconciliation refuses a same-name replacement', async ()
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2740,7 +2740,7 @@ test('external cleanup reconciliation refuses a replacement racing directory rec
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const rootFiles = new ExternalCleanupMkdirCollisionAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2774,7 +2774,7 @@ test('current managed open releases the store transaction before awaiting host c
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2812,7 +2812,7 @@ test('a committed journal cannot omit its replacement identity', async () => {
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2846,7 +2846,7 @@ test('a v2 journal binds each replacement temporary to its exact tombstone entry
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -2893,7 +2893,7 @@ test('state roots and files reject special permission bits rather than masking t
     const statePath = join(stateRoot, 'codex-projects-v1.json')
     await writeFile(statePath, '{"active_workspace_id":null,"sessions":{},"version":1,"workspaces":{}}', {mode: 0o600})
     await chmod(statePath, 0o1600)
-    const store = await CodexProjectStore.open({
+    const store = await ProjectStore.open({
       stateRoot: hostProjectRootForTest(realpathSync(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(realpathSync(managedRoot)),
       nativeLocks: new DescriptorLockAuthority(),
@@ -2923,7 +2923,7 @@ test('an owner-controlled 0750 managed root is accepted while group-writable roo
   await mkdir(managedRoot, {mode: 0o750})
   await chmod(managedRoot, 0o750)
   try {
-    const accepted = await CodexProjectStore.open({
+    const accepted = await ProjectStore.open({
       stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
       nativeLocks: new DescriptorLockAuthority(),
@@ -3066,7 +3066,7 @@ test('strict v1 decode rejects key, type, cap, reference, and normalized-identit
     for (const mutation of mutations) {
       await writeFile(statePath, JSON.stringify(mutation.value), {mode: 0o600})
       await chmod(statePath, 0o600)
-      const store = await CodexProjectStore.open(options)
+      const store = await ProjectStore.open(options)
       try {
         await assert.rejects(
           store.snapshot(),
@@ -3094,7 +3094,7 @@ test('managed and registered workspace bindings reject symlink replacement at tr
   await mkdir(registered, {mode: 0o700})
   await mkdir(replacement, {mode: 0o700})
   const ids = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3132,7 +3132,7 @@ test('workspace bindings pin inode identity and managed workspaces retain owner-
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(registered, {mode: 0o700})
   const ids = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3182,7 +3182,7 @@ test('Windows run revalidation reapplies the managed workspace ACL before admiss
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const rootFiles = new CountingProtectRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3211,7 +3211,7 @@ test('Windows session resume reapplies the managed workspace ACL before admissio
   await mkdir(managedRoot, {mode: 0o700})
   const rootFiles = new CountingProtectRootFileAuthority([stateRoot, managedRoot])
   const ids = ['workspace-0001', 'session-0001'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3253,10 +3253,10 @@ test('workspace inode pins are process-local and a restart establishes a fresh p
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => 'workspace-0001',
   }
-  let first: CodexProjectStore | null = null
-  let restarted: CodexProjectStore | null = null
+  let first: ProjectStore | null = null
+  let restarted: ProjectStore | null = null
   try {
-    first = await CodexProjectStore.open(options)
+    first = await ProjectStore.open(options)
     const imported = await first.ensureImported(
       'registered',
       hostWorkspaceForTest(await realpath(registered)),
@@ -3266,7 +3266,7 @@ test('workspace inode pins are process-local and a restart establishes a fresh p
     await rename(registered, join(root, 'registered-original'))
     await mkdir(registered, {mode: 0o700})
 
-    restarted = await CodexProjectStore.open(options)
+    restarted = await ProjectStore.open(options)
     assert.equal(
       hostWorkspacePath(await restarted.revalidateWorkspace(imported.workspace_id)),
       await realpath(registered),
@@ -3293,7 +3293,7 @@ test('ensureImported preserves the stronger managed workspace binding for an exi
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3332,9 +3332,9 @@ test('a managed record must remain a direct child even when its replacement path
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => 'workspace-0001',
   }
-  let store: CodexProjectStore | null = null
+  let store: ProjectStore | null = null
   try {
-    store = await CodexProjectStore.open(options)
+    store = await ProjectStore.open(options)
     const workspace = await store.createManaged('alpha')
     await store.close()
     store = null
@@ -3344,7 +3344,7 @@ test('a managed record must remain a direct child even when its replacement path
     }
     state.workspaces[workspace.workspace_id]!.canonical_path = await realpath(outside)
     await writeFile(statePath, JSON.stringify(state), {mode: 0o600})
-    store = await CodexProjectStore.open(options)
+    store = await ProjectStore.open(options)
     await assert.rejects(
       store.revalidateWorkspace(workspace.workspace_id),
       (error: unknown) => error instanceof ProjectStateError
@@ -3363,7 +3363,7 @@ test('managed creation uses only a pinned safe slug and rollback never deletes u
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const ids = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3399,7 +3399,7 @@ test('managed mkdir returns the rollback identity without a second path lookup',
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3422,7 +3422,7 @@ test('managed rollback refuses an empty same-path inode replacement and retains 
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3449,7 +3449,7 @@ test('a committed create keeps its inode pin when only native release fails', as
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const nativeLocks = new FailNextReleaseLockAuthority()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
@@ -3483,7 +3483,7 @@ test('successful managed rollback clears the exact pin so an absent ID can be re
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3508,7 +3508,7 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const rootFiles = new ToggleTempCreateRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3570,7 +3570,7 @@ test('rollback restore rejects an immediate mkdir replacement before chmod or pi
     stateRoot,
     managedRoot,
   ])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3606,7 +3606,7 @@ test('a managed slug and ID collision is a stable path conflict without overwrit
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const ids = ['prefix-one-123456789012', 'prefix-two-123456789012'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3635,7 +3635,7 @@ test('ID allocation never overwrites either namespace and has a fixed collision 
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   let calls = 0
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3677,7 +3677,7 @@ test('failed registered creation clears only its new pin so the exact ID can be 
     await mkdir(managedRoot, {mode: 0o700})
     await mkdir(workspace, {mode: 0o700})
     const rootFiles = new ToggleTempCreateRootFileAuthority([stateRoot, managedRoot])
-    const store = await CodexProjectStore.open({
+    const store = await ProjectStore.open({
       stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
       nativeLocks: new DescriptorLockAuthority(),
@@ -3710,7 +3710,7 @@ test('a committed registered workspace keeps its exact pin when release fails', 
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(workspace, {mode: 0o700})
   const nativeLocks = new FailNextReleaseLockAuthority()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
@@ -3747,7 +3747,7 @@ test('managed creation repairs a restrictive umask and leaves no rollback residu
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3777,7 +3777,7 @@ test('managed creation repairs a permissive native mkdir before it can become pu
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3799,7 +3799,7 @@ test('managed creation rolls back an empty child when the subsequent state save 
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3835,7 +3835,7 @@ test('an uncommitted poisoned state root cannot strand an empty managed child', 
   await mkdir(replacementState, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   let swapped = false
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3886,7 +3886,7 @@ test('Windows first save completes without POSIX directory fsync', async () => {
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(workspacePath, {mode: 0o700})
   const durability: string[] = []
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -3934,10 +3934,10 @@ test('project state reloads under a descriptor lock and persists ready sessions 
       durability.push(step)
     },
   }
-  let first: CodexProjectStore | null = null
-  let second: CodexProjectStore | null = null
+  let first: ProjectStore | null = null
+  let second: ProjectStore | null = null
   try {
-    first = await CodexProjectStore.open(options)
+    first = await ProjectStore.open(options)
     const workspace = await first.ensureImported(
       'Ａlpha',
       hostWorkspaceForTest(await realpath(workspacePath)),
@@ -3959,7 +3959,7 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     await first.close()
     first = null
 
-    second = await CodexProjectStore.open(options)
+    second = await ProjectStore.open(options)
     const snapshot = await second.snapshot()
     assert.ok(Number(
       (snapshot as unknown as {active_binding_revision?: unknown}).active_binding_revision,
@@ -3993,7 +3993,7 @@ test('persistent homes are private, stable per workspace, and distinct across wo
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const ids = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -4026,7 +4026,7 @@ test('opening the live project store migrates legacy codex-workspaces to codex-h
   await mkdir(legacyRoot, {mode: 0o700})
   await mkdir(legacyHome, {mode: 0o700})
   await writeFile(join(legacyHome, 'migration-marker'), 'preserved', {mode: 0o600})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(canonicalStateRoot),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -4063,11 +4063,11 @@ test('a rejected legacy home migration releases the live owner lock for retry', 
   }
   try {
     await assert.rejects(
-      CodexProjectStore.open(options),
+      ProjectStore.open(options),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
     )
     await chmod(legacyRoot, 0o700)
-    const retried = await CodexProjectStore.open(options)
+    const retried = await ProjectStore.open(options)
     await retried.close()
     assert.equal((await lstat(join(stateRoot, 'codex-homes'))).isDirectory(), true)
   } finally {
@@ -4082,7 +4082,7 @@ test('persistent home rejects an immediate mkdir replacement before chmod or ado
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const rootFiles = new ReplaceHomeAfterMkdirRootFileAuthority([stateRoot, managedRoot])
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -4112,7 +4112,7 @@ test('managed rollback restores the deterministic most-recent survivor on timest
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const ids = ['workspace-0001', 'workspace-0002', 'workspace-0003'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -4173,7 +4173,7 @@ test('session retention prunes unavailable before inactive ready and never prune
     },
     sessions,
   }), {mode: 0o600})
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -4204,7 +4204,7 @@ test('default Session numbering increments Python integers beyond Number safe ra
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(workspacePath, {mode: 0o700})
   const ids = ['workspace-0001', 'session-0001', 'session-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -4235,7 +4235,7 @@ test('rollback and unavailable transitions repair the active Session determinist
   await mkdir(workspacePath, {mode: 0o700})
   const ids = ['workspace-0001', 'session-0001', 'session-0002', 'session-0003'][Symbol.iterator]()
   let now = 0
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -4286,7 +4286,7 @@ test('thread identity uses Python code-point bounds and exact returned text', as
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(workspacePath, {mode: 0o700})
   const ids = ['workspace-0001', 'session-0001', 'session-0002'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
@@ -4327,9 +4327,9 @@ test('live recovery reads Python v1 bytes and writes byte-identical Python canon
   await mkdir(managedRoot, {mode: 0o700})
   const statePath = join(stateRoot, 'codex-projects-v1.json')
   await writeFile(statePath, Buffer.from(fixture.input_utf8_base64, 'base64'), {mode: 0o600})
-  let store: CodexProjectStore | null = null
+  let store: ProjectStore | null = null
   try {
-    store = await CodexProjectStore.open({
+    store = await ProjectStore.open({
       stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
       nativeLocks: new DescriptorLockAuthority(),

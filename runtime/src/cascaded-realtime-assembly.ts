@@ -11,7 +11,7 @@ import {
   type VolcengineTtsConfig,
 } from './cascaded-realtime-config.js'
 import {RealClock, type Clock} from './clock.js'
-import type {CodexAssemblyResource} from './executors/codex/factory.js'
+import type {CodingExecutorResource} from './coding-executor.js'
 import {
   resolveSupportModelConnection,
   type CascadedAsrProviderName,
@@ -101,7 +101,7 @@ export interface BuildCascadedRealtimeAssemblyOptions
   readonly arkLlmFactory?: ArkCascadedFactory
   readonly ttsClient?: CascadedTtsClientFactory
   readonly liveKitExecutor?: LiveKitExecutor
-  readonly codexResource?: CodexAssemblyResource
+  readonly codexResource?: CodingExecutorResource
 }
 
 export interface AutoEndpointingFactoryInput {
@@ -213,7 +213,7 @@ export function buildCascadedRealtimeAssembly(
 ): RealtimeAssembly {
   const selected = requireSelectedCascadedRealtimeConfig(options.settings)
   const selection = selected.selection
-  validateCodexResource(options)
+  validateCodingResource(options)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const instructions = options.codexResource?.approvalController === null
@@ -316,7 +316,7 @@ export function buildCascadedRealtimeAssembly(
     ...(options.onSpoken === undefined ? {} : {onSpoken: options.onSpoken}),
     ...(options.onDelivery === undefined ? {} : {onDelivery: options.onDelivery}),
     ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
-    ...(options.onCodexState === undefined ? {} : {onCodexState: options.onCodexState}),
+    ...(options.onExecutorState === undefined ? {} : {onExecutorState: options.onExecutorState}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
@@ -379,13 +379,13 @@ function supportComposition(
   }
 }
 
-function validateCodexResource(options: BuildCascadedRealtimeAssemblyOptions): void {
-  const selected = options.settings.executors.includes('codex')
-  if (selected !== (options.codexResource !== undefined)) {
-    throw new AssemblyError('realtime Codex resource selection mismatch')
-  }
+function validateCodingResource(options: BuildCascadedRealtimeAssemblyOptions): void {
+  if (
+    options.codexResource !== undefined
+    && !options.settings.executors.includes(options.codexResource.adapter.manifest.name)
+  ) throw new AssemblyError('realtime coding resource selection mismatch')
   if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {
-    throw new AssemblyError('realtime Codex project mode mismatch')
+    throw new AssemblyError('realtime coding resource project mode mismatch')
   }
 }
 

@@ -12,11 +12,12 @@ import {CodexTransportError} from './app-server-transport.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
+  admitCodexProjectRequest,
   validateCodexRequest,
 } from './contract.js'
 import {
   ProjectStateError,
-  type CodexProjectStore,
+  type ProjectStore,
   type ProjectSessionRecord,
   type PublicProjectContext,
   type PublicProjectView,
@@ -26,21 +27,26 @@ import {
 } from '../../project-store.js'
 import type {HostCodexHome, HostWorkspace} from './process-owner.js'
 import type {
-  ExecutorAdapter,
+  ExecutorAdmission,
   ExecutorDispatchContext,
   ExecutorHandoff,
 } from '../../causal-runtime.js'
 import type {JsonValue} from '../../events.js'
 import {consumeHostExecutorCapability} from '../../host-executor-capability.js'
 import {USER_PRIORITY} from '../../memory.js'
-import type {DelegateRequest} from '../../ports.js'
 import type {CodexApprovalController} from './approval.js'
-import type {IntakeTarget} from '../../realtime/intake.js'
+import type {
+  CommittedWorkspaceEvent,
+  IntakeTarget,
+  ProjectCommitResult,
+  ProjectExecutorAdapter,
+  ProjectRuntimeDispatch,
+  TerminalWorkOrderEvent,
+} from '../../coding-executor.js'
 import type {
   ConfirmedProjectOperation,
   ProjectConfirmationController,
-} from '../../realtime/project-confirmation.js'
-import type {WakeReason} from '../../slots.js'
+} from '../../project-confirmation.js'
 import {compareCodePoints} from '../../canonical-json.js'
 import {CodexLiveAdapter} from './adapter-live.js'
 import {
@@ -63,37 +69,14 @@ export interface ProjectTransportFactory {
   create(binding: ProjectTransportBinding): CodexAppServerTransport
 }
 
-export type ProjectRuntimeDispatch = (
-  request: DelegateRequest,
-  reason: WakeReason,
-  hostCapability: object,
-) => {
-    readonly accepted: boolean
-    readonly delegate_id: string | null
-}
-
-export interface ProjectCommitResult {
-  readonly accepted: boolean
-  readonly code: string
-  readonly delegate_id?: string
-}
+export type {CommittedWorkspaceEvent, ProjectCommitResult, ProjectRuntimeDispatch, TerminalWorkOrderEvent}
 
 export interface ProjectCodexAdapterOptions {
-  readonly store: CodexProjectStore
+  readonly store: ProjectStore
   readonly confirmation: ProjectConfirmationController
   readonly transportFactory: ProjectTransportFactory
   readonly codexApproval?: CodexApprovalController
   readonly onProjectView?: ProjectViewObserver
-}
-
-export interface CommittedWorkspaceEvent {
-  readonly workspace: WorkspaceRecord
-}
-
-export interface TerminalWorkOrderEvent {
-  readonly workspace: WorkspaceRecord
-  readonly work_order: string
-  readonly handoff: ExecutorHandoff
 }
 
 type CommittedWorkspaceObserver = (event: CommittedWorkspaceEvent) => void | Promise<void>
@@ -108,9 +91,9 @@ interface ConfirmedDelegateBinding {
   readonly workOrder: string
 }
 
-export class ProjectCodexAdapter implements ExecutorAdapter {
+export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   readonly manifest
-  readonly #store: CodexProjectStore
+  readonly #store: ProjectStore
   readonly #confirmation: ProjectConfirmationController
   readonly #transportFactory: ProjectTransportFactory
   readonly #projectViewObservers = new Set<ProjectViewObserver>()
@@ -150,6 +133,16 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   /** Exact controller owned by this adapter; host assembly uses it for spoken confirmation. */
   get confirmationController(): ProjectConfirmationController {
     return this.#confirmation
+  }
+
+  /**
+   * `project` multiplexes short project-boundary actions and long-running task execution. The
+   * former can produce a confirmation proposal, so acknowledging them as delegated work would let
+   * the model speak before it has seen the question: every action except `start_session` holds the
+   * protocol open for its correlated Handoff.
+   */
+  admitRequest(op: string, request: Readonly<Record<string, JsonValue>>): ExecutorAdmission | null {
+    return admitCodexProjectRequest(op, request)
   }
 
   initialize(): Promise<void> {

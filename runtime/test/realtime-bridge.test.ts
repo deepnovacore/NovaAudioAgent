@@ -13,7 +13,7 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import { VirtualClock } from '../src/clock.js'
-import { CODEX_PROJECT_MANIFEST } from '../src/executors/codex/contract.js'
+import {CODEX_PROJECT_MANIFEST, admitCodexProjectRequest} from '../src/executors/codex/contract.js'
 import type { JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema, type ExecutorManifest, type UpdateSpec } from '../src/ports.js'
@@ -245,7 +245,7 @@ test('project-boundary actions wait for their result while task execution stays 
   const runtime = new ScriptedRuntime(
     new VirtualClock(),
     memory,
-    new Map([[manifest.name, {manifest}]]),
+    new Map([[manifest.name, {manifest, admitRequest: admitCodexProjectRequest}]]),
     {dispatch_results: dispatchResults},
   )
   let identifier = 0

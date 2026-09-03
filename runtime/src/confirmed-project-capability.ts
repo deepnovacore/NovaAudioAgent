@@ -34,11 +34,13 @@ export function issueConfirmedProjectCapability(
 export function beginConfirmedProjectAdmission(
   capability: object,
   request: DelegateRequest,
+  codingExecutor: string | null,
 ): boolean {
   const state = CAPABILITIES.get(capability)
   if (
     state?.phase !== 'ready'
-    || request.executor !== 'codex'
+    || codingExecutor === null
+    || request.executor !== codingExecutor
     || request.op !== 'project'
     || request.origin_ref !== state.origin_ref
     || Object.keys(request.request).length !== 1

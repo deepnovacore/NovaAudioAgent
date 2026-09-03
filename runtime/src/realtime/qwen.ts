@@ -14,7 +14,7 @@ import { z } from 'zod'
 import { canonicalJson } from '../canonical-json.js'
 import { jsonValueSchema, type JsonValue } from '../events.js'
 import {GUARD_ACTIVATION_PREFIX} from './cascaded/llm.js'
-import type {ProjectConfirmationView} from './project-confirmation.js'
+import type {ProjectConfirmationView} from '../project-confirmation.js'
 import {
   activeExecutorContextData,
   type DelegateRecord,
@@ -304,7 +304,7 @@ export interface QwenAdapterOptions {
   readonly closeTimeout?: number
   readonly now?: () => number
   readonly workspaceGraphPolicy?: boolean
-  readonly codexApproval?: boolean
+  readonly executorApproval?: boolean
 }
 
 interface PendingItem {
@@ -382,7 +382,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     this.#closeTimeout = requirePositive(options.closeTimeout ?? DEFAULT_CLOSE_TIMEOUT,
       'closeTimeout')
     this.#now = options.now ?? (() => Date.now() / 1000)
-    const instructions = options.codexApproval === true
+    const instructions = options.executorApproval === true
       ? CODEX_APPROVAL_FRONTEND_INSTRUCTIONS
       : FRONTEND_INSTRUCTIONS
     this.#instructions = options.workspaceGraphPolicy === true

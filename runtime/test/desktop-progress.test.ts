@@ -7,7 +7,8 @@ import type {Delegate} from '../src/ports.js'
 const delegate: Delegate = {delegate_id: 'd', executor: 'codex', op: 'project', request: {},
   origin_ref: 'conversation:1', deadline: 60, routing_class: 'user_awaited', dispatched_at: 1}
 const evidence = {inFlightDelegate: () => delegate, claimedHandoff: () => delegate,
-  delegateFor: () => delegate, terminatedByDeadline: () => true}
+  delegateFor: () => delegate, terminatedByDeadline: () => true,
+  executors: new Map([['codex', {manifest: {display_name: 'Codex'}}]])}
 
 test('progress projects only correlated accepted evidence and never private commands or paths', () => {
   const started: EventRecord = {seq: 1, ts: 1, kind: 'progress', payload: {

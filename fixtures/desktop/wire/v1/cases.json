@@ -299,46 +299,46 @@
     },
     {
       "name": "codex-state-idle",
-      "kind": "codex_state",
+      "kind": "executor_state",
       "state": "idle"
     },
     {
       "name": "codex-state-running",
-      "kind": "codex_state",
+      "kind": "executor_state",
       "state": "running"
     },
     {
       "name": "codex-state-invalid",
-      "kind": "codex_state",
+      "kind": "executor_state",
       "state": "sideways"
     },
     {
       "name": "project-empty",
-      "kind": "codex_project",
+      "kind": "project_state",
       "pending_confirmation": false
     },
     {
       "name": "project-named",
-      "kind": "codex_project",
+      "kind": "project_state",
       "workspace_display_name": "研究项目",
       "session_title": "上次的会话",
       "pending_confirmation": true
     },
     {
       "name": "project-empty-name",
-      "kind": "codex_project",
+      "kind": "project_state",
       "workspace_display_name": "",
       "pending_confirmation": false
     },
     {
       "name": "project-oversized-name",
-      "kind": "codex_project",
+      "kind": "project_state",
       "workspace_display_name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "pending_confirmation": false
     },
     {
       "name": "project-at-name-bound",
-      "kind": "codex_project",
+      "kind": "project_state",
       "workspace_display_name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "pending_confirmation": false
     },

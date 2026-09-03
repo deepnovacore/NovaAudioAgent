@@ -363,7 +363,7 @@ test('default Qwen instructions preserve the original surface without Codex appr
 
 test('Qwen provider emits approval instructions only for an approval-enabled session', async () => {
   const fixture = loadJson<NormalizationFixture>('normalization.json')
-  for (const codexApproval of [false, true]) {
+  for (const executorApproval of [false, true]) {
     const sent: Record<string, JsonValue>[] = []
     const adapter = new QwenAudioRealtimeAdapter({
       url: 'wss://example.invalid/realtime',
@@ -372,7 +372,7 @@ test('Qwen provider emits approval instructions only for an approval-enabled ses
       voice: 'fixture-voice',
       connector: () => Promise.resolve(scriptedSocket(fixture.handshake, sent)),
       idFactory: identityFactory(),
-      codexApproval,
+      executorApproval,
     })
     const stop = new AbortController()
     await adapter.connect({tools: [], signal: stop.signal})
@@ -385,9 +385,9 @@ test('Qwen provider emits approval instructions only for an approval-enabled ses
     assert.equal(typeof instructions, 'string')
     assert.equal(
       (instructions as string).includes('codex__confirm_codex_approval'),
-      codexApproval,
+      executorApproval,
     )
-    assert.equal((instructions as string).includes('approval_id'), codexApproval)
+    assert.equal((instructions as string).includes('approval_id'), executorApproval)
   }
 })
 
@@ -418,7 +418,7 @@ test('the emitted session.update matches the pinned outbound payload', async () 
     voice: 'fixture-voice',
     connector: () => Promise.resolve(socket),
     idFactory: identityFactory(),
-    codexApproval: true,
+    executorApproval: true,
   })
   const stop = new AbortController()
   await adapter.connect({tools: [], signal: stop.signal})

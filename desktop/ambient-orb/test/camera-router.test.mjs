@@ -256,6 +256,7 @@ test('suspended browser PCM cannot block a Codex approval render and exact decis
       decision.sync({
         pending: approval.pending_approval,
         approvalId: approval.pending_approval_id,
+        executor: approval.executor,
         busy: approval.pending_approval_busy,
       })
       assert.equal(decision.decide(true), true)
@@ -265,7 +266,9 @@ test('suspended browser PCM cannot block a Codex approval render and exact decis
   try {
     connection.onMessage({data: new Uint8Array([0, 1]).buffer})
     connection.onMessage({data: JSON.stringify({
-      type: 'codex.approval',
+      type: 'executor.approval',
+      executor: 'codex',
+      display_name: 'Codex',
       pending_approval: true,
       pending_approval_busy: false,
       pending_approval_id: 'approval-cross-path',
@@ -281,7 +284,8 @@ test('suspended browser PCM cannot block a Codex approval render and exact decis
     await settleWithin(decisionSent.promise, 'Codex control behind suspended PCM')
     assert.deepEqual(order, ['pcm-start', 'approval-rendered', 'decision-sent'])
     assert.deepEqual(socket.sent, [JSON.stringify({
-      type: 'codex.approval_decision',
+      type: 'executor.approval_decision',
+      executor: 'codex',
       approval_id: 'approval-cross-path',
       approved: true,
     })])

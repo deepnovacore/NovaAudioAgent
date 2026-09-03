@@ -16,6 +16,7 @@ import type {JsonValue} from '../src/events.js'
 import type {RealtimeTelemetry} from '../src/realtime/telemetry.js'
 
 const TOKEN = '1'.repeat(32)
+const CODEX = {executor: 'codex', display_name: 'Codex'} as const
 const SETTLE_MS = 1_000
 
 interface ServiceHarness {
@@ -43,7 +44,7 @@ function serviceHarness(): ServiceHarness {
   return {
     calls,
     service: {
-      codexState: 'running',
+      executorState: 'running',
       sendAudio: pcm => { calls.push(`audio:${[...pcm].join(',')}`); return Promise.resolve() },
       localSpeechOnset: speechId => { calls.push(`onset:${speechId}`); return Promise.resolve() },
       playbackStarted: (utteranceId, epoch) => { calls.push(`started:${utteranceId}:${epoch}`); return true },
@@ -67,8 +68,8 @@ function serviceHarness(): ServiceHarness {
         calls.push(`project-decision:${proposalId}:${confirmed}`)
         return Promise.resolve()
       },
-      codexApprovalDecision: (approvalId, approved) => {
-        calls.push(`codex-approval:${approvalId}:${approved}`)
+      executorApprovalDecision: (approvalId, approved) => {
+        calls.push(`approval:${approvalId}:${approved}`)
         return true
       },
     },
@@ -152,6 +153,7 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
   const clock = new VirtualClock()
   const telemetry = new RecordingTelemetry()
   const realtime = new DesktopRealtime({
+    executor: CODEX,
     token: TOKEN,
     service,
     stop,
@@ -178,8 +180,8 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
     assert.deepEqual((await initial).map(frame => text(frame)), [
       '{"type":"desktop.ready"}',
       '{"type":"playback.clear","utterance_id":"stale","generation_epoch":1}',
-      '{"type":"codex.state","state":"running"}',
-      '{"type":"codex.project","workspace_display_name":"project-a","session_title":"session-a","pending_confirmation":false,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
+      '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}',
+      '{"type":"project.state","workspace_display_name":"project-a","session_title":"session-a","pending_confirmation":false,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
     ])
 
     const downlink = nextFrames(socket, 6, 'desktop bridge downlink families')
@@ -188,8 +190,8 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
     })
     realtime.bridge.onAudioTerminal('u-2', 2)
     realtime.bridge.onCaption({role: 'user', text: 'caption', final: true})
-    realtime.bridge.onCodexState('idle')
-    realtime.bridge.onCodexProject({
+    realtime.bridge.onExecutorState('idle')
+    realtime.bridge.onProjectView({
       workspace_display_name: 'project-b', session_title: null, pending_confirmation: true,
       pending_confirmation_busy: false,
     })
@@ -204,7 +206,7 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
     assert.equal(text(frames[1]!), '{"type":"playback.alert"}')
     assert.match(text(frames[2]!), /"type":"playback\.terminal"/u)
     assert.match(text(frames[3]!), /"type":"caption"/u)
-    assert.equal(text(frames[4]!), '{"type":"codex.state","state":"idle"}')
+    assert.equal(text(frames[4]!), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
     assert.match(text(frames[5]!), /"workspace_display_name":"project-b"/u)
 
     realtime.bridge.registerPing('p-1')
@@ -246,6 +248,7 @@ test('renderer reconnect receives current state and project without aborting the
   let released: (() => void) | undefined
   const connectionReleased = new Promise<void>(resolve => { released = resolve })
   const realtime = new DesktopRealtime({
+    executor: CODEX,
     token: TOKEN,
     service,
     stop,
@@ -262,13 +265,13 @@ test('renderer reconnect receives current state and project without aborting the
     await sendClient(first, JSON.stringify({type: 'hello', token: TOKEN}), 'first connection hello')
     await firstState
     const changedFrames = nextFrames(first, 2, 'first connection state changes')
-    realtime.bridge.onCodexState('idle')
-    realtime.bridge.onCodexProject({
+    realtime.bridge.onExecutorState('idle')
+    realtime.bridge.onProjectView({
       workspace_display_name: 'two', session_title: 'current', pending_confirmation: true,
       pending_confirmation_busy: false,
     })
     const changed = await changedFrames
-    assert.equal(text(changed[0]!), '{"type":"codex.state","state":"idle"}')
+    assert.equal(text(changed[0]!), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
     await closeDesktop(first)
     await settleWithin('bridge connection release', connectionReleased)
     assert.ok(calls.includes('playback-disconnected'))
@@ -280,8 +283,8 @@ test('renderer reconnect receives current state and project without aborting the
       await sendClient(second, JSON.stringify({type: 'hello', token: TOKEN}), 'second connection hello')
       assert.deepEqual((await current).map(frame => text(frame)), [
         '{"type":"desktop.ready"}',
-        '{"type":"codex.state","state":"idle"}',
-        '{"type":"codex.project","workspace_display_name":"two","session_title":"current","pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
+        '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}',
+        '{"type":"project.state","workspace_display_name":"two","session_title":"current","pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
       ])
     } finally {
       await closeDesktop(second)
@@ -295,6 +298,7 @@ test('debug board client transfers a large snapshot without owning the renderer 
   const {service} = serviceHarness()
   const stop = new AbortController()
   const realtime = new DesktopRealtime({
+    executor: CODEX,
     token: TOKEN,
     service,
     stop,
@@ -339,8 +343,8 @@ test('debug board client transfers a large snapshot without owning the renderer 
     })
 
     const rendererState = nextFrames(renderer, 1, 'renderer survives debug board response')
-    realtime.bridge.onCodexState('idle')
-    assert.equal(text((await rendererState)[0]!), '{"type":"codex.state","state":"idle"}')
+    realtime.bridge.onExecutorState('idle')
+    assert.equal(text((await rendererState)[0]!), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
     assert.equal(stop.signal.aborted, false)
   } finally {
     if (debug) await closeDesktop(debug)
@@ -351,7 +355,7 @@ test('debug board client transfers a large snapshot without owning the renderer 
 
 test('bridge uplink errors retain the server stable protocol rejection', async () => {
   const {service, calls} = serviceHarness()
-  const realtime = new DesktopRealtime({token: TOKEN, service, stop: new AbortController()})
+  const realtime = new DesktopRealtime({token: TOKEN, service, stop: new AbortController(), executor: CODEX})
   const readiness = await settleWithin('protocol rejection server start', realtime.server.start())
   const socket = await connectDesktop(readiness.port)
   try {
@@ -463,6 +467,7 @@ function controlledRealtime(stop: AbortController): {
   const {service} = serviceHarness()
   let server: ControlledServer | undefined
   const realtime = new DesktopRealtime({
+    executor: CODEX,
     token: TOKEN,
     service,
     stop,
@@ -480,7 +485,7 @@ test('one serialized drain retains a wake that arrives while a socket send is he
   const {realtime, server} = controlledRealtime(stop)
   const initial = server.nextSend('controlled initial state send')
   await server.connectClient()
-  assert.equal(await initial, '{"type":"codex.state","state":"running"}')
+  assert.equal(await initial, '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}')
 
   const held = server.holdNext()
   const audioSend = server.nextSend('controlled held audio send')
@@ -519,7 +524,7 @@ test('connection ownership refuses a second claim and fences an old held generat
   await server.connectClient()
   server.releaseHeld()
   await settleWithin('old generation held send release', oldHeld)
-  assert.equal(await freshState, '{"type":"codex.state","state":"running"}')
+  assert.equal(await freshState, '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}')
   assert.equal(server.maxConcurrent, 1, 'the fresh generation never shares the old writer')
   assert.equal(stop.signal.aborted, false)
 })
@@ -564,23 +569,24 @@ test('required send failure and bridge overflow abort, while droppable/latest fa
 
   const reconnectState = soft.server.nextSend('soft failure reconnect state')
   await soft.server.connectClient()
-  assert.equal(await reconnectState, '{"type":"codex.state","state":"running"}')
+  assert.equal(await reconnectState, '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}')
   soft.server.failNext()
   const latestAttempt = soft.server.nextSend('latest failing send attempt')
   soft.server.holdDisconnect()
   const latestDisconnected = soft.server.nextDisconnected('latest failure transport disconnected')
-  soft.realtime.bridge.onCodexState('idle')
+  soft.realtime.bridge.onExecutorState('idle')
   await latestAttempt
   assert.equal(softStop.signal.aborted, false)
   soft.server.releaseDisconnect()
   await latestDisconnected
   const currentState = soft.server.nextSend('latest failure current state retry')
   await soft.server.connectClient()
-  assert.equal(await currentState, '{"type":"codex.state","state":"idle"}')
+  assert.equal(await currentState, '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
 
   const overflowStop = new AbortController()
   const overflowService = serviceHarness().service
   const overflow = new DesktopRealtime({
+    executor: CODEX,
     token: TOKEN, service: overflowService, stop: overflowStop, maxOutboundFrames: 1,
     createServer: options => new ControlledServer(options),
   })
@@ -600,6 +606,7 @@ test('droppable local validation failure is diagnosed without disconnecting a he
   const {service} = serviceHarness()
   let server: ControlledServer | undefined
   const realtime = new DesktopRealtime({
+    executor: CODEX,
     token: TOKEN,
     service,
     stop,
@@ -621,8 +628,8 @@ test('droppable local validation failure is diagnosed without disconnecting a he
   await rejectedCaption
 
   const currentState = controlled.nextSend('state after local validation failure')
-  realtime.bridge.onCodexState('idle')
-  assert.equal(await currentState, '{"type":"codex.state","state":"idle"}')
+  realtime.bridge.onExecutorState('idle')
+  assert.equal(await currentState, '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
   assert.equal(stop.signal.aborted, false)
   assert.deepEqual(telemetry.records.at(-1), {
     kind: 'desktop.outbound_validation_dropped',

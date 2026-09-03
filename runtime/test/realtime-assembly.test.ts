@@ -19,7 +19,7 @@ import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/executors/code
 import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
 import {
   ProjectStateError,
-  type CodexProjectStore,
+  type ProjectStore,
   type PublicProjectContext,
   type WorkspaceRecord,
 } from '../src/project-store.js'
@@ -58,7 +58,7 @@ import {
   ProjectConfirmationController,
   type ConfirmedProjectOperation,
   type ProjectConfirmationView,
-} from '../src/realtime/project-confirmation.js'
+} from '../src/project-confirmation.js'
 import type {
   HostContextItem,
   HostResponseIntent,
@@ -67,7 +67,7 @@ import type {
 } from '../src/realtime/protocol.js'
 import { RealtimeProviderSession } from '../src/realtime/provider-session.js'
 import { RealtimeService } from '../src/realtime/service.js'
-import type { CodexState } from '../src/realtime/service-state.js'
+import type { ExecutorState } from '../src/realtime/service-state.js'
 import { RealtimeSession } from '../src/realtime/session.js'
 import type { CaptionFrame } from '../src/realtime/session-state.js'
 import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
@@ -651,7 +651,7 @@ test('provider tool view narrows schemas without copying host authority', async 
   const realtime = buildRealtimeAssembly({
     core,
     provider,
-    providerToolView: tools => ({schemas: selected, bindings: tools.bindings}),
+    providerToolView: tools => ({...tools, schemas: selected}),
     onDiagnostic: () => undefined,
   })
   const selectedDeclaration = selected[0]?.function
@@ -669,7 +669,7 @@ test('provider tool view narrows schemas without copying host authority', async 
   await settleNamed('narrowed provider stop', realtime.stop())
 
   const copiedBindings = (): CompiledTools => ({
-    schemas: core.tools.schemas,
+    ...core.tools,
     bindings: new Map(core.tools.bindings),
   })
   assert.throws(
@@ -678,8 +678,8 @@ test('provider tool view narrows schemas without copying host authority', async 
       && error.message === 'provider tool view must reuse core tool bindings',
   )
   const malformed = (): CompiledTools => ({
+    ...core.tools,
     schemas: [{type: 'function'}],
-    bindings: core.tools.bindings,
   })
   assert.throws(
     () => buildRealtimeAssembly({core, provider: new AbortAwareProvider(), providerToolView: malformed}),
@@ -706,7 +706,7 @@ test('provider tool view narrows schemas without copying host authority', async 
     () => buildRealtimeAssembly({
       core,
       provider: new AbortAwareProvider(),
-      providerToolView: tools => ({schemas: [unknown], bindings: tools.bindings}),
+      providerToolView: tools => ({...tools, schemas: [unknown]}),
     }),
     error => error instanceof AssemblyError
       && error.message === 'provider tool view contains an unknown schema',
@@ -740,8 +740,8 @@ test('provider tool view rejects deep non-JSON, malformed, and altered known sch
         core,
         provider: new AbortAwareProvider(),
         providerToolView: tools => ({
+          ...tools,
           schemas: [schema] as unknown as CompiledTools['schemas'],
-          bindings: tools.bindings,
         }),
       }),
       error => error instanceof AssemblyError && error.message === message,
@@ -777,7 +777,7 @@ test('callbacks route once through the single playback, session, bridge, and ser
   const spoken: string[] = []
   const deliveries: PlaybackCompletion[] = []
   const captions: CaptionFrame[] = []
-  const codexStates: CodexState[] = []
+  const executorStates: ExecutorState[] = []
   const projectViews: ProjectConfirmationView[] = []
   const diagnostics: string[] = []
   const telemetryRecords: {readonly kind: string; readonly payload: Readonly<Record<string, JsonValue>>}[] = []
@@ -803,7 +803,7 @@ test('callbacks route once through the single playback, session, bridge, and ser
     onSpoken: text => { spoken.push(text) },
     onDelivery: completion => { deliveries.push(completion) },
     onCaption: frame => { captions.push(frame) },
-    onCodexState: state => { codexStates.push(state) },
+    onExecutorState: state => { executorStates.push(state) },
     onProjectView: view => { projectViews.push(view) },
     telemetry,
     onDiagnostic: line => { diagnostics.push(line) },
@@ -842,7 +842,7 @@ test('callbacks route once through the single playback, session, bridge, and ser
   })
   assert.equal(realtime.service.playbackStarted(first.utterance_id, first.generation_epoch), true)
   assert.equal(realtime.service.playbackDone(first.utterance_id, first.generation_epoch, 25), true)
-  realtime.service.internals.setCodexState('running')
+  realtime.service.internals.setExecutorState('running')
   realtime.service.invalidateProjectConfirmationForTest('callback-test')
 
   const second = realtime.playback.openResponse({sessionEpoch: 1, responseId: 'r-2'})
@@ -872,7 +872,7 @@ test('callbacks route once through the single playback, session, bridge, and ser
     {role: 'assistant', text: 'hel', final: false},
     {role: 'assistant', text: 'hello', final: true},
   ])
-  assert.deepEqual(codexStates, ['running'])
+  assert.deepEqual(executorStates, ['running'])
   assert.deepEqual(projectViews, [{
     pending_confirmation: false,
     pending_confirmation_busy: false,
@@ -925,7 +925,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
       workspaces: Object.freeze([alpha]),
     })),
     close: () => Promise.resolve(),
-  } as unknown as CodexProjectStore
+  } as unknown as ProjectStore
   let transportCreations = 0
   const transportFactory: ProjectTransportFactory = {
     create: (binding: ProjectTransportBinding) => {
@@ -1492,7 +1492,7 @@ test('active project views replace one provider context without publishing histo
     assert.match(provider.currentWorkspaceItem?.content ?? '', /正在运行测试/u)
     assert.equal(provider.currentWorkspaceItem?.content.includes('正在写计时逻辑'), false)
 
-    realtime.session.registerDelegate('delegate-progress', {
+    realtime.session.registerDelegate('delegate-progress', {channel: 'codex', 
       summary: '实现计时器',
       state: 'completed',
     })
@@ -1528,7 +1528,7 @@ test('active executor context is published even when no project workspace is com
     assert.match(provider.currentWorkspaceItem?.content ?? '', /正在等待画面变化/u)
     assert.equal(provider.currentWorkspaceItem?.workspace_instance_id, 'active-executor-context')
 
-    realtime.session.registerDelegate('standalone-watch', {
+    realtime.session.registerDelegate('standalone-watch', {channel: 'codex', 
       summary: '观察桌面状态', state: 'completed',
     })
     await realtime.enqueueActiveWorkContextPublication()
@@ -2768,11 +2768,11 @@ test('Codex resource approval authority is wired into the realtime service', asy
       operation_summary: 'Codex 请求执行一条工作区命令。',
     }, new AbortController().signal)
     await waitNamed('Codex approval context injection', () => (
-      provider.injected.some(item => item.event_id === 'codex-approval:approval-1:requested')
+      provider.injected.some(item => item.event_id === 'approval:approval-1:requested')
     ))
     await waitNamed('Codex approval question response', () => (
       provider.responses.some(intent => (
-        intent.item.event_id === 'codex-approval:approval-1:requested'
+        intent.item.event_id === 'approval:approval-1:requested'
       ))
     ))
   } finally {
