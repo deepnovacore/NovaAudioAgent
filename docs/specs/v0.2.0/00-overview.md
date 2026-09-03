@@ -16,6 +16,8 @@ only after the corresponding volume is agreed.
 | [04 Knowledge base](04-knowledge-base.md) | Private RAG (layer K), ingest, recall surfaces |
 | [05 Progress bubbles](05-progress-bubbles.md) | Orb progress notifications |
 | [06 Settings and config](06-settings-and-config.md) | Settings v4, env contract, panel tabs |
+| [07 Executor boundary](07-executor-boundary.md) | Codex as a real plug-in behind `ports.ts`; role-based routing; host-owned confirmations; enforced by lint + script |
+| [08 Project, session and work](08-project-and-work.md) | `work__*` / `project__*` host tools replace `codex__project`; roster in ContextView; per-session concurrency; confirmed cancel; Codex-owned titles |
 
 The public architecture volumes under [`docs/archs/`](../../archs/00-overview.md)
 remain the source of invariants. Specs here propose deltas; they do not silently
@@ -78,7 +80,10 @@ flowchart TD
   B[02 intake: binding + gates + host dispatch] --> M1
   S[06 skeleton: v4 migration + coordinated commit] --> M1
   E0[05 core: milestone bubbles + last-result entry] --> M1
-  M1[M1 complete coding loop] --> C1[03a registry + MCP search opt-in]
+  M1[M1 complete coding loop] --> X1[07 executor boundary]
+  X1 --> X2[08 project session work]
+  X1 --> C1[03a registry + MCP search opt-in]
+  X2 --> C1
   C1 --> C1f[03a-flip default search → mcp]
   C1 --> C2[03b external MCP adapter + Codex projection]
   C2 --> D2[04b work-order references + nova-knowledge MCP]
@@ -94,6 +99,8 @@ the listed checklists are green on `v0.2.0dev`.
 | Milestone | Delivers | Acceptance |
 |---|---|---|
 | **M1 — one complete coding experience** | User asks → only necessary user-owned questions → WorkOrder v2 → `on-request` approvals on macOS and Windows → execution → visible result (milestone bubbles + last-result entry). YOLO selectable. | 01 deterministic + live lists; 02 checklist; 05 core items (frames, stack, last-result entry, bounds reservation); 06 migration + coordinated commit |
+| **M1.5a — executor boundary** | Codex moved under `executors/codex/`; core routes by `roles: ['coding']`; approval / project confirmation are host capabilities; `executor.*` / `project.*` wire; fixture executor proves the port; `check:executor-boundary` in `npm run check`. No user-visible change. | 07 deterministic list; live rows identical to M1 validation |
+| **M1.5b — project, session and work** | `work__dispatch / steer / status / cancel`, `project__sessions / create` replace `codex__project`; roster in `workspace_context`; per-session locks (cap 3); confirmed cancel with `cancelled` outcome; host-derived titles via `thread/name/set`. | 08 deterministic list; 08 live rows with DashScope + Codex 0.152.0 evidence |
 | **M2 — capability registry** | `capabilities.json`, module toggles, MCP search provider opt-in, Tavily optional | 03a checklist; then 03a-flip after the live smoke is recorded |
 | **M3 — external MCP** | FrontBrain MCP executors with compiler adaptation; Codex projection with allowlist closure | 03b checklist incl. `mcpServerStatus/list` verification |
 | **M4 — knowledge** | Layer K store, ingest UI, `knowledge__recall`, then host-attached references + `nova-knowledge` | 04 checklist; release-gate decision below |
@@ -134,6 +141,8 @@ merges — not as part of this documentation phase.
 | Search transport | MCP provider available with Bailian preset; default flips from Tavily only after recorded live verification; evidence still `untrusted_external` via SearchAdapter | Hard-coded Tavily as the only transport; flipping the default before the endpoint is proven |
 | Knowledge | Separate layer K (user-curated) with hybrid retrieval; evidence-only; references reach Codex only in a form it can resolve (`get_chunk` with digest pin, or in-workspace paths); no auto ContextView injection by default | Stuffing document bodies into system prompt; merging knowledge into L1 graph; emitting `knowledge://` URIs Codex cannot open |
 | Progress UX | Optional orb bubbles as reminders + a persistent last-result entry; main process reserves window bounds; speech remains Floor-gated | Speaking every Codex working update; OS toasts for in-session progress; bubbles as the audit trail |
+| Executor identity | Core sees `manifest.name / roles / display_name` only; coding work routed by role; boundary enforced by lint + script; approvals and project confirmation are host capabilities behind an `ApprovalBroker` port | Branching on `'codex'` in core; executor-owned confirmation tools; boundary by convention |
+| Project selection | FastBrain picks a roster name from a versioned `workspace_context` item; host does resolution, unconfirmed switching, session bookkeeping; only create confirms; cancel targets running work and is confirmed via `turn/interrupt` | Model-driven list/select/start state machine; backend coordinator choosing projects (qwen pattern); optimistic cancel; `任务 N` titles |
 
 ### Deferred items that stay deferred
 
@@ -217,6 +226,22 @@ persona or history (02), Task record as a bounded delivery receipt and
 projects user-selected MCP servers into the Nova-owned private `CODEX_HOME`
 (03), and Nova hosts a knowledge MCP for Codex (04); qwen leaves backend MCP
 entirely to the backend’s own configuration.
+
+### 2026-09-03 — third pass (executor boundary, project/session/work)
+
+Triggered by re-reading the qwen-audio-agent Deep Dive against three static
+audits of `runtime/src` (coupling map, port contract, project flow). Findings
+that became volumes 07 and 08:
+
+| # | Finding | Verified? | Disposition |
+|---|---|---|---|
+| P1 | Codex leaks into 31 core files outside `codex-*` / `executors/`; `realtime-assembly.ts:827` and `confirmed-project-capability.ts:41` hard-code `executor:'codex'`; `executors/codex-project-live.ts` imports `realtime/*` | Yes | 07: package under `executors/codex/`, role routing, `ApprovalBroker` port, lint + script, fixture executor |
+| P1 | Voice surface is six `codex__project` actions + confirm; common case costs ≥3 tool round-trips; `session` is model-visible | Yes | 08: `work__*` / `project__*` host tools, roster in ContextView, `latest/new/<id>` |
+| P2 | Runtime admits concurrent delegates but adapters serialize with `#runActive`; no model-facing cancel; transport already has `turn/interrupt` | Yes | 08: per-session lock, cap 3, `work__cancel` confirmed, `cancelled` outcome |
+| P2 | Codex never auto-names app-server threads (0/… locally); Nova ignores `thread/name/*`; titles default to `任务 N` | Yes (local `state_5.sqlite`, schema 0.152.0) | 08: host-derived title, `thread/name/set`, mirror `thread/name/updated` |
+
+Deliberate difference from qwen kept: selection stays with FastBrain + host,
+not a backend coordinator (reasons in 08 Non-goals).
 
 ## Document conventions
 
