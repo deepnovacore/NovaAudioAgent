@@ -99,10 +99,11 @@ Note that native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windo
 | [Architecture](docs/architecture.md) | Modules and boundaries |
 | [Glossary and invariants](docs/glossary.md) | Vocabulary and rules |
 | [Getting started](docs/getting-started.md) | Setup and integrations |
+| [v0.2.0 specs](docs/specs/v0.2.0/00-overview.md) | In-progress feature contracts on `v0.2.0dev` |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | The design-space essay |
 
 ## 5. Roadmap
-- [ ] Fix and improve the permission apprroval system on windows. Add support for using network in codex.
+- [ ] **v0.2.0 (branch `v0.2.0dev`):** cross-platform Codex `on-request` approvals + YOLO; multi-round intake and WorkOrder planning; capability registry / MCP (MCP search opt-in until live verification, then default flip); private knowledge base; progress bubbles. Specs: [docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md).
 - [ ] Support more end-to-end and cascaded frontend pipelines.
 - [ ] Integrate MyContext to support workspace-centric memory.
 - [ ] More coding agents through the executor port.

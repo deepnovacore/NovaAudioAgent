@@ -95,10 +95,11 @@ node runtime/dist/src/cli.js demo all
 | [架构](docs/architecture.md) | 模块与边界 |
 | [术语与不变量](docs/glossary.md) | 核心常量 |
 | [上手指南](docs/getting-started.zh-CN.md) | 安装与集成 |
+| [v0.2.0 规格](docs/specs/v0.2.0/00-overview.md) | `v0.2.0dev` 上进行中的功能契约 |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 设计博客 |
 
 ## 5. 路线图
-- [ ] 优化 Windows下的权限审批机制，在 mac/windows 下支持codex 使用网络。
+- [ ] **v0.2.0（分支 `v0.2.0dev`）：** 跨平台 Codex `on-request` 审批与 YOLO；多轮意图澄清与 WorkOrder 规划；能力注册表 / MCP（MCP 搜索先 opt-in，真实接入验证通过后再切默认）；私人知识库；进度气泡。规格：[docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md)。
 - [ ] 支持更多端到端与级联前端管线。
 - [ ] 接入 MyContext，做以工作区为中心的记忆。
 - [ ] 通过 executor 端口接入更多 coding agent。
