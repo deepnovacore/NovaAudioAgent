@@ -97,6 +97,9 @@ by unit tests. Prefer missing a detail bubble over leaking sensitive text.
   Memory Board / project-store view scrolled to that delegate (or, until that
   view has deep links, a compact native panel listing outcome, summary,
   changed-file count, and start/end time).
+- With concurrent works ([08](08-project-and-work.md)) the entry is keyed by
+  `work_id` (= `delegate_id`): each running work gets its own entry and a new
+  dispatch replaces only the entry for the same work, never another work's.
 - The entry persists until the next dispatch replaces it; it does not
   auto-dismiss and is independent of `progressBubbles` (it exists even at
   `off`).

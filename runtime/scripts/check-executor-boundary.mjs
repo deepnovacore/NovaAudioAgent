@@ -50,12 +50,43 @@ export function scanCore() {
   return hits
 }
 
+function entryBudget(allowlist) {
+  return allowlist.map(entry => ({
+    entry,
+    remaining: typeof entry.count === 'number' && entry.count > 0 ? entry.count : 1,
+  }))
+}
+
 export function unlistedHits(hits, allowlist) {
-  return hits.filter(hit => !allowlist.some(entry => entry.path === hit.path && hit.text.includes(entry.pattern)))
+  const budgets = entryBudget(allowlist)
+  const unlisted = []
+  for (const hit of hits) {
+    let covered = false
+    for (const budget of budgets) {
+      if (budget.remaining <= 0) continue
+      const entry = budget.entry
+      if (entry.path !== hit.path || !hit.text.includes(entry.pattern)) continue
+      budget.remaining -= 1
+      covered = true
+      break
+    }
+    if (!covered) unlisted.push(hit)
+  }
+  return unlisted
 }
 
 export function staleEntries(hits, allowlist) {
-  return allowlist.filter(entry => !hits.some(hit => hit.path === entry.path && hit.text.includes(entry.pattern)))
+  const budgets = entryBudget(allowlist)
+  for (const hit of hits) {
+    for (const budget of budgets) {
+      if (budget.remaining <= 0) continue
+      const entry = budget.entry
+      if (entry.path !== hit.path || !hit.text.includes(entry.pattern)) continue
+      budget.remaining -= 1
+      break
+    }
+  }
+  return budgets.filter(budget => budget.remaining > 0).map(budget => budget.entry)
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -66,7 +97,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf8'))
     for (const entry of allowlist) {
       if (typeof entry.path !== 'string' || typeof entry.pattern !== 'string' || typeof entry.reason !== 'string'
-        || entry.pattern === '' || entry.reason === '') {
+        || entry.pattern === '' || entry.reason === ''
+        || (entry.count !== undefined && (!Number.isInteger(entry.count) || entry.count < 1))) {
         throw new Error('invalid executor boundary allowlist entry')
       }
     }

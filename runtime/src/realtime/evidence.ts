@@ -37,6 +37,7 @@ export interface CodingChannel {
 export function finalSpeechView(outcome: string, content: unknown, displayName: string): string {
   const confirmation = outcome === 'ok' ? codingConfirmationSpeech(content, displayName) : null
   if (confirmation !== null) return confirmation
+  if (outcome === 'cancelled') return `${displayName} 那个任务已经停了`
   let finalMessage: unknown
   let code: unknown
   let error: unknown
@@ -173,6 +174,8 @@ export function genericFinalSpeechView(
       : `${displayName} 报告任务完成`
   } else if (outcome === 'failed') {
     text = `${displayName} 任务失败`
+  } else if (outcome === 'cancelled') {
+    text = `${displayName} 任务已停止`
   } else if (outcome === 'refused') {
     text = values.error === 'camera_permission_denied'
       && values.recoverable === true

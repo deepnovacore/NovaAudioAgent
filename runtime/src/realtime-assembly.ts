@@ -41,8 +41,19 @@ import type {GraphContext} from './workspace-graph/context.js'
 import type {Suggestion} from './suggestions.js'
 import type {WakeReason} from './slots.js'
 import {USER_PRIORITY} from './memory.js'
-import type {IntakeModels} from './realtime/intake-model.js'
+import {intakeModels, type IntakeModels} from './realtime/intake-model.js'
 import type {IntakeSettings, IntakeSession} from './realtime/intake.js'
+import type {ModelGateway} from './model-gateway.js'
+
+/** Production compositions derive intake from settings only when an executor carries `coding`; an explicit `intake` without one still fails assembly. */
+export function defaultIntake(
+  core: Assembly,
+  gateway: ModelGateway,
+  settings: IntakeSettings & {readonly surrogate_model: string; readonly planner_model: string; readonly fast_model: string},
+): RealtimeAssemblyOptions['intake'] {
+  if (executorWithRole([...core.runtime.executors.values()].map(adapter => adapter.manifest), 'coding') === null) return undefined
+  return {models: intakeModels(gateway, settings.surrogate_model, settings.planner_model || settings.fast_model), settings}
+}
 
 export interface RealtimeWorkspaceGraph {
   readonly publishedSnapshot: PublishedGraphSnapshot
@@ -815,6 +826,9 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     idFactory,
   })
   const assemblyHolder: {current: RealtimeAssembly | null} = {current: null}
+  if (options.intake !== undefined && projectAdapter === undefined) {
+    throw new AssemblyError('no executor with role coding')
+  }
   const service = new RealtimeService({
     provider: providerSession,
     runtime: core.runtime,

@@ -1,4 +1,3 @@
-import {intakeModels} from './realtime/intake-model.js'
 /** Provider-neutral cascaded production assembly over closed, host-owned node registries. */
 
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
@@ -25,6 +24,7 @@ import {OpenAIModelGateway, type ModelGateway} from './model-gateway.js'
 import {stripLikePython} from './python-text.js'
 import {
   buildRealtimeAssembly,
+  defaultIntake,
   type RealtimeAssembly,
   type RealtimeAssemblyOptions,
 } from './realtime-assembly.js'
@@ -298,10 +298,11 @@ export function buildCascadedRealtimeAssembly(
       try { options.onDiagnostic?.(`[realtime-diagnostic] ${code}`) } catch { /* advisory */ }
     },
   )
+  const intake = options.intake ?? defaultIntake(core, support.gateway, options.settings)
   return buildRealtimeAssembly({
     core,
     provider,
-    intake: options.intake ?? {models: intakeModels(support.gateway, options.settings.surrogate_model, options.settings.planner_model || options.settings.fast_model), settings: options.settings},
+    ...(intake === undefined ? {} : {intake}),
     ...(options.onExecutorSuggestion === undefined ? {} : {onExecutorSuggestion: options.onExecutorSuggestion}),
     idFactory: () => ids.next('realtime'),
     controlledGuardReconnect: false,

@@ -29,5 +29,8 @@ test('the runtime package root does not export Codex authority bypasses or test 
     'createCodexAssemblyResource',
     'OwnedCodexBackendTransportFactory',
     'unavailableCodexBackendTransportFactory',
+    'CredentialSnapshotter',
+    'credentialSnapshotEnvironment',
+    'OwnedCodexAppServerTransport',
   ]) assert.equal(Object.hasOwn(runtime, name), false, name)
 })

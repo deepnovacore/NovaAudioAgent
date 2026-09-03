@@ -179,18 +179,22 @@ Rules:
 | TTL expiry (60 s), controller already spent, or broker lost | `decline` | `decline` | `{permissions: {}, scope:'turn'}` |
 
 - Nova never answers `cancel`; interrupting the turn is a separate user action
-  (`codex__cancel`), not an approval outcome.
+  (the `cancel` tool from [08](08-project-and-work.md)), not an approval
+  outcome.
 - Nova never returns a partial permission grant. Voice and banner both grant
   the full requested profile or nothing.
 - `strictAutoReview` is never set.
 - The voice tool `codex__confirm_codex_approval` keeps its
-  `{approval_id, approved: boolean}` schema. `approved:true` maps to the
+  `{approval_id, approved: boolean}` schema (renamed `host__confirm_approval` in
+  [07](07-executor-boundary.md), then folded into the unified
+  `confirm(id, accepted)` in [08](08-project-and-work.md); the decision shape is
+  unchanged throughout). `approved:true` maps to the
   “Accept” row for the kind the controller is holding; the tool never produces a
   session grant.
 
 ### Voice path (unchanged authority model)
 
-1. Context-only host fact with opaque `approval_id`, kind, neutral summary.
+1. Context-only host fact with opaque `approval_id`, kind, neutral summary, and (08) the asking work's project name and session title.
 2. Preemptive spoken question; at most two attempts and one host clarification.
 3. `ConfirmationTurnIsolation` keeps the answer response a silent carrier.
 4. ASR text is Memory / provenance only; it never spends the controller.

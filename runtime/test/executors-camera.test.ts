@@ -44,6 +44,7 @@ test('camera is a registry adapter with the Python snapshot manifest', () => {
   assert.equal(adapter.manifest, CAMERA_MANIFEST)
   assert.deepEqual(CAMERA_MANIFEST, {
     name: 'cam',
+    display_name: 'Camera',
     ops: [{
       name: 'snapshot',
       description: '查看当前摄像头画面，返回带观察时间的图片引用',

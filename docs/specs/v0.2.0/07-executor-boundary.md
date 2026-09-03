@@ -66,7 +66,9 @@ validation (`codex-host-config`, `codex-launch-profile`, `codex-version`,
    `runtime/src/executors/codex/` and is reachable only through
    `executors/codex/index.ts`. Core never imports it; composition roots do.
 2. **Role, not name.** The host dispatches coding work to "the configured
-   executor with role `coding`", never to the string `'codex'`.
+   executor with role `coding`", never to the string `'codex'`. On the voice
+   surface ([08](08-project-and-work.md)), the model sees executor names only
+   via the `dispatch.executor` enum compiled from manifests.
 3. **Host-owned confirmations.** Approval and project confirmation become
    executor-agnostic host capabilities. An executor *declares* that it needs
    an approval surface; it does not own the tool or the FSM.
@@ -87,8 +89,17 @@ validation (`codex-host-config`, `codex-launch-profile`, `codex-version`,
   test-only. ACP remains out of v0.2.0.
 - Changing Windows approval behaviour, launch profiles, or the broker shapes
   agreed in [01](01-codex-approvals.md).
-- Merging approval and project confirmation into one tool (rejected in the
-  2026-09-02 handoff; still rejected).
+- Merging the two confirmation state machines. `ApprovalController` and
+  `ProjectConfirmationController` stay separate structures with their own
+  TTLs, wire frames, and tests (rejected in the 2026-09-02 handoff; still
+  rejected). What [08](08-project-and-work.md) unifies is only the
+  **voice-facing tool**: one `confirm(id, accepted)` whose `id` selects *which
+  FSM handles the call* — the approval view's `pending_approval_id`, or the
+  project confirmation's `pending_confirmation_id`; matching neither returns
+  `unknown_confirmation`. Both id spaces come from the host `idFactory`, so the
+  selection is unambiguous. Selecting an FSM is not deciding: each FSM still
+  applies its own carrier / origin / epoch / revision isolation before it
+  accepts a decision, exactly as today.
 - Renaming user-facing environment variables (`NOVA_AUDIO_AGENT_CODEX_*`,
   `CODEX_HOME`). Ownership moves; names do not.
 
@@ -133,6 +144,7 @@ export const executorManifestSchema = z.object({
   display_name: z.string().min(1).max(40),          // new; wire + bubble label
   roles: z.array(z.enum(['coding'])).default([]),    // new; host routes by role
   approvals: z.boolean().default(false),             // new; needs approval surface
+  agent: z.object({ summary: z.string().min(1).max(200) }).optional(),  // new; agent executor
   ops: z.array(opSpecSchema),
   policy: handoffPolicySchema,
   confirm_ttl: z.number().finite().nonnegative().default(0),
@@ -143,6 +155,15 @@ export const executorManifestSchema = z.object({
   with `AssemblyError('no executor with role coding')` when intake is enabled
   and none is registered, and with `'multiple executors with role coding'`
   when more than one is (v0.2.0 admits exactly one).
+- `agent` present makes the executor an **agent executor**: `tool-schema.ts`
+  does *not* compile its ops as `${name}__${op}`; the executor appears to the
+  model only as a value of the `dispatch.executor` enum, and `agent.summary`
+  reaches the model as one `<name>: <summary>` line inside the `dispatch` /
+  `cancel` tool **description** — a realtime function schema cannot be assumed
+  to attach a description to an individual enum value
+  ([08](08-project-and-work.md)). Executors without `agent` (`cam`, `search`,
+  `watcher`, `memory`) keep their direct tools. `agent` is orthogonal to
+  `roles`: `roles` decides host routing, `agent` decides model visibility.
 - `approvals: true` tells assembly to attach the host approval surface
   (`host__confirm_approval` tool, `executor.approval` wire, approval FSM). The
   executor exposes its broker through a typed port (below); the FSM never
@@ -182,6 +203,15 @@ logic) implements this port. `service.ts` keeps its FSM but talks to
 `ApprovalBroker` only; the ~40 `#…CodexApproval` methods are renamed
 `#…Approval` with no behaviour change (mechanical rename, covered by the
 existing approval tests).
+
+One thing this volume does **not** have to solve, because M1.5a keeps one
+running work: two works asking for permission at once. [08](08-project-and-work.md)
+(Approval queue) adds a FIFO queue keyed `{work_id, approval_id}` behind this
+same port — exactly one approval voice-visible at a time, later ones queued
+with their Codex request still open, the request naming the asking work's
+project and session title. The port shape above is what makes that a
+broker/controller change rather than an FSM change, so nothing here needs to
+anticipate it beyond keeping `approval_id` the only handle the FSM holds.
 
 ### Project confirmation
 
@@ -262,12 +292,12 @@ Golden-tested transcripts must be identical for the Codex case.
 
 `runtime/src/executors/fixture/` ships a deterministic executor registered
 through the same `executors/index.ts` path as Codex, with
-`roles: ['coding']`, `approvals: true`, ops `run`, `steer`, `status`,
-`project` mirroring the Codex project manifest shapes, and a scripted
+`roles: ['coding']`, `approvals: true`, `agent: {summary}`, ops `run`, `steer`,
+`status`, `cancel` mirroring the Codex manifest shapes (08), and a scripted
 `ApprovalBroker`. It is selectable only when `NODE_ENV !== 'production'` or
 via `NOVA_AUDIO_AGENT_EXECUTORS=fixture` in tests. A single test
 (`runtime/test/executor-boundary-fixture.test.ts`) drives: assembly by role,
-intake dispatch, progress, an approval round-trip through `host__confirm_*`,
+intake dispatch through `dispatch`, progress, an approval round-trip through `confirm`,
 a project confirmation round-trip, and terminal handoff — **with no Codex
 module loaded** (asserted via `require.cache` / module registry inspection).
 If that test cannot be written without importing Codex, the boundary is not
@@ -317,8 +347,8 @@ Deterministic:
 - [ ] Fixture executor test passes with no Codex module in the module registry.
 - [ ] Assembly by role: zero coding executors with intake enabled →
       `AssemblyError`; two → `AssemblyError`; one → dispatch reaches it.
-- [ ] Manifest schema: `roles`, `display_name`, `approvals` validated;
-      `confirm_ttl` removed; existing manifests updated.
+- [ ] Manifest schema: `roles`, `display_name`, `approvals`, optional `agent`
+      validated; `confirm_ttl` removed; existing manifests updated.
 - [ ] Approval FSM tests pass unchanged against a fake `ApprovalBroker`.
 - [ ] Wire schema tests for `executor.state` / `project.state` /
       `executor.approval` / `executor.approval_decision`; old type names
@@ -344,4 +374,4 @@ Live (behaviour must be identical to the M1 validation table in
 | Decision | Chosen boundary | Rejected alternative |
 |---|---|---|
 | Executor identity in core | Core sees `manifest.name / roles / display_name` and `delegate.executor` only; routing by `roles: ['coding']`; lint + script enforce | Branching on `'codex'`; a `switch` per executor in assemblies; boundary by convention only |
-| Confirmation ownership | Approval and project confirmation are host capabilities; executors declare `approvals: true` and expose an `ApprovalBroker` port | Executor-owned confirmation tools; one merged confirm tool (still rejected) |
+| Confirmation ownership | Approval and project confirmation are host capabilities; executors declare `approvals: true` and expose an `ApprovalBroker` port; the two FSMs stay separate and 08 unifies only the voice-facing `confirm(id, accepted)` tool by id ownership | Executor-owned confirmation tools; one merged confirmation state machine (still rejected) |

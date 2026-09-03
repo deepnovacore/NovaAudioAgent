@@ -74,6 +74,9 @@ export const APP_SERVER_METHOD_SCHEMAS: Readonly<Record<string, MethodSchemaSpec
   'turn/interrupt': method('v2/TurnInterruptParams.json', {
     threadId: 'string', turnId: 'string',
   }, ['threadId', 'turnId']),
+  'thread/name/set': method('v2/ThreadSetNameParams.json', {
+    threadId: 'string', name: 'string',
+  }, ['threadId', 'name']),
 })
 
 const THREAD_NESTED = deepFreeze({
@@ -117,6 +120,9 @@ export const APP_SERVER_INBOUND_SCHEMAS: readonly InboundSchemaSpec[] = deepFree
   {...method('v2/TurnCompletedNotification.json', {
     threadId: 'string', turn: 'object',
   }, ['threadId', 'turn']), nested: TURN_NESTED},
+  method('v2/ThreadNameUpdatedNotification.json', {
+    threadId: 'string', threadName: 'string',
+  }, ['threadId'], ['threadName']),
 ])
 
 export const APP_SERVER_APPROVAL_SCHEMA_FILES: readonly string[] = deepFreeze([

@@ -21,6 +21,7 @@ import {ProjectConfirmationController} from '../src/project-confirmation.js'
 
 const manifest = executorManifestSchema.parse({
   name: 'slow_sim',
+  display_name: 'Slow Sim',
   policy: handoffPolicySchema.parse({
     channel: 'slow_sim',
     priority: 50,
@@ -432,6 +433,7 @@ function testManifest(options: {
 }) {
   return executorManifestSchema.parse({
     name: 'route_sim',
+    display_name: 'Route Sim',
     policy: {
       channel: 'route_sim',
       priority: 50,
@@ -1634,6 +1636,7 @@ test('speech is still consumed when the action is rejected', () => {
  */
 const externalManifest = executorManifestSchema.parse({
   name: 'ext_sim',
+  display_name: 'Ext Sim',
   policy: handoffPolicySchema.parse({
     channel: 'ext_sim',
     priority: 50,

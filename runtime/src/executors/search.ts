@@ -71,6 +71,7 @@ export const SEARCH_POLICY = handoffPolicySchema.parse({
 
 export const SEARCH_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   name: 'search',
+  display_name: 'Search',
   ops: [SEARCH],
   policy: SEARCH_POLICY,
 })

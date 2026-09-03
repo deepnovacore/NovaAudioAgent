@@ -29,6 +29,7 @@ export const CAMERA_POLICY = handoffPolicySchema.parse({
 
 export const CAMERA_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   name: 'cam',
+  display_name: 'Camera',
   ops: [SNAPSHOT],
   policy: CAMERA_POLICY,
 })

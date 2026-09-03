@@ -8,7 +8,7 @@ const summary = z.string().min(1).max(180)
 const credentialName = /(?:^|[\s_-])(?:[a-z0-9]+[_-])*?(?:secret|token|password|api[_-]?key|access[_-]?key|authorization)(?:[_-][a-z0-9]+)*(?:\s*[:=]|\s+)|(?:^|\s)--?(?:token|password|secret|api[_-]?key|access[_-]?key|authorization)(?:=|\s+)/iu
 const executorResultBodySchema = z.object({
   delegate_id: identifier, executor: identifier,
-  outcome: z.enum(['ok', 'failed', 'refused', 'unknown']), summary,
+  outcome: z.enum(['ok', 'failed', 'refused', 'unknown', 'cancelled']), summary,
   started_at: z.number().finite().nonnegative(), ended_at: z.number().finite().nonnegative(),
   changed_files: z.number().int().nonnegative().nullable(),
 }).refine(value => value.ended_at >= value.started_at, {
@@ -16,7 +16,7 @@ const executorResultBodySchema = z.object({
 })
 export const executorProgressSchema = z.object({
   type: z.literal('executor.progress'), delegate_id: identifier, executor: identifier,
-  phase: z.enum(['started', 'working', 'completed', 'failed', 'refused', 'unknown', 'alert']),
+  phase: z.enum(['started', 'working', 'completed', 'failed', 'refused', 'unknown', 'cancelled', 'alert']),
   summary, level: z.enum(['milestone', 'detail']), ts: z.number().finite().nonnegative(),
 })
 export type ExecutorProgress = z.infer<typeof executorProgressSchema>
@@ -76,7 +76,7 @@ export function projectExecutorEvent(event: EventRecord, runtime: RuntimeEvidenc
   } else {
     const outcome = event.kind === 'deadline' ? 'unknown' : event.payload.outcome
     phase = outcome === 'ok' ? 'completed' : outcome
-    const fallback = outcome === 'ok' ? `${label} 已完成任务。` : `${label} ${outcome === 'unknown' ? '结果尚未确认' : outcome === 'refused' ? '请求被拒绝' : '执行失败'}。`
+    const fallback = outcome === 'ok' ? `${label} 已完成任务。` : `${label} ${outcome === 'unknown' ? '结果尚未确认' : outcome === 'refused' ? '请求被拒绝' : outcome === 'cancelled' ? '任务已停止' : '执行失败'}。`
     text = event.kind === 'handoff' ? safeProgressSummary(event.payload.content.summary, fallback) : fallback
     const changed = event.kind === 'handoff' ? event.payload.content.changed_files : null
     result = {delegate_id: id, executor: delegate.executor, outcome, summary: text,

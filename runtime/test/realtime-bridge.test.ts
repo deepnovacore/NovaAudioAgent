@@ -24,6 +24,14 @@ import { compileToolSchema } from '../src/tool-schema.js'
 
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/bridge/v1')
 
+function parseManifest(entry: unknown): ExecutorManifest {
+  const raw = {...entry as Record<string, unknown>}
+  if (typeof raw.display_name !== 'string' || raw.display_name === '') {
+    raw.display_name = typeof raw.name === 'string' && raw.name !== '' ? raw.name : 'Executor'
+  }
+  return executorManifestSchema.parse(raw)
+}
+
 /**
  * Fixed so the digest is reproducible across runs.
  *
@@ -145,7 +153,7 @@ class ScriptedRuntime implements BridgeRuntime {
 
 async function runScenario(scenario: Scenario): Promise<Record<string, unknown>> {
   const clock = new VirtualClock()
-  const manifests = scenario.manifests.map(entry => executorManifestSchema.parse(entry))
+  const manifests = scenario.manifests.map(entry => parseManifest(entry))
   const memory = new Memory({policies: manifests.map(manifest => manifest.policy)})
   for (const item of scenario.memory ?? []) {
     memory.append(item.channel, {
@@ -506,7 +514,7 @@ test('a recall origin is required by the bridge and again by recall itself', () 
   // HMAC over the query, no clock read -- for a call that cannot succeed. Kept because the oracle
   // keeps it; a mutation sweep will report it as undetected, and that is correct.
   const clock = new VirtualClock()
-  const manifests = [executorManifestSchema.parse(document.scenarios[0]!.manifests[0])]
+  const manifests = [parseManifest(document.scenarios[0]!.manifests[0])]
   const memory = new Memory({policies: manifests.map(manifest => manifest.policy)})
   const runtime = new ScriptedRuntime(
     clock,
@@ -547,7 +555,7 @@ test('a clock that moved backwards reports zero elapsed rather than a negative',
       return value
     },
   }
-  const manifests = [executorManifestSchema.parse(document.scenarios[0]!.manifests[0])]
+  const manifests = [parseManifest(document.scenarios[0]!.manifests[0])]
   const memory = new Memory({policies: manifests.map(manifest => manifest.policy)})
   memory.append('conversation', {
     ts: 1,
@@ -598,6 +606,7 @@ test('a container summary renders as canonical JSON, which is a recorded diverge
   // The test exists so a future manifest that loosens one does not change behavior unnoticed.
   const manifest = executorManifestSchema.parse({
     name: 'loose_sim',
+    display_name: 'Loose Sim',
     policy: {
       channel: 'loose_sim',
       priority: 50,

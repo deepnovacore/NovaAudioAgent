@@ -507,7 +507,8 @@
                       "ok",
                       "refused",
                       "unknown",
-                      "failed"
+                      "failed",
+                      "cancelled"
                     ]
                   },
                   "trust": {
@@ -1011,7 +1012,8 @@
                           "ok",
                           "refused",
                           "unknown",
-                          "failed"
+                          "failed",
+                          "cancelled"
                         ]
                       },
                       "trust": {
@@ -1558,7 +1560,8 @@
                             "ok",
                             "refused",
                             "unknown",
-                            "failed"
+                            "failed",
+                            "cancelled"
                           ]
                         },
                         {

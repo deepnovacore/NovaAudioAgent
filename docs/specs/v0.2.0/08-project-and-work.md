@@ -1,8 +1,8 @@
 # 08. Project, Session and Work
 
-> 摘要：语音模型不再操作 workspace/session 状态机。今天的 `codex__project` 六个 action 加独立确认工具，换成四个宿主工具：`work__dispatch(objective, project?, session?)`、`work__steer`、`work__status`、`work__cancel`，以及只读 `project__sessions` 和唯一保留 propose-and-confirm 的 `project__create`。FastBrain 工具名里**不再出现任何执行器前缀**。项目清单（roster）作为版本化 `workspace_context` item 常驻 ContextView，模型据此直接选项目；切换既有项目**不确认**（可逆），新建才确认（不可逆）。session 由 `'latest' | 'new' | <session_id>` 表达，宿主永远恢复该项目最近线程。适配器锁从全局单飞改为**每 session 一把**，不同项目可并行；取消的是正在跑的 **work**，session 与历史保留，取消是确认式而非乐观。session 标题由宿主从 objective 生成并经 `thread/name/set` 写回 Codex，Codex 成为标题的单一真相源。里程碑 **M1.5b**，依赖 07。
+> 摘要：语音模型不再操作 workspace/session 状态机，也不再看见项目清单。今天的 `codex__project` 六个 action 加两个独立确认工具，换成三个通用宿主工具：`dispatch(executor, instruction)`、`cancel(executor, instruction?)`、`confirm(id, accepted)`；非 agent 执行器（`cam` / `search` / `watcher` / `memory`）保持 `${name}__${op}` 直接工具不变。项目/会话编排下沉到 **coding 执行器侧**的 intake coordinator：`assess` 一步兼任 kind / project / session 决策（`latest | new` 仅二选一）；roster 只作为 coordinator 输入，不进 ContextView。切换既有项目**不确认**（可逆），新建才确认（不可逆）。适配器锁从全局单飞改为**每项目一把**（`Map<workspace_id, RunSlot>`，跨项目全局 cap 3）；取消的是正在跑的 **work**，session 与历史保留。多个 work 并发时审批按 `{work_id, approval_id}` FIFO 排队，一次只对语音暴露一条。session 标题由宿主从 work order 生成，经 `RunInput.threadName` 由 transport 写回 Codex。里程碑 **M1.5b**，依赖 07。
 >
-> 对照 qwen-audio-agent 的差异是**有意的**：它把项目选择下沉到后端 coordinator（一个更慢的模型），我们把判断留给已在场的 FastBrain、把记账留给确定性宿主，因为 Surrogate / Floor / 气泡都依赖宿主知道"当前在哪个项目"。
+> 修订（2026-09-03）：吸收对本卷改版稿的独立评审 12 条——审批 FIFO 队列、`cancel` 目标解析定型、`create` 仍走规划、跨项目选择必须给 `project_evidence`、并发改为每项目一槽、`dispatch` / `cancel` 为全局宿主工具绑定、`cancelDelegate` 论证更正。
 
 ## Baseline (today)
 
@@ -19,23 +19,22 @@
   audible pause.
 - `session` and `workspace` are both model-visible concepts; users never say
   "线程三".
-- Store (`codex-project-store.ts`): `WorkspaceRecord{display_name,
+- Store (`project-store.ts`): `WorkspaceRecord{display_name,
   canonical_path, active_session_id, last_used_at}`,
   `ProjectSessionRecord{display_title, codex_thread_id, state, last_used_at}`.
   No summary/preview. Default title `任务 N`
-  (`DEFAULT_SESSION_TITLE`, line 57). Title otherwise comes from the model's
+  (`DEFAULT_SESSION_TITLE`). Title otherwise comes from the model's
   `session` string.
 - Codex 0.152.0 `Thread` has `name` ("Optional user-facing thread title"),
   `preview` (first user message), `recencyAt`; methods `thread/name/set`,
-  notification `thread/name/updated`. **No** auto-naming in app-server; on this
-  machine `name` is set only on VS Code-sourced threads (71/643), never on
-  app-server-sourced ones (0). Nova handles neither method.
+  notification `thread/name/updated`. **No** auto-naming in app-server; Nova
+  handles neither method on app-server-sourced threads.
 - Concurrency: Runtime admits any number of delegates (`runtime.ts:1565`
   refuses only identical requests); adapters serialize with `#runActive`
-  (`codex-common.ts:190`, `codex-project-live.ts:280`) → second run = `busy`.
+  (`codex-common.ts:190`, `adapter-project.ts:280`) → second run = `busy`.
 - Cancel: `ExecutorDispatchContext.signal` reaches adapters
-  (`codex-project-live.ts:283`); transport sends `turn/interrupt`
-  (`codex-app-server-transport.ts:1176`); `causal-runtime.ts:447` aborts on
+  (`adapter-project.ts:283`); transport sends `turn/interrupt`
+  (`app-server-transport.ts:1176`); `causal-runtime.ts:447` aborts on
   shutdown/deadline. **No model-facing cancel tool**, no per-delegate abort API.
 - `workspace_context` item: produced by
   `RealtimeAssembly.#injectCurrentProjectContext` (`realtime-assembly.ts`
@@ -50,201 +49,548 @@
 ## Goals
 
 1. **One round-trip for the common case.** "改博客的暗色模式" with `blog`
-   existing and not active = one `work__dispatch` call, no confirmation, no
-   list.
-2. **No executor name in the model's tool table.** Assert it.
-3. **Session invisible by default.** `latest` / `new` cover normal turns;
-   historical resume is one read-only lookup away.
+   existing and not active = one `dispatch(executor:'codex', instruction:…)`
+   call; coordinator picks the project, no confirmation, no list.
+2. **Minimal model tool surface.** Agent executors expose only `dispatch` /
+   `cancel` / `confirm` on the voice side; non-agent executors keep direct ops.
+   The voice model sees executor names **only** as the `dispatch.executor`
+   enum (from manifests; see 07).
+3. **Session invisible by default.** Coordinator chooses `latest` or `new`;
+   users never say "线程三"; no `<session_id>` in the model tool table.
 4. **Concurrent projects.** Work in A keeps running while B is dispatched;
-   roster shows both; Floor semantics untouched.
+   desktop roster shows both; Floor semantics untouched.
 5. **Confirmed cancellation of work, not sessions.**
-6. **Titles humans can say.** Host-generated from the objective, written to
+6. **Titles humans can say.** Host-generated from the work order, written to
    Codex, mirrored back; `preview` as fallback; `任务 N` removed.
+7. **Coordinator in the executor, not the voice model.** Project selection,
+   session resolution, and cancel target resolution happen in
+   `executors/coding/intake` via a cheap assess slot; the voice model sends
+   natural language only.
 
 ## Non-goals
 
-- Backend-side project selection (qwen coordinator pattern). Rejected: routing
-  by a slow model; host loses "which project" and Surrogate / bubbles / Floor
-  starve.
+- Roster in ContextView for the voice model. The roster is coordinator input
+  and desktop UI state only; `#renderActiveProjectContext` keeps
+  workspace/session lines, not project lists.
 - Voice archive / delete of sessions or workspaces — remains the desktop
   maintenance surface (`managed-workspace-maintenance.ts`).
 - Multiple live Orbs; cross-project session merge; changing `plan_readback`
   semantics or the intake question policy from [02](02-intake-and-planning.md).
+  `create` confirming under every `plan_readback` value is not an exception to
+  this: that confirmation is the project-confirmation FSM (as today), not plan
+  readback.
 - Widening approval decisions (still boolean + scope per [01](01-codex-approvals.md)).
+- Historical resume by `<session_id>` on the voice surface — desktop remains
+  the maintenance/resume surface for named threads.
+- Two sessions of the **same** project running at once. The run slot is
+  per workspace because each workspace has one `CODEX_HOME` and therefore one
+  app-server child; a second live session in the same project would need a
+  second child under the same home, which is out of scope here. Concurrency is
+  across projects only.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Voice[Voice model Qwen realtime] -->|"dispatch(executor, instruction)"| Host[Host realtime/service]
+  Voice -->|"cancel(executor, instruction?)"| Host
+  Voice -->|"confirm(id, accepted)"| Host
+  Host -->|"AgentExecutor port"| Intake[executors/coding/intake coordinator]
+  Intake -->|"assess: kind/project/session + slots"| LLM[DashScope surrogate_model, default qwen-flash]
+  Intake -->|"fact / proposal back"| Host
+  Intake -->|"run{work_order, project, session}"| Adapter[executors/codex/adapter-project]
+  Adapter -->|"per-workspace slot, global cap 3"| Codex[codex app-server]
+  Host -->|"direct ops unchanged"| Others[cam / search / watcher / memory]
+```
+
+- **Agent executors** (manifest has `agent: {summary}`; today `codex` with
+  `roles: ['coding']`, later `autoglm`): voice model calls `dispatch` /
+  `cancel`; host routes through the `AgentExecutor` port to
+  `executors/coding/intake`.
+- **Non-agent executors** (no `agent`: `cam`, `search`, `watcher`, `memory`): unchanged
+  `${name}__${op}` tools compiled from manifests; no coordinator.
 
 ## Model-facing tools (host-owned)
 
 All compiled by `tool-schema.ts` as host tools (alongside `update_*`,
-`memory__recall`). The coding executor's manifest ops (`run / steer / status /
-project`) are **not** compiled into the model tool table when
-`roles` includes `coding`; the host routes to them.
+`memory__recall`). An executor with `agent: {summary}` on its manifest
+([07](07-executor-boundary.md)) is an **agent executor**: its ops
+(`run / steer / status / cancel`; project bookkeeping is applied by the coordinator through
+adapter methods, not through a model-facing op) are **not** compiled as `${name}__${op}`;
+the name appears only as a value of the `dispatch.executor` enum, and the host
+routes to the ops internally. Executors without `agent` keep their direct tools.
+
+`dispatch` and `cancel` are **one global binding each**, not one binding per
+agent executor. `tool-schema.ts` gains a binding kind `host` (today's kinds are
+`delegate | update | query`) whose `executor` / `op` are null; the service
+router reads the call's `executor` argument and resolves the agent executor by
+name at call time. The enum values are collected from every manifest carrying
+`agent`; the per-executor summaries go into the **tool description** as one
+line per executor (`<name>: <agent.summary>`), because a realtime function
+schema cannot be assumed to support `oneOf` / `const` branches with a
+per-enum-value description. Zero agent executors registered → neither tool is
+compiled.
 
 | Tool | Kind | Params | Notes |
 |---|---|---|---|
-| `work__dispatch` | write | `objective` (1–4000), `project?` (1–80, roster name), `session?` = `'latest'` \| `'new'` \| `<session_id>` (default `latest`) | Enters intake exactly as today's `start_session`/`resume_session` with `work_order`; `plan_readback` gate unchanged |
-| `work__steer` | write | `work` (see Work reference), `instruction` (1–2000) | Routes to executor `steer` op |
-| `work__status` | readonly | `work?` | Routes to executor `status`; default: running work of the active project, else the latest terminal one |
-| `work__cancel` | write | `work` | Confirmed cancel (below) |
-| `project__sessions` | readonly | `project` | Up to 5 most recent `{session_id, title, last_used_at, running, work_id?}` |
-| `project__create` | write | `name` (1–80) | Propose-and-confirm through `host__confirm_project` (from 07) — the only remaining confirmation on this surface |
+| `dispatch` | write (`host` binding) | `executor` (enum of agent-executor names from manifests), `instruction` (1–4000) | Description lists `<name>: <agent.summary>` per executor; host resolves the agent executor by name, then opens the intake coordinator or a direct `run` for future non-intake agents |
+| `cancel` | write (`host` binding) | `executor` (enum), `instruction?` (1–4000) | Same description convention; target resolution in the executor (below); `async` |
+| `confirm` | write | `id`, `accepted` (bool) | Unified yes/no for project proposals and executor approvals (below) |
 
-**Work reference.** `work` accepts a `work_id` **or** a roster project name.
-The host resolves a project name to that project's single running work; if
-the project has more than one running work the call fails with
-`ambiguous_work` listing `work_id`s, and if none with `no_running_work`.
+Non-agent executors: `${name}__${op}` direct tools unchanged (e.g.
+`search__query`, `cam__capture`).
 
-**Resolution errors are structured, never guessed.** `work__dispatch` with a
-`project` not in the roster returns `unknown_project` with up to 3
-`suggestions` (existing normalized-name matching in the store) and
-`hint: 'project__create'`; the model asks the user, it does not create. Two
-roster names both matching (post-normalization) returns `ambiguous_project`.
+**Removed:** `codex__project` (all six actions), `codex__confirm_project_action`,
+`codex__confirm_codex_approval` / `host__confirm_approval`,
+`codex__steer`, `codex__status`, and the interim `work__*` / `project__*`
+host tools. Frontend instructions in `qwen.ts` and intake fact text are
+rewritten for the new names.
 
-**Switching is a side effect, not an action.** `work__dispatch(project: X)`
-with `X ≠ active` sets `X` active (`selectWorkspaceExact`) before intake; no
-proposal, because switching is reversible. The `intake` still applies its own
-gates to the work order.
+**No status tool.** There is no voice-facing status tool and no `status`
+coordinator kind. "跑到哪了" is answered from the existing
+`active_executor_context` block in ContextView (`qwen.ts:85–93`), which already
+carries the latest in-flight delegate's channel, state, elapsed seconds and
+internal activity, with `memory__recall` as the fallback for older progress —
+both unchanged from today. `steer` exists only as a coordinator kind reached
+through `dispatch` (see Coordinator); it is not a tool the model can name.
 
-**Session semantics.** `latest` resumes `active_session_id` of the project
-(or starts the first session if none). `new` starts a fresh thread and makes
-it active. `<session_id>` must belong to `project` (else `session_mismatch`)
-and becomes active on success. If the resolved session is `running`, dispatch
-fails with `busy_session` unless `session: 'new'`; the model may offer
-`work__steer` instead.
+### `dispatch`
 
-Removed: `codex__project` (all six actions), `codex__confirm_project_action`,
-`codex__steer`, `codex__status`, `codex__confirm_codex_approval` (renamed
-`host__confirm_approval` in 07). Frontend instructions in `qwen.ts` and the
-intake fact text are rewritten for the new names.
+1. Host resolves `executor` against registered agent manifests; unknown →
+   structured tool error.
+2. Host calls `AgentExecutor.openDispatch(draft, userText, originRef,
+   sessionEpoch)`.
+3. Intake coordinator runs `assess` (see Coordinator) → branches on `kind`.
+4. For `kind: 'work'`, existing intake flow: clarify → plan → dispatch
+   through `dispatchExternal` / `dispatchConfirmedExternal`; `plan_readback`
+   gate unchanged from [02](02-intake-and-planning.md).
+5. For `kind: 'create'`, intake **continues** — see Create below. Creating a
+   workspace is irreversible, so it always confirms, but it does not
+   short-circuit clarification or planning.
+6. For `switch | steer | cancel`, coordinator resolves project/session or the
+   target work and routes directly to the adapter; intake closes without a
+   plan cycle. `kind: 'cancel'` is deliberately redundant with the explicit
+   `cancel` tool: a voice model that routes "取消" through `dispatch` still
+   lands on the same resolver instead of starting new work.
+7. Switching an existing project (`switch`) sets it active before work; no
+   proposal, because switching is reversible.
 
-## Roster in ContextView
+### `cancel`
 
-`#injectCurrentProjectContext` gains a `<projects>` block inside the same
-`workspace_context` item (same delivery path, same `replace_provider_item`
-semantics):
+Cancel is an explicit tool (safety action, not classified from speech). Target
+resolution lives in the executor and is **asynchronous**:
+`AgentExecutor.cancel(instruction: string | undefined, context): Promise<CancelResult>`.
+It is async because the >1 case may need one model call; the 0 and 1 cases
+resolve without any model.
 
+| Running works | Behaviour |
+|---|---|
+| 0 | `not_running` |
+| 1 | Cancel that work immediately — no model call, `instruction` ignored |
+| >1, no `instruction` | `ambiguous_work` listing `{work_id, project, title}` |
+| >1, with `instruction` | One `resolveCancelTarget` call (below); `null` → `ambiguous_work` with the same list |
+
+```ts
+// Dedicated tiny call on the same `surrogate_model` as `intake.assess`.
+// The cancel target is NOT a field on the assess schema: assess answers
+// "should I ask again / which project" for an incoming objective, and a cancel
+// carries no objective, so folding a `work_id` into it would widen the intake
+// schema for a call that never opens an intake.
+resolveCancelTarget(
+  instruction: string,
+  running: readonly {work_id: string; project: string; title: string}[],
+): Promise<{target_work_id: string | null}>
 ```
-<projects active="blog">
-blog · 2h · running work=w-7f3a
-pricing-svc · yesterday
-nova-audio-agent · 3d · running work=w-91c0
-</projects>
+
+The result is validated against the list the host passed in: `target_work_id`
+must be one of the `running` ids, otherwise it is treated as `null`. A `null`
+(or malformed / failed call) yields `ambiguous_work` with
+`[{work_id, project, title}]` so the voice model can ask which one — the host
+never guesses a target.
+
+On a resolved target the adapter aborts the slot, sends `turn/interrupt`, and
+returns handoff `{outcome: 'cancelled', …}`. Session and history survive.
+
+### `confirm`
+
+One tool for all yes/no questions the host surfaces. The `id` selects **which
+FSM handles the call**, nothing more:
+
+| `id` matches | Route |
+|---|---|
+| `approvalController.view.pending_approval_id` | Existing approval FSM |
+| `projectConfirmation.view.pending_confirmation_id` | Existing project-confirmation FSM |
+| neither | `unknown_confirmation` |
+
+Routing is not a decision. Once an FSM has the call it still applies its own
+carrier / origin / epoch / revision isolation exactly as today
+(`ConfirmationTurnIsolation`, the two separate instances in `service.ts`)
+before the decision is accepted; a call that fails isolation is refused by that
+FSM, not re-routed to the other one.
+
+`ApprovalController` and `ProjectConfirmationController` stay separate FSMs —
+merging them is still rejected ([07](07-executor-boundary.md) Non-goals); only
+the tool is unified. Ids come from host `idFactory` and do not collide. Prompt rules follow today's approval bar: call only when the user
+clearly accepts or declines this turn; call once; same response — no speech
+and no other tools; when ambiguous, wait for host clarification.
+
+### Approval queue (concurrent works)
+
+Concurrency makes approvals collide: two running works can each hit an
+`on-request` permission at the same time, and the voice surface can only hold
+one yes/no question. `ApprovalController` / `ApprovalBroker`
+([07](07-executor-boundary.md) approval port) therefore gain a **FIFO queue
+keyed by `{work_id, approval_id}`**:
+
+- Exactly one approval is voice-visible at a time. It is the head of the queue,
+  and it is the only one whose `approval_id` appears in
+  `approvalController.view.pending_approval_id`.
+- Later approvals from other running works are **queued, not refused**. This
+  replaces today's `offer()` early return: `approval.ts:152` answers `null`
+  when `#current !== null`, and the adapter turns that into a decline. Queued
+  entries keep their Codex server request open — Codex is already blocked
+  waiting for a permission response — so a queued approval loses nothing but
+  its turn.
+- The TTL (`CODEX_APPROVAL_TTL_SECONDS`) starts when the entry becomes **head**,
+  not when it is enqueued, and the expiry timer is armed at the same moment.
+  Otherwise a queued approval would burn its TTL unheard and expire into a
+  `decline` (`#invalidateCurrent` resolves `decline`) — the exact failure the
+  queue exists to prevent. Queue position has no deadline of its own.
+- The head is replaced when it is decided (accept / decline) or invalidated
+  (expiry, session epoch change, carrier loss). The next entry becomes visible
+  in arrival order; making it visible re-runs the normal prompt path, so the
+  user hears the queued question as its own approval turn.
+- Because two works can be asking, the approval host fact and banner copy name
+  the **project and session title** of the asking work
+  (`"blog / 暗色模式：要改 3 个文件吗？"`), taken from the run slot, not from
+  the executor's `operation_summary`. Without that the user cannot tell which
+  work is asking.
+- Queue depth is bounded by `MAX_CONCURRENT_WORK` × the per-work in-flight
+  approval limit of 1 (Codex asks one permission per turn), so no extra bound
+  is needed.
+- Decisions never cross works: `acceptDecision` matches both `work_id` and
+  `approval_id`, so a stale `confirm` for a finished work is `unknown`, exactly
+  as today's single-slot behaviour.
+
+## Coordinator (`executors/coding/intake`)
+
+Intake moves from `realtime/` to `executors/coding/` (role-level shared, not
+codex-exclusive). The cheap `assess` slot gains coordinator fields:
+
+```ts
+kind: 'work' | 'steer' | 'cancel' | 'switch' | 'create' | 'unclear'
+project: string | null           // must be exact roster display_name, or null
+project_evidence: string | null  // required when project ≠ active project
+session: 'latest' | 'new'
 ```
 
-- At most 10 projects ordered by `last_used_at`; names are `display_name`;
-  relative age in the user's language; `running` lists `work_id`s.
-- Budget: the whole item stays within the existing 300-token header budget
-  (`workspace-graph/context.ts:27–32`); if the roster would exceed it, drop
-  oldest non-running entries first, never running ones.
-- Revision bumps when: store `active_binding_revision` changes, a project is
-  created/renamed, or a work starts/ends (`onActiveWorkChanged` already exists
-  in `service.ts`).
-- **Authority.** The roster is authoritative for choosing an existing project
-  in `work__dispatch` / `work__cancel` / `project__sessions`. The
-  `<workspace_graph_context>` header remains low-authority and cannot
-  authorize anything (`WORKSPACE_GRAPH_POLICY` wording updated to say the
-  roster, not the graph, is the source for project names).
-- The item still cannot create a response (`protocol.ts:206`).
+There is **no `work_id` field**: the cancel target is resolved by the separate
+`resolveCancelTarget` call above, not by assess.
+
+**Assess inputs** (not visible to the voice model):
+
+- Roster: ≤10 items `{name, last_session_title?, running: [{work_id, title}]}`,
+  ordered by `last_used_at`.
+- Active project name.
+- User text / instruction.
+
+**Assess rules:**
+
+- Pick `project` only from roster verbatim names.
+- Name not in the roster: **explicit create intent** ("新建一个 …", "开个新项目
+  叫 …") → `create`; anything else → `unclear`. A name that merely does not
+  match is never turned into a create proposal.
+- Same running session, user adds requirements → `steer`, not new work.
+- `unclear` → existing `candidate_question` mechanism (question budget from
+  [02](02-intake-and-planning.md)).
+
+**Wrong-project protection.** Selecting a project other than the active one is
+the expensive mistake: work lands in the wrong repository and the user may not
+notice until Codex reports. So a non-active selection must be *quoted*, not
+inferred:
+
+- Whenever `project` is not the active project, assess must also return
+  `project_evidence`: the span of the user's utterance that names it
+  ("改**博客**的暗色模式" → `博客`).
+- The host verifies that span occurs in the raw utterance, comparing after
+  `stripLikePython`-style whitespace and case normalisation (`python-text.ts`).
+  Missing, empty, or not found → the result is treated as `unclear` and
+  FrontBrain asks the one-line question "是在 X 里做吗？" naming the selected
+  project. A hallucinated project name therefore costs one question, never a
+  dispatch.
+- Selecting the **active** project needs no evidence: `project_evidence` may be
+  null and is not checked.
+- The readback line always names the project — the `summary` sentence under
+  `plan_readback: 'summary'`, the proposal text under `'confirm'` — so even a
+  verified selection is audible before Codex starts. `plan_readback: 'silent'`
+  has no line by definition; a user who turned readback off accepts that a
+  cross-project dispatch is only visible on the desktop, and the evidence check
+  above is then the only guard.
+
+**Kind routing after assess:**
+
+| `kind` | Path |
+|---|---|
+| `work` | Clarify → plan → dispatch (today's intake) |
+| `create` | Intake continues (below); always confirms |
+| `switch` / `steer` / `cancel` | Adapter resolver, intake closes |
+| `unclear` | Ask one clarifying question |
+
+### Create
+
+`create` sets the intake target to
+`{action: 'create', workspace_display_name: <name from the utterance>}` and
+intake **continues**; it is not a short-circuit. Creating a workspace is
+irreversible, so `create` **always** confirms, regardless of `plan_readback`:
+
+| Utterance | Path | Proposal |
+|---|---|---|
+| Carries a coding goal ("新建一个 foo，把 README 翻译成英文") | clarify → plan, as `work` | `{action: 'create', work_order}` |
+| Create-only ("新建一个项目叫 foo") | no plan cycle | `{action: 'create', work_order: null}` immediately |
+
+Both are today's `ConfirmedProjectOperation` shapes, so no new commit path is
+needed: `commitConfirmed` with `work_order === null` creates an empty
+workspace and claims immediately (`adapter-project.ts` workspace-only branch),
+and with a work order it creates the workspace and then runs the order
+(`#runConfirmed` create branch). `plan_readback === 'confirm'` still gates plan
+readback for `work`; action kinds no longer trigger separate confirm tools —
+all confirmation goes through `confirm(id, accepted)`.
+
+## ContextView (no roster)
+
+`#injectCurrentProjectContext` keeps `<active_project_context>` (active
+workspace path, active session title) and optional low-authority
+`<workspace_graph_context>`. **No `<projects>` block.** The voice model does
+not see project names in context; it sends natural language and the
+coordinator picks from roster input.
+
+Revision bumps when: store `active_binding_revision` changes, active session
+changes, or a work starts/ends. The item still cannot create a response
+(`protocol.ts:206`).
+
+**Concurrent works need identity in the status block.** With one work running,
+"跑到哪了" is unambiguous; with three, `active_executor_context` records
+(`session-state.ts` `ActiveExecutorContextRecord`, up to 3 plus
+`omitted_count`) carry only `delegate_id`, `channel`, `state`, `elapsed_s`,
+`internal_activity` and the executor's `progress_summary` — nothing a person
+can name. Each record's **`host_state` gains host-authored `project` and
+`title`**, read from the run slot that owns the work (never from the
+executor's progress text, which stays non-authoritative data). "博客那个在跑
+测试，pricing 那个刚开始" then comes out of the existing block. This does not
+reintroduce a status tool: it is the same item, one revision, two more
+host-owned fields.
+
+## Session semantics
+
+Only `latest | new`; no `<session_id>` parameter and no `project__sessions`
+tool.
+
+- `latest`: resume `active_session_id` of the resolved project (or start the
+  first session if none).
+- `new`: start a fresh thread and make it active. Allowed **only when that
+  project has no running work** — the run slot is per workspace (see
+  Concurrency), so `new` cannot be used to run a second session of the same
+  project in parallel.
+- A new objective for a project whose work is running → `busy_project`
+  (whichever `session` was chosen), and the voice model offers the two real
+  options: `steer` the running work, or `cancel` it and start over. The
+  coordinator may reach `steer` on the follow-up turn.
+- Removed: `session_mismatch`, `busy_session` (renamed `busy_project`),
+  `project__sessions`, voice-side historical resume by id.
+
+## Resolution errors
+
+Structured, never guessed. Returned to the voice model as tool errors with
+stable codes:
+
+| Code | When |
+|---|---|
+| `unknown_project` | Roster name not found; includes up to 3 `suggestions` (normalized match) and `hint: 'create'` |
+| `ambiguous_project` | Two roster names match after normalization |
+| `busy_project` | New objective for a project that already has a running work; carries `{work_id, title}` and `options: ['steer','cancel']` |
+| `capacity` | `MAX_CONCURRENT_WORK` (3) exceeded; lists running `{work_id, project, title}` |
+| `not_running` | Cancel with zero running works |
+| `ambiguous_work` | Cancel with multiple running works and `resolveCancelTarget` could not pick one; lists `{work_id, project, title}` |
+| `unknown_confirmation` | `confirm` id matches neither approval nor project confirmation |
 
 ## Concurrency
 
-- Adapter lock becomes **per session** (`Map<session_id, run>`), replacing
-  `#runActive`. One Codex thread admits one turn at a time (Codex constraint;
-  same-turn additions go through `steer`); different threads run in parallel.
-- Global cap: `MAX_CONCURRENT_WORK = 3` as a constant with a `ponytail:`
-  comment (ceiling: one app-server child per workspace home; upgrade path is a
-  settings key once real usage shows the need). Exceeding it → `capacity`
-  error naming the running `work_id`s so the model can offer to cancel one.
+- Adapter lock becomes **per workspace** (`Map<workspace_id, RunSlot>`),
+  replacing `#runActive`. One running work per project; different projects run
+  in parallel. Within a project, one Codex thread admits one turn at a time
+  (Codex constraint; same-turn additions go through `steer`), and a second
+  session of the same project is not started while the first runs (see
+  Non-goals) — hence the slot key is the workspace, not the session.
+- Global cap: `MAX_CONCURRENT_WORK = 3` across projects, as a constant with a
+  `ponytail:` comment (ceiling: one app-server child per `CODEX_HOME`, i.e. per
+  workspace; upgrade path is a settings key once real usage shows the need).
+  Exceeding it → `capacity` error naming running works so the model can offer
+  to cancel one.
 - Each workspace already has its own `CODEX_HOME`; the transport factory must
-  allow one live app-server child per workspace concurrently (today's factory
-  assumptions are verified in the checklist).
+  allow one live app-server child per workspace concurrently, and must not
+  admit a second child for a workspace that already has one.
 - Floor is unaffected: each running work is an active-executor channel entry
   at priority 50; two concurrent works do not raise priority.
 
 ## Cancellation
 
-- `work__cancel(work)` → host resolves `delegate_id` → new
-  `CoreRuntime.cancelDelegate(delegate_id, origin_ref)` → `CausalRuntime`
-  aborts that task's controller (the same controller `causal-runtime.ts:447`
-  uses on shutdown).
-- The adapter observes `signal.aborted`, sends `turn/interrupt`, and returns a
-  handoff `{outcome: 'cancelled', trust: 'trusted_system', content: {reason:
-  'user_cancelled'}}`. `ExecutorHandoff.outcome` gains `'cancelled'`
-  (`events.ts`, `ports.ts`, `causal-runtime.ts`). Alternative considered and
-  rejected: overloading `refused` — it would make cancelled work look like a
-  policy refusal in memory and speech.
-- Public state: `running → cancelling → cancelled | failed`. The tool returns
-  `cancelling` immediately; the terminal handoff arrives through the normal
-  path and is spoken like any terminal result ("博客那个已经停了").
-  `cancelling` that exceeds the op's `deadline_budget` becomes `failed` with
-  `cancel_timeout`.
-- Session and history survive; `project__sessions` shows the session with
-  `running: false`.
+Cancellation is deliberately **adapter-level**, not runtime-level:
+
+- `cancel(executor, instruction?)` → host → `AgentExecutor.cancel` → adapter
+  finds the slot → aborts the **run slot's own `AbortController`**, the one the
+  adapter created for that work. The delegate's task controller inside
+  `CausalRuntime` is not touched.
+- `#runBound` (`adapter-project.ts:714`) observes its own AbortError while
+  `slot.cancelling` is set, sends `turn/interrupt` once (`active.close()`
+  already does this), and *returns* handoff `{outcome: 'cancelled', trust:
+  'trusted_system', content: {reason: 'user_cancelled', work_id}}`. Being a
+  normal return, it travels the normal completion path —
+  `CausalRuntime.#ownTask` → `CoreRuntime.postExecutorResult` — so memory,
+  speech, and bubbles need no special case. `ExecutorHandoff.outcome` includes
+  `'cancelled'` (`events.ts`, `ports.ts`). Rejected alternative: overloading
+  `refused` — cancelled work would look like a policy refusal in memory and
+  speech.
+- **`CausalRuntime` is not changed**, and there is no
+  `CoreRuntime.cancelDelegate`. `#ownTask` (`causal-runtime.ts:399`) still
+  posts a **normally resolved** handoff after its controller is aborted — only
+  the rejection branch is suppressed (`!controller.signal.aborted`,
+  `causal-runtime.ts:414`). So a runtime-level abort would produce a terminal
+  fact only if the adapter converted the abort into a resolved `cancelled`
+  handoff anyway; the adapter-level abort achieves exactly that without adding
+  a runtime API. A new `cancelDelegate` would buy nothing and would put a
+  cancel concept into a layer that has none.
+- Public state: `running → cancelling → cancelled | failed`. The `cancel` call
+  resolves as soon as the target is resolved and its slot aborted (at most one
+  `resolveCancelTarget` round-trip in between); the terminal handoff arrives a
+  moment later through the normal path ("博客那个已经停了").
+- Session and history survive; desktop roster shows the session with
+  `running: []`.
 
 ## Titles
 
-- On `beginSessionForRun` the host derives `display_title` from the work
-  order's objective: first sentence, stripped, ≤ 20 code points, existing
-  `uniqueSessionTitle` disambiguation. `DEFAULT_SESSION_TITLE` (`任务 N`) and
-  `nextDefaultSessionTitle` are deleted.
-- After `onThreadReady`, the adapter calls `thread/name/set {threadId, name}`
-  (add to `codex-app-server-schema.ts` outbound). Failure is logged, not
-  fatal.
-- The transport subscribes to `thread/name/updated {threadId, threadName}`
-  (add inbound) and the adapter mirrors a non-null name into the store's
-  `display_title` — Codex is the source of truth once a name exists.
-- `project__sessions` returns `display_title`; when a thread has no name
-  (legacy sessions) the store keeps its existing title.
+- On `beginSessionForRun(workspaceId, title: string)` the host derives
+  `display_title` from the work order: first sentence, stripped, ≤ 20 code
+  points, `uniqueSessionTitle` disambiguation. `DEFAULT_SESSION_TITLE`
+  (`任务 N`) and `nextDefaultSessionTitle` are deleted.
+- New session: `RunInput.threadName = deriveSessionTitle(workOrder)`. That is
+  the adapter's **only** job in naming.
+- The **transport** owns the call: when `RunInput.threadName` is set it sends
+  `thread/name/set {threadId, name}` right after firing `onThreadReady`
+  (`app-server-transport.ts:413–418`, schema `app-server-schema.ts:77`).
+  Failure is logged, not fatal; the adapter never sends the method itself.
+- The transport also subscribes to `thread/name/updated {threadId, threadName}`
+  and surfaces it as `onThreadNamed(threadId, name | null)`
+  (`app-server-transport.ts:122–124, 867–872`); the adapter mirrors a non-null
+  name into store `display_title` (truncate 120) — Codex is source of truth
+  once a name exists.
+- Desktop roster and session lists show `display_title`; legacy threads without
+  names keep the store title.
 
 ## Desktop
 
-- `project.state` (renamed in 07) adds `roster: [{name, last_used_at,
-  running: [{work_id, title}]}]` and drops `pending_action` values other than
-  `create_workspace`.
-- The confirmation pill appears only for `project__create` proposals and
-  approvals.
-- Progress bubbles and the last-result entry key on `work_id` so two
+- `project.state` adds `roster: [{name, last_used_at, running: [{work_id,
+  title}]}]` for UI only (Orb sidebar, bubbles). Voice model does not read
+  this wire.
+- `pending_action` retains only `create_workspace`; switching does not surface
+  a confirmation pill.
+- Progress bubbles and last-result key on `work_id` (`delegate_id`) so two
   concurrent works do not overwrite each other's bubble/last-result.
+- Confirmation pill appears for `create` proposals and executor approvals
+  (both routed through `confirm` on the voice side). The approval pill shows
+  the asking work's project and session title, and only ever shows the queue
+  head — queued approvals from other works are not rendered until their turn.
+
+## AgentExecutor port (`coding-executor.ts`)
+
+```ts
+interface AgentExecutor {
+  openDispatch(draft, userText, originRef, sessionEpoch): IntakeHandle
+  /** Async: >1 running works with an instruction needs one `resolveCancelTarget` call. */
+  cancel(instruction: string | undefined, context): Promise<CancelResult>
+  roster(): RosterEntry[]                      // for coordinator input
+}
+```
+
+Host `service.ts` routes the single `dispatch` / `cancel` host bindings by the
+call's `executor` argument; finds the agent adapter implementing
+`AgentExecutor`. Assembly wires intake's
+dispatch callback as `{op:'run', request:{work_order, project, session}}`;
+roster comes from the project adapter.
 
 ## Implementation touchpoints
 
 | Area | Files |
 |---|---|
-| Tools | `tool-schema.ts` (host tools, skip coding manifest ops), new `runtime/src/work-tools.ts` (validation + resolution), `realtime/bridge.ts` routing |
-| Intake | `realtime/intake.ts` (`isIntakeAction` → dispatch-shaped), `realtime/service.ts` `#interceptIntake`, `realtime-assembly.ts` dispatch by role |
-| Store | `project-store.ts` (title derivation, per-session running state, roster query) |
-| Roster | `realtime-assembly.ts` `#injectCurrentProjectContext`, `realtime/qwen.ts` render + policy text |
-| Concurrency | `executors/codex/adapter-project.ts` per-session lock, transport factory, `MAX_CONCURRENT_WORK` |
-| Cancel | `runtime.ts` `cancelDelegate`, `causal-runtime.ts`, `events.ts`/`ports.ts` outcome, adapter abort → `turn/interrupt` |
+| Tools | `tool-schema.ts` (`host` binding kind, `dispatch.executor` enum + per-executor description lines), `work-tools.ts` (`dispatch`/`cancel`/`confirm` constants + `deriveSessionTitle`), `realtime/bridge.ts` routing |
+| Intake move | `realtime/intake.ts` → `executors/coding/intake.ts`, `intake-model.ts`, `work-order.ts`; tests follow |
+| Coordinator | `executors/coding/intake-model.ts` assess schema (+ `project_evidence`) + roster input, `resolveCancelTarget`; `intake.ts` kind routing and evidence verification; `executors/codex/adapter-project.ts` `resolveIntakeTarget` |
+| Port | `executors/coding-executor.ts` `AgentExecutor`; `realtime/service.ts` `dispatch`/`cancel` routing by `executor` argument, unified `confirm` routing |
+| Store | `project-store.ts` (title derivation, per-workspace running state, roster query) |
+| Context | `realtime-assembly.ts` `#injectCurrentProjectContext` (no roster), `realtime/session-state.ts` `host_state.project` / `.title`, `realtime/qwen.ts` render + policy text |
+| Approvals | `approval-port.ts` + `executors/codex/approval.ts` FIFO queue keyed `{work_id, approval_id}`; `realtime/service.ts` approval fact naming project + title |
+| Concurrency | `executors/codex/adapter-project.ts` per-workspace lock, transport factory, `MAX_CONCURRENT_WORK` |
+| Cancel | adapter abort → `turn/interrupt`, `events.ts`/`ports.ts` `cancelled` outcome |
 | Titles | `executors/codex/transport/app-server-schema.ts`, `-transport.ts`, adapter mirror |
-| Prompt | `realtime/qwen.ts` FRONTEND_INSTRUCTIONS, `intake.ts:293` |
+| Prompt | `realtime/qwen.ts` FRONTEND_INSTRUCTIONS, `intake.ts` fact text |
 | Desktop | `desktop-wire.ts`, `desktop-bridge.ts`, renderer `index.mjs` / `confirmation-controls.mjs` / `bubbles.mjs` |
-| Tests | `codex-contract` → `work-tools`; `realtime-intake`, `realtime-service`, `realtime-project-confirmation`, `project-store`, `executors-codex-project-live`, `realtime-qwen`, `*-assembly`, `causal-runtime`, `codex-app-server-schema/transport`, desktop `confirmation-controls`, wire tests |
+| Tests | `tool-schema`, `realtime-intake`, coordinator eval, `adapter-project`, `realtime-service`, `project-store`, `realtime-qwen`, assembly, desktop wire; the 07 fixture executor gains `agent: {summary}` and ops `run / steer / status / cancel` so `executor-boundary-fixture.test.ts` drives the `dispatch` path |
 
 ## Verification checklist
 
 Deterministic:
 
-- [ ] Compiled realtime tool table contains no name matching `/^codex__/`
-      (assert in `tool-schema.test.ts` and `qwen-realtime-assembly.test.ts`).
-- [ ] `work__dispatch`: unknown project → `unknown_project` + suggestions;
-      ambiguous → `ambiguous_project`; existing non-active → active switched,
-      intake entered, **no** proposal; `session:'new'` → new thread;
-      `session:<id>` of another project → `session_mismatch`; running latest
-      without `new` → `busy_session`.
-- [ ] `project__create` → proposal; confirm/decline/expiry through
-      `host__confirm_project` unchanged from today's FSM tests.
-- [ ] Roster: ≤10 entries, running never dropped under budget pressure,
-      revision bumps on the three triggers only, item cannot create a response.
-- [ ] Per-session lock: two dispatches to two projects run concurrently under
-      a fake transport; same session → `busy_session`; cap 3 → `capacity`.
-- [ ] Cancel: `cancelDelegate` aborts exactly one delegate; adapter sends
-      `turn/interrupt` once; handoff `cancelled`; second cancel → `not_running`;
-      cancel timeout → `failed/cancel_timeout`; session record survives.
-- [ ] Titles: derived title ≤20 code points and unique; `thread/name/set`
-      sent after ready; `thread/name/updated` mirrors; `任务 N` code deleted.
+- [ ] Compiled realtime tool table: agent executors expose `dispatch` /
+      `cancel` / `confirm` only (no `codex__*`, no `work__*` / `project__*`);
+      non-agent direct ops unchanged; exactly one `dispatch` and one `cancel`
+      binding of kind `host` with null `executor`/`op` for two registered agent
+      manifests; `dispatch.executor` enum generated from manifests with one
+      `<name>: <agent.summary>` line per executor in the tool description and
+      no per-enum-value schema branch; no status tool anywhere in the table
+      (`tool-schema.test.ts`, `qwen-realtime-assembly.test.ts`).
+- [ ] Coordinator assess: six kinds route correctly; roster verbatim enforced;
+      not-in-roster with explicit create intent → `create`, otherwise
+      `unclear`; `new` refused when that project has a running work.
+- [ ] `project_evidence`: non-active selection without a verifiable span (absent,
+      empty, or not present in the raw utterance after normalisation) →
+      `unclear` + the "是在 X 里做吗？" question, never a dispatch; active-project
+      selection dispatches with no evidence; readback names the project.
+- [ ] Resolution errors: `unknown_project` + suggestions; `ambiguous_project`;
+      `busy_project` with `steer` / `cancel` options; `capacity` at cap 3;
+      `not_running`; `ambiguous_work`; `unknown_confirmation`.
+- [ ] `create` keeps planning: with a coding goal → clarify/plan → proposal
+      carrying a `work_order`; create-only → proposal with `work_order: null`
+      and no `plan.compile` call; both confirm under every `plan_readback`
+      value; confirm/decline/expiry through unified `confirm` unchanged from
+      today's FSM tests.
+- [ ] ContextView: no roster block; active project/session lines only; each
+      `active_executor_context` record carries host-authored `project` and
+      `title`; item cannot create a response.
+- [ ] Per-workspace lock: two dispatches to two projects run concurrently under
+      a fake transport; a second objective for a project with a running work →
+      `busy_project`; cap 3 → `capacity`.
+- [ ] Approval queue: two concurrent works each raise an approval; only the
+      first is voice-visible and the second's Codex request stays open; the
+      queued one becomes visible after the first is decided and after the first
+      is invalidated; the fact/banner names project + title; a `confirm` for
+      the queued id while it is not the head is not accepted; under a fake
+      clock, holding the head past the TTL expires only the head and the
+      queued entry still gets a full TTL once it becomes head.
+- [ ] Cancel typing: 0 running → `not_running` with no model call; 1 running →
+      cancelled with no model call even when an instruction is given; >1 with
+      an instruction → one `resolveCancelTarget` call, an id outside the
+      running set is rejected as `null` → `ambiguous_work` listing
+      `{work_id, project, title}`; the assess schema has no `work_id` field.
+- [ ] Cancel: adapter sends `turn/interrupt` once; handoff `cancelled` arrives
+      through `postExecutorResult` with no `CausalRuntime` change; second
+      cancel → `not_running`; session record survives.
+- [ ] Titles: derived title ≤20 code points and unique; transport sends
+      `thread/name/set` after `onThreadReady` only when `threadName` is set and
+      the adapter sends the method nowhere; `thread/name/updated` mirrors via
+      `onThreadNamed`; `任务 N` code deleted.
 - [ ] Prompt goldens updated; intake fact text has no `codex__`.
-- [ ] Desktop: `project.state` schema with roster; pill only on create;
-      bubbles/last-result keyed by `work_id` under two concurrent works.
+- [ ] Desktop: `project.state` schema with roster (UI only); pill on create +
+      approval; bubbles/last-result keyed by `work_id` under two concurrent
+      works.
 - [ ] Full `npm test` green; `check:executor-boundary` still zero violations.
 
 Live (DashScope FastBrain / Qwen realtime, real Codex 0.152.0, macOS headset
@@ -252,34 +598,47 @@ first, Windows second). Each row records transcript, tool calls, and Codex
 `thread/list` output as evidence in IMPLEMENTATION.md:
 
 - [ ] **Direct dispatch.** With `blog` existing and not active, say
-      "改博客的暗色模式". Expect exactly one tool call (`work__dispatch`),
+      "改博客的暗色模式". Expect exactly one `dispatch(executor:'codex', …)`,
       no confirmation prompt, active project switched, bubble within 3 s.
 - [ ] **New session + title.** Say "在博客里重新开一个，把 README 翻译成英文".
-      Expect `session:'new'`, a new thread, and `codex` TUI / `thread/list`
+      Expect coordinator chooses `session:'new'`, a new thread, and `thread/list`
       showing a name derived from the objective.
-- [ ] **Historical resume.** After two sessions exist, say
-      "回到刚才翻译 README 那个，继续". Expect `project__sessions` then
-      `work__dispatch(session:<id>)` resuming the correct `codex_thread_id`.
 - [ ] **Concurrency.** Start a long task in A, then dispatch B. Expect both
-      progressing, roster showing two `running`, and a Guard alert still
-      preempting speech mid-progress.
-- [ ] **Cancel.** Say "取消博客那个". Expect `cancelling` spoken, app-server
-      log showing `turn/interrupt`, terminal "已停" within the op deadline, and
-      the session still listed.
+      progressing, desktop roster showing two `running`, `active_executor_context`
+      naming both projects, and a Guard alert still preempting speech
+      mid-progress. Then dispatch a third objective into A → `busy_project`
+      and a spoken `steer` / `cancel` offer.
+- [ ] **Approval collision.** With two long tasks running under `ask`, drive
+      both into a `file_change` approval. Expect one prompt at a time, naming
+      its project; after answering it, the second prompt arrives on its own and
+      its Codex request completes normally (no timeout, no lost approval).
+- [ ] **Cancel.** Say "取消博客那个" with two works running. Expect one
+      `resolveCancelTarget` call, `turn/interrupt` on the blog work only,
+      terminal "已停" within the op deadline, the other work still progressing,
+      and the session still listed.
 - [ ] **Unknown / ambiguous.** Say "改一下 pricing 那个" with both
-      `pricing-svc` and `pricing-web` present → the model asks which; say
-      "改 foo" with no `foo` → the model offers to create → confirm → created.
+      `pricing-svc` and `pricing-web` present → coordinator asks which; say
+      "改 foo" with no `foo` → one clarifying question, **no** create proposal;
+      say "新建一个项目叫 foo，把 README 翻译成英文" → create proposal carrying
+      the work order → confirm → workspace created and the order runs.
 - [ ] **Regression.** One `file_change` approval accepted by voice under
       `ask`; one declined via banner; YOLO profile runs a command without a
-      prompt.
+      prompt; both via `confirm(id, accepted)`.
 - [ ] **Latency.** Log tool round-trips per dispatch over 10 utterances;
       median must be 1 (today ≥3).
+
+Coordinator eval (DashScope `surrogate_model`, default `qwen-flash` — the same
+model 02 pins for `intake.assess`; fixed roster, ~10 Chinese utterances
+covering switch / create / steer / cancel / ambiguity) with threshold in test;
+evidence in IMPLEMENTATION.md.
 
 ## Decision-record delta (apply on merge)
 
 | Decision | Chosen boundary | Rejected alternative |
 |---|---|---|
-| Project selection | FastBrain picks a roster name from ContextView; host does resolution, switching (no confirm), session bookkeeping; only create confirms | Model-driven list/select/start state machine; backend coordinator choosing the project; deterministic name parser in the host |
-| Session surface | `latest` / `new` / `<session_id>` with a read-only session lookup; titles derived by host and owned by Codex via `thread/name/set` | Model-authored session titles; `任务 N`; session as a first-class voice concept |
-| Cancellation | Cancels running work by delegate; confirmed via `turn/interrupt`; new `cancelled` outcome; session survives | Optimistic cancel; "cancel session"; overloading `refused` |
-| Concurrency | Per-session adapter lock, cap 3, Floor unchanged | Global single-flight; unbounded parallel app-server children |
+| Project selection | Executor-side coordinator (`assess` + roster input); voice sends natural language via `dispatch`; switching unconfirmed, create confirms and still plans; a non-active project must be quoted in `project_evidence` and verified against the raw utterance | Voice model picks roster from ContextView; six `work__`/`project__` tools; model-driven list/select/start state machine; trusting an unquoted project name; `create` short-circuiting intake |
+| Voice tool surface | Three host tools (`dispatch`, `cancel`, `confirm`) + non-agent direct ops; `dispatch` / `cancel` are one `host` binding each, routed by the `executor` argument; executor names only in the `dispatch.executor` enum, summaries as description lines | Per-executor prefixed tools; one binding per agent executor; per-enum-value schema descriptions (`oneOf` / `const`); separate confirm tools per FSM |
+| Session surface | `latest` / `new` only; coordinator decides; titles derived by host, sent by the transport via `thread/name/set`, owned by Codex afterwards | `<session_id>` parameter; `project__sessions`; model-authored session titles; adapter-sent naming calls; `任务 N` |
+| Roster visibility | Coordinator input + desktop UI; not in ContextView; running works identified in `active_executor_context` by host-authored project + title | Roster in versioned `workspace_context` for the voice model; a status tool |
+| Cancellation | Explicit async `cancel` tool; 0/1 running resolved without a model; >1 with an instruction resolved by a validated `resolveCancelTarget` call, else `ambiguous_work`; abort the adapter's own run-slot controller so the `cancelled` handoff returns through `postExecutorResult`; session survives | Speech-inferred cancel; optimistic cancel; a `work_id` field on the assess schema; overloading `refused`; a `CoreRuntime.cancelDelegate` API (buys nothing: `#ownTask` already posts a resolved handoff after abort) |
+| Concurrency | Per-workspace adapter lock (one running work per project), global cap 3, Floor unchanged; approvals FIFO-queued by `{work_id, approval_id}` with one voice-visible at a time | Global single-flight; per-session locks with two live sessions per `CODEX_HOME`; unbounded parallel app-server children; refusing or auto-declining an approval that collides with another work's |

@@ -2167,7 +2167,7 @@ test('credential cancellation joins snapshot work and removes the ephemeral home
   let cleanupCount = 0
   let settled = false
   const workspace = process.cwd()
-  const transport = new runtime.OwnedCodexAppServerTransport({
+  const transport = new OwnedCodexAppServerTransport({
     config: {
       binary: hostBinaryForTest(process.execPath),
       workspace: hostWorkspaceForTest(workspace),
@@ -2224,7 +2224,7 @@ test('persistent resume uses exact host identity and rejection is pre-effect res
       threadId: 'durable-thread-1',
       rejectResume: rejected,
     })
-    const transport = new runtime.OwnedCodexAppServerTransport({
+    const transport = new OwnedCodexAppServerTransport({
       config: {
         binary: hostBinaryForTest(process.execPath),
         workspace: hostWorkspaceForTest(workspace),
@@ -2832,7 +2832,7 @@ function createTransport(
   } = {},
 ): OwnedCodexAppServerTransport {
   const workspace = process.cwd()
-  return new (runtime.OwnedCodexAppServerTransport)({
+  return new OwnedCodexAppServerTransport({
     config: {
       binary: hostBinaryForTest(process.execPath),
       workspace: hostWorkspaceForTest(workspace),

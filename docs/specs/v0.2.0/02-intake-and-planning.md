@@ -1,8 +1,12 @@
 # 02. Intake and Planning
 
-> 摘要：用宿主拥有的 IntakeSession 替代「问一轮就 dispatch」的提示词策略。目标不是多问，而是**少犯错**：只问会改变实现或验收的、属于用户的偏好；技术栈、入口、测试命令等仓库事实交给 Codex 自己探索。廉价槽 `intake.assess` 判断「还要不要问」；「允许规划」与「允许执行」分开；`confirm` 读回绑定既有 proposal，纯确认不 bump revision。只拦截携带编码任务的 `codex__project` action；列表/切换工作区等管理操作保持原路径。派单经现有 `dispatchExternal` / `dispatchConfirmedExternal`，accepted 后才标记 dispatched。
+> 摘要：用宿主拥有的 IntakeSession 替代「问一轮就 dispatch」的提示词策略。目标不是多问，而是**少犯错**：只问会改变实现或验收的、属于用户的偏好；技术栈、入口、测试命令等仓库事实交给 Codex 自己探索。廉价槽 `intake.assess` 判断「还要不要问」，并在 [08](08-project-and-work.md) 后兼任 coordinator（选项目 / 选会话 / 定 kind）；「允许规划」与「允许执行」分开；`confirm` 读回绑定既有 proposal，纯确认不 bump revision。拦截的是宿主工具 `dispatch`，且只对暴露 intake 端口的 agent 执行器生效；非 agent 执行器的直接 ops 保持原路径。派单经现有 `dispatchExternal` / `dispatchConfirmedExternal`，accepted 后才标记 dispatched。
 >
 > 修订（2026-09-03）：回应评审 P1-3；再修订回应 P1（confirm 循环依赖、全量拦截 `codex__project`）与 P2（admission 拒绝仍标 dispatched、入口 API 名）。
+>
+> 修订（2026-09-03，coordinator 下沉）：拦截入口从 `codex__project` 的六个 action 换成宿主工具 `dispatch`；intake 代码搬到 `runtime/src/executors/coding/`；`assess` 输出增加 `kind` / `project` / `session`，输入增加 roster 与当前 active 项目；确认工具统一为 `confirm(id, accepted)`。边界见 [08](08-project-and-work.md)。
+>
+> 修订（2026-09-03，08 评审回应）：intake 归执行器所有，宿主只提供 fact / prepare / dispatch / record 回调；workspace 改为 assess 解析出项目后才绑定；`assess` 增加 `project_evidence`（选非 active 项目必须给出用户原话片段并由宿主校验）；`kind: 'create'` 不再短路，继续澄清与规划且一律确认；非 roster 名只有明确新建意图才 `create`，否则 `unclear`。
 
 ## Baseline (today)
 
@@ -63,8 +67,17 @@ Env mirrors: `NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH`,
 
 ### Identity and binding
 
-`IntakeSession` is a host-owned bounded structure on the realtime service. It
-is not `intent` or `goal`.
+`IntakeSession` is a bounded structure owned by the **coding executor** and
+living in `runtime/src/executors/coding/` ([08](08-project-and-work.md) moved
+it out of `realtime/`). It is not `intent` or `goal`.
+
+Ownership after 08: the executor owns the state machine, the gates, the slot
+calls, and the revision binding. The host provides only callbacks — inject a
+bounded **fact** for FrontBrain to speak, **prepare** a proposal on the
+project-confirmation controller, **dispatch** through `dispatchExternal` /
+`dispatchConfirmedExternal`, and **record** the outcome in Memory. The realtime
+service does not read or mutate intake state; it forwards the intercepted
+`dispatch` call and the callbacks' results.
 
 | Field | Meaning |
 |---|---|
@@ -72,9 +85,9 @@ is not `intent` or `goal`.
 | `revision` | Monotonic counter for the **request content** (see revision rules) |
 | `plan_revision` | Revision the current compiled plan was built from; null until compiled |
 | `proposal_id` | Opaque id of the pending plan-readback proposal when `planReadback=confirm`; null otherwise |
-| `workspace` | Canonical workspace path at open time (the Codex workspace the task will bind to) |
+| `workspace` | Canonical workspace path of the resolved project; **null until** a current-revision `assess` result resolves `project` (08: the utterance may name another project, so binding at open time would bind the wrong one) |
 | `session_id` | Realtime session that opened it |
-| `codex_session` | Optional named Codex session the opening action asked for; preserved through dispatch |
+| `session` | Coordinator's session decision, `latest` \| `new`; preserved through dispatch ([08](08-project-and-work.md)) |
 | `origin_ref` | `origin_ref` of the most recent **content-changing** user utterance |
 | `state` | see lifecycle |
 | `slots`, `questions_asked`, `intent_to_proceed` | see below |
@@ -100,10 +113,12 @@ Binding rules:
 - A compiled plan is valid only while `plan_revision === revision`. Any content
   bump invalidates the plan and the pending `proposal_id` (if any).
 - Pure confirmation is bound to `{proposal_id, plan_revision}` via the existing
-  project-confirmation controller (`codex__confirm_project_action`). It does
-  **not** recompile and does **not** bump `revision`.
-- Workspace change, session end, or a `session_id` mismatch closes the intake
-  with `cancelled`.
+  project-confirmation controller, reached from the voice side through
+  `confirm(id, accepted)`. It does **not** recompile and does **not** bump
+  `revision`.
+- A workspace change **after** the workspace was bound, session end, or a
+  `session_id` mismatch closes the intake with `cancelled`. Before binding
+  there is no workspace to invalidate.
 - Concrete case: while `planning`, the user says “等等，只分析不要改”. That is
   an amend → `revision` bumps; the in-flight plan result arrives with the old
   revision and is discarded; assess + plan rerun. Saying “确认” against a
@@ -164,7 +179,7 @@ and marking the inference.
 
 ```text
 idle
-  → open            coding-task action intercepted (see interception table)
+  → open            `dispatch` intercepted (see interception table)
   → clarifying      0..N user-owned questions (stop-asking gate open)
   → ready_to_plan   stop-asking closed AND planning gate satisfied
   → planning        plan.compile on current revision
@@ -185,17 +200,33 @@ idle
 ### `intake.assess` slot
 
 - Single-flight model slot alongside `fast`, `surrogate.watch`, `compress`.
-- Default model: `surrogate_model` (cheap).
+- Default model: `surrogate_model` (cheap). [08](08-project-and-work.md)'s
+  `resolveCancelTarget` uses the same model but is **not** this slot: it runs
+  outside any intake, so it neither blocks nor is blocked by an open assess.
 - Trigger: on open and after each accepted user turn while `open` /
   `clarifying` / `readback`.
 - Input: bounded view of the opening request, prior intake Q&A, slot state,
-  and depth budget — not unrestricted Memory.
-- Output (schema-validated, fail-closed):
+  and depth budget — not unrestricted Memory. Since
+  [08](08-project-and-work.md) the input also carries the **roster** (≤10
+  entries: project name, latest session title, running work titles, ordered by
+  `last_used_at`) and the **current active project**, so one call decides both
+  "ask again?" and "which project / session". The roster never reaches the
+  voice model.
+- Output (schema-validated, fail-closed). `kind` / `project` /
+  `project_evidence` / `session` are the coordinator fields added by 08;
+  `project` must be a roster name **verbatim** or `null`. There is no
+  `work_id` field: a cancel target is resolved by 08's separate
+  `resolveCancelTarget` call, because a cancel carries no objective and never
+  opens an intake:
 
 ```json
 {
   "intake_id": "intake-…",
   "revision": 3,
+  "kind": "work",
+  "project": "blog",
+  "project_evidence": "博客",
+  "session": "latest",
   "slots": {
     "goal": { "state": "stated", "note": "…" },
     "scope": { "state": "inferred", "note": "CLI only; desktop untouched" },
@@ -214,54 +245,87 @@ idle
 }
 ```
 
-- Host applies the stop-asking gate: if open and `candidate_question.owner ===
-  'user'`, inject a bounded host fact so FrontBrain asks **exactly** that
-  question. If closed, FrontBrain is told not to ask.
+- `kind` is one of `work | steer | cancel | switch | create | unclear`. `work`
+  and `create` continue into the clarify → plan → dispatch flow described
+  below; `steer` / `cancel` / `switch` are resolved by the executor's adapter
+  and close the intake (routing table in [08](08-project-and-work.md)). There
+  is no `status` kind.
+- `create` does **not** short-circuit intake. It sets the intake target to
+  `{action: 'create', workspace_display_name: <name from the utterance>}` and
+  intake continues: an utterance that also carries a coding goal runs the
+  normal clarify → plan cycle and produces the proposal
+  `{action: 'create', work_order}`; a create-only utterance produces
+  `{action: 'create', work_order: null}` immediately with no `plan.compile`
+  call. Creating a workspace is irreversible, so `create` **always** confirms,
+  regardless of `planReadback`. Both proposals are today's
+  `ConfirmedProjectOperation` shapes, so the rule that only a plan bound to the
+  current revision may start coding is unchanged: the `work_order` in the
+  proposal is a compiled WorkOrder v2 with `plan_revision === revision`, and a
+  create-only confirmation starts no coding at all.
+- A `project` name that is not in the roster is only `create` when the user
+  expressed **explicit create intent** ("新建一个 …", "开个新项目叫 …");
+  otherwise the result is `unclear` and one question is asked. A mismatch is
+  never upgraded into a workspace creation.
+- `project_evidence` is required whenever `project` is not the currently active
+  project: it must be the span of the user's utterance that names it. The host
+  verifies the span occurs in the raw utterance after `stripLikePython`-style
+  whitespace / case normalisation; absent, empty, or not found → the result is
+  treated as `unclear` and FrontBrain asks "是在 X 里做吗？". Selecting the
+  active project needs no evidence. Rationale and readback rules in
+  [08](08-project-and-work.md).
+- Intake applies the stop-asking gate: if open and `candidate_question.owner
+  === 'user'`, it asks the host's fact callback to inject a bounded host fact so
+  FrontBrain asks **exactly** that question. If closed, FrontBrain is told not
+  to ask.
 - Malformed output: the turn is treated as “no new information”; after two
   consecutive malformed results the intake closes `abandoned` with a spoken
   apology. Malformed assess never plans or dispatches.
 
-### Which `codex__project` actions enter intake
+### What enters intake
 
-`codex__project` keeps its current action enum
-([`runtime/src/codex-contract.ts`](../../../runtime/src/codex-contract.ts)):
-`list_workspaces`, `create_workspace`, `select_workspace`, `list_sessions`,
-`start_session`, `resume_session`. Intake **only** intercepts coding-task
-actions that carry a `work_order`. Everything else keeps today’s path,
-including project-confirmation for workspace/session creates.
+Since [08](08-project-and-work.md) the intercepted call is the host tool
+`dispatch(executor, instruction)`. The host resolves `executor` against the
+registered **agent executors** (manifest carries `agent: {summary}`, see
+[07](07-executor-boundary.md)); if that executor exposes an intake port
+(`AgentExecutor.openDispatch`) the call opens or amends an intake, otherwise it
+goes straight to the executor's `run` op (the path a future non-intake agent
+takes).
 
-| Action | Intake? | Notes |
+| Call | Intake? | Notes |
 |---|---|---|
-| `list_workspaces` | no | Read-only management |
-| `list_sessions` | no | Read-only management |
-| `select_workspace` | no | Switch only; closes any open intake for the previous workspace |
-| `create_workspace` without `work_order` | no | Create empty workspace; existing confirmation if required |
-| `create_workspace` with `work_order` | **yes** | Open intake bound to the new workspace name; create confirmation still runs before any Codex session starts |
-| `start_session` | **yes** | Open / amend intake; bind `codex_session` if provided; keep “must run in current workspace” rule |
-| `resume_session` | **yes** | Open / amend intake; bind target `workspace` + `codex_session`; keep resume confirmation |
+| `dispatch` to an agent executor with `openDispatch` | **yes** | Open / amend intake; coordinator decides `kind` / `project` / `session` in the same `assess` call |
+| `dispatch` to an agent executor without an intake port | no | Direct `{op:'run'}` dispatch |
+| `cancel` | no | Resolved in the executor ([08](08-project-and-work.md)); async, and with more than one running work it may make one tiny `resolveCancelTarget` call — never `intake.assess`, never an intake |
+| `confirm` | no | The `id` selects which FSM handles the call (approval or project confirmation); that FSM's own isolation still gates the decision |
+| Non-agent `${name}__${op}` ops (`search__query`, `cam__capture`, …) | no | Unchanged |
+
+The management actions that used to bypass intake (`list_workspaces`,
+`list_sessions`, `select_workspace`, `create_workspace` without a work order)
+no longer exist on the voice surface: listing is gone, switching and creating
+are coordinator decisions (`switch` / `create`). Workspace maintenance is a
+desktop surface.
 
 While an intake is open for the same realtime session:
 
-- A second coding-task action with a new `work_order` amends the open intake
-  (content bump) unless the user clearly started an unrelated task, in which
-  case assess may `abandon` the old one.
-- Management actions (`list_*`, `select_workspace`, create without work_order)
-  are never answered with `intake_*` codes; they execute as today. Selecting a
-  different workspace closes the open intake as `cancelled`.
+- A second `dispatch` with a new instruction amends the open intake (content
+  bump) unless the user clearly started an unrelated task, in which case assess
+  may `abandon` the old one.
+- A coordinator `switch` to a different project closes the open intake as
+  `cancelled`.
 
 ### FrontBrain policy changes
 
 Replace the “one question then never ask again” block with:
 
-1. Coding work still uses `codex__project` with the appropriate action and a
-   `work_order` draft. When intake intercepts, the tool result is
-   `intake_opened` or `intake_in_progress` — not “dispatched”. Management
-   actions are unchanged.
+1. Coding work uses `dispatch(executor, instruction)` with the user's request in
+   natural language — no project name, no session, no work-order draft. When
+   intake intercepts, the tool result is `intake_opened` or
+   `intake_in_progress` — not “dispatched”.
 2. If the host fact carries a question, ask it and nothing else; do not call
-   another coding-task `codex__project`.
+   `dispatch` again.
 3. If the host fact says ready / planning / readback / committing, do not
    invent questions. For `planReadback=confirm`, answer with
-   `codex__confirm_project_action` against the given `proposal_id`.
+   `confirm(id, accepted)` against the given id.
 4. One action per turn remains in force.
 
 ## Planning: `plan.compile`
@@ -305,11 +369,13 @@ string is the only text passed to `turn/start`.
 | Mode | Behaviour |
 |---|---|
 | `summary` | One spoken sentence; execution gate opens immediately after a valid plan |
-| `confirm` | Host opens a proposal via the existing project-confirmation controller, bound to `{proposal_id, plan_revision, intake_id}`. Accept (`codex__confirm_project_action`) opens the execution gate without bumping `revision` or recompiling. Amend bumps `revision` and returns to clarifying / ready_to_plan. Decline without amend leaves the plan valid but does not dispatch |
+| `confirm` | Host opens a proposal via the existing project-confirmation controller, bound to `{proposal_id, plan_revision, intake_id}`. Accept (voice tool `confirm(id, accepted)`) opens the execution gate without bumping `revision` or recompiling. Amend bumps `revision` and returns to clarifying / ready_to_plan. Decline without amend leaves the plan valid but does not dispatch |
 | `silent` | No spoken readback; execution gate opens after a valid plan; status label / bubbles may still update |
 
-`confirm` must not merge with Codex permission approval; same proposal domain
-as today’s workspace/session confirmation.
+The plan-readback proposal stays in the project-confirmation FSM; it must not
+merge with the Codex permission-approval FSM. Only the voice-facing tool is
+shared (`confirm(id, accepted)`, routed by id ownership — see
+[08](08-project-and-work.md)).
 
 ## Dispatch boundary — one route for coding tasks
 
@@ -324,10 +390,10 @@ sequenceDiagram
   participant Codex
 
   User->>FrontBrain: coding request
-  FrontBrain->>Intake: start_session / resume_session / create+work_order
-  Note over Intake: management actions bypass intake
+  FrontBrain->>Intake: dispatch(executor, instruction)
+  Note over Intake: non-agent ops, cancel and confirm bypass intake
   loop stop-asking gate open
-    Intake->>Assess: assess(rev n)
+    Intake->>Assess: assess(rev n) — kind/project/session + slots
     Assess-->>Intake: result(rev n) — dropped if n ≠ current
     Intake->>FrontBrain: host fact: ask this user-owned question
     FrontBrain->>User: one short question
@@ -335,12 +401,12 @@ sequenceDiagram
   end
   Intake->>Plan: compile(rev k) when planning gate open
   Plan-->>Intake: WorkOrder v2 (rev k) — dropped if k ≠ current
-  alt planReadback=confirm
+  alt planReadback=confirm or kind=create
     Intake->>FrontBrain: proposal_id bound to plan_revision=k
     User->>Intake: confirm (no rev bump) or amend (rev bump)
   end
   Intake->>Intake: state=committing
-  Intake->>Runtime: project action with compiled work_order
+  Intake->>Runtime: {op:'run', request:{work_order, project, session}}
   alt accepted=true
     Runtime->>Codex: turn/start
     Intake->>Intake: closed(dispatched)
@@ -351,10 +417,14 @@ sequenceDiagram
 
 Rules:
 
-- Management `codex__project` actions never enter this diagram.
+- `cancel`, `confirm`, and non-agent executor ops never enter this diagram.
+  `switch` / `steer` / `cancel` leave it after `assess` and are resolved by the
+  executor's adapter. `create` stays in the diagram: it runs the same loop and
+  ends in a `{action:'create', …}` proposal, always through
+  `dispatchConfirmedExternal`.
 - For coding tasks the host is the only dispatcher of the compiled work order.
-  FrontBrain’s intercepted call opens or amends intake; it does not reach Codex
-  with the draft `work_order`.
+  FrontBrain’s intercepted `dispatch` opens or amends intake; the instruction
+  text never reaches Codex as a work order.
 - Dispatch uses the existing public APIs on
   [`CausalRuntime`](../../../runtime/src/causal-runtime.ts) /
   [`Runtime`](../../../runtime/src/runtime.ts):
@@ -362,6 +432,9 @@ Rules:
     required (create-with-work-order, and any path that already goes through
     the confirmation controller — including `planReadback=confirm`);
   - `dispatchExternal` otherwise.
+  A create-only confirmation (`work_order: null`) admits no delegate at all:
+  `commitConfirmed` creates the workspace and claims immediately, and the
+  intake closes `dispatched` with no `delegate_id`.
   Do **not** invent a parallel `admitDelegate` path. Those methods already
   perform schema, duplicate, fence, and `origin_ref` checks.
 - Before the call the intake enters `committing` (re-entrancy guard: a second
@@ -373,9 +446,9 @@ Rules:
     coding-task action (new intake) or, if the refusal was
     `unknown`-fence related, a verify-then-retry after the user confirms.
   Never mark `dispatched` before the admission result is known.
-- The dispatched request preserves the opening action’s target `workspace`,
-  optional `codex_session`, and the compiled work order. `origin_ref` is the
-  content-changing utterance of `plan_revision`.
+- The dispatched request preserves the coordinator's resolved `project`,
+  `session` (`latest` \| `new`), and the compiled work order. `origin_ref` is
+  the content-changing utterance of `plan_revision`.
 - Exactly one successful dispatch per `intake_id`.
 
 ## Eval and metrics
@@ -386,6 +459,9 @@ Rules:
   must be converted to `discovery`.
 - Binding fixtures: stale assess / plan results with old `revision` must be
   ignored (deterministic, fake clock).
+- Evidence fixtures: an assess result naming a non-active project with a
+  `project_evidence` span absent from the utterance must degrade to `unclear`,
+  not dispatch (deterministic; no model call).
 - Planner goldens: fixed slot notes → stable canonical JSON → stable template.
 - Track question count per dispatched intake and token delta into Codex
   (internal metrics).
@@ -395,10 +471,10 @@ Rules:
 | Area | Likely files |
 |---|---|
 | Slots | causal runtime slot table |
-| Intake state + gates | new `runtime/src/realtime/intake.ts` |
+| Intake state + gates | `runtime/src/executors/coding/intake.ts` (moved from `realtime/` by [08](08-project-and-work.md)), with `intake-model.ts` and `work-order.ts` alongside |
 | Prompts | `runtime/src/realtime/qwen.ts` FRONTEND_INSTRUCTIONS; assess / planner prompts |
 | WorkOrder | new schema + template module; `codex-app-server-transport.ts` consumes the rendered string unchanged |
-| Tool semantics | Intercept only coding-task actions; result codes `intake_opened`, `intake_in_progress`; management actions unchanged |
+| Tool semantics | Intercept `dispatch` for agent executors with an intake port; result codes `intake_opened`, `intake_in_progress`; non-agent ops unchanged |
 | Dispatch | `dispatchExternal` / `dispatchConfirmedExternal`; `committing` → `dispatched` \| `admission_refused` |
 | Settings | see [06](06-settings-and-config.md) |
 | Fixtures | `fixtures/realtime/qwen/v1/`, planner and binding fixtures |
@@ -414,14 +490,28 @@ Rules:
       before proposal accept; proposal accept does not recompile.
 - [ ] Pure “确认” against a pending `proposal_id` does not bump `revision`;
       amend does; stale `(intake_id, revision)` results are dropped.
-- [ ] `list_workspaces` / `list_sessions` / `select_workspace` /
-      `create_workspace` without `work_order` never open intake.
-- [ ] `start_session` / `resume_session` / `create_workspace`+`work_order`
-      open intake and preserve workspace + optional `codex_session` through
-      dispatch; create/resume confirmation still required where today.
-- [ ] Workspace switch / session end closes intake; nothing dispatches after.
-- [ ] Second coding-task call while intake open returns `intake_in_progress`
+- [ ] `cancel` / `confirm` / non-agent `${name}__${op}` ops never open intake;
+      `dispatch` to an agent executor without an intake port goes straight to
+      `{op:'run'}`.
+- [ ] `dispatch` to an agent executor with an intake port opens intake and
+      preserves the coordinator's `project` + `session` through dispatch;
+      `create` confirmation still required.
+- [ ] `workspace` is null until a current-revision `assess` resolves `project`;
+      a stale assess result never binds it; intake state is owned by
+      `executors/coding/` and the service only invokes the fact / prepare /
+      dispatch / record callbacks.
+- [ ] Coordinator `switch` / session end closes intake; nothing dispatches after.
+- [ ] Second `dispatch` while intake open returns `intake_in_progress`
       (amend) rather than a parallel Codex run.
+- [ ] `kind ∈ {steer, cancel, switch}` closes intake without compiling a plan;
+      `kind: 'create'` with a coding goal still compiles a plan and proposes
+      `{action:'create', work_order}`, create-only proposes
+      `{action:'create', work_order: null}` with no `plan.compile` call, and
+      both confirm under every `planReadback` value.
+- [ ] `project` not matching a roster name verbatim is `create` only on
+      explicit create intent and `unclear` otherwise, never guessed; a
+      non-active `project` whose `project_evidence` is missing or absent from
+      the raw utterance is treated as `unclear` and asks "是在 X 里做吗？".
 - [ ] State enters `committing` before `dispatchExternal` /
       `dispatchConfirmedExternal`; `dispatched` only when `accepted=true`;
       `admission_refused` keeps a recovery path; no parallel admit API.

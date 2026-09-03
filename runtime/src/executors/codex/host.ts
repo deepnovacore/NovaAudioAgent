@@ -5,6 +5,12 @@
  * runtime package never exports authority bypasses (`test/codex-root-exports.test.ts`).
  */
 export * from './approval.js'
+export {OwnedCodexAppServerTransport} from './app-server-transport.js'
+export {
+  CredentialSnapshotter,
+  credentialSnapshotEnvironment,
+  type CredentialSnapshot,
+} from './credential-snapshot.js'
 export * from './factory.js'
 export * from './host-config.js'
 export * from './production-host.js'

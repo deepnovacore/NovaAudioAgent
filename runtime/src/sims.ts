@@ -55,6 +55,7 @@ export const GET_STATE: OpSpec = opSpecSchema.parse({
 
 export const fastSimManifest: ExecutorManifest = executorManifestSchema.parse({
   name: 'fast_sim',
+  display_name: 'Fast Sim',
   ops: [SET_LIGHT, GET_STATE],
   policy: handoffPolicySchema.parse({
     channel: 'fast_sim', priority: 50, wake: 'fast', typical_latency: 0.05,
@@ -64,6 +65,7 @@ export const fastSimManifest: ExecutorManifest = executorManifestSchema.parse({
 
 export const slowSimManifest: ExecutorManifest = executorManifestSchema.parse({
   name: 'slow_sim',
+  display_name: 'Slow Sim',
   ops: [SET_LIGHT, GET_STATE],
   policy: handoffPolicySchema.parse({
     channel: 'slow_sim', priority: 50, wake: 'fast', typical_latency: 5,
@@ -120,7 +122,7 @@ export function checkParams(
 }
 
 export interface SimHandoff {
-  readonly outcome: 'ok' | 'refused' | 'unknown' | 'failed'
+  readonly outcome: 'ok' | 'refused' | 'unknown' | 'failed' | 'cancelled'
   readonly trust: 'trusted_system'
   readonly content: Readonly<Record<string, JsonValue>>
 }

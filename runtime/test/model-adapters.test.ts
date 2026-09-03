@@ -36,6 +36,7 @@ void new VirtualClock()
 function manifest(name: string, ops: readonly Record<string, JsonValue>[], roles: readonly string[] = []) {
   return executorManifestSchema.parse({
     name,
+    display_name: name,
     roles,
     policy: handoffPolicySchema.parse({
       channel: name, priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8,

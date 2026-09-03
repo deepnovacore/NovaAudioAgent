@@ -103,6 +103,7 @@ test('affordance sources are probe, suggestion, unresolved question, then update
   })
   const manifest = executorManifestSchema.parse({
     name: 'slow_sim',
+    display_name: 'Slow Sim',
     policy: slowPolicy,
     ops: [{
       name: 'get_state',

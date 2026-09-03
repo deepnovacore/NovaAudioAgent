@@ -124,7 +124,7 @@ export interface TaskCompletionRelationCue {
 export interface TaskCompletionInput {
   readonly workspace_instance_id: string
   readonly summary: string | null
-  readonly outcome: 'ok' | 'refused' | 'unknown' | 'failed'
+  readonly outcome: 'ok' | 'refused' | 'unknown' | 'failed' | 'cancelled'
   readonly now: number
   readonly relation_cue?: TaskCompletionRelationCue | null
 }

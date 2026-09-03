@@ -1,8 +1,8 @@
 const DETAIL_MS = 6_000
 const MILESTONE_MS = 12_000
 const MAX_BUBBLES = 3
-const PROGRESS_PHASES = new Set(['started', 'working', 'completed', 'failed', 'refused', 'unknown', 'alert'])
-const RESULT_OUTCOMES = new Set(['ok', 'failed', 'refused', 'unknown'])
+const PROGRESS_PHASES = new Set(['started', 'working', 'completed', 'failed', 'refused', 'unknown', 'cancelled', 'alert'])
+const RESULT_OUTCOMES = new Set(['ok', 'failed', 'refused', 'unknown', 'cancelled'])
 
 export function parseProgressFrame(frame) {
   if (!frame || typeof frame !== 'object'

@@ -314,16 +314,10 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     executors,
     ...executorOwnedSettings(environment, executors),
     proactivity_preset: optionalString(environment.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET),
-    codex_working_interval: optionalPydanticFloat(
-      environment.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL,
-    ),
     suggestion_cooldown: optionalPydanticFloat(
       environment.NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN,
     ),
     fresh_window: optionalPydanticFloat(environment.NOVA_AUDIO_AGENT_FRESH_WINDOW),
-    codex_approval_mode: parseExecutorApprovalMode(
-      environment.NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE,
-    ),
     clarification_depth: parseClarificationDepth(
       environment.NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH,
     ),
@@ -542,6 +536,12 @@ const EXECUTOR_OWNED_SETTINGS: Readonly<Record<string, (environment: NodeJS.Proc
     codex_prewarm: optionalBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PREWARM),
     codex_managed_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT),
     codex_project_state_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT),
+    codex_working_interval: optionalPydanticFloat(
+      environment.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL,
+    ),
+    codex_approval_mode: parseExecutorApprovalMode(
+      environment.NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE,
+    ),
   }),
 }
 

@@ -428,6 +428,7 @@ test('production schema probe invokes the host binary and returns only the revie
       'turn/start': true,
       'turn/steer': true,
       'turn/interrupt': true,
+      'thread/name/set': true,
     })
   } finally {
     await rm(root, {recursive: true, force: true})
@@ -482,6 +483,7 @@ test('Windows production schema probe derives HOME from USERPROFILE without a sy
       'turn/start': true,
       'turn/steer': true,
       'turn/interrupt': true,
+      'thread/name/set': true,
     })
   } finally {
     await rm(root, {recursive: true, force: true})

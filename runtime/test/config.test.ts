@@ -48,6 +48,7 @@ test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash'
 
 test('v4 settings env selectors and paths load with the documented names', () => {
   const settings = loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTORS: 'codex',
     NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE: 'yolo',
     NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH: 'thorough',
     NOVA_AUDIO_AGENT_PLAN_READBACK: 'confirm',
@@ -71,6 +72,7 @@ test('v4 settings env selectors and paths load with the documented names', () =>
 
 test('invalid v4 enum env values fall back safely', () => {
   const settings = loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTORS: 'codex',
     NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE: 'unsafe',
     NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH: 'deep',
     NOVA_AUDIO_AGENT_PLAN_READBACK: 'always',
@@ -303,7 +305,7 @@ test('numeric overrides reject negative, non-finite, and out-of-range values', (
     /NOVA_AUDIO_AGENT_FRESH_WINDOW/u,
   )
   assert.throws(
-    () => loadSettings({NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: '601'}),
+    () => loadSettings({NOVA_AUDIO_AGENT_EXECUTOR: 'codex', NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: '601'}),
     ConfigurationError,
   )
 })

@@ -114,12 +114,14 @@ export interface SafePreflightReport extends Readonly<Record<string, unknown>> {
   readonly network: 'blocked'
 }
 
-export interface RunInput { readonly workOrder: string }
+export interface RunInput { readonly workOrder: string; readonly threadName?: string }
 export interface SteerInput { readonly instruction: string }
 
 export interface TransportObserver {
   readonly onProgress?: (progress: ExecutorProgress) => void
   readonly onThreadReady?: (threadId: string) => void
+  /** Codex renamed the thread (`thread/name/updated`); `null` clears the name. */
+  readonly onThreadNamed?: (threadId: string, name: string | null) => void
   readonly onTurnStartWritten?: () => void
   readonly onTurnBound?: () => void
 }
@@ -192,6 +194,7 @@ interface Session {
   readonly threadResponse: unknown
   projection: AppServerTurnProjection | null
   completion: Deferred<TurnCompletion> | null
+  onThreadNamed: ((threadId: string, name: string | null) => void) | null
   unexpectedServerRequest: boolean
   turnStartAdmitted: boolean
   turnStartWritten: boolean
@@ -403,10 +406,18 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       })
       session.projection = projection
       session.completion = deferred<TurnCompletion>()
+      session.onThreadNamed = observer.onThreadNamed ?? null
       this.#bindThread(projection, session.threadResponse)
       const threadId = projection.threadId
       if (threadId === null) throw new CodexTransportError('unsupported_protocol')
       try { observer.onThreadReady?.(threadId) } catch { /* advisory */ }
+      if (input.threadName !== undefined) {
+        // The host-derived title is advisory: Codex owns the name once set (08), so a rejection
+        // never fails the turn.
+        await this.#requestWithin(session, 'thread/name/set', {
+          threadId, name: input.threadName,
+        }, deadline).catch(() => undefined)
+      }
       await this.#scheduler.yieldIo()
       const turnResponse = await this.#requestPreparedWithin(
         session,
@@ -853,6 +864,15 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           this.#failSession(session, new CodexTransportError('unsupported_protocol'))
           return
         }
+        if (notification.method === 'thread/name/updated') {
+          const params = notification.params
+          const threadId = params.threadId
+          const name = params.threadName
+          if (typeof threadId === 'string' && (typeof name === 'string' || name === null || name === undefined)) {
+            try { session.onThreadNamed?.(threadId, name ?? null) } catch { /* advisory */ }
+          }
+          return
+        }
         const projection = session.projection
         if (projection === null) return
         try {
@@ -989,6 +1009,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       threadResponse: null,
       projection: null,
       completion: null,
+      onThreadNamed: null,
       unexpectedServerRequest: false,
       turnStartAdmitted: false,
       turnStartWritten: false,

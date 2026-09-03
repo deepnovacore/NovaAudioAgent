@@ -990,6 +990,12 @@ function resetRendererConnection(processReplaced, {closeSocket = true} = {}) {
   if (processReplaced) {
     lastResult = null
     lastResultButton.hidden = true
+    axes.executorName = ''
+    axes.codex = 'idle'
+    axes.pendingConfirmation = false
+    axes.pendingConfirmationKind = null
+    axes.pendingConfirmationBusy = false
+    axes.pendingConfirmationId = null
   }
   alertTone.stop()
   if (processReplaced) playback.backendExited()

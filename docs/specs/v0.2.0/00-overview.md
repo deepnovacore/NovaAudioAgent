@@ -17,7 +17,7 @@ only after the corresponding volume is agreed.
 | [05 Progress bubbles](05-progress-bubbles.md) | Orb progress notifications |
 | [06 Settings and config](06-settings-and-config.md) | Settings v4, env contract, panel tabs |
 | [07 Executor boundary](07-executor-boundary.md) | Codex as a real plug-in behind `ports.ts`; role-based routing; host-owned confirmations; enforced by lint + script |
-| [08 Project, session and work](08-project-and-work.md) | `work__*` / `project__*` host tools replace `codex__project`; roster in ContextView; per-session concurrency; confirmed cancel; Codex-owned titles |
+| [08 Project, session and work](08-project-and-work.md) | `dispatch` / `cancel` / `confirm` host tools replace `codex__project`; coordinator sinks into the coding executor; per-project concurrency; explicit cancel; Codex-owned titles |
 
 The public architecture volumes under [`docs/archs/`](../../archs/00-overview.md)
 remain the source of invariants. Specs here propose deltas; they do not silently
@@ -56,8 +56,10 @@ rewrite those volumes.
 - A universal workflow / graph language, unrestricted long-term memory search
   auto-injected into every ContextView, or multiple speaking personas
   ([deferred](../../archs/08-deferred.md)).
-- Merging project confirmation and Codex approval into one public tool (rejected
-  in the 2026-09-02 Windows approvals handoff).
+- Merging the project-confirmation and approval state machines (rejected in the
+  2026-09-02 Windows approvals handoff; still rejected). [08](08-project-and-work.md)
+  unifies only the voice-facing tool as `confirm(id, accepted)`, routed by id
+  ownership; the two FSMs remain separate.
 - Embedding-provider marketplace, cloud-hosted knowledge sync, or multi-tenant
   RAG. Knowledge is local and single-user.
 - Widening the voice approval tool schema beyond a boolean decision in this
@@ -100,7 +102,7 @@ the listed checklists are green on `v0.2.0dev`.
 |---|---|---|
 | **M1 — one complete coding experience** | User asks → only necessary user-owned questions → WorkOrder v2 → `on-request` approvals on macOS and Windows → execution → visible result (milestone bubbles + last-result entry). YOLO selectable. | 01 deterministic + live lists; 02 checklist; 05 core items (frames, stack, last-result entry, bounds reservation); 06 migration + coordinated commit |
 | **M1.5a — executor boundary** | Codex moved under `executors/codex/`; core routes by `roles: ['coding']`; approval / project confirmation are host capabilities; `executor.*` / `project.*` wire; fixture executor proves the port; `check:executor-boundary` in `npm run check`. No user-visible change. | 07 deterministic list; live rows identical to M1 validation |
-| **M1.5b — project, session and work** | `work__dispatch / steer / status / cancel`, `project__sessions / create` replace `codex__project`; roster in `workspace_context`; per-session locks (cap 3); confirmed cancel with `cancelled` outcome; host-derived titles via `thread/name/set`. | 08 deterministic list; 08 live rows with DashScope + Codex 0.152.0 evidence |
+| **M1.5b — project, session and work** | `dispatch(executor, instruction)` / `cancel(executor, instruction?)` / `confirm(id, accepted)` replace `codex__project` and the two confirm tools; project / session / cancel-target selection sinks into `executors/coding/` intake; session is `latest \| new`; per-project run slots (global cap 3) with FIFO-queued approvals; adapter-level cancel with `cancelled` outcome; host-derived titles via `thread/name/set`. | 08 deterministic list; 08 live rows with DashScope + Codex 0.152.0 evidence |
 | **M2 — capability registry** | `capabilities.json`, module toggles, MCP search provider opt-in, Tavily optional | 03a checklist; then 03a-flip after the live smoke is recorded |
 | **M3 — external MCP** | FrontBrain MCP executors with compiler adaptation; Codex projection with allowlist closure | 03b checklist incl. `mcpServerStatus/list` verification |
 | **M4 — knowledge** | Layer K store, ingest UI, `knowledge__recall`, then host-attached references + `nova-knowledge` | 04 checklist; release-gate decision below |
@@ -142,7 +144,7 @@ merges — not as part of this documentation phase.
 | Knowledge | Separate layer K (user-curated) with hybrid retrieval; evidence-only; references reach Codex only in a form it can resolve (`get_chunk` with digest pin, or in-workspace paths); no auto ContextView injection by default | Stuffing document bodies into system prompt; merging knowledge into L1 graph; emitting `knowledge://` URIs Codex cannot open |
 | Progress UX | Optional orb bubbles as reminders + a persistent last-result entry; main process reserves window bounds; speech remains Floor-gated | Speaking every Codex working update; OS toasts for in-session progress; bubbles as the audit trail |
 | Executor identity | Core sees `manifest.name / roles / display_name` only; coding work routed by role; boundary enforced by lint + script; approvals and project confirmation are host capabilities behind an `ApprovalBroker` port | Branching on `'codex'` in core; executor-owned confirmation tools; boundary by convention |
-| Project selection | FastBrain picks a roster name from a versioned `workspace_context` item; host does resolution, unconfirmed switching, session bookkeeping; only create confirms; cancel targets running work and is confirmed via `turn/interrupt` | Model-driven list/select/start state machine; backend coordinator choosing projects (qwen pattern); optimistic cancel; `任务 N` titles |
+| Project selection | Executor-side coordinator in `executors/coding/` intake; FastBrain sends natural language through `dispatch(executor, instruction)`; roster is coordinator input and desktop UI only; session is `latest \| new`; switching unconfirmed, create confirms; cancel is an explicit tool resolved in the executor | Voice model picking a roster name from a versioned `workspace_context` item; six `work__` / `project__` tools; model-driven list/select/start state machine; `<session_id>` on the voice surface; optimistic cancel; `任务 N` titles |
 
 ### Deferred items that stay deferred
 
@@ -155,7 +157,8 @@ merges — not as part of this documentation phase.
 
 - Local embedding provider implementation (interface reserved in 04).
 - `sqlite-vec` acceleration if chunk counts exceed brute-force comfort.
-- Widening `codex__confirm_codex_approval` to session-scoped decisions by voice.
+- Widening the voice approval decision (`confirm(id, accepted)` after 08) to
+  session-scoped grants.
 
 ## Invariants that must not regress
 
@@ -211,7 +214,7 @@ schema bundle before revising. Disposition:
 | # | Finding | Verified? | Disposition |
 |---|---|---|---|
 | P1 | `planReadback=confirm` circular: execution required authorization which required confirm of a plan | Yes | `02`: split planning gate vs execution gate; `intent_to_proceed` unlocks planning only; confirm binds `{proposal_id, plan_revision}`; pure confirm does not bump `revision` |
-| P1 | All `codex__project` calls routed into intake would break list/switch workspace | Yes — actions in `codex-contract.ts` | `02`: interception table; only `start_session` / `resume_session` / `create_workspace`+`work_order`; preserve workspace + session + create confirmation |
+| P1 | All `codex__project` calls routed into intake would break list/switch workspace | Yes — actions in `codex-contract.ts` | `02`: interception table; only `start_session` / `resume_session` / `create_workspace`+`work_order`; preserve workspace + session + create confirmation. Superseded by 08: the intercepted tool is now `dispatch`, and management actions no longer exist on the voice surface |
 | P2 | `closed(dispatched)` before admission returns; `admitDelegate` is not the public API | Yes — public API is `dispatchExternal` / `dispatchConfirmedExternal` | `02`: `committing` re-entrancy guard; `dispatched` only on `accepted=true`; else `admission_refused` + recovery |
 | P2 | Headless ask contradicted the ask column (`on-request` vs `never`) | Yes | `01`: resolved profiles `ask` / `ask_headless` / `yolo`; matrix has three columns |
 | P2 | Alias short form could yield wire name length 66 for a 32-char server | Yes — `5+32+2+20+1+6=66` | `03`: `budget = 64 - len(prefix)`; short form uses `budget-7`; max-length fixture required |
@@ -236,12 +239,29 @@ that became volumes 07 and 08:
 | # | Finding | Verified? | Disposition |
 |---|---|---|---|
 | P1 | Codex leaks into 31 core files outside `codex-*` / `executors/`; `realtime-assembly.ts:827` and `confirmed-project-capability.ts:41` hard-code `executor:'codex'`; `executors/codex-project-live.ts` imports `realtime/*` | Yes | 07: package under `executors/codex/`, role routing, `ApprovalBroker` port, lint + script, fixture executor |
-| P1 | Voice surface is six `codex__project` actions + confirm; common case costs ≥3 tool round-trips; `session` is model-visible | Yes | 08: `work__*` / `project__*` host tools, roster in ContextView, `latest/new/<id>` |
-| P2 | Runtime admits concurrent delegates but adapters serialize with `#runActive`; no model-facing cancel; transport already has `turn/interrupt` | Yes | 08: per-session lock, cap 3, `work__cancel` confirmed, `cancelled` outcome |
+| P1 | Voice surface is six `codex__project` actions + confirm; common case costs ≥3 tool round-trips; `session` is model-visible | Yes | 08: `dispatch` / `cancel` / `confirm` host tools, coordinator in the coding executor, `latest \| new` (see fourth pass) |
+| P2 | Runtime admits concurrent delegates but adapters serialize with `#runActive`; no model-facing cancel; transport already has `turn/interrupt` | Yes | 08: per-session lock, cap 3, explicit `cancel` tool, `cancelled` outcome |
 | P2 | Codex never auto-names app-server threads (0/… locally); Nova ignores `thread/name/*`; titles default to `任务 N` | Yes (local `state_5.sqlite`, schema 0.152.0) | 08: host-derived title, `thread/name/set`, mirror `thread/name/updated` |
 
-Deliberate difference from qwen kept: selection stays with FastBrain + host,
-not a backend coordinator (reasons in 08 Non-goals).
+This pass still kept selection with FastBrain + host rather than a backend
+coordinator; the fourth pass below reverses that.
+
+### 2026-09-03 — fourth pass (coordinator sink)
+
+Re-reading the third-pass 08 draft against the round-trip cost of a realtime
+model: giving the voice model a roster and a six-tool state machine keeps the
+common case at ≥2 audible pauses, and every added tool competes with speech.
+
+| # | Finding | Verified? | Disposition |
+|---|---|---|---|
+| P1 | Roster in ContextView + `work__*` / `project__*` tools still made the voice model the coordinator; ≥2 round-trips for "改博客" | Yes — draft 08 tool table | 08 rewritten: voice surface is `dispatch` / `cancel` / `confirm`; project / session / cancel-target selection moves into `executors/coding/` intake, decided in the existing cheap `assess` slot; roster is coordinator input + desktop UI only |
+| P1 | Two confirmation tools (approval, project proposal) are the same yes/no question to the user | Yes | One `confirm(id, accepted)` routed by id ownership; the two FSMs stay separate (07 Non-goals) |
+| P2 | A voice-facing status tool duplicates evidence the model already has | Yes — `active_executor_context` in `qwen.ts:85–93` | No status tool and no `status` coordinator kind; progress questions read ContextView, `memory__recall` as fallback |
+| P2 | `<session_id>` and `project__sessions` exposed a concept users never say | Yes | Session reduced to `latest \| new`; historical resume stays on the desktop |
+
+Difference from qwen now narrowed deliberately: Nova adopts the backend
+coordinator pattern for project / session selection, but keeps clarification,
+work-order authorship, and admission on the host (02).
 
 ## Document conventions
 

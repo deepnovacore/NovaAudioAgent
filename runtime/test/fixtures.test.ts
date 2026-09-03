@@ -41,6 +41,7 @@ test('every version-one fixture directory validates', async () => {
 
 const slowManifest = executorManifestSchema.parse({
   name: 'slow_sim',
+  display_name: 'Slow Sim',
   policy: handoffPolicySchema.parse({
     channel: 'slow_sim',
     priority: 50,

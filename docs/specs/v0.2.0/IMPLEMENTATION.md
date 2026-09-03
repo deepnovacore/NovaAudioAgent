@@ -24,10 +24,16 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
   `display_name` / `approvals` on the manifest, `ApprovalBroker` port, role-based
   routing, `executor.*` / `project.*` wire, fixture executor,
   `check:executor-boundary`. Behaviour identical to M1.
-- [ ] 08 project/session/work: `work__dispatch / steer / status / cancel`,
-  `project__sessions / create`; roster in `workspace_context`; per-session
-  locks with cap 3; `cancelDelegate` + `cancelled` outcome; host-derived titles
-  through `thread/name/set` / `thread/name/updated`.
+- [ ] 08 project/session/work — **in progress / redesigned 2026-09-03**
+  (coordinator sink; spec rewritten, nothing implemented): voice tools
+  `dispatch(executor, instruction)` / `cancel(executor, instruction?)` /
+  `confirm(id, accepted)`; intake + coordinator move to
+  `runtime/src/executors/coding/`; session is `latest | new`; roster is
+  coordinator input and desktop UI only, not ContextView; per-project run slots
+  with cap 3; adapter-level cancel producing a `cancelled` handoff through the
+  normal `postExecutorResult` path (no `CausalRuntime` change, no
+  `cancelDelegate` API); host-derived titles through `thread/name/set` /
+  `thread/name/updated`.
 - [ ] Live acceptance for 08 recorded below with DashScope + Codex 0.152.0
   evidence (transcript, tool calls, `thread/list`).
 

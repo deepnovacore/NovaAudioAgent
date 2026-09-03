@@ -12,6 +12,7 @@ import { executorManifestSchema } from './ports.js'
 
 export const fixtureSlowSimManifest = executorManifestSchema.parse({
   name: 'slow_sim',
+  display_name: 'Slow Sim',
   policy: handoffPolicySchema.parse({
     channel: 'slow_sim',
     priority: 50,

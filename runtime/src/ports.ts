@@ -133,8 +133,8 @@ export const executorRoleSchema = z.enum(['coding'])
 
 export const executorManifestSchema = z.object({
   name: z.string().min(1),
-  /** Human label for wire frames and bubbles; defaults to `name` at the read site. */
-  display_name: z.string().min(1).max(40).optional(),
+  /** Human label for wire frames and bubbles. */
+  display_name: z.string().min(1).max(40),
   roles: z.array(executorRoleSchema).default([]),
   /** The executor raises mid-run approvals; the host attaches its approval surface. */
   approvals: z.boolean().default(false),

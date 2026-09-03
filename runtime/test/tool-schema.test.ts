@@ -37,6 +37,7 @@ function manifestFrom(spec: unknown): ReturnType<typeof executorManifestSchema.p
   const raw = spec as {policy: unknown, name: string, ops: unknown[]}
   return executorManifestSchema.parse({
     name: raw.name,
+    display_name: raw.name,
     policy: handoffPolicySchema.parse(raw.policy),
     ops: raw.ops,
   })
@@ -99,6 +100,7 @@ test('origin_ref is injected into every discriminated object branch', () => {
   })
   const manifest = executorManifestSchema.parse({
     name: 'demo',
+    display_name: 'Demo',
     policy,
     ops: [{
       name: 'route',
@@ -157,19 +159,22 @@ test('wire names, reserved params, and readonly requirements are enforced', () =
   // A manifest with no readonly op cannot be compiled.
   assert.throws(() => compileToolSchema([executorManifestSchema.parse({
     name: 'sim',
+    display_name: 'Sim',
     policy,
     ops: [{name: 'write', description: 'writes', params: {type: 'object', properties: {}}}],
   })]), ToolSchemaError)
 
   // A dot in a name would break the provider wire format.
   assert.throws(() => compileToolSchema([executorManifestSchema.parse({
-    name: 'bad.name', policy: handoffPolicySchema.parse({...policy, channel: 'bad.name'}),
+    name: 'bad.name', display_name: 'Bad Name',
+    policy: handoffPolicySchema.parse({...policy, channel: 'bad.name'}),
     ops: [readonlyOp],
   })]), ToolSchemaError)
 
   // origin_ref is host-owned and cannot be declared by a manifest.
   assert.throws(() => compileToolSchema([executorManifestSchema.parse({
     name: 'sim',
+    display_name: 'Sim',
     policy,
     ops: [{
       ...readonlyOp,
@@ -178,13 +183,14 @@ test('wire names, reserved params, and readonly requirements are enforced', () =
   })]), ToolSchemaError)
 
   // A duplicate manifest name is rejected rather than silently shadowing.
-  const manifest = executorManifestSchema.parse({name: 'sim', policy, ops: [readonlyOp]})
+  const manifest = executorManifestSchema.parse({name: 'sim', display_name: 'Sim', policy, ops: [readonlyOp]})
   assert.throws(() => compileToolSchema([manifest, manifest]), ToolSchemaError)
 
   // A wire name over 64 characters cannot reach the provider.
   const longName = 'a'.repeat(60)
   assert.throws(() => compileToolSchema([executorManifestSchema.parse({
     name: longName,
+    display_name: 'Long Name',
     policy: handoffPolicySchema.parse({...policy, channel: longName}),
     ops: [{...readonlyOp, name: 'peekpeek'}],
   })]), ToolSchemaError)

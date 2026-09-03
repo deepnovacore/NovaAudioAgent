@@ -29,6 +29,9 @@ const METHODS = {
   'turn/interrupt': ['v2/TurnInterruptParams.json', {
     threadId: 'string', turnId: 'string',
   }, ['threadId', 'turnId'], [], {}],
+  'thread/name/set': ['v2/ThreadSetNameParams.json', {
+    threadId: 'string', name: 'string',
+  }, ['threadId', 'name'], [], {}],
 } as const
 
 const INBOUND = [
@@ -63,7 +66,12 @@ const INBOUND = [
   }, ['threadId', 'turn'], ['turn', {
     id: 'string', items: 'array', status: 'string',
   }, ['id', 'items', 'status']]],
+  ['v2/ThreadNameUpdatedNotification.json', {threadId: 'string', threadName: 'string'}, ['threadId'], null],
 ] as const
+
+const INBOUND_NULLABLE: Readonly<Record<string, readonly string[]>> = {
+  'v2/ThreadNameUpdatedNotification.json': ['threadName'],
+}
 
 const INBOUND_ALLOWED_TYPES: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
   'v2/ThreadStartResponse.json': {approvalPolicy: ['string', 'object']},
@@ -87,7 +95,7 @@ export function supportedSchemaBundle(): Bundle {
     bundle[file] = schema(fields, required, nullable, allowedTypes)
   }
   for (const [file, fields, required, nested] of INBOUND) {
-    const properties = fieldSchemas(fields, [], INBOUND_ALLOWED_TYPES[file] ?? {})
+    const properties = fieldSchemas(fields, INBOUND_NULLABLE[file] ?? [], INBOUND_ALLOWED_TYPES[file] ?? {})
     const definitions: Record<string, unknown> = {}
     if (nested !== null) {
       const [field, nestedFields, nestedRequired] = nested

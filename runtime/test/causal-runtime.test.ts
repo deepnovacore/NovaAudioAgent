@@ -305,6 +305,7 @@ test('compressor calls receive the frozen channel snapshot they summarize', asyn
   const manifest = executorManifestSchema.parse({
     ...fixtureSlowSimManifest,
     name: 'compress_sim',
+    display_name: 'Compress Sim',
     policy: {
       ...fixtureSlowSimManifest.policy,
       channel: 'compress_sim',

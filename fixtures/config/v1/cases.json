@@ -61,7 +61,7 @@
       "action": "load",
       "environment": {
         "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "\u001c5",
-        "NOVA_AUDIO_AGENT_EXECUTORS": "\u001cslow_sim, fast_sim ",
+        "NOVA_AUDIO_AGENT_EXECUTORS": "\u001cslow_sim, fast_sim, codex ",
         "NOVA_AUDIO_AGENT_FAST_MODEL": "\u001cfast",
         "NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN": "\u001c0",
         "TAVILY_API_KEY": "\u001ctavily"
@@ -121,6 +121,7 @@
       "action": "load",
       "environment": {
         "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "600",
+        "NOVA_AUDIO_AGENT_EXECUTORS": "fast_sim, codex",
         "NOVA_AUDIO_AGENT_FRESH_WINDOW": "0",
         "NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN": "0"
       },
@@ -129,7 +130,8 @@
     {
       "action": "load",
       "environment": {
-        "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "601"
+        "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "601",
+        "NOVA_AUDIO_AGENT_EXECUTORS": "fast_sim, codex"
       },
       "id": "numeric_out_of_bounds"
     },

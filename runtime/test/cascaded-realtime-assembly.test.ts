@@ -217,6 +217,7 @@ function readySurface(onVad: () => void): LiveKitAgentsPublicSurface {
 
 const MODEL_PROBE_MANIFEST = executorManifestSchema.parse({
   name: 'fast_sim',
+  display_name: 'Fast Sim',
   policy: handoffPolicySchema.parse({
     channel: 'fast_sim', priority: 50, wake: 'surrogate', typical_latency: 1,
     compress_watermark: 1,

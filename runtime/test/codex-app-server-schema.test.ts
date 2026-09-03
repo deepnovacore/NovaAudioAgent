@@ -60,6 +60,11 @@ const METHOD_SPECS = {
     fields: {threadId: 'string', turnId: 'string'},
     required: ['threadId', 'turnId'],
   },
+  'thread/name/set': {
+    file: 'v2/ThreadSetNameParams.json',
+    fields: {threadId: 'string', name: 'string'},
+    required: ['threadId', 'name'],
+  },
 } as const
 
 const THREAD_NESTED = {
@@ -119,6 +124,10 @@ const INBOUND_SPECS = [
     fields: {threadId: 'string', turn: 'object'}, required: ['threadId', 'turn'],
     nested: TURN_NESTED,
   },
+  {
+    file: 'v2/ThreadNameUpdatedNotification.json',
+    fields: {threadId: 'string', threadName: 'string'}, required: ['threadId'], nullable: ['threadName'],
+  },
 ] as const
 
 function objectSchema(
@@ -167,10 +176,11 @@ function supportedBundle(): Bundle {
     const allowedTypes: Readonly<Record<string, readonly string[]>> = 'allowedTypes' in spec
       ? spec.allowedTypes
       : {}
+    const nullable: readonly string[] = 'nullable' in spec ? spec.nullable : []
     const fields: Record<string, unknown> = Object.fromEntries(
       Object.entries(spec.fields).map(([name, type]) => [
         name,
-        {type: allowedTypes[name] ?? type},
+        {type: allowedTypes[name] ?? (nullable.includes(name) ? [type, 'null'] : type)},
       ]),
     )
     const definitions: Record<string, unknown> = {}
@@ -245,6 +255,7 @@ test('the exact supported request and inbound schema bundle validates', () => {
     'turn/start': true,
     'turn/steer': true,
     'turn/interrupt': true,
+    'thread/name/set': true,
   })
 })
 
@@ -488,7 +499,7 @@ test('every required method, reference, field, required marker, and type is fail
       const widenedType = supportedBundle()
       const fieldSchema = nested(widenedType, spec.file, 'properties', field)
       if (Object.hasOwn(fieldSchema, '$ref')) fieldSchema.type = 'string'
-      else fieldSchema.type = [expectedType, 'null']
+      else fieldSchema.type = [expectedType, ('nullable' in spec && (spec.nullable as readonly string[]).includes(field)) ? 'integer' : 'null']
       expectUnsupported(widenedType)
     }
     for (const field of spec.required) {

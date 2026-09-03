@@ -70,6 +70,7 @@ const STATUS = opSpecSchema.parse({
 
 export const WATCH_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   name: 'watch',
+  display_name: 'Watch',
   ops: [START, STOP, STATUS],
   policy: handoffPolicySchema.parse({
     channel: 'watch', priority: 40, wake: 'surrogate', typical_latency: 300,
@@ -79,6 +80,7 @@ export const WATCH_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
 
 export const GUARD_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   name: 'guard',
+  display_name: 'Guard',
   ops: [START, STOP, STATUS],
   policy: handoffPolicySchema.parse({
     channel: 'guard', priority: 90, wake: 'fast', typical_latency: 300,

@@ -199,7 +199,7 @@ test('a progress summary keeps its head, bounded by code point', () => {
   // Distinct code points, so the retained half is provable rather than merely the right length.
   const state = new RealtimeSessionState()
   const characters = distinctCharacters(PROGRESS_SUMMARY_LIMIT + 50)
-  state.registerDelegate('d-1', {channel: 'codex', 
+  state.registerDelegate('d-1', {channel: 'codex',
     summary: 's',
     state: 'running',
     progress_summary: characters.join(''),

@@ -272,6 +272,7 @@ test('the provider schemas are copied, not aliased', () => {
 function queueOnlyOptions(): ConstructorParameters<typeof RealtimeService>[0] {
   const manifest = executorManifestSchema.parse({
     name: 'queue_sim',
+    display_name: 'Queue Sim',
     policy: {
       channel: 'queue_sim',
       priority: 50,
@@ -1448,7 +1449,8 @@ function projectionService(options: {
   }
   const manifest = executorManifestSchema.parse({
     name: delegate.executor,
-    ...(delegate.executor === 'codex' ? {display_name: 'Codex', roles: ['coding']} : {}),
+    display_name: delegate.executor === 'codex' ? 'Codex' : delegate.executor,
+    ...(delegate.executor === 'codex' ? {roles: ['coding']} : {}),
     policy: {
       channel: delegate.executor,
       priority: options.priority ?? 50,
@@ -4234,6 +4236,7 @@ function guardService(options: {
   // Priority 90 is inside the preemption band, which is what makes a queued item preemptive at all.
   const manifest = executorManifestSchema.parse({
     name: 'guard',
+    display_name: 'Guard',
     policy: {
       channel: 'guard',
       priority: 90,

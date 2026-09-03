@@ -713,6 +713,24 @@ test('provider tool view narrows schemas without copying host authority', async 
   )
 })
 
+test('intake without a coding executor fails assembly instead of silently dropping intake', () => {
+  const core = realCore()
+  assert.throws(
+    () => buildRealtimeAssembly({
+      core,
+      provider: new AbortAwareProvider(),
+      intake: {
+        models: {
+          assess: () => Promise.reject(new Error('not used')),
+          plan: () => Promise.reject(new Error('not used')),
+        },
+        settings: {clarification_depth: 'balanced', plan_readback: 'summary'},
+      },
+    }),
+    error => error instanceof AssemblyError && error.message === 'no executor with role coding',
+  )
+})
+
 test('provider tool view rejects deep non-JSON, malformed, and altered known schemas', () => {
   // Mutations caught: shallow name-only validation accepts every case below and defers failure to a
   // lower layer; comparing object identity instead of behavior also rejects the exact clone above.
@@ -1492,7 +1510,7 @@ test('active project views replace one provider context without publishing histo
     assert.match(provider.currentWorkspaceItem?.content ?? '', /正在运行测试/u)
     assert.equal(provider.currentWorkspaceItem?.content.includes('正在写计时逻辑'), false)
 
-    realtime.session.registerDelegate('delegate-progress', {channel: 'codex', 
+    realtime.session.registerDelegate('delegate-progress', {channel: 'codex',
       summary: '实现计时器',
       state: 'completed',
     })
@@ -1528,7 +1546,7 @@ test('active executor context is published even when no project workspace is com
     assert.match(provider.currentWorkspaceItem?.content ?? '', /正在等待画面变化/u)
     assert.equal(provider.currentWorkspaceItem?.workspace_instance_id, 'active-executor-context')
 
-    realtime.session.registerDelegate('standalone-watch', {channel: 'codex', 
+    realtime.session.registerDelegate('standalone-watch', {channel: 'codex',
       summary: '观察桌面状态', state: 'completed',
     })
     await realtime.enqueueActiveWorkContextPublication()
