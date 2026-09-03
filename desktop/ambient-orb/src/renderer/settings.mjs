@@ -64,11 +64,15 @@ const workspaceActionStatus = document.querySelector('#workspace-action-status')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
 const pipelineModeInputs = [...document.querySelectorAll('input[name="pipelineMode"]')]
+const codexApprovalModeInputs = [...document.querySelectorAll('input[name="codexApprovalMode"]')]
+const planReadbackInputs = [...document.querySelectorAll('input[name="planReadback"]')]
+const progressBubblesInputs = [...document.querySelectorAll('input[name="progressBubbles"]')]
 const heartbeat = document.querySelector('#heartbeat')
 const heartbeatValue = document.querySelector('#heartbeat-value')
 const codexModeInputs = [...document.querySelectorAll('input[name="codexBinaryMode"]')]
 const codexBinaryPath = document.querySelector('#codexBinaryPath')
 const codexStatus = document.querySelector('#codex-status')
+const yoloWarning = document.querySelector('#codex-yolo-warning')
 const codexManualSettings = document.querySelector('#codex-manual-settings')
 const codexRescan = document.querySelector('#codex-rescan')
 const codexWorkspace = document.querySelector('#codexWorkspace')
@@ -89,6 +93,8 @@ const cascadedLlmModel = document.querySelector('#cascadedLlmModel')
 const cascadedTtsProvider = document.querySelector('#cascadedTtsProvider')
 const cascadedTtsVoicePreset = document.querySelector('#cascadedTtsVoicePreset')
 const cascadedTtsVoiceCustom = document.querySelector('#cascadedTtsVoiceCustom')
+const clarificationDepth = document.querySelector('#clarificationDepth')
+const plannerModel = document.querySelector('#plannerModel')
 
 function populateVoiceOptions(select, presets) {
   for (const preset of presets) {
@@ -179,6 +185,14 @@ function render(view, _drafts, state) {
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
   for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
+  for (const input of codexApprovalModeInputs) {
+    input.checked = input.value === view.codexApprovalMode
+  }
+  for (const input of planReadbackInputs) input.checked = input.value === view.planReadback
+  for (const input of progressBubblesInputs) input.checked = input.value === view.progressBubbles
+  yoloWarning.hidden = view.codexApprovalMode !== 'yolo'
+  clarificationDepth.value = view.clarificationDepth
+  plannerModel.value = view.plannerModel ?? ''
   heartbeat.value = String(view.codexHeartbeatSeconds)
   heartbeatValue.textContent = `${view.codexHeartbeatSeconds} 秒`
   for (const input of codexModeInputs) input.checked = input.value === view.codexBinaryMode
@@ -226,14 +240,14 @@ function updateRestartNotice(phase) {
     return
   }
   if (phase === 'failed') {
-    restartNotice.textContent = '已保存，但后台未能应用新配置；当前仍在使用旧配置'
+    restartNotice.textContent = '已保存·未生效：后台仍在使用旧配置'
     return
   }
   if (phase === 'restart_failed') {
-    restartNotice.textContent = '已保存并载入新配置，但后台重启失败；请检查后台状态后重试'
+    restartNotice.textContent = '已保存·后端未启动：请检查后台状态后重试'
     return
   }
-  restartNotice.textContent = '已保存，后台已重启并重新连接'
+  restartNotice.textContent = '已生效：后台已重启并重新连接'
 }
 
 const controller = createSettingsController({
@@ -250,6 +264,15 @@ function bindStage(element, event, patch) {
 for (const input of paletteInputs) bindStage(input, 'change', () => ({palette: input.value}))
 for (const input of proactivityInputs) bindStage(input, 'change', () => ({proactivity: input.value}))
 for (const input of pipelineModeInputs) bindStage(input, 'change', () => ({pipelineMode: input.value}))
+for (const input of codexApprovalModeInputs) {
+  bindStage(input, 'change', () => ({codexApprovalMode: input.value}))
+}
+for (const input of planReadbackInputs) bindStage(input, 'change', () => ({planReadback: input.value}))
+for (const input of progressBubblesInputs) {
+  bindStage(input, 'change', () => ({progressBubbles: input.value}))
+}
+bindStage(clarificationDepth, 'change', () => ({clarificationDepth: clarificationDepth.value}))
+bindStage(plannerModel, 'input', () => ({plannerModel: plannerModel.value}))
 heartbeat.addEventListener('input', () => {
   heartbeatValue.textContent = `${heartbeat.value} 秒`
   controller.stage({codexHeartbeatSeconds: Number(heartbeat.value)})

@@ -52,6 +52,7 @@ import {
 import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
+import { executorResultDialogOptions, parseExecutorResult } from './executor-result.mjs'
 import { shouldOpenSettings } from './launch-command.mjs'
 import {
   canonicalInstalledExecutable,
@@ -94,7 +95,7 @@ import {
 } from './workspace-actions.mjs'
 import {
   clampWindowPosition,
-  createConfirmationWindowController,
+  createOrbWindowController,
   loadWindowPosition,
   saveWindowPosition,
   validDragDelta,
@@ -742,12 +743,16 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
         mainWindow.once('closed', () => rejectShown(new Error('source_startup_window_closed')))
       })
     : null
-  const confirmationWindow = createConfirmationWindowController({
+  const orbWindow = createOrbWindowController({
     getBounds: () => mainWindow.getBounds(),
     setBounds: bounds => mainWindow.setBounds(bounds),
     getZoomFactor: () => mainWindow.webContents.getZoomFactor(),
+    getScaleFactor: () => screen.getDisplayNearestPoint(
+      screen.getCursorScreenPoint(),
+    ).scaleFactor,
     getWorkAreaForPoint: point => screen.getDisplayNearestPoint(point).workArea,
-    onPlacement: placement => sendToOrb('nova:confirmation-placement', placement),
+    onConfirmationPlacement: placement => sendToOrb('nova:confirmation-placement', placement),
+    onBubbleLayout: layout => sendToOrb('nova:bubble-layout', layout),
   })
 
   const dragController = createDragController({
@@ -757,10 +762,10 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       return { x, y }
     },
     setWindowPosition: position => mainWindow.setPosition(position.x, position.y),
-    clamp: candidate => confirmationWindow.clampDragPosition(candidate),
+    clamp: candidate => orbWindow.clampDragPosition(candidate),
   })
   mainWindow.webContents.on('zoom-changed', () => {
-    if (confirmationWindow.active) setTimeout(() => confirmationWindow.sync(), 0)
+    setTimeout(() => orbWindow.sync(), 0)
   })
   const readBootstrap = createBootstrapAccess(bootstrap, mainWindow.webContents)
   ipcMain.handle('nova:camera:permission', async event => {
@@ -1064,7 +1069,26 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   ipcMain.on('nova:confirmation-mode', (event, active) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
     if (typeof active !== 'boolean') return
-    confirmationWindow.setMode(active)
+    orbWindow.setConfirmationMode(active)
+  })
+  ipcMain.handle('nova:bubbles:reserve', async (event, rows) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('bubble bounds request rejected')
+    }
+    if (!Number.isInteger(rows) || rows < 0 || rows > 3) {
+      throw new Error('bubble rows rejected')
+    }
+    return orbWindow.reserveBubbleArea(rows)
+  })
+  ipcMain.handle('nova:executor-result:open', async (event, value) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('executor result request rejected')
+    }
+    const result = parseExecutorResult(value)
+    if (result === null) throw new Error('executor result rejected')
+    const response = await dialog.showMessageBox(mainWindow, executorResultDialogOptions(result))
+    if (response.response === 0) openMemoryBoard(launchId)
+    return true
   })
   ipcMain.on('nova:window-drag:start', event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
@@ -1084,7 +1108,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
     const { moved, position } = dragController.end()
     if (!moved || !position) return
-    const naturalPosition = confirmationWindow.finishDrag(position)
+    const naturalPosition = orbWindow.finishDrag(position)
     void saveWindowPosition(windowPositionFile(), naturalPosition).catch(error => {
       console.error(`[desktop-diagnostic] window_position_save_failure type=${error.name}`)
     })

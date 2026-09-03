@@ -94,6 +94,33 @@ test('Codex approval controls send their independent exact one-shot frame', () =
   }])
 })
 
+test('session grants require the advertised decision and never change the boolean accept path', () => {
+  const sent = []
+  const controller = new CodexApprovalDecisionController({send: frame => { sent.push(frame); return true }})
+  controller.sync({pending: true, approvalId: 'approval', allowedDecisions: ['accept', 'decline']})
+  assert.equal(controller.canAcceptForSession, false)
+  assert.equal(controller.decide(true, 'session'), false)
+  assert.equal(controller.decide(true), true)
+  assert.equal(sent[0].scope, undefined)
+  controller.sync({pending: true, approvalId: 'next', allowedDecisions: ['acceptForSession', 'decline']})
+  assert.equal(controller.canAccept, false)
+  assert.equal(controller.canAcceptForSession, true)
+  assert.equal(controller.decide(true), false)
+  assert.equal(controller.decide(false, 'session'), false)
+  assert.equal(controller.decide(true, 'session'), true)
+  assert.deepEqual(sent.at(-1), {type: 'codex.approval_decision', approval_id: 'next', approved: true, scope: 'session'})
+})
+
+test('permission scope and allowed buttons survive the wire while unknown authority is rejected', () => {
+  const frame = {type: 'codex.approval', pending_approval: true, pending_approval_busy: false,
+    pending_approval_id: 'p', kind: 'permissions', local_detail: {kind: 'permissions', scope: 'write: 工作区外；网络：请求访问'},
+    operation_summary: 'Codex 请求提升权限。', expires_in_seconds: 60,
+    allowed_decisions: ['accept', 'acceptForSession', 'decline']}
+  assert.match(parseCodexApprovalMessage(frame).operation, /工作区外/)
+  assert.equal(parseCodexApprovalMessage({...frame, allowed_decisions: ['acceptWithExecpolicyAmendment']}), null)
+  assert.equal(parseCodexApprovalMessage({...frame, local_detail: {kind: 'permissions', scope: 'x'.repeat(1025)}}), null)
+})
+
 test('the pending loser is promoted after the visible Codex confirmation settles', () => {
   const presentation = new ConfirmationPresentationController()
   const sent = []

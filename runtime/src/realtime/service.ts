@@ -25,6 +25,8 @@
 
 import {createHash, randomUUID} from 'node:crypto'
 import {canonicalJson} from '../canonical-json.js'
+import {validateCodexRequest} from '../codex-contract.js'
+import {IntakeController, isIntakeAction, type IntakeOptions, type IntakeSession} from './intake.js'
 import type { Clock } from '../clock.js'
 import { validProgressSummary, type EventRecord, type JsonValue } from '../events.js'
 import { parseMemoryRef, USER_PRIORITY, type MemoryItem } from '../memory.js'
@@ -308,6 +310,7 @@ export interface ServiceProvider {
 }
 
 export interface RealtimeServiceOptions {
+  readonly intake?: Pick<IntakeOptions, 'models' | 'settings' | 'resolveTarget' | 'dispatch' | 'record'>
   readonly provider: ServiceProvider
   readonly runtime: ServiceRuntime
   readonly tools: CompiledTools
@@ -358,6 +361,9 @@ const SHUTDOWN_GRACE_MS = 250
 
 export class RealtimeService {
   readonly session: RealtimeSession
+  readonly #intake: IntakeController | undefined
+  #intakeUser: {text: string; origin_ref: string; epoch: number} | null = null
+  #intakeWorkspaceId: string | null | undefined = undefined
 
   readonly #provider: ServiceProvider
   readonly #runtime: ServiceRuntime
@@ -572,6 +578,42 @@ export class RealtimeService {
     this.#guardHistoryRecovery = recovery
     this.#guardHistoryPairs = pairs
     this.#projectConfirmation = options.projectConfirmation
+    this.#intake = options.intake === undefined ? undefined : new IntakeController({
+      ...options.intake,
+      idFactory: this.#idFactory,
+      dispatch: intake => {
+        const result = options.intake!.dispatch(intake)
+        if (result.accepted && result.delegate_id !== null && result.delegate_id !== undefined) {
+          this.session.registerDelegate(result.delegate_id, {summary: intake.slots.goal.note.slice(0, 240), state: 'running', channel: 'codex'})
+          this.#telemetry?.record('codex.dispatch', {delegate_id: result.delegate_id})
+          this.#publishCodexState()
+        }
+        return result
+      },
+      diagnostic: code => this.#onDiagnostic(`[realtime-diagnostic] ${code}`),
+      invalidateProposal: () => this.#invalidateProjectConfirmation('intake_amended'),
+      fact: (intake, text) => {
+        this.queueHostItem(hostFactIntent({
+          kind: 'final', host_item_id: this.#idFactory(),
+          event_id: `intake:${intake.intake_id}:${intake.revision}:${this.#idFactory()}`,
+          content: [...text].slice(0, MAX_HOST_FACT_CHARS).join(''),
+        }), {priority: USER_PRIORITY - 1, preemptive: false})
+        this.#deliveryReady.set()
+      },
+      prepare: intake => {
+        if (intake.target === null || this.#projectConfirmation === undefined) throw new TypeError('intake_confirmation_unavailable')
+        const target = intake.target
+        const proposal = this.#projectConfirmation.prepare({
+          action: target.action, workspace_display_name: target.workspace_display_name,
+          workspace_id: target.workspace_id, session_title: target.session_title, session_id: target.session_id,
+          work_order: intake.work_order, origin_ref: intake.origin_ref,
+          intake_id: intake.intake_id, plan_revision: intake.plan_revision!,
+        })
+        this.#syncProjectConfirmationIsolation()
+        this.#publishProjectView()
+        return proposal
+      },
+    })
     this.#codexApproval = options.codexApproval
     this.#commitProjectOperation = options.commitProjectOperation
     this.#onProjectView = options.onProjectView
@@ -581,7 +623,9 @@ export class RealtimeService {
     // Subscribed at construction: a proposal can expire before anything else happens, and the observer
     // is the only notice of it.
     this.#unsubscribeProjectExpiry = options.projectConfirmation?.observeExpiry(() => {
+      const proposalId = this.#projectConfirmation?.lifecycleId
       this.#projectConfirmationExpired()
+      if (proposalId !== undefined && proposalId !== null) this.#intake?.decline(proposalId)
     }) ?? null
     this.#unsubscribeCodexApproval = options.codexApproval?.observe(view => {
       this.#syncCodexApproval(view)
@@ -591,6 +635,15 @@ export class RealtimeService {
 
   get codexState(): CodexState {
     return this.#codexState
+  }
+
+  get intakeSession(): Readonly<IntakeSession> | null { return this.#intake?.view ?? null }
+  async settleIntakeForTest(): Promise<void> { await this.#intake?.settled() }
+
+  onProjectWorkspaceChanged(workspaceId: string | null): void {
+    if (this.#intakeWorkspaceId !== undefined && this.#intakeWorkspaceId !== workspaceId
+      && this.#intake?.view?.state !== 'committing') this.#intake?.cancel()
+    this.#intakeWorkspaceId = workspaceId
   }
 
   get stopped(): boolean {
@@ -729,6 +782,7 @@ export class RealtimeService {
   }
 
   async localSpeechOnset(speechId: string): Promise<void> {
+    this.#intake?.userInputStarted()
     this.#noteCodexApprovalOnsetBeforeContext()
     const generation = this.session.currentGeneration
     if (generation !== null) {
@@ -763,6 +817,7 @@ export class RealtimeService {
     })
     if (controller === undefined) return
     const outcome = controller.acceptDirectDecision({proposalId, confirmed})
+    if (outcome.kind === 'cancelled') this.#intake?.decline(proposalId)
     if (outcome.kind === 'ignored') {
       this.#telemetry?.record('project_confirmation.ui_decision_refused', {
         proposal_id: proposalId,
@@ -839,13 +894,13 @@ export class RealtimeService {
   }
 
   /** Renderer clicks are direct local-user authority on the same one-shot controller as voice. */
-  codexApprovalDecision(approvalId: string, approved: boolean): boolean {
-    if (typeof approved !== 'boolean') return false
+  codexApprovalDecision(approvalId: string, approved: boolean, scope?: 'session'): boolean {
+    if (typeof approved !== 'boolean' || scope !== undefined && (scope !== 'session' || !approved)) return false
     const controller = this.#codexApproval
     if (controller === undefined) return false
     const accepted = controller.acceptDecision({
       approvalId,
-      decision: approved ? 'accept' : 'decline',
+      decision: approved ? scope === 'session' ? 'acceptForSession' : 'accept' : 'decline',
     })
     const expired = this.#codexApprovalExpiredIdentity
     this.#recordCodexApprovalDecision(
@@ -1216,6 +1271,12 @@ export class RealtimeService {
   /** Revalidate lifecycle eligibility at the final provider boundary. */
   #queuedHostItemEligible(queued: QueuedHostResponse): boolean {
     const eventId = queued.intent.item.event_id
+    if (eventId.startsWith('intake:')) {
+      const intake = this.#intake?.view
+      if (intake?.session_id !== String(this.session.sessionEpoch)
+        || !eventId.startsWith(`intake:${intake.intake_id}:${intake.revision}:`)
+        || intake.outcome === 'cancelled') return false
+    }
     if (eventId.startsWith('codex-approval:')) {
       const authority = this.#codexApprovalAuthority
       if (
@@ -2782,6 +2843,7 @@ export class RealtimeService {
     }
 
     if (event.kind === 'user_speech_started' && accepted) {
+      this.#intake?.userInputStarted()
       if (this.#providerEpochNeedingActivation === event.session_epoch) {
         this.#providerEpochNeedingActivation = null
       }
@@ -2975,6 +3037,8 @@ export class RealtimeService {
         await this.#maybeRequestFreshCodexApprovalResponse()
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
         this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
+        this.#intakeUser = {text: event.text, origin_ref: originRef, epoch: event.session_epoch}
+        this.#intake?.userTurn(event.text, originRef, String(event.session_epoch))
         this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
           event.session_epoch,
           this.session.userInputRevision,
@@ -2996,6 +3060,7 @@ export class RealtimeService {
       }
     } else if (event.kind === 'user_transcript_failed') {
       if (accepted) {
+        this.#intake?.cancel()
         if (this.#userOrigins.revisionForItem(event.session_epoch, event.item_id) === undefined) {
           this.#rememberUnboundUserOrigin(
             event.session_epoch,
@@ -3579,9 +3644,10 @@ export class RealtimeService {
       acceptance = this.#overCapacityAcceptance(event)
     } else {
       try {
-        acceptance = originRef === null
-          ? this.#bridge.acceptToolCall(event)
-          : this.#bridge.acceptToolCall(event, {originRef})
+        acceptance = this.#interceptIntake(event, originRef)
+          ?? (originRef === null
+            ? this.#bridge.acceptToolCall(event)
+            : this.#bridge.acceptToolCall(event, {originRef}))
       } catch (cause) {
         // The reservation was taken on the assumption the admission would happen. It did not, and a
         // reservation nobody releases is a slot permanently unavailable to every later call.
@@ -3752,6 +3818,24 @@ export class RealtimeService {
       inline_fulfilled: false,
       telemetry: null,
     }
+  }
+
+  #interceptIntake(event: ToolCallReady, originRef: string | null): ToolAcceptance | null {
+    if (this.#intake === undefined || event.name !== 'codex__project') return null
+    const request = {...event.arguments}
+    delete request.origin_ref
+    if (!isIntakeAction(request)) return null
+    const validated = validateCodexRequest('project', 'project', request)
+    if (!validated.ok) return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
+    const user = this.#intakeUser
+    if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref) {
+      return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
+    }
+    const code = this.#intake.open(validated.value as Readonly<Record<string, JsonValue>>, user.text, user.origin_ref, String(event.session_epoch))
+    const result = this.#refusalAcceptance(event, code, JSON.stringify({
+      code, state: this.#intake.view?.state, message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
+    }))
+    return {...result, accepted: true, inline_fulfilled: true}
   }
 
   #recordToolAdmission(input: {
@@ -5149,6 +5233,7 @@ export class RealtimeService {
             proposalId: decision.proposalId,
             confirmed: decision.confirmed,
           })
+          if (outcome.kind === 'cancelled') this.#intake?.decline(decision.proposalId)
           code = outcome.kind === 'ignored' ? 'confirmation_not_pending' : outcome.kind
           state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
           text = outcome.response_text
@@ -5223,6 +5308,11 @@ export class RealtimeService {
     readonly text: string
     readonly expiryOwnsFact: boolean
   }> {
+    const intakeOperation = operation.intake_id !== undefined
+    if (intakeOperation && this.#intake?.beginConfirmed(operation) !== true) {
+      this.#projectConfirmation?.rejectConfirmed(operation)
+      return {state: 'failed', text: '计划已失效，尚未执行。请重新提出任务。', expiryOwnsFact: false}
+    }
     const callback = this.#commitProjectOperation
     const lifecycleId = operation.proposal_id
     this.#projectConfirmationCommittingLifecycles.add(lifecycleId)
@@ -5234,6 +5324,7 @@ export class RealtimeService {
       expires_at: operation.expires_at,
     })
     if (callback === undefined) {
+      if (intakeOperation) this.#intake?.settleConfirmed({accepted: false, code: 'callback_missing'})
       this.#projectConfirmation?.rollbackConfirmed(operation)
       this.#telemetry?.record(this.#projectConfirmation?.pending === true
         ? 'project_confirmation.commit_rollback'
@@ -5262,6 +5353,7 @@ export class RealtimeService {
         delegate_id: result.delegate_id ?? 'none',
       })
       if (result.accepted && controller?.committing === true) {
+        if (intakeOperation) this.#intake?.settleConfirmed({accepted: false, code: 'confirmation_invalid'})
         controller.rejectConfirmed(operation)
         this.#telemetry?.record('project_confirmation.commit_settled', {
           session_epoch: this.session.sessionEpoch,
@@ -5281,6 +5373,7 @@ export class RealtimeService {
         if (result.code === 'runtime_rejected') controller.rollbackConfirmed(operation)
         else if (result.code !== 'confirmation_in_progress') controller.rejectConfirmed(operation)
       }
+      if (intakeOperation) this.#intake?.settleConfirmed(result)
       const transitionKind = result.code === 'confirmation_in_progress'
         ? 'project_confirmation.commit_duplicate_suppressed'
         : controller?.pending === true
@@ -5304,6 +5397,7 @@ export class RealtimeService {
             : projectCommitFailureText(result.code),
       })
     } catch (failure) {
+      if (intakeOperation) this.#intake?.settleConfirmed({accepted: false, code: 'callback_failed'})
       if (isAbort(failure)) {
         this.#projectConfirmationCommittingLifecycles.delete(lifecycleId)
         this.#projectConfirmationExpiryFactOwners.delete(lifecycleId)
@@ -5853,6 +5947,7 @@ export class RealtimeService {
    * provider session -- so confirming it would commit against a context the user never saw.
    */
   #invalidateProjectConfirmation(reason: string): void {
+    if (reason !== 'intake_amended') this.#intake?.cancel()
     this.#projectConfirmation?.invalidate(reason)
     this.#projectConfirmationIsolation.invalidate()
     this.#projectConfirmationShadowItems.clear()

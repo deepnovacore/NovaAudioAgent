@@ -12,6 +12,7 @@ import {
   type TransportObserver,
 } from '../src/codex-app-server-transport.js'
 import {MAX_STDOUT} from '../src/codex-protocol.js'
+import {resolveCodexLaunchProfile, type CodexLaunchProfile} from '../src/codex-launch-profile.js'
 import {RealClock} from '../src/clock.js'
 import {CodexApprovalController} from '../src/realtime/codex-approval.js'
 import {
@@ -72,6 +73,27 @@ test('a cold run follows the app-server handshake and returns bounded internal c
     final_text: 'bounded result',
     internal_activity: 1,
   })
+})
+
+test('an explicit ask profile supplies the approval policy without a legacy launch field', async () => {
+  const controller = new CodexApprovalController({
+    clock: new RealClock(),
+    idFactory: () => 'profile-approval',
+  })
+  const factory = new FakeAppServerOwnerFactory('file-approval')
+  const transport = createTransport(factory, {
+    approvalController: controller,
+    launchProfile: resolveCodexLaunchProfile({
+      approvalMode: 'ask', project: true, foregroundBroker: true,
+    }),
+  })
+  try {
+    assert.notEqual(await transport.prewarm({expiresAtMs: Date.now() + 5000}), null)
+  } finally {
+    await transport.close().catch(() => undefined)
+    await factory.owner?.killTree().catch(() => undefined)
+    await factory.owner?.dispose().catch(() => undefined)
+  }
 })
 
 test('thread-ready observer receives the exact app-server thread identity after binding', async () => {
@@ -2233,6 +2255,8 @@ test('persistent resume uses exact host identity and rejection is pre-effect res
     const resume = owner.received.find(message => message.method === 'thread/resume')
     assert.deepEqual(resume?.params, {
       approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+      permissions: 'nova_audio_agent',
       developerInstructions: 'bounded instructions',
       cwd: workspace,
       threadId: 'durable-thread-1',
@@ -2314,6 +2338,7 @@ test('the real fake app-server carries correlated file and bounded command appro
         ? 'file_change'
         : 'command_execution')
       assert.deepEqual(Object.keys(controller.view).sort(), [
+        'allowed_decisions',
         'expires_at',
         'kind',
         'local_detail',
@@ -2322,6 +2347,9 @@ test('the real fake app-server carries correlated file and bounded command appro
         'pending_approval_busy',
         'pending_approval_id',
       ])
+      if (scenario === 'command-approval') {
+        assert.deepEqual(controller.view.allowed_decisions, ['accept', 'acceptForSession', 'decline'])
+      }
       assert.equal(controller.view.pending_approval_id, `nova-${scenario}`)
       assert.equal(controller.acceptDecision({
         approvalId: `nova-${scenario}`,
@@ -2739,6 +2767,8 @@ class MemoryAppServerOwner {
 function effectiveConfig(workspace: string, widened = false): Record<string, unknown> {
   return {
     config: {
+      approval_policy: 'never',
+      approvals_reviewer: 'user',
       default_permissions: 'nova_audio_agent',
       web_search: 'disabled',
       cwd: workspace,
@@ -2770,6 +2800,7 @@ function threadResponse(
     approvalPolicy: 'never',
     cwd: workspace,
     sandbox: {},
+    approvalsReviewer: 'user',
     activePermissionProfile: {id: 'nova_audio_agent'},
     ...(persistent ? {runtimeWorkspaceRoots: [workspace]} : {}),
     thread: {
@@ -2797,6 +2828,7 @@ function createTransport(
     readonly removeEphemeralHome?: () => Promise<void>
     readonly approvalPolicy?: 'never' | 'on-request'
     readonly approvalController?: CodexApprovalController
+    readonly launchProfile?: CodexLaunchProfile
   } = {},
 ): OwnedCodexAppServerTransport {
   const workspace = process.cwd()
@@ -2815,6 +2847,9 @@ function createTransport(
       ...(overrides.approvalController === undefined
         ? {}
         : {approvalController: overrides.approvalController}),
+      ...(overrides.launchProfile === undefined
+        ? {}
+        : {launchProfile: overrides.launchProfile}),
     },
     processFactory,
     credentialSnapshotter: {

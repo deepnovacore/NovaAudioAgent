@@ -141,7 +141,7 @@ test('invalid generated IDs and malformed public decisions never replace pending
   const waiting = offerCommand(approval)
   assert.equal(approval.acceptDecision({
     approvalId: 'nova-approval-1',
-    decision: 'acceptForSession' as 'accept',
+    decision: 'acceptForSession',
   }), false)
   assert.equal(approval.pending, true)
   approval.invalidate('test_cleanup')

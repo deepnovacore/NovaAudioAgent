@@ -39,6 +39,7 @@ import {
 } from './confirmation-controls.mjs'
 import { deriveOrbState } from './state.mjs'
 import { BackendReconnectController } from './backend-reconnect.mjs'
+import {mountProgressBubbles, parseProgressFrame, parseLastResultFrame} from './bubbles.mjs'
 
 const PROJECT_CONFIRMATION_TTL_SECONDS = 360
 
@@ -54,11 +55,34 @@ const codexSummary = document.querySelector('#codex-summary')
 const codexOperation = document.querySelector('#codex-operation')
 const codexExpiry = document.querySelector('#codex-expiry')
 const confirmationActions = document.querySelector('#codex-confirmation-actions')
+const confirmationAllowSession = document.querySelector('#codex-allow-session')
 const confirmationConfirm = document.querySelector('#codex-confirm')
 const confirmationCancel = document.querySelector('#codex-cancel')
 const confirmationAnnouncement = document.querySelector('#confirmation-announcement')
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
+const lastResultButton = document.querySelector('#last-result')
+let lastResult = null
+const applyBubbleLayout = layout => {
+  const active = layout?.rows > 0 && !layout.suppressed
+  shell.dataset.bubbles = String(active)
+  if (active) {
+    shell.style.setProperty('--bubble-orb-x', `${layout.orbOffsetCssX}px`)
+    shell.style.setProperty('--bubble-orb-y', `${layout.orbOffsetCssY}px`)
+  }
+}
+const progressBubbles = mountProgressBubbles({
+  container: document.querySelector('#bubble-stack'),
+  reserveBubbleArea: async rows => {
+    const layout = await window.novaAudioAgentDesktop.windowLayout.reserveBubbleArea(rows)
+    applyBubbleLayout({...layout, rows: layout?.rows ?? rows})
+    return layout
+  },
+})
+const stopBubbleLayout = window.novaAudioAgentDesktop.windowLayout.onBubbleLayout(layout => {
+  applyBubbleLayout(layout)
+  progressBubbles.applyLayout(layout)
+})
 const stopConfirmationPlacement = window.novaAudioAgentDesktop.windowLayout
   .onConfirmationPlacement(placement => {
     shell.dataset.confirmationPlacement = placement
@@ -269,6 +293,7 @@ function render() {
   setText(stateLabel, state.statusLine)
   setText(codexSummary, state.projectLabel)
   setText(codexOperation, state.confirmationOperation)
+  setAttribute(codexOperation, 'title', state.confirmationOperation)
   setText(codexExpiry, state.confirmationCompactStatus)
   codexLabel.dataset.mode = state.codexMode
   setAttribute(codexLabel, 'aria-label', state.codexLabel)
@@ -282,8 +307,12 @@ function render() {
   const decisionEnabled = activeDecision.enabled
     && axes.connected
     && !axes.pendingConfirmationBusy
+    && confirmationUnexpired()
   confirmationActions.hidden = !axes.pendingConfirmation || axes.pendingConfirmationId === null
   confirmationConfirm.disabled = !decisionEnabled
+  confirmationConfirm.hidden = axes.pendingConfirmationKind === 'codex' && !codexApprovalDecision.canAccept
+  confirmationAllowSession.hidden = axes.pendingConfirmationKind !== 'codex' || !codexApprovalDecision.canAcceptForSession
+  confirmationAllowSession.disabled = !decisionEnabled
   confirmationCancel.disabled = !decisionEnabled
   setText(aecLabel, state.aecLabel)
   setAttribute(orb, 'aria-label', `${state.label}；${state.accessibleCodexLabel}`)
@@ -318,6 +347,11 @@ function confirmationDeadline(seconds) {
 
 function remainingConfirmationSeconds(deadline) {
   return deadline === null ? null : Math.max(0, (deadline - performance.now()) / 1_000)
+}
+
+function confirmationUnexpired() {
+  const active = axes.pendingConfirmationKind === 'codex' ? latestCodexApproval : latestProjectConfirmation
+  return active !== null && remainingConfirmationSeconds(active.deadline) !== 0
 }
 
 function applyConfirmationPresentation() {
@@ -870,9 +904,21 @@ async function handleControl(message) {
         pending: approval.pending_approval,
         approvalId: approval.pending_approval ? approval.pending_approval_id : null,
         busy: approval.pending_approval_busy,
+        allowedDecisions: approval.allowed_decisions,
       })
       confirmationPresentation.sync('codex', approval.pending_approval)
       applyConfirmationPresentation()
+    }
+  } else if (message.type === 'executor.progress') {
+    const frame = parseProgressFrame(message)
+    if (frame !== null) void progressBubbles.push(frame)
+  } else if (message.type === 'executor.result') {
+    const result = parseLastResultFrame(message)
+    if (result !== undefined) {
+      lastResult = result
+      lastResultButton.hidden = result === null
+      lastResultButton.title = result?.summary ?? ''
+      lastResultButton.setAttribute('aria-label', result ? `最近结果：${result.summary}` : '最近结果')
     }
   } else if (message.type === 'error') {
     axes.error = 'backend'
@@ -935,6 +981,11 @@ function resetRendererConnection(processReplaced, {closeSocket = true} = {}) {
   axes.error = ''
   confirmationDecision.deliveryLost()
   codexApprovalDecision.deliveryLost()
+  void progressBubbles.clear()
+  if (processReplaced) {
+    lastResult = null
+    lastResultButton.hidden = true
+  }
   alertTone.stop()
   if (processReplaced) playback.backendExited()
   else playback.disconnect()
@@ -1138,19 +1189,30 @@ speakerToggle.addEventListener('click', () => { void toggleOutputMuted() })
 cameraToggle.addEventListener('click', () => { void cameraToggleController.toggle() })
 openSettingsButton.addEventListener('click', () => window.novaAudioAgentDesktop.orbMenu.openSettings?.())
 confirmationConfirm.addEventListener('click', () => {
+  if (!confirmationUnexpired()) return
   const decision = axes.pendingConfirmationKind === 'codex'
     ? codexApprovalDecision
     : confirmationDecision
   if (decision.decide(true)) render()
 })
 confirmationCancel.addEventListener('click', () => {
+  if (!confirmationUnexpired()) return
   const decision = axes.pendingConfirmationKind === 'codex'
     ? codexApprovalDecision
     : confirmationDecision
   if (decision.decide(false)) render()
 })
+confirmationAllowSession.addEventListener('click', () => {
+  if (!confirmationUnexpired()) return
+  if (axes.pendingConfirmationKind === 'codex' && codexApprovalDecision.decide(true, 'session')) render()
+})
+lastResultButton.addEventListener('click', () => {
+  if (lastResult !== null) void window.novaAudioAgentDesktop.executorResult.open(lastResult)
+})
 window.addEventListener('beforeunload', () => {
   stopConfirmationPlacement()
+  stopBubbleLayout()
+  void progressBubbles.clear()
   socketRouter.dispose()
   cameraController.dispose()
   reducedMotionQuery.removeEventListener('change', syncPaletteAccessibility)

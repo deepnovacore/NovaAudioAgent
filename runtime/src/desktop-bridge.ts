@@ -44,6 +44,7 @@ import type { CodexState } from './realtime/service-state.js'
 import type {CodexApprovalView} from './realtime/codex-approval.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
+import {executorProgressSchema, executorResultSchema, type ExecutorProgress, type ExecutorResult, type ProgressMode} from './desktop-progress.js'
 
 export const DEFAULT_MAX_OUTBOUND_FRAMES = 128
 
@@ -80,7 +81,7 @@ export interface BridgeService {
   playbackDisconnected(options?: {readonly resumeDelivery?: boolean}): Promise<boolean>
   playbackCleared(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean
   projectConfirmationDecision(proposalId: string, confirmed: boolean): Promise<void>
-  codexApprovalDecision(approvalId: string, approved: boolean): boolean
+  codexApprovalDecision(approvalId: string, approved: boolean, scope?: 'session'): boolean
 }
 
 export interface DesktopBridgeOptions {
@@ -93,6 +94,7 @@ export interface DesktopBridgeOptions {
   readonly telemetry?: RealtimeTelemetry
   readonly projectView?: PublicProjectView
   readonly approvalView?: CodexApprovalView
+  readonly progressBubbles?: ProgressMode
   /** Wake the composition-owned sender after, and only after, work becomes available. */
   readonly onOutboundAvailable?: () => void
 }
@@ -124,6 +126,11 @@ export class DesktopSocketBridge {
   #codexOutbound: CodexState | null = null
   #projectOutbound: PublicProjectView | null = null
   #approvalOutbound: CodexApprovalView | null = null
+  readonly #progressMode: ProgressMode
+  readonly #progressSummaries = new Map<string, string>()
+  #lastResult: ExecutorResult | undefined
+  #resultPending = false
+  #latestDelegateId: string | null = null
 
   /**
    * The highest generation the renderer has been told to clear.
@@ -170,6 +177,7 @@ export class DesktopSocketBridge {
     this.#codexState = options.service.codexState
     this.#projectView = options.projectView ?? null
     this.#approvalView = options.approvalView ?? null
+    this.#progressMode = options.progressBubbles ?? 'milestones'
     this.#uplinkFlushedAt = options.clock?.now() ?? 0
   }
 
@@ -292,6 +300,24 @@ export class DesktopSocketBridge {
     this.#enqueue(captionMessage(frame, this.#captionSequence), {droppable: true})
   }
 
+  onExecutorProgress(input: ExecutorProgress, result?: ExecutorResult): void {
+    const frame = executorProgressSchema.parse(input)
+    if (frame.phase === 'started') this.#latestDelegateId = frame.delegate_id
+    if (result !== undefined && (result === null || this.#latestDelegateId === null || this.#latestDelegateId === frame.delegate_id)) {
+      this.#lastResult = executorResultSchema.parse({type: 'executor.result', result}).result
+      this.#resultPending = true
+      if (this.#authenticated) this.#onOutboundAvailable?.()
+    }
+    if (result !== undefined && result !== null) this.#progressSummaries.delete(frame.delegate_id)
+    if (this.#progressMode === 'off' || this.#progressMode === 'milestones' && frame.level === 'detail') return
+    if (frame.level === 'detail') {
+      if (this.#progressSummaries.get(frame.delegate_id) === frame.summary) return
+      if (this.#progressSummaries.size >= 64) this.#progressSummaries.delete(this.#progressSummaries.keys().next().value!)
+      this.#progressSummaries.set(frame.delegate_id, frame.summary)
+    }
+    this.#enqueue(JSON.stringify(frame), {droppable: true})
+  }
+
   // -----------------------------------------------------------------------------------------------
   // Connection ownership.
   // -----------------------------------------------------------------------------------------------
@@ -323,6 +349,7 @@ export class DesktopSocketBridge {
     this.#codexOutbound = null
     this.#projectOutbound = null
     this.#approvalOutbound = null
+    this.#progressSummaries.clear()
   }
 
   /** Mark the connection authenticated, which is what unblocks the single-slot queues. */
@@ -335,6 +362,10 @@ export class DesktopSocketBridge {
     this.#syncCodexStateDelivery()
     this.#syncProjectDelivery()
     this.#syncApprovalDelivery()
+    if (this.#lastResult !== undefined) {
+      this.#resultPending = true
+      this.#onOutboundAvailable?.()
+    }
   }
 
   #fencePlaybackForConnectionBoundary(
@@ -458,7 +489,7 @@ export class DesktopSocketBridge {
       case 'codex_approval_decision': {
         const approvalId = command.payload.approval_id
         if (typeof approvalId !== 'string') return
-        this.#service.codexApprovalDecision(approvalId, command.payload.approved === true)
+        this.#service.codexApprovalDecision(approvalId, command.payload.approved === true, command.payload.scope === 'session' ? 'session' : undefined)
         return
       }
       default:
@@ -517,6 +548,10 @@ export class DesktopSocketBridge {
         return {frame: codexApprovalMessage(view, this.#clock?.now() ?? 0), policy: 'latest'}
       }
     }
+    if (this.#authenticated && this.#resultPending) {
+      this.#resultPending = false
+      return {frame: JSON.stringify({type: 'executor.result', result: this.#lastResult}), policy: 'latest'}
+    }
     return null
   }
 
@@ -562,6 +597,12 @@ export class DesktopSocketBridge {
 
   #enqueue(value: OutboundFrame, options: {readonly droppable?: boolean} = {}): boolean {
     if (this.#everAuthenticated && !this.#authenticated) return false
+    if (this.#outbound.length >= this.#maxOutboundFrames) {
+      if (options.droppable !== true) {
+        const droppableIndex = this.#outbound.findIndex(delivery => delivery.policy === 'droppable')
+        if (droppableIndex >= 0) this.#outbound.splice(droppableIndex, 1)
+      }
+    }
     if (this.#outbound.length >= this.#maxOutboundFrames) {
       // A dropped non-droppable frame leaves the renderer's picture of playback wrong in a way it
       // cannot detect, so the transport stops rather than continuing to look healthy.
@@ -857,10 +898,10 @@ export function parseClientMessage(
     }
   }
   if (kind === 'codex.approval_decision') {
-    if (Object.keys(value).sort().join(',') !== 'approval_id,approved,type') {
+    if (Object.keys(value).sort().join(',') !== (value.scope === undefined ? 'approval_id,approved,type' : 'approval_id,approved,scope,type')) {
       throw new DesktopProtocolError('desktop control frame type is unsupported')
     }
-    if (typeof value.approved !== 'boolean') {
+    if (typeof value.approved !== 'boolean' || value.scope !== undefined && (value.scope !== 'session' || !value.approved)) {
       throw new DesktopProtocolError('desktop Codex approval decision is invalid')
     }
     const approvalId = readIdentifier(value, 'approval_id')
@@ -869,7 +910,7 @@ export function parseClientMessage(
     }
     return {
       kind: 'codex_approval_decision',
-      payload: {approval_id: approvalId, approved: value.approved},
+      payload: {approval_id: approvalId, approved: value.approved, ...(value.scope === undefined ? {} : {scope: value.scope})},
     }
   }
   if (kind === 'clock.pong') {
@@ -927,7 +968,7 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
     case 'codex.approval_decision':
       return {
         kind: 'codex_approval_decision',
-        payload: {approval_id: control.approval_id, approved: control.approved},
+        payload: {approval_id: control.approval_id, approved: control.approved, ...(control.scope === undefined ? {} : {scope: control.scope})},
       }
     case 'clock.pong':
       return {
@@ -1021,6 +1062,7 @@ function sameApprovalView(
     && left.kind === right.kind
     && left.operation_summary === right.operation_summary
     && left.expires_at === right.expires_at
+    && JSON.stringify(left.allowed_decisions) === JSON.stringify(right.allowed_decisions)
     && JSON.stringify(left.local_detail) === JSON.stringify(right.local_detail)
 }
 

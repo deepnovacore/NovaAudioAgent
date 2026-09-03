@@ -42,7 +42,7 @@ import {
   type ConfirmedProjectOperation,
   type ProjectConfirmationView,
 } from '../src/realtime/project-confirmation.js'
-import {CodexApprovalController} from '../src/realtime/codex-approval.js'
+import {CodexApprovalController, type CodexApprovalResolution} from '../src/realtime/codex-approval.js'
 import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
 
@@ -630,6 +630,7 @@ async function* parkedStream(signal: AbortSignal): AsyncGenerator<never> {
  * the batch that speaks about the result. That is what these do.
  */
 function pipelineService(options: {
+  readonly intake?: ConstructorParameters<typeof RealtimeService>[0]['intake']
   readonly toolResult?: {readonly accepted: boolean; readonly delegateId: string | null}
   readonly onCaption?: (frame: {
     readonly role: string
@@ -821,6 +822,7 @@ function pipelineService(options: {
       tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false}),
       idFactory: nextId,
     }),
+    ...(options.intake === undefined ? {} : {intake: options.intake}),
     ...(codexApproval === null ? {} : {codexApproval}),
     idFactory: nextId,
     // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
@@ -4577,7 +4579,7 @@ test('a cancel rejection for a turn that already spoke is ignored', async () => 
 function offerCodexCommand(
   controller: CodexApprovalController,
   signal = new AbortController().signal,
-): Promise<{readonly decision: 'accept' | 'decline'} | null> {
+): Promise<CodexApprovalResolution | null> {
   return controller.offer({
     kind: 'command_execution',
     local_detail: {
@@ -9579,4 +9581,83 @@ test('a shutdown mid-cleanup stops the expiry before it reconnects', async () =>
     connects,
     'the resumed chain does not reconnect a stopped service',
   )
+})
+
+
+for (const source of ['failed_transcript', 'unbound_response', 'mismatched_origin'] as const) {
+  test(`intake refuses ${source} even with a cached successful user transcript`, async () => {
+    const unexpected = () => { throw new Error('unbound draft must not reach intake') }
+    const {service} = pipelineService({projectTool: true, intake: {
+      settings: {clarification_depth: 'balanced', plan_readback: 'silent'},
+      resolveTarget: unexpected,
+      models: {assess: unexpected, plan: unexpected},
+      dispatch: unexpected,
+      record: unexpected,
+    }})
+    await service.connect()
+    await speak(service, 'u1', 'Improve login')
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
+    if (source !== 'mismatched_origin') {
+      await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: 'r1', status: 'completed', reason: ''})
+    }
+    if (source === 'failed_transcript') {
+      await service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 's2', provider_item_id: 'u2'})
+      await service.handleEvent({kind: 'user_speech_ended', session_epoch: 1, speech_id: 's2', provider_item_id: 'u2'})
+    } else if (source === 'mismatched_origin') {
+      await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'u2', text: 'Only discuss the design'})
+    }
+    if (source !== 'mismatched_origin') {
+      await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r2'})
+    }
+    await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1,
+      response_id: source === 'mismatched_origin' ? 'r1' : 'r2', item_id: 't1', call_id: 'c1', name: 'codex__project',
+      arguments: {action: 'start_session', work_order: 'Improve login', origin_ref: 'conversation:1'}})
+    if (source === 'failed_transcript') {
+      assert.equal(service.toolCallAcceptances().length, 0)
+      await service.handleEvent({kind: 'user_transcript_failed', session_epoch: 1, item_id: 'u2'})
+    }
+    const acceptance = service.toolCallAcceptances().at(-1)?.acceptance
+    assert.equal(acceptance?.accepted, false)
+    assert.equal(acceptance?.code, 'missing_origin_ref')
+    assert.equal(service.intakeSession, null)
+    await service.close()
+  })
+}
+
+test('intake service management bypasses host planning and committed workspace changes cancel intake', async () => {
+  const dispatched: unknown[] = []
+  const intake: NonNullable<ConstructorParameters<typeof RealtimeService>[0]['intake']> = {
+    settings: {clarification_depth: 'balanced', plan_readback: 'silent'},
+    resolveTarget: () => Promise.resolve(({workspace: '/canonical', action: 'reuse', workspace_display_name: 'alpha', workspace_id: 'w1', session_title: null, session_id: null})),
+    models: {
+      assess: input => Promise.resolve(({intake_id: input.intake_id, revision: input.revision,
+        slots: {goal: {state: 'stated', note: 'Improve login'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
+        readiness: .25, intent_to_proceed: true, candidate_question: {owner: 'user', text: 'Which observable behavior?'}, discovery: [], early_exit: false, abandon: false})),
+      plan: () => { return Promise.reject(new Error('not ready')) },
+    },
+    dispatch: current => { dispatched.push(current); return {accepted: true, delegate_id: 'd1'} },
+    record: () => undefined,
+  }
+  for (const action of ['list_workspaces', 'list_sessions', 'select_workspace', 'create_workspace']) {
+    const {service} = pipelineService({projectTool: true, intake})
+    await service.connect()
+    await speak(service, 'u1', 'Manage workspaces')
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
+    await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 't1', call_id: 'c1', name: 'codex__project', arguments: {action, ...(['select_workspace', 'create_workspace'].includes(action) ? {workspace: 'alpha'} : {})}})
+    assert.equal(service.intakeSession, null)
+    assert.ok(!service.toolCallAcceptances().at(-1)!.acceptance.code.startsWith('intake_'))
+    await service.close()
+  }
+  const {service} = pipelineService({projectTool: true, intake})
+  await service.connect()
+  service.onProjectWorkspaceChanged('w1')
+  await speak(service, 'u1', 'Improve login')
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
+  await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 't1', call_id: 'c1', name: 'codex__project', arguments: {action: 'start_session', work_order: 'Improve login'}})
+  await service.settleIntakeForTest()
+  assert.equal(service.intakeSession?.questions_asked, 1)
+  service.onProjectWorkspaceChanged('w2')
+  assert.equal(service.intakeSession?.outcome, 'cancelled')
+  assert.equal(dispatched.length, 0)
+  await service.close()
 })

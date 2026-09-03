@@ -176,7 +176,7 @@ test('a durable save clears accepted drafts and secrets while reporting restart 
   assert.equal(controller.dirty, false)
   assert.deepEqual(controller.snapshot().drafts, {})
   assert.deepEqual(result.acceptedSecrets, ['dashscopeApiKey'])
-  assert.equal(statuses.at(-1), '设置已保存，但后台重启失败')
+  assert.equal(statuses.at(-1), '已保存·后端未启动')
   assert.deepEqual(notices, ['restart_failed'])
 })
 
@@ -490,11 +490,34 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(html, /保存并重启/)
   assert.match(html, /<p id="restart-notice" class="warning" hidden><\/p>/)
   assert.match(script, /已保存，后台正在重启并重新连接/u)
-  assert.match(script, /已保存，后台已重启并重新连接/u)
-  assert.match(script, /已保存，但后台未能应用新配置；当前仍在使用旧配置/u)
-  assert.match(script, /已保存并载入新配置，但后台重启失败；请检查后台状态后重试/u)
+  assert.match(script, /已生效：后台已重启并重新连接/u)
+  assert.match(script, /已保存·未生效：后台仍在使用旧配置/u)
+  assert.match(script, /已保存·后端未启动：请检查后台状态后重试/u)
+  assert.match(controllerScript, /已保存·未生效/u)
+  assert.match(controllerScript, /已保存·后端未启动/u)
   assert.match(controllerScript, /announce\('complete'\)/)
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
+})
+
+test('M1 settings expose approval, planning, and progress controls with no registry editor', () => {
+  for (const value of ['ask', 'yolo']) {
+    assert.match(html, new RegExp(`<input type="radio" name="codexApprovalMode" value="${value}"`))
+  }
+  assert.match(html, /id="codex-yolo-warning"[^>]*hidden/u)
+  for (const value of ['minimal', 'balanced', 'thorough']) {
+    assert.match(html, new RegExp(`<option value="${value}"`))
+  }
+  for (const value of ['summary', 'confirm', 'silent']) {
+    assert.match(html, new RegExp(`<input type="radio" name="planReadback" value="${value}"`))
+  }
+  assert.match(html, /id="plannerModel"/)
+  for (const value of ['off', 'milestones', 'all']) {
+    assert.match(html, new RegExp(`<input type="radio" name="progressBubbles" value="${value}"`))
+  }
+  assert.match(script, /codexApprovalModeInputs/)
+  assert.match(script, /yoloWarning\.hidden = view\.codexApprovalMode !== 'yolo'/)
+  assert.match(script, /plannerModel\.value = view\.plannerModel/u)
+  assert.doesNotMatch(html, /searchProvider|MCP 服务器|MCP 编辑器/u)
 })
 
 test('automatic discovery hides manual Codex and Projects configuration', () => {

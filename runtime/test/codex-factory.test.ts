@@ -517,13 +517,13 @@ test('realtime project startup truncates an imported directory basename to the s
   }
 })
 
-test('factory exposes a brokered controller only for Windows foreground project transports', async t => {
+test('factory exposes a brokered controller for every foreground project transport', async t => {
   for (const [index, evidence] of [
     {platform: 'win32' as const, broker: true, policy: 'on-request' as const},
     {platform: 'win32' as const, broker: false, policy: 'never' as const},
-    {platform: 'darwin' as const, broker: true, policy: 'never' as const},
+    {platform: 'darwin' as const, broker: true, policy: 'on-request' as const},
     {platform: 'darwin' as const, broker: false, policy: 'never' as const},
-    {platform: 'linux' as const, broker: true, policy: 'never' as const},
+    {platform: 'linux' as const, broker: true, policy: 'on-request' as const},
     {platform: 'linux' as const, broker: false, policy: 'never' as const},
   ].entries()) {
     const {config, stateRoot, managedRoot} = projectHostConfig(t, `workspace-${index}`)
@@ -553,19 +553,8 @@ test('factory exposes a brokered controller only for Windows foreground project 
         resource.approvalController !== null,
         'only a resource with real approval authority exposes the provider tool',
       )
-      assert.equal(transportFactory.calls[0]?.approvalPolicy, 'never', 'startup live is never')
+      assert.equal(transportFactory.calls[0]?.launchProfile.id, 'ask_headless', 'startup live is headless ask')
       assert.equal(transportFactory.calls[0]?.approvalController, null)
-      if (evidence.platform === 'darwin') {
-        assert.equal(resource.approvalPolicy, 'never', 'macOS policy remains exact never')
-        assert.equal(resource.approvalController, null, 'macOS never creates approval authority')
-        assert.equal(
-          transportFactory.calls.every(call => (
-            call.approvalPolicy === 'never' && call.approvalController === null
-          )),
-          true,
-          'macOS lifecycle never binds an approval controller to a transport',
-        )
-      }
       assert.deepEqual(published, [])
     } finally {
       await resource.close()

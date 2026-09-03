@@ -13,10 +13,49 @@ const FILE_PARAMS = {
   required: ['itemId', 'startedAtMs', 'threadId', 'turnId'],
 }
 
+const COMMAND_APPROVAL_DECISIONS = [
+  {type: 'string', enum: ['accept']},
+  {type: 'string', enum: ['acceptForSession']},
+  {
+    type: 'object', additionalProperties: false,
+    properties: {
+      acceptWithExecpolicyAmendment: {
+        type: 'object',
+        properties: {execpolicy_amendment: {type: 'array', items: {type: 'string'}}},
+        required: ['execpolicy_amendment'],
+      },
+    },
+    required: ['acceptWithExecpolicyAmendment'],
+  },
+  {
+    type: 'object', additionalProperties: false,
+    properties: {
+      applyNetworkPolicyAmendment: {
+        type: 'object',
+        properties: {
+          network_policy_amendment: {
+            type: 'object',
+            properties: {
+              action: {type: 'string', enum: ['allow', 'deny']}, host: {type: 'string'},
+            },
+            required: ['action', 'host'],
+          },
+        },
+        required: ['network_policy_amendment'],
+      },
+    },
+    required: ['applyNetworkPolicyAmendment'],
+  },
+  {type: 'string', enum: ['decline']},
+  {type: 'string', enum: ['cancel']},
+]
+
 const COMMAND_DEFINITIONS = {
+  AdditionalPermissionProfile: {type: 'object'},
   CommandExecutionApprovalKind: {
     type: 'string', enum: ['command', 'writeStdin'],
   },
+  CommandExecutionApprovalDecision: {oneOf: COMMAND_APPROVAL_DECISIONS},
   CommandAction: {
     oneOf: [{
       type: 'object',
@@ -32,7 +71,7 @@ const COMMAND_DEFINITIONS = {
   },
   NetworkPolicyAmendment: {
     type: 'object',
-    properties: {action: {type: 'string'}, host: {type: 'string'}},
+    properties: {action: {type: 'string', enum: ['allow', 'deny']}, host: {type: 'string'}},
     required: ['action', 'host'],
   },
 }
@@ -40,7 +79,13 @@ const COMMAND_DEFINITIONS = {
 const COMMAND_PARAMS = {
   type: 'object',
   properties: {
+    additionalPermissions: {
+      anyOf: [{$ref: '#/definitions/AdditionalPermissionProfile'}, {type: 'null'}],
+    },
     approvalId: {type: ['string', 'null']},
+    availableDecisions: {
+      type: ['array', 'null'], items: {$ref: '#/definitions/CommandExecutionApprovalDecision'},
+    },
     command: {type: ['string', 'null']},
     commandActions: {
       type: ['array', 'null'], items: {$ref: '#/definitions/CommandAction'},
@@ -68,6 +113,31 @@ const COMMAND_PARAMS = {
   definitions: COMMAND_DEFINITIONS,
 }
 
+const PERMISSIONS_PARAMS = {
+  type: 'object',
+  properties: {
+    cwd: {type: 'string'}, environmentId: {type: ['string', 'null']}, itemId: {type: 'string'},
+    permissions: {$ref: '#/definitions/RequestPermissionProfile'}, reason: {type: ['string', 'null']},
+    startedAtMs: {type: 'integer'}, threadId: {type: 'string'}, turnId: {type: 'string'},
+  },
+  required: ['cwd', 'itemId', 'permissions', 'startedAtMs', 'threadId', 'turnId'],
+  definitions: {RequestPermissionProfile: {type: 'object'}},
+}
+
+const PERMISSIONS_RESPONSE = {
+  type: 'object',
+  properties: {
+    permissions: {$ref: '#/definitions/GrantedPermissionProfile'},
+    scope: {allOf: [{$ref: '#/definitions/PermissionGrantScope'}]},
+    strictAutoReview: {type: ['boolean', 'null']},
+  },
+  required: ['permissions'],
+  definitions: {
+    GrantedPermissionProfile: {type: 'object'},
+    PermissionGrantScope: {type: 'string', enum: ['turn', 'session']},
+  },
+}
+
 function requestVariant(method: string, paramsDefinition: string): unknown {
   return {
     type: 'object',
@@ -90,15 +160,6 @@ function response(decisionName: string, choices: readonly unknown[]): unknown {
     properties: {decision: {$ref: `#/definitions/${decisionName}`}},
     required: ['decision'],
     definitions: {[decisionName]: {oneOf: choices}},
-  }
-}
-
-function objectDecision(property: string): unknown {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {[property]: {type: 'object'}},
-    required: [property],
   }
 }
 
@@ -169,30 +230,28 @@ export function approvalSchemaBundle(): Bundle {
           'CommandExecutionRequestApprovalParams',
         ),
         requestVariant('item/fileChange/requestApproval', 'FileChangeRequestApprovalParams'),
+        requestVariant('item/permissions/requestApproval', 'PermissionsRequestApprovalParams'),
       ],
       definitions: {
         RequestId: {anyOf: [{type: 'string'}, {type: 'integer'}]},
         FileChangeRequestApprovalParams: structuredClone(FILE_PARAMS),
         CommandExecutionRequestApprovalParams: commandParams,
+        PermissionsRequestApprovalParams: structuredClone(PERMISSIONS_PARAMS),
+        RequestPermissionProfile: {type: 'object'},
         ...structuredClone(COMMAND_DEFINITIONS),
       },
     },
     'FileChangeRequestApprovalParams.json': fileParams,
     'CommandExecutionRequestApprovalParams.json': structuredClone(COMMAND_PARAMS),
+    'PermissionsRequestApprovalParams.json': structuredClone(PERMISSIONS_PARAMS),
     'FileChangeRequestApprovalResponse.json': response('FileChangeApprovalDecision', [
       decision('accept'), decision('acceptForSession'), decision('decline'), decision('cancel'),
     ]),
     'CommandExecutionRequestApprovalResponse.json': response(
       'CommandExecutionApprovalDecision',
-      [
-        decision('accept'),
-        decision('acceptForSession'),
-        objectDecision('acceptWithExecpolicyAmendment'),
-        objectDecision('applyNetworkPolicyAmendment'),
-        decision('decline'),
-        decision('cancel'),
-      ],
+      structuredClone(COMMAND_APPROVAL_DECISIONS),
     ),
+    'PermissionsRequestApprovalResponse.json': structuredClone(PERMISSIONS_RESPONSE),
     'v2/ItemStartedNotification.json': itemStarted,
   }
 }

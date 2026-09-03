@@ -30,6 +30,52 @@ interface TelemetryRecord {
   readonly payload: Readonly<Record<string, JsonValue>>
 }
 
+interface JsonFrame {
+  readonly type?: string
+  readonly result?: unknown
+}
+
+function parseJsonFrame(frame: string | Uint8Array): JsonFrame {
+  const parsed = JSON.parse(String(frame)) as unknown
+  assert.ok(parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed), 'expected a JSON object')
+  return parsed
+}
+
+function drainJsonFrames(bridge: DesktopSocketBridge): JsonFrame[] {
+  const frames: JsonFrame[] = []
+  for (let frame; (frame = bridge.takeNextFrame()) !== null;) frames.push(parseJsonFrame(frame))
+  return frames
+}
+
+function findJsonFrame(frames: readonly JsonFrame[], type: string): JsonFrame {
+  const frame = frames.find(value => value.type === type)
+  assert.ok(frame, `missing ${type} frame`)
+  return frame
+}
+
+test('bubble filtering never hides last results, which replay on reconnect and clear on the next dispatch', () => {
+  for (const mode of ['off', 'milestones', 'all'] as const) {
+    const {bridge} = harness({progressBubbles: mode})
+    bridge.markAuthenticated()
+    while (bridge.takeNextFrame() !== null) { /* bootstrap */ }
+    const base = {type: 'executor.progress' as const, delegate_id: 'd', executor: 'codex', ts: 1}
+    bridge.onExecutorProgress({...base, phase: 'working', summary: '正在测试', level: 'detail'})
+    assert.equal(bridge.takeNextFrame() !== null, mode === 'all')
+    const result = {delegate_id: 'd', executor: 'codex', outcome: 'ok' as const, summary: '任务完成', started_at: 0, ended_at: 1, changed_files: 2}
+    bridge.onExecutorProgress({...base, phase: 'completed', summary: '任务完成', level: 'milestone'}, result)
+    const frames = drainJsonFrames(bridge)
+    assert.equal(frames.filter(frame => frame.type === 'executor.progress').length, mode === 'off' ? 0 : 1)
+    assert.deepEqual(findJsonFrame(frames, 'executor.result').result, result)
+    bridge.release()
+    bridge.markAuthenticated()
+    const replay = drainJsonFrames(bridge)
+    assert.deepEqual(findJsonFrame(replay, 'executor.result').result, result)
+    bridge.onExecutorProgress({...base, delegate_id: 'next', phase: 'started', summary: '任务开始', level: 'milestone'}, null)
+    const cleared = drainJsonFrames(bridge)
+    assert.equal(findJsonFrame(cleared, 'executor.result').result, null)
+  }
+})
+
 /**
  * A telemetry sink that keeps what it is handed.
  *
@@ -234,6 +280,20 @@ test('an overflowing audio queue stops the transport, and an overflowing caption
   caption.bridge.onCaption({role: 'user', text: 'b', final: false})
   caption.bridge.onCaption({role: 'user', text: 'c', final: false})
   assert.equal(caption.stopped(), false, 'a lost caption is')
+})
+
+test('a required frame evicts queued droppable progress before stopping the transport', () => {
+  const {bridge, stopped} = harness({maxOutboundFrames: 1})
+  bridge.onExecutorProgress({
+    type: 'executor.progress', delegate_id: 'd', executor: 'codex', phase: 'started',
+    summary: 'Codex 已开始处理任务。', level: 'milestone', ts: 1,
+  }, null)
+
+  bridge.onAudioFrame(frame(1, 0))
+
+  assert.equal(stopped(), false)
+  assert.equal(bridge.pendingCounts.outbound, 1)
+  assert.equal(bridge.takeNextDelivery()?.policy, 'required')
 })
 
 test('an overflowing preempt queue always stops the transport', () => {

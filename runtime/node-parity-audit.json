@@ -11,6 +11,7 @@
     "desktop/ambient-orb/src/main/debug-board-client.mjs",
     "desktop/ambient-orb/src/main/desktop-startup.mjs",
     "desktop/ambient-orb/src/main/drag-controller.mjs",
+    "desktop/ambient-orb/src/main/executor-result.mjs",
     "desktop/ambient-orb/src/main/launch-command.mjs",
     "desktop/ambient-orb/src/main/lifecycle-coordinator.mjs",
     "desktop/ambient-orb/src/main/main.mjs",
@@ -27,6 +28,7 @@
     "desktop/ambient-orb/src/renderer/audio.mjs",
     "desktop/ambient-orb/src/renderer/backend-reconnect.mjs",
     "desktop/ambient-orb/src/renderer/board-scroll-state.mjs",
+    "desktop/ambient-orb/src/renderer/bubbles.mjs",
     "desktop/ambient-orb/src/renderer/camera.mjs",
     "desktop/ambient-orb/src/renderer/capture-worklet.mjs",
     "desktop/ambient-orb/src/renderer/confirmation-controls.mjs",
@@ -60,6 +62,7 @@
     "runtime/src/codex-factory.ts",
     "runtime/src/codex-host-config.ts",
     "runtime/src/codex-jsonl.ts",
+    "runtime/src/codex-launch-profile.ts",
     "runtime/src/codex-process-owner.ts",
     "runtime/src/codex-production-host.ts",
     "runtime/src/codex-project-store.ts",
@@ -76,6 +79,7 @@
     "runtime/src/desktop-camera-source.ts",
     "runtime/src/desktop-camera.ts",
     "runtime/src/desktop-entry.ts",
+    "runtime/src/desktop-progress.ts",
     "runtime/src/desktop-realtime.ts",
     "runtime/src/desktop-service.ts",
     "runtime/src/desktop-wire.ts",
@@ -127,6 +131,8 @@
     "runtime/src/realtime/confirmation-turn-isolation.ts",
     "runtime/src/realtime/evidence.ts",
     "runtime/src/realtime/history.ts",
+    "runtime/src/realtime/intake-model.ts",
+    "runtime/src/realtime/intake.ts",
     "runtime/src/realtime/memory-board.ts",
     "runtime/src/realtime/project-confirmation.ts",
     "runtime/src/realtime/protocol.ts",
@@ -151,6 +157,7 @@
     "runtime/src/realtime/volcengine/silence-endpointing.ts",
     "runtime/src/realtime/volcengine/tts.ts",
     "runtime/src/realtime/volcengine/websocket.ts",
+    "runtime/src/realtime/work-order.ts",
     "runtime/src/realtime/workspace-graph-board.ts",
     "runtime/src/runtime.ts",
     "runtime/src/scorecard.ts",
@@ -276,6 +283,50 @@
       "behavior": "passes token only through environment and dials back over loopback"
     },
     {
+      "file": "desktop/ambient-orb/src/main/executor-result.mjs",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 58,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "desktop/ambient-orb/test/executor-result.test.mjs",
+      "behavior": "rejects malformed results before a native dialog can render them"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/executor-result.mjs",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 58,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "desktop/ambient-orb/test/executor-result.test.mjs",
+      "behavior": "rejects malformed results before a native dialog can render them"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/executor-result.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "line": 64,
+      "snippet": "/(^|\\s)\\/(?:Users|home|private|tmp|var|etc)(?:\\/|\\b)/u",
+      "snippet_sha256": "672ce8291ede462bd8e980c60f99dddfd60fa05d9ced0a39367283d5549ec607",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/executor-result.test.mjs",
+      "behavior": "rejects malformed results before a native dialog can render them"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/executor-result.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "line": 65,
+      "snippet": "/\\b[A-Za-z]:[\\\\/]/u",
+      "snippet_sha256": "9808265026804d64c46861fc0692f893449c955569ecb790d8d82fbd1c260103",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/executor-result.test.mjs",
+      "behavior": "rejects malformed results before a native dialog can render them"
+    },
+    {
       "file": "desktop/ambient-orb/src/main/main.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
@@ -384,6 +435,50 @@
       "disposition": "wire_json",
       "test": "desktop/ambient-orb/test/window-position.test.mjs",
       "behavior": "accepts only finite bounded drag deltas"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/bubbles.mjs",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 231,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "desktop/ambient-orb/test/progress-bubbles.test.mjs",
+      "behavior": "parses only bounded sanitized executor progress frames"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/bubbles.mjs",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 231,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "desktop/ambient-orb/test/progress-bubbles.test.mjs",
+      "behavior": "parses only bounded sanitized executor progress frames"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/bubbles.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "line": 237,
+      "snippet": "/(^|\\s)\\/(?:Users|home|private|tmp|var|etc)(?:\\/|\\b)/u",
+      "snippet_sha256": "672ce8291ede462bd8e980c60f99dddfd60fa05d9ced0a39367283d5549ec607",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/progress-bubbles.test.mjs",
+      "behavior": "parses only bounded sanitized executor progress frames"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/bubbles.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "line": 238,
+      "snippet": "/\\b[A-Za-z]:[\\\\/]/u",
+      "snippet_sha256": "9808265026804d64c46861fc0692f893449c955569ecb790d8d82fbd1c260103",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/progress-bubbles.test.mjs",
+      "behavior": "parses only bounded sanitized executor progress frames"
     },
     {
       "file": "desktop/ambient-orb/src/renderer/camera.mjs",
@@ -1057,6 +1152,72 @@
       "behavior": "a token that is not 128 bits of hex is refused at construction"
     },
     {
+      "file": "runtime/src/desktop-progress.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "line": 8,
+      "snippet": "/(?:^|[\\s_-])(?:[a-z0-9]+[_-])*?(?:secret|token|password|api[_-]?key|access[_-]?key|authorization)(?:[_-][a-z0-9]+)*(?:\\s*[:=]|\\s+)|(?:^|\\s)--?(?:token|password|secret|api[_-]?key|access[_-]?key|authorization)(?:=|\\s+)/iu",
+      "snippet_sha256": "582d2ffa18a91dfa99fd000ba9b9d2830efe49abde427e38d63dd9fc5c7d603a",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/desktop-progress.test.ts",
+      "behavior": "progress projects only correlated accepted evidence and never private commands or paths"
+    },
+    {
+      "file": "runtime/src/desktop-progress.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 33,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/desktop-progress.test.ts",
+      "behavior": "progress projects only correlated accepted evidence and never private commands or paths"
+    },
+    {
+      "file": "runtime/src/desktop-progress.ts",
+      "kind": "string_trim",
+      "occurrence_index": 2,
+      "line": 33,
+      "snippet": "value.trim()",
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/desktop-progress.test.ts",
+      "behavior": "progress projects only correlated accepted evidence and never private commands or paths"
+    },
+    {
+      "file": "runtime/src/desktop-progress.ts",
+      "kind": "unicode_property_regex",
+      "occurrence_index": 3,
+      "line": 34,
+      "snippet": "/[\\p{C}\\/\\\\`$]|https?:|bearer|(?:sk|rk|pk)-/iu",
+      "snippet_sha256": "0b94b7551d52a47507f07785f306ecef337c04969c0c3cfbcf1b7265662dce15",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/desktop-progress.test.ts",
+      "behavior": "progress projects only correlated accepted evidence and never private commands or paths"
+    },
+    {
+      "file": "runtime/src/desktop-progress.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "line": 36,
+      "snippet": "/(?:^|\\s)(?:curl|npm|pip|sudo|git|node|python)\\s/iu",
+      "snippet_sha256": "d3afcee32de3e0c7e90ee80971320cf386a6d6ead7bb14947c764f42dfbe0b81",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/desktop-progress.test.ts",
+      "behavior": "progress projects only correlated accepted evidence and never private commands or paths"
+    },
+    {
+      "file": "runtime/src/desktop-progress.ts",
+      "kind": "string_trim",
+      "occurrence_index": 5,
+      "line": 37,
+      "snippet": "value.trim()",
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/desktop-progress.test.ts",
+      "behavior": "progress projects only correlated accepted evidence and never private commands or paths"
+    },
+    {
       "file": "runtime/src/executors/search.ts",
       "kind": "string_length",
       "occurrence_index": 0,
@@ -1508,6 +1669,94 @@
       "behavior": "commands require one bounded complete command at the exact canonical workspace cwd"
     },
     {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 419,
+      "snippet": "scope.length",
+      "snippet_sha256": "36204a2b0fd74edd663b1ad2eed2d23542f1a553d632fa3ac3f58a48ca576e7b",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "approval command and file displays redact common credential forms"
+    },
+    {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "line": 474,
+      "snippet": "summary.length",
+      "snippet_sha256": "4a130794bc2c686e5c261d453ab4147ebf152501d9571a087f981476b54b13ba",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "approval command and file displays redact common credential forms"
+    },
+    {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "line": 489,
+      "snippet": "/((?:[a-z][a-z\\d+.-]*):\\/\\/[^/\\s:@]+:)[^/\\s@]+(@)/giu",
+      "snippet_sha256": "362a8dd6a1d0df501633dfb92a36d21b2db5413f5dd1750cc92f5e703b131402",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "approval command and file displays redact common credential forms"
+    },
+    {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "line": 490,
+      "snippet": "/((?:proxy-)?authorization\\s*:\\s*basic\\s+)[^\\s\"';&]+/giu",
+      "snippet_sha256": "b2b1bee9d4b409e5fea5d76fb887e64b66bfc28126a0383a4057628fc561593a",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "approval command and file displays redact common credential forms"
+    },
+    {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 5,
+      "line": 491,
+      "snippet": "/((?:^|[\\s;&])(?:-u|--user|--username)\\s+)(?:\"[^\"]*\"|'[^']*'|[^\\s;&]+)/giu",
+      "snippet_sha256": "e111b73baef12cdc86f185c6c57b53487752f1c03e095e69ed48e6609405a496",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "approval command and file displays redact common credential forms"
+    },
+    {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 6,
+      "line": 492,
+      "snippet": "/((?:^|[\\s;&?#,{\\\\/])[\"']?(?:--?|\\/)?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:token|password|passwd|pwd|api[_-]?key|access[_-]?key(?:[_-]?(?:id|secret))?|secret(?:[_-]?key)?|client[_-]?secret|private[_-]?key|authorization|auth|credential(?:s)?)\\b[\"']?\\s*(?:=|:)\\s*)(?!(?:basic|bearer)\\s+)(?:\"[^\"]*\"|'[^']*'|[^\\s;&]+)/giu",
+      "snippet_sha256": "a97130a9b3e4e8bf0f3ae0823883aafb0c04cf196343e02bca3f75de7528a653",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "approval command and file displays redact common credential forms"
+    },
+    {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 7,
+      "line": 493,
+      "snippet": "/((?:^|[\\s;&])(?:--?|\\/)?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:token|password|passwd|pwd|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret|private[_-]?key|authorization)\\b\\s+)(?!(?:basic|bearer)\\s+)(?:\"[^\"]*\"|'[^']*'|[^\\s;&]+)/giu",
+      "snippet_sha256": "3a741edc406f7564027b1c302277a41704551f7a48926cc25f462af55abfbb2f",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "approval command and file displays redact common credential forms"
+    },
+    {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 8,
+      "line": 494,
+      "snippet": "/(?:bearer\\s+\\S+|(?:sk|rk|pk)-[A-Za-z0-9_./+=-]{8,})/giu",
+      "snippet_sha256": "26878b6a339467904b80885399d1beeff42e0aebb30ecaff1fd1afd83d3aec03",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "approval command and file displays redact common credential forms"
+    },
+    {
       "file": "runtime/src/realtime/confirmation-turn-isolation.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
@@ -1574,6 +1823,83 @@
       "behavior": "structured numeric evidence uses deterministic Python float spelling"
     },
     {
+      "file": "runtime/src/realtime/intake-model.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 10,
+      "snippet": "value.note.trim().length",
+      "snippet_sha256": "fc7cc03c5b14cc8821a3001c84f9b91cf6ad4650b4e09f5205e4c5cad1afe26f",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "intake model ports use selected models, bounded JSON and explicit ownership prompts"
+    },
+    {
+      "file": "runtime/src/realtime/intake-model.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "line": 10,
+      "snippet": "value.note.trim()",
+      "snippet_sha256": "e15a3fd022149bc15d2cd7c38c558a6ed45e463ff193d4b956801fa651277203",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "intake model ports use selected models, bounded JSON and explicit ownership prompts"
+    },
+    {
+      "file": "runtime/src/realtime/intake-model.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "line": 43,
+      "snippet": "result.text.length",
+      "snippet_sha256": "d09cef26fed436d1661ea39a1924ad8204fbd2e318dcadf0fdd4c00be314b5c8",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "intake model ports use selected models, bounded JSON and explicit ownership prompts"
+    },
+    {
+      "file": "runtime/src/realtime/intake.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "line": 78,
+      "snippet": "/^(确认|可以|做吧|好|好的|同意|不同意|不行|取消|不用了|算了|yes|ok|okay|confirm|no|cancel)[。！!,.，\\s]*$/iu",
+      "snippet_sha256": "c97c789a5a9867640f4762d8b9e44fc48016643c6959bc1316c02114845f8087",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "intake confirms the exact compiled proposal without revision bump or recompile; replay fails"
+    },
+    {
+      "file": "runtime/src/realtime/intake.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "line": 78,
+      "snippet": "text.trim()",
+      "snippet_sha256": "a2838f629ddddb232d2e7923abffa609125674aaaf98df603fdc620fd0822c64",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "intake confirms the exact compiled proposal without revision bump or recompile; replay fails"
+    },
+    {
+      "file": "runtime/src/realtime/intake.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "line": 126,
+      "snippet": "/^(取消|不用了|算了|cancel)[。！!.，\\s]*$/iu",
+      "snippet_sha256": "10ee9419dc84f748509ef6f8d13382e09758f42818f4290f5041cfb2dee2ddb4",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "intake confirms the exact compiled proposal without revision bump or recompile; replay fails"
+    },
+    {
+      "file": "runtime/src/realtime/intake.ts",
+      "kind": "string_trim",
+      "occurrence_index": 3,
+      "line": 126,
+      "snippet": "text.trim()",
+      "snippet_sha256": "a2838f629ddddb232d2e7923abffa609125674aaaf98df603fdc620fd0822c64",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "intake confirms the exact compiled proposal without revision bump or recompile; replay fails"
+    },
+    {
       "file": "runtime/src/realtime/project-confirmation.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
@@ -1583,6 +1909,28 @@
       "disposition": "wire_json",
       "test": "runtime/test/realtime-project-confirmation.test.ts",
       "behavior": "wrong epoch or item is ignored without moving the reservation"
+    },
+    {
+      "file": "runtime/src/realtime/project-confirmation.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 574,
+      "snippet": "input.intake_id.length",
+      "snippet_sha256": "6ddb4c7cea52ad6d01c5fdc534bd910a53fde113abcbde23dfb12e01231bf069",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-project-confirmation.test.ts",
+      "behavior": "a matching structured true decision grants one-shot identity authority"
+    },
+    {
+      "file": "runtime/src/realtime/project-confirmation.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "line": 575,
+      "snippet": "input.intake_id.length",
+      "snippet_sha256": "6ddb4c7cea52ad6d01c5fdc534bd910a53fde113abcbde23dfb12e01231bf069",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-project-confirmation.test.ts",
+      "behavior": "a matching structured true decision grants one-shot identity authority"
     },
     {
       "file": "runtime/src/realtime/protocol.ts",
@@ -1753,6 +2101,17 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
+      "line": 598,
+      "snippet": "intake.revision",
+      "snippet_sha256": "92bd85dd07911afa71fba33c3937ab32ca330cc47ff981f566dea445d2bfebab",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-service.test.ts",
+      "behavior": "intake service management bypasses host planning and committed workspace changes cancel intake"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
       "line": 577,
       "snippet": "abandoned",
       "snippet_sha256": "20e7f550122ee415de2b6d761a474ea5a363cbb575604f18b1fffb269e4cf48a",
@@ -1762,8 +2121,30 @@
     },
     {
       "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 2,
+      "line": 1276,
+      "snippet": "String(this.session.sessionEpoch)",
+      "snippet_sha256": "602d0d8b39218fa881de3087c28c4be1be952dfefd083ba8439d61b826ab3ae6",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-service.test.ts",
+      "behavior": "intake service management bypasses host planning and committed workspace changes cancel intake"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 1,
+      "occurrence_index": 3,
+      "line": 1277,
+      "snippet": "intake.revision",
+      "snippet_sha256": "92bd85dd07911afa71fba33c3937ab32ca330cc47ff981f566dea445d2bfebab",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-service.test.ts",
+      "behavior": "intake service management bypasses host planning and committed workspace changes cancel intake"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
       "line": 1947,
       "snippet": "event.seq",
       "snippet_sha256": "f96edcdd62f2ae0026bf653215e5def7ad15cb1ddcabbf8fa45d1ca6037f52b8",
@@ -1774,7 +2155,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 2,
+      "occurrence_index": 5,
       "line": 2046,
       "snippet": "payload.internal_activity",
       "snippet_sha256": "e8e901d528b989a403360b8379323876833636076a551d748c493316e71224d9",
@@ -1785,7 +2166,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 3,
+      "occurrence_index": 6,
       "line": 2048,
       "snippet": "payload.internal_activity",
       "snippet_sha256": "e8e901d528b989a403360b8379323876833636076a551d748c493316e71224d9",
@@ -1795,8 +2176,30 @@
     },
     {
       "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 7,
+      "line": 3041,
+      "snippet": "String(event.session_epoch)",
+      "snippet_sha256": "c12e5e2af8c77a9316ec6d995d4700725fc0b12ae58d2514060261f8ce410791",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-service.test.ts",
+      "behavior": "intake service management bypasses host planning and committed workspace changes cancel intake"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 8,
+      "line": 3834,
+      "snippet": "String(event.session_epoch)",
+      "snippet_sha256": "c12e5e2af8c77a9316ec6d995d4700725fc0b12ae58d2514060261f8ce410791",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-service.test.ts",
+      "behavior": "intake service management bypasses host planning and committed workspace changes cancel intake"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 4,
+      "occurrence_index": 9,
       "line": 3562,
       "snippet": "event.session_epoch",
       "snippet_sha256": "eb3fbfa4708d87bc9491f0ebd0b0d38c17351623f235745480d5d5024aa88379",
@@ -1807,7 +2210,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 5,
+      "occurrence_index": 10,
       "line": 3966,
       "snippet": "this.session.sessionEpoch",
       "snippet_sha256": "73f3d5bff15a17e3969ea80c5dd3718c21c6aea00d5d3791deed51ed23dbcc91",
@@ -1818,7 +2221,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "string_length",
-      "occurrence_index": 6,
+      "occurrence_index": 11,
       "line": 4189,
       "snippet": "'suggestion:'.length",
       "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
@@ -1829,7 +2232,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "string_length",
-      "occurrence_index": 7,
+      "occurrence_index": 12,
       "line": 4234,
       "snippet": "'suggestion:'.length",
       "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
@@ -1840,7 +2243,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 8,
+      "occurrence_index": 13,
       "line": 4896,
       "snippet": "generation.generation_epoch",
       "snippet_sha256": "312a76f17befeed056da4dbb995c9d86554a275b67fb89f365088c0a6039e0d9",
@@ -1851,7 +2254,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 9,
+      "occurrence_index": 14,
       "line": 4933,
       "snippet": "generationEpoch",
       "snippet_sha256": "88c621c35cd74d7f42af02c856f028ef45106d5181cd15e91d678c69d7019eb6",
@@ -1862,7 +2265,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 10,
+      "occurrence_index": 15,
       "line": 5540,
       "snippet": "floor + 1",
       "snippet_sha256": "a947109c5fb07fd3b221a2f220031120b6f5a79089dad0ff6ce5cbe7f27cc781",
@@ -1873,7 +2276,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 11,
+      "occurrence_index": 16,
       "line": 5541,
       "snippet": "floor",
       "snippet_sha256": "a3e1f4935b0919b346c2caf4da18078a1ebaf6451eb7f7b5dc79c11629b6368c",
@@ -1884,7 +2287,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 12,
+      "occurrence_index": 17,
       "line": 5542,
       "snippet": "floor % 2 === 0 ? floor : floor + 1",
       "snippet_sha256": "a540ffd17090437f8d94ce8c1d341ca870696286623dee8d4e18cfdcfa78af6a",
@@ -2056,6 +2459,39 @@
       "disposition": "wire_json",
       "test": "runtime/test/realtime-user-origin-binding.test.ts",
       "behavior": "origin ledger binds responses by epoch and exact user revision"
+    },
+    {
+      "file": "runtime/src/realtime/work-order.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 44,
+      "snippet": "render().length",
+      "snippet_sha256": "30d949c2ef79915ea0619601d9f8d1ae6238eccb84c0ff68a95c9a94a755e2a5",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "WorkOrder deterministic golden, optional truncation order, unicode and required-size refusal"
+    },
+    {
+      "file": "runtime/src/realtime/work-order.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 48,
+      "snippet": "render().length",
+      "snippet_sha256": "30d949c2ef79915ea0619601d9f8d1ae6238eccb84c0ff68a95c9a94a755e2a5",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "WorkOrder deterministic golden, optional truncation order, unicode and required-size refusal"
+    },
+    {
+      "file": "runtime/src/realtime/work-order.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "line": 51,
+      "snippet": "rendered.length",
+      "snippet_sha256": "0b15d886fd97e6339268f35b4fabd09be0f24d4f8ec125df347fa9780f0993c3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-intake.test.ts",
+      "behavior": "WorkOrder deterministic golden, optional truncation order, unicode and required-size refusal"
     },
     {
       "file": "runtime/src/realtime/workspace-graph-board.ts",

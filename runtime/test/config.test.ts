@@ -23,6 +23,67 @@ test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash'
     llmModel: 'qwen-flash',
     ttsProvider: 'volcengine',
   })
+  assert.deepEqual({
+    codexApprovalMode: settings.codex_approval_mode,
+    clarificationDepth: settings.clarification_depth,
+    planReadback: settings.plan_readback,
+    plannerModel: settings.planner_model,
+    progressBubbles: settings.progress_bubbles,
+    embeddingProvider: settings.embedding_provider,
+    embeddingModel: settings.embedding_model,
+    capabilitiesConfigPath: settings.capabilities_config_path,
+    knowledgePath: settings.knowledge_path,
+  }, {
+    codexApprovalMode: 'ask',
+    clarificationDepth: 'balanced',
+    planReadback: 'summary',
+    plannerModel: '',
+    progressBubbles: 'milestones',
+    embeddingProvider: 'dashscope',
+    embeddingModel: 'text-embedding-v4',
+    capabilitiesConfigPath: '~/.nova-audio-agent/capabilities.json',
+    knowledgePath: '~/.nova-audio-agent/knowledge.sqlite',
+  })
+})
+
+test('v4 settings env selectors and paths load with the documented names', () => {
+  const settings = loadSettings({
+    NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE: 'yolo',
+    NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH: 'thorough',
+    NOVA_AUDIO_AGENT_PLAN_READBACK: 'confirm',
+    NOVA_AUDIO_AGENT_PLANNER_MODEL: 'planner-model',
+    NOVA_AUDIO_AGENT_PROGRESS_BUBBLES: 'all',
+    NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: '/state/capabilities.json',
+    NOVA_AUDIO_AGENT_KNOWLEDGE_PATH: '/state/knowledge.sqlite',
+    NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER: 'local',
+    NOVA_AUDIO_AGENT_EMBEDDING_MODEL: 'custom-embedding',
+  })
+  assert.equal(settings.codex_approval_mode, 'yolo')
+  assert.equal(settings.clarification_depth, 'thorough')
+  assert.equal(settings.plan_readback, 'confirm')
+  assert.equal(settings.planner_model, 'planner-model')
+  assert.equal(settings.progress_bubbles, 'all')
+  assert.equal(settings.capabilities_config_path, '/state/capabilities.json')
+  assert.equal(settings.knowledge_path, '/state/knowledge.sqlite')
+  assert.equal(settings.embedding_provider, 'local')
+  assert.equal(settings.embedding_model, 'custom-embedding')
+})
+
+test('invalid v4 enum env values fall back safely', () => {
+  const settings = loadSettings({
+    NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE: 'unsafe',
+    NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH: 'deep',
+    NOVA_AUDIO_AGENT_PLAN_READBACK: 'always',
+    NOVA_AUDIO_AGENT_PROGRESS_BUBBLES: 'verbose',
+    NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER: 'remote',
+    NOVA_AUDIO_AGENT_SEARCH_PROVIDER: 'unknown',
+  })
+  assert.equal(settings.codex_approval_mode, 'ask')
+  assert.equal(settings.clarification_depth, 'balanced')
+  assert.equal(settings.plan_readback, 'summary')
+  assert.equal(settings.progress_bubbles, 'milestones')
+  assert.equal(settings.embedding_provider, 'dashscope')
+  assert.equal(settings.search_provider, 'tavily')
 })
 
 test('Ark receives its provider default only when no model override exists', () => {

@@ -29,6 +29,8 @@ import {
 
 const EXACT_APP_SERVER_ARGV = [
   '-a', 'never',
+  '-c', 'approval_policy="never"',
+  '-c', 'approvals_reviewer="user"',
   '--disable', 'hooks',
   '--disable', 'multi_agent',
   '--disable', 'apps',

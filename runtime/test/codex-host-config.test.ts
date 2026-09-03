@@ -66,6 +66,7 @@ test('host resolver is lazy without Codex and brands one allowlisted launch tupl
     NOVA_AUDIO_AGENT_CODEX_API_KEY: 'secret-must-remain-opaque',
   }), fixture.catalog)
   assert.ok(resolved !== null)
+  assert.equal(resolved.codexApprovalMode, 'ask')
   assert.equal(hostBinaryPath(resolved.binary), fixture.binary)
   assert.equal(hostWorkspacePath(resolved.workspace), fixture.workspace)
   assert.deepEqual(resolved.binaryPrefixArgs, [])

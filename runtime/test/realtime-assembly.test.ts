@@ -522,10 +522,15 @@ test('routine cumulative progress is suppressed end to end while a later milesto
         close: () => undefined,
       },
     })
+    const selected: string[] = []
     const provider = new RecordingProgressProvider()
     const realtime = buildRealtimeAssembly({
       core,
       provider,
+      onExecutorSuggestion: suggestion => {
+        selected.push(suggestion.id)
+        throw new Error('optional observer unavailable')
+      },
       idFactory: (() => {
         let sequence = 0
         return () => `progress-e2e-${++sequence}`
@@ -599,6 +604,7 @@ test('routine cumulative progress is suppressed end to end while a later milesto
       await waitNamed('milestone surrogate verdict', () => gateway.completed.length === 4)
       await waitNamed('milestone host fact', () => provider.injected.length === 1)
       await waitNamed('milestone response', () => provider.responses.length === 1)
+      assert.deepEqual(selected, ['s-4'], 'one selected suggestion reaches the optional observer without blocking speech')
 
       assert.deepEqual(provider.injected.map(item => ({
         kind: item.kind,

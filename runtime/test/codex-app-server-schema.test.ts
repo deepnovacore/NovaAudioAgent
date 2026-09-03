@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import {readFileSync} from 'node:fs'
+import {resolve} from 'node:path'
 import {test} from 'node:test'
 import {
   APP_SERVER_INBOUND_SCHEMAS,
@@ -8,6 +10,7 @@ import {
 } from '../src/codex-app-server-schema.js'
 import {CodexProtocolError} from '../src/codex-protocol.js'
 import {approvalSchemaBundle} from './fixtures/codex/approval-schema-bundle.js'
+import {resolveCodexLaunchProfile} from '../src/codex-launch-profile.js'
 
 type Bundle = Record<string, unknown>
 
@@ -25,19 +28,21 @@ const METHOD_SPECS = {
     file: 'v2/ThreadStartParams.json',
     fields: {
       ephemeral: 'boolean', approvalPolicy: 'string', developerInstructions: 'string',
+      approvalsReviewer: 'string', permissions: 'string', sandbox: 'string',
       cwd: 'string',
     },
     required: [],
-    nullable: ['ephemeral', 'approvalPolicy', 'developerInstructions', 'cwd'],
+    nullable: ['ephemeral', 'approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'],
     allowedTypes: {approvalPolicy: ['string', 'object', 'null']},
   },
   'thread/resume': {
     file: 'v2/ThreadResumeParams.json',
     fields: {
       threadId: 'string', approvalPolicy: 'string', developerInstructions: 'string', cwd: 'string',
+      approvalsReviewer: 'string', permissions: 'string', sandbox: 'string',
     },
     required: ['threadId'],
-    nullable: ['approvalPolicy', 'developerInstructions', 'cwd'],
+    nullable: ['approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'],
     allowedTypes: {approvalPolicy: ['string', 'object', 'null']},
   },
   'turn/start': {
@@ -74,16 +79,16 @@ const INBOUND_SPECS = [
   },
   {
     file: 'v2/ThreadStartResponse.json',
-    fields: {approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object'},
-    required: ['approvalPolicy', 'cwd', 'sandbox', 'thread'], nested: THREAD_NESTED,
+    fields: {approvalPolicy: 'string', approvalsReviewer: 'string', cwd: 'string', sandbox: 'object', thread: 'object'},
+    required: ['approvalPolicy', 'approvalsReviewer', 'cwd', 'sandbox', 'thread'], nested: THREAD_NESTED,
     allowedTypes: {approvalPolicy: ['string', 'object']},
   },
   {
     file: 'v2/ThreadResumeResponse.json',
     fields: {
-      approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
+      approvalPolicy: 'string', approvalsReviewer: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
     },
-    required: ['approvalPolicy', 'cwd', 'sandbox', 'thread'],
+    required: ['approvalPolicy', 'approvalsReviewer', 'cwd', 'sandbox', 'thread'],
     nested: THREAD_NESTED,
     allowedTypes: {approvalPolicy: ['string', 'object']},
   },
@@ -243,7 +248,39 @@ test('the exact supported request and inbound schema bundle validates', () => {
   })
 })
 
-test('the legacy command approval schema without kind remains supported', () => {
+test('the pinned Codex 0.152.0 approval schema bundle validates', () => {
+  const root = resolve(import.meta.dirname, '../../../fixtures/codex/app-server-schema/0.152.0')
+  const files = new Set<string>(['ClientRequest.json'])
+  for (const spec of Object.values(APP_SERVER_METHOD_SCHEMAS)) files.add(spec.file)
+  for (const spec of APP_SERVER_INBOUND_SCHEMAS) files.add(spec.file)
+  for (const file of [
+    'ServerRequest.json', 'FileChangeRequestApprovalParams.json',
+    'CommandExecutionRequestApprovalParams.json', 'FileChangeRequestApprovalResponse.json',
+    'CommandExecutionRequestApprovalResponse.json', 'PermissionsRequestApprovalParams.json',
+    'PermissionsRequestApprovalResponse.json',
+  ]) files.add(file)
+  const bundle = Object.fromEntries([...files].map(file => [
+    file, JSON.parse(readFileSync(resolve(root, file), 'utf8')),
+  ]))
+  assert.doesNotThrow(() => validateCodexSchemaBundle(bundle))
+  for (const file of ['v2/ThreadStartParams.json', 'v2/ThreadResumeParams.json']) {
+    for (const field of ['permissions', 'sandbox', 'approvalsReviewer']) {
+      const missing = structuredClone(bundle)
+      delete nested(missing, file, 'properties')[field]
+      assert.throws(() => validateCodexSchemaBundle(missing), `${file} missing ${field}`)
+      const widened = structuredClone(bundle)
+      nested(widened, file, 'properties')[field] = {type: ['string', 'number', 'null']}
+      assert.throws(() => validateCodexSchemaBundle(widened), `${file} widened ${field}`)
+    }
+  }
+  for (const file of ['v2/ThreadStartResponse.json', 'v2/ThreadResumeResponse.json']) {
+    const missing = structuredClone(bundle)
+    delete nested(missing, file, 'properties').approvalsReviewer
+    assert.throws(() => validateCodexSchemaBundle(missing), `${file} missing reviewer`)
+  }
+})
+
+test('the legacy command approval schema without kind is rejected after the 0.152 protocol pin', () => {
   const bundle = supportedBundle()
   for (const schema of [
     nested(bundle, 'CommandExecutionRequestApprovalParams.json'),
@@ -254,7 +291,7 @@ test('the legacy command approval schema without kind remains supported', () => 
     nested(bundle, 'ServerRequest.json', 'definitions'),
   ]) delete definitions.CommandExecutionApprovalKind
 
-  assert.equal(validateCodexSchemaBundle(bundle)['turn/start'], true)
+  expectUnsupported(bundle)
 })
 
 test('missing, widened, malformed, and recursive schemas fail closed', () => {
@@ -490,6 +527,8 @@ test('every required method, reference, field, required marker, and type is fail
 function effectiveConfig(): Record<string, unknown> {
   return {
     config: {
+      approval_policy: 'on-request',
+      approvals_reviewer: 'user',
       default_permissions: 'nova_audio_agent',
       web_search: 'disabled',
       permissions: {
@@ -577,6 +616,51 @@ test('effective config returns only the fixed credential-free isolation report',
   })
   assert.equal(JSON.stringify(report).includes('PRIVATE'), false)
   assert.equal(JSON.stringify(report).includes('DO-NOT-LEAK'), false)
+})
+
+test('effective config accepts only the resolved yolo shape', () => {
+  const yolo = clone(effectiveConfig())
+  const config = nested(yolo, 'config')
+  config.default_permissions = null
+  config.approval_policy = 'never'
+  config.permissions = {}
+  config.sandbox_mode = 'danger-full-access'
+  const profile = resolveCodexLaunchProfile({approvalMode: 'yolo', project: true, foregroundBroker: true})
+  assert.deepEqual(validateEffectiveCodexConfig(yolo, '/workspace', {
+    allowReplacementInstructions: false, launchProfile: profile,
+  }), {
+    default_permissions: null,
+    filesystem: 'full_access',
+    network: 'unrestricted',
+    web_search: 'disabled',
+    shell_environment: 'core_include_only',
+    extensions: 'disabled',
+    mcp: 'empty',
+    instructions: 'builtin',
+  })
+  assert.throws(() => validateEffectiveCodexConfig(yolo, '/workspace', {
+    allowReplacementInstructions: false,
+  }), expectCode('config_not_isolated'))
+})
+
+test('effective config rejects each other launch profile approval binding', () => {
+  const ask = resolveCodexLaunchProfile({approvalMode: 'ask', project: true, foregroundBroker: true})
+  const headless = resolveCodexLaunchProfile({approvalMode: 'ask', project: true, foregroundBroker: false})
+  const askConfig = effectiveConfig()
+  assert.doesNotThrow(() => validateEffectiveCodexConfig(askConfig, '/workspace', {
+    allowReplacementInstructions: false, launchProfile: ask,
+  }))
+  assert.throws(() => validateEffectiveCodexConfig(askConfig, '/workspace', {
+    allowReplacementInstructions: false, launchProfile: headless,
+  }), expectCode('config_not_isolated'))
+  const headlessConfig = clone(askConfig)
+  nested(headlessConfig, 'config').approval_policy = 'never'
+  assert.doesNotThrow(() => validateEffectiveCodexConfig(headlessConfig, '/workspace', {
+    allowReplacementInstructions: false, launchProfile: headless,
+  }))
+  assert.throws(() => validateEffectiveCodexConfig(headlessConfig, '/workspace', {
+    allowReplacementInstructions: false, launchProfile: ask,
+  }), expectCode('config_not_isolated'))
 })
 
 test('Codex 0.147 inert config expansion preserves the isolation report', () => {

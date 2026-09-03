@@ -1,6 +1,7 @@
 import {resolve} from 'node:path'
 import {CodexProtocolError} from './codex-protocol.js'
 import {snapshotJsonRecord} from './codex-safe-json.js'
+import type {CodexLaunchProfile} from './codex-launch-profile.js'
 
 export interface MethodSchemaSpec {
   readonly file: string
@@ -45,17 +46,23 @@ export const APP_SERVER_METHOD_SCHEMAS: Readonly<Record<string, MethodSchemaSpec
   'thread/start': method('v2/ThreadStartParams.json', {
     ephemeral: 'boolean',
     approvalPolicy: 'string',
+    approvalsReviewer: 'string',
+    permissions: 'string',
+    sandbox: 'string',
     developerInstructions: 'string',
     cwd: 'string',
-  }, [], ['ephemeral', 'approvalPolicy', 'developerInstructions', 'cwd'], {
+  }, [], ['ephemeral', 'approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'], {
     approvalPolicy: ['string', 'object', 'null'],
   }),
   'thread/resume': method('v2/ThreadResumeParams.json', {
     threadId: 'string',
     approvalPolicy: 'string',
+    approvalsReviewer: 'string',
+    permissions: 'string',
+    sandbox: 'string',
     developerInstructions: 'string',
     cwd: 'string',
-  }, ['threadId'], ['approvalPolicy', 'developerInstructions', 'cwd'], {
+  }, ['threadId'], ['approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'], {
     approvalPolicy: ['string', 'object', 'null'],
   }),
   'turn/start': method('v2/TurnStartParams.json', {threadId: 'string', input: 'array'}, [
@@ -83,16 +90,17 @@ const TURN_NESTED = deepFreeze({
 export const APP_SERVER_INBOUND_SCHEMAS: readonly InboundSchemaSpec[] = deepFreeze([
   method('v2/ConfigReadResponse.json', {config: 'object', origins: 'object'}, ['config', 'origins']),
   {...method('v2/ThreadStartResponse.json', {
-    approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
-  }, ['approvalPolicy', 'cwd', 'sandbox', 'thread'], [], {
+    approvalPolicy: 'string', approvalsReviewer: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
+  }, ['approvalPolicy', 'approvalsReviewer', 'cwd', 'sandbox', 'thread'], [], {
     approvalPolicy: ['string', 'object'],
   }), nested: THREAD_NESTED},
   {...method('v2/ThreadResumeResponse.json', {
     approvalPolicy: 'string',
+    approvalsReviewer: 'string',
     cwd: 'string',
     sandbox: 'object',
     thread: 'object',
-  }, ['approvalPolicy', 'cwd', 'sandbox', 'thread'], [], {
+  }, ['approvalPolicy', 'approvalsReviewer', 'cwd', 'sandbox', 'thread'], [], {
     approvalPolicy: ['string', 'object'],
   }), nested: THREAD_NESTED},
   {...method('v2/TurnStartResponse.json', {turn: 'object'}, ['turn']), nested: TURN_NESTED},
@@ -117,6 +125,8 @@ export const APP_SERVER_APPROVAL_SCHEMA_FILES: readonly string[] = deepFreeze([
   'CommandExecutionRequestApprovalParams.json',
   'FileChangeRequestApprovalResponse.json',
   'CommandExecutionRequestApprovalResponse.json',
+  'PermissionsRequestApprovalParams.json',
+  'PermissionsRequestApprovalResponse.json',
 ])
 
 const FILE_APPROVAL_PARAM_FIELDS = deepFreeze({
@@ -148,9 +158,13 @@ const LEGACY_COMMAND_APPROVAL_PARAM_FIELDS = deepFreeze({
 })
 const COMMAND_APPROVAL_PARAM_FIELDS = deepFreeze({
   ...LEGACY_COMMAND_APPROVAL_PARAM_FIELDS,
+  additionalPermissions: 'object',
+  availableDecisions: 'array',
   kind: 'string',
 })
 const COMMAND_APPROVAL_PARAM_TYPES = deepFreeze({
+  additionalPermissions: ['object', 'null'],
+  availableDecisions: ['array', 'null'],
   approvalId: ['string', 'null'],
   command: ['string', 'null'],
   commandActions: ['array', 'null'],
@@ -237,6 +251,8 @@ function validateApprovalSchemaSurface(bundle: Readonly<Record<string, unknown>>
     ['accept', 'acceptForSession', 'decline', 'cancel'],
     ['acceptWithExecpolicyAmendment', 'applyNetworkPolicyAmendment'],
   )
+  validatePermissionsApprovalParams(requireObject(bundle['PermissionsRequestApprovalParams.json']))
+  validatePermissionsApprovalResponse(requireObject(bundle['PermissionsRequestApprovalResponse.json']))
 }
 
 function validateApprovalServerRequest(root: Record<string, unknown>): boolean {
@@ -245,6 +261,7 @@ function validateApprovalServerRequest(root: Record<string, unknown>): boolean {
   for (const [methodName, paramsName] of [
     ['item/fileChange/requestApproval', 'FileChangeRequestApprovalParams'],
     ['item/commandExecution/requestApproval', 'CommandExecutionRequestApprovalParams'],
+    ['item/permissions/requestApproval', 'PermissionsRequestApprovalParams'],
   ] as const) {
     const matches = variants.filter(candidate => approvalMethod(candidate) === methodName)
     if (matches.length !== 1) throw new TypeError('approval method')
@@ -265,9 +282,11 @@ function validateApprovalServerRequest(root: Record<string, unknown>): boolean {
   const requestId = requireObject(definitions.RequestId)
   requireTypes(requestId, root, ['string', 'integer'])
   validateFileApprovalParams(requireObject(definitions.FileChangeRequestApprovalParams), root)
-  return validateCommandApprovalParams(
+  const result = validateCommandApprovalParams(
     requireObject(definitions.CommandExecutionRequestApprovalParams), root,
   )
+  validatePermissionsApprovalParams(requireObject(definitions.PermissionsRequestApprovalParams), root)
+  return result
 }
 
 function validateFileApprovalParams(
@@ -322,7 +341,36 @@ function validateCommandApprovalParams(
     properties.proposedNetworkPolicyAmendments,
     '#/definitions/NetworkPolicyAmendment',
   )
+  requireNullableReference(properties.additionalPermissions, '#/definitions/AdditionalPermissionProfile')
+  requireArrayItemReference(properties.availableDecisions, '#/definitions/CommandExecutionApprovalDecision')
   return hasKind
+}
+
+function validatePermissionsApprovalParams(
+  schema: Record<string, unknown>,
+  root: Record<string, unknown> = schema,
+): void {
+  validateExactObjectSchema(schema, {
+    cwd: 'string', environmentId: 'string', itemId: 'string', permissions: 'object', reason: 'string',
+    startedAtMs: 'integer', threadId: 'string', turnId: 'string',
+  }, ['cwd', 'itemId', 'permissions', 'startedAtMs', 'threadId', 'turnId'], root, {
+    environmentId: ['string', 'null'], reason: ['string', 'null'],
+  })
+  requireReference(requireObject(requireObject(schema.properties).permissions), '#/definitions/RequestPermissionProfile')
+}
+
+function validatePermissionsApprovalResponse(root: Record<string, unknown>): void {
+  validateExactObjectSchema(root, {permissions: 'object', scope: 'string', strictAutoReview: 'boolean'}, ['permissions'], root, {
+    strictAutoReview: ['boolean', 'null'],
+  })
+  const properties = requireObject(root.properties)
+  requireReference(requireObject(properties.permissions), '#/definitions/GrantedPermissionProfile')
+  const choices = requireObject(properties.scope).allOf
+  if (!Array.isArray(choices) || choices.length !== 1) throw new TypeError('permission scope')
+  requireReference(requireObject(choices[0]), '#/definitions/PermissionGrantScope')
+  const definition = requireObject(requireObject(root.definitions).PermissionGrantScope)
+  requireTypes(definition, root, ['string'])
+  requireExactEnum(definition.enum, ['turn', 'session'])
 }
 
 function validateFileChangeItem(root: Record<string, unknown>): void {
@@ -619,9 +667,9 @@ function localReferenceTarget(reference: string, root: Record<string, unknown>):
 }
 
 export interface EffectiveCodexConfigReport {
-  readonly default_permissions: 'nova_audio_agent'
-  readonly filesystem: 'workspace_only'
-  readonly network: 'blocked'
+  readonly default_permissions: 'nova_audio_agent' | null
+  readonly filesystem: 'workspace_only' | 'full_access'
+  readonly network: 'blocked' | 'unrestricted'
   readonly web_search: 'disabled'
   readonly shell_environment: 'core_include_only'
   readonly extensions: 'disabled'
@@ -650,31 +698,44 @@ const SAFE_OPTIONAL_FEATURES: ReadonlySet<string> = new Set([
 export function validateEffectiveCodexConfig(
   response: unknown,
   workspace: string,
-  options: {readonly allowReplacementInstructions: boolean},
+  options: {readonly allowReplacementInstructions: boolean; readonly launchProfile?: CodexLaunchProfile},
 ): EffectiveCodexConfigReport {
   try {
     const envelope = snapshotJsonRecord(response)
     if (truthy(envelope.warnings) || truthy(envelope.requirements)) throw new TypeError('diagnostic')
     const config = requireObject(envelope.config)
-    if (config.default_permissions !== 'nova_audio_agent') throw new TypeError('permissions')
+    const yolo = options.launchProfile?.id === 'yolo'
+    if (options.launchProfile !== undefined
+      && (config.approval_policy !== options.launchProfile.thread.approvalPolicy
+        || config.approvals_reviewer !== 'user')) {
+      throw new TypeError('approval')
+    }
+    if (yolo ? config.default_permissions !== null && config.default_permissions !== undefined
+      : config.default_permissions !== 'nova_audio_agent') throw new TypeError('permissions')
     if (config.web_search !== 'disabled') throw new TypeError('web')
     if (config.cwd !== undefined && (
       typeof config.cwd !== 'string' || resolve(config.cwd) !== resolve(workspace)
     )) throw new TypeError('cwd')
     const permissions = requireObject(config.permissions)
-    if (!exactKeys(permissions, ['nova_audio_agent'])) throw new TypeError('permission profiles')
-    const profile = requireObject(permissions.nova_audio_agent)
-    if (!requiredKeysWithNullExtras(profile, ['filesystem', 'network'])) throw new TypeError('profile')
-    const filesystem = requireObject(profile.filesystem)
-    if (!requiredKeysWithNullExtras(filesystem, [':root', ':workspace_roots'])) {
-      throw new TypeError('filesystem')
-    }
-    if (filesystem[':root'] !== 'read') throw new TypeError('root')
-    const roots = requireObject(filesystem[':workspace_roots'])
-    if (!exactStringRecord(roots, ROOTS)) throw new TypeError('roots')
-    const network = requireObject(profile.network)
-    if (!requiredKeysWithNullExtras(network, ['enabled']) || network.enabled !== false) {
-      throw new TypeError('network')
+    if (yolo) {
+      if (Object.keys(permissions).length !== 0 || config.sandbox_mode !== 'danger-full-access') {
+        throw new TypeError('permission profiles')
+      }
+    } else {
+      if (!exactKeys(permissions, ['nova_audio_agent'])) throw new TypeError('permission profiles')
+      const profile = requireObject(permissions.nova_audio_agent)
+      if (!requiredKeysWithNullExtras(profile, ['filesystem', 'network'])) throw new TypeError('profile')
+      const filesystem = requireObject(profile.filesystem)
+      if (!requiredKeysWithNullExtras(filesystem, [':root', ':workspace_roots'])) {
+        throw new TypeError('filesystem')
+      }
+      if (filesystem[':root'] !== 'read') throw new TypeError('root')
+      const roots = requireObject(filesystem[':workspace_roots'])
+      if (!exactStringRecord(roots, ROOTS)) throw new TypeError('roots')
+      const network = requireObject(profile.network)
+      if (!requiredKeysWithNullExtras(network, ['enabled']) || network.enabled !== false) {
+        throw new TypeError('network')
+      }
     }
     const shell = requireObject(config.shell_environment_policy)
     if (!requiredKeysWithNullExtras(shell, ['inherit', 'include_only'])
@@ -706,9 +767,9 @@ export function validateEffectiveCodexConfig(
       && replacement !== undefined
       && (typeof replacement !== 'string' || replacement === '')) throw new TypeError('instructions')
     return deepFreeze({
-      default_permissions: 'nova_audio_agent',
-      filesystem: 'workspace_only',
-      network: 'blocked',
+      default_permissions: yolo ? null : 'nova_audio_agent',
+      filesystem: yolo ? 'full_access' : 'workspace_only',
+      network: yolo ? 'unrestricted' : 'blocked',
       web_search: 'disabled',
       shell_environment: 'core_include_only',
       extensions: 'disabled',

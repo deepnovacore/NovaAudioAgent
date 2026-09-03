@@ -5,6 +5,8 @@ export const NATURAL_ORB_WINDOW_SIZE = Object.freeze({width: 160, height: 160})
 const CONFIRMATION_LAYOUT_CSS_HEIGHT = 160
 const CONFIRMATION_ORB_CENTER_BELOW_CSS = 53
 const CONFIRMATION_ORB_CENTER_ABOVE_CSS = 107
+const BUBBLE_WIDTH_CSS = 320
+const BUBBLE_ROW_HEIGHT_CSS = 56
 
 function normalizedPosition(value) {
   if (!value || !Number.isInteger(value.x) || !Number.isInteger(value.y)) return null
@@ -38,7 +40,10 @@ export function confirmationWindowLayout({normalBounds, zoomFactor, workArea}) {
   if (!Number.isFinite(zoomFactor) || zoomFactor <= 0 || zoomFactor > 5) {
     throw new RangeError('confirmation zoom factor is invalid')
   }
-  const width = NATURAL_ORB_WINDOW_SIZE.width
+  const width = Math.max(
+    NATURAL_ORB_WINDOW_SIZE.width,
+    Math.ceil(CONFIRMATION_LAYOUT_CSS_HEIGHT * zoomFactor),
+  )
   const height = Math.max(
     NATURAL_ORB_WINDOW_SIZE.height,
     Math.ceil(CONFIRMATION_LAYOUT_CSS_HEIGHT * zoomFactor),
@@ -81,6 +86,160 @@ export function confirmationWindowLayout({normalBounds, zoomFactor, workArea}) {
   })
 }
 
+/**
+ * Reserve the native surface a renderer needs for up to three progress bubbles.
+ * BrowserWindow bounds are Electron DIPs, so display scale is deliberately not
+ * multiplied here: Chromium's CSS-to-backing-pixel conversion already owns it.
+ */
+export function bubbleWindowLayout({
+  normalBounds,
+  rows,
+  zoomFactor,
+  scaleFactor,
+  workArea,
+  confirmationActive = false,
+}) {
+  if (!validRectangle(normalBounds) || !validRectangle(workArea)) {
+    throw new TypeError('bubble window geometry is invalid')
+  }
+  if (!Number.isInteger(rows) || rows < 1 || rows > 3) {
+    throw new RangeError('bubble rows are invalid')
+  }
+  if (!Number.isFinite(zoomFactor) || zoomFactor <= 0 || zoomFactor > 5
+    || !Number.isFinite(scaleFactor) || scaleFactor <= 0) {
+    throw new RangeError('bubble scale is invalid')
+  }
+  const bubbleHeight = Math.ceil(BUBBLE_ROW_HEIGHT_CSS * rows * zoomFactor)
+  const bubbleWidth = Math.max(
+    NATURAL_ORB_WINDOW_SIZE.width,
+    Math.ceil(BUBBLE_WIDTH_CSS * zoomFactor),
+  )
+  const orbScreenCenter = rectangleCenter(normalBounds)
+  const x = clampWindowPosition({
+    x: orbScreenCenter.x - Math.round(bubbleWidth / 2),
+    y: workArea.y,
+  }, {width: bubbleWidth, height: 1}, workArea).x
+  const orbOffsetX = orbScreenCenter.x - x
+  const bubbleAlignment = orbOffsetX < Math.round(bubbleWidth / 2)
+    ? 'left'
+    : orbOffsetX > Math.round(bubbleWidth / 2) ? 'right' : 'center'
+  const layout = confirmationActive
+    ? bubbleConfirmationLayout({
+        normalBounds,
+        zoomFactor,
+        bubbleHeight,
+        bubbleWidth,
+        x,
+        workArea,
+      })
+    : bubbleOnlyLayout({
+        normalBounds,
+        zoomFactor,
+        bubbleHeight,
+        bubbleWidth,
+        x,
+        workArea,
+      })
+  if (layout.suppressed) {
+    return Object.freeze({
+      ...layout,
+      bounds: Object.freeze(layout.position),
+      bubbleAlignment,
+      bubbleHeight,
+      confirmationPlacement: layout.confirmationPlacement,
+      orbOffsetCssX: layout.orbOffsetX / zoomFactor,
+      orbOffsetCssY: layout.orbOffsetY / zoomFactor,
+      renderedOrbScreenCenter: Object.freeze({
+        x: layout.position.x + layout.orbOffsetX,
+        y: layout.position.y + layout.orbOffsetY,
+      }),
+    })
+  }
+  const bounds = Object.freeze({...layout.position, width: bubbleWidth, height: layout.height})
+  const clamped = Object.freeze({
+    ...clampWindowPosition(bounds, bounds, workArea),
+    width: bounds.width,
+    height: bounds.height,
+  })
+  return Object.freeze({
+    ...layout,
+    bounds: clamped,
+    suppressed: false,
+    bubbleAlignment,
+    bubbleHeight,
+    bubblePlacement: layout.bubblePlacement,
+    confirmationPlacement: layout.confirmationPlacement || null,
+    orbOffsetCssX: orbOffsetX / zoomFactor,
+    orbOffsetCssY: layout.orbOffsetY / zoomFactor,
+    renderedOrbScreenCenter: Object.freeze({
+      x: clamped.x + orbOffsetX,
+      y: clamped.y + layout.orbOffsetY,
+    }),
+  })
+}
+
+function bubbleOnlyLayout({normalBounds, zoomFactor, bubbleHeight, bubbleWidth, x, workArea}) {
+  const naturalHeight = Math.max(NATURAL_ORB_WINDOW_SIZE.height, Math.ceil(160 * zoomFactor))
+  const orbOffset = Math.round(naturalHeight / 2)
+  const above = {
+    bubblePlacement: 'above',
+    position: {x, y: rectangleCenter(normalBounds).y - bubbleHeight - orbOffset},
+    height: naturalHeight + bubbleHeight,
+    orbOffsetY: bubbleHeight + orbOffset,
+  }
+  const below = {
+    bubblePlacement: 'below',
+    position: {x, y: rectangleCenter(normalBounds).y - orbOffset},
+    height: naturalHeight + bubbleHeight,
+    orbOffsetY: orbOffset,
+  }
+  return fitsWorkArea(above.position, {width: bubbleWidth, height: above.height}, workArea)
+    ? above
+    : fitsWorkArea(below.position, {width: bubbleWidth, height: below.height}, workArea)
+      ? below
+      : overflow(above.position, {width: bubbleWidth, height: above.height}, workArea)
+        <= overflow(below.position, {width: bubbleWidth, height: below.height}, workArea) ? above : below
+}
+
+function bubbleConfirmationLayout({normalBounds, zoomFactor, bubbleHeight, bubbleWidth, x, workArea}) {
+  const confirmation = confirmationWindowLayout({normalBounds, zoomFactor, workArea})
+  const confirmationHeight = confirmation.bounds.height
+  const candidates = confirmation.placement === 'below'
+    ? [{
+        bubblePlacement: 'above',
+        confirmationPlacement: 'below',
+        position: {
+          x,
+          y: confirmation.orbScreenCenter.y - bubbleHeight
+            - (confirmation.renderedOrbScreenCenter.y - confirmation.bounds.y),
+        },
+        height: confirmationHeight + bubbleHeight,
+        orbOffsetY: bubbleHeight + confirmation.renderedOrbScreenCenter.y - confirmation.bounds.y,
+      }]
+    : [{
+        bubblePlacement: 'below',
+        confirmationPlacement: 'above',
+        position: {
+          x,
+          y: confirmation.orbScreenCenter.y
+            - (confirmation.renderedOrbScreenCenter.y - confirmation.bounds.y),
+        },
+        height: confirmationHeight + bubbleHeight,
+        orbOffsetY: confirmation.renderedOrbScreenCenter.y - confirmation.bounds.y,
+      }]
+  const selected = candidates[0]
+  return fitsWorkArea(selected.position, {width: bubbleWidth, height: selected.height}, workArea)
+    ? selected
+    : {
+        ...selected,
+        suppressed: true,
+        position: confirmation.bounds,
+        height: confirmation.bounds.height,
+        orbOffsetX: confirmation.renderedOrbScreenCenter.x - confirmation.bounds.x,
+        orbOffsetY: confirmation.renderedOrbScreenCenter.y - confirmation.bounds.y,
+      }
+}
+
 /** Translate a dragged temporary surface back to the natural 160x160 position persisted on disk. */
 export function naturalWindowPositionAfterTemporaryDrag({
   normalBounds,
@@ -98,104 +257,172 @@ export function naturalWindowPositionAfterTemporaryDrag({
   }, NATURAL_ORB_WINDOW_SIZE, workArea)
 }
 
-/** Main-owned state machine for temporary confirmation bounds and their persisted natural anchor. */
-export function createConfirmationWindowController({
+/**
+ * Legacy confirmation API backed by the sole temporary-bounds owner below.
+ * Existing call sites retain their narrow method names while bubbles share its state.
+ */
+export function createConfirmationWindowController(options) {
+  const controller = createOrbWindowController({
+    ...options,
+    getScaleFactor: () => 1,
+    onConfirmationPlacement: options.onPlacement,
+  })
+  return Object.freeze({
+    setMode: controller.setConfirmationMode,
+    sync: controller.sync,
+    clampDragPosition: controller.clampDragPosition,
+    finishDrag: controller.finishDrag,
+    get active() { return controller.active },
+  })
+}
+
+/** Sole owner for confirmation and bubble bounds, anchored to the persisted 160 DIP orb. */
+export function createOrbWindowController({
   getBounds,
   setBounds,
   getZoomFactor,
+  getScaleFactor,
   getWorkAreaForPoint,
-  onPlacement,
+  onConfirmationPlacement,
+  onBubbleLayout = () => {},
 }) {
   let normalBounds = null
+  let confirmationActive = false
+  let rows = 0
   let activeLayout = null
+
+  function ensureNormalBounds() {
+    if (normalBounds !== null) return
+    const current = getBounds()
+    if (!validRectangle(current)) throw new TypeError('natural window bounds are invalid')
+    normalBounds = {
+      x: current.x,
+      y: current.y,
+      width: NATURAL_ORB_WINDOW_SIZE.width,
+      height: NATURAL_ORB_WINDOW_SIZE.height,
+    }
+  }
+
+  function restoreIfNatural() {
+    if (confirmationActive || rows > 0 || normalBounds === null) return false
+    setBounds(normalBounds)
+    normalBounds = null
+    activeLayout = null
+    onConfirmationPlacement('below')
+    onBubbleLayout(Object.freeze({rows: 0, suppressed: false, bubblePlacement: 'above'}))
+    return true
+  }
 
   function sync() {
     if (normalBounds === null) return null
-    const orbScreenCenter = rectangleCenter(normalBounds)
-    const layout = confirmationWindowLayout({
-      normalBounds,
-      zoomFactor: getZoomFactor(),
-      workArea: getWorkAreaForPoint(orbScreenCenter),
-    })
-    activeLayout = layout
-    onPlacement(layout.placement)
-    setBounds(layout.bounds)
-    return layout
+    const center = rectangleCenter(normalBounds)
+    const workArea = getWorkAreaForPoint(center)
+    if (rows > 0) {
+      const layout = bubbleWindowLayout({
+        normalBounds,
+        rows,
+        zoomFactor: getZoomFactor(),
+        scaleFactor: getScaleFactor(),
+        workArea,
+        confirmationActive,
+      })
+      if (layout.suppressed) {
+        const confirmation = confirmationWindowLayout({
+          normalBounds,
+          zoomFactor: getZoomFactor(),
+          workArea,
+        })
+        activeLayout = confirmation
+        onConfirmationPlacement(confirmation.placement)
+        onBubbleLayout(Object.freeze({...layout, rows}))
+        setBounds(confirmation.bounds)
+        return Object.freeze({...layout, rows})
+      }
+      activeLayout = layout
+      onConfirmationPlacement(layout.confirmationPlacement || 'below')
+      onBubbleLayout(Object.freeze({...layout, rows}))
+      setBounds(layout.bounds)
+      return Object.freeze({...layout, rows})
+    }
+    if (confirmationActive) {
+      const layout = confirmationWindowLayout({
+        normalBounds,
+        zoomFactor: getZoomFactor(),
+        workArea,
+      })
+      activeLayout = layout
+      onConfirmationPlacement(layout.placement)
+      onBubbleLayout(Object.freeze({rows: 0, suppressed: false, bubblePlacement: 'above'}))
+      setBounds(layout.bounds)
+      return layout
+    }
+    restoreIfNatural()
+    return null
   }
 
-  function setMode(active) {
+  function setConfirmationMode(active) {
     if (typeof active !== 'boolean') throw new TypeError('confirmation mode must be boolean')
-    if (active) {
-      if (normalBounds === null) {
-        const current = getBounds()
-        if (!validRectangle(current)) throw new TypeError('natural window bounds are invalid')
-        normalBounds = {
-          x: current.x,
-          y: current.y,
-          width: NATURAL_ORB_WINDOW_SIZE.width,
-          height: NATURAL_ORB_WINDOW_SIZE.height,
-        }
-      }
-      sync()
-      return
+    if (active) ensureNormalBounds()
+    confirmationActive = active
+    return sync()
+  }
+
+  function reserveBubbleArea(nextRows) {
+    if (!Number.isInteger(nextRows) || nextRows < 0 || nextRows > 3) {
+      throw new RangeError('bubble rows are invalid')
     }
-    if (normalBounds === null) return
-    const restore = normalBounds
-    normalBounds = null
-    activeLayout = null
-    onPlacement('below')
-    setBounds(restore)
+    if (nextRows > 0) ensureNormalBounds()
+    rows = nextRows
+    return sync() || Object.freeze({rows: 0, suppressed: false, bubblePlacement: 'above'})
   }
 
   function clampDragPosition(candidate) {
     if (!validPosition(candidate)) throw new TypeError('drag position is invalid')
-    if (activeLayout === null) {
-      return clampWindowPosition(
-        candidate,
-        NATURAL_ORB_WINDOW_SIZE,
-        getWorkAreaForPoint({
-          x: candidate.x + Math.round(NATURAL_ORB_WINDOW_SIZE.width / 2),
-          y: candidate.y + Math.round(NATURAL_ORB_WINDOW_SIZE.height / 2),
-        }),
-      )
+    const layout = activeLayout
+    if (layout === null) {
+      return clampWindowPosition(candidate, NATURAL_ORB_WINDOW_SIZE, getWorkAreaForPoint({
+        x: candidate.x + 80, y: candidate.y + 80,
+      }))
     }
-    const orbOffset = {
-      x: activeLayout.renderedOrbScreenCenter.x - activeLayout.bounds.x,
-      y: activeLayout.renderedOrbScreenCenter.y - activeLayout.bounds.y,
-    }
-    return clampWindowPosition(candidate, activeLayout.bounds, getWorkAreaForPoint({
-      x: candidate.x + orbOffset.x,
-      y: candidate.y + orbOffset.y,
+    const offset = layout.renderedOrbScreenCenter
+      ? {
+          x: layout.renderedOrbScreenCenter.x - layout.bounds.x,
+          y: layout.renderedOrbScreenCenter.y - layout.bounds.y,
+        }
+      : {x: 80, y: 80}
+    return clampWindowPosition(candidate, layout.bounds, getWorkAreaForPoint({
+      x: candidate.x + offset.x,
+      y: candidate.y + offset.y,
     }))
   }
 
   function finishDrag(position) {
     if (!validPosition(position)) throw new TypeError('drag position is invalid')
     if (normalBounds === null || activeLayout === null) return position
-    const provisional = {
+    const offset = {
+      x: activeLayout.renderedOrbScreenCenter.x - activeLayout.bounds.x,
+      y: activeLayout.renderedOrbScreenCenter.y - activeLayout.bounds.y,
+    }
+    const natural = clampWindowPosition({
       x: normalBounds.x + (position.x - activeLayout.bounds.x),
       y: normalBounds.y + (position.y - activeLayout.bounds.y),
-    }
-    const natural = naturalWindowPositionAfterTemporaryDrag({
-      normalBounds,
-      temporaryBounds: activeLayout.bounds,
-      draggedPosition: position,
-      workArea: getWorkAreaForPoint({
-        x: provisional.x + Math.round(NATURAL_ORB_WINDOW_SIZE.width / 2),
-        y: provisional.y + Math.round(NATURAL_ORB_WINDOW_SIZE.height / 2),
-      }),
-    })
+    }, NATURAL_ORB_WINDOW_SIZE, getWorkAreaForPoint({
+      x: position.x + offset.x,
+      y: position.y + offset.y,
+    }))
     normalBounds = {...normalBounds, ...natural}
     sync()
     return natural
   }
 
   return Object.freeze({
-    setMode,
+    setConfirmationMode,
+    reserveBubbleArea,
     sync,
     clampDragPosition,
     finishDrag,
     get active() { return normalBounds !== null },
+    get bubblesSuppressed() { return rows > 0 && activeLayout?.suppressed === true },
   })
 }
 

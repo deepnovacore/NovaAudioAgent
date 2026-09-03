@@ -63,6 +63,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
           transportFactory: codexHost.transportFactory,
           clock,
           idFactory: () => randomUUID().replaceAll('-', ''),
+          onDiagnostic,
           codexApprovalBroker: {
             publish: view => { publishCodexApproval(view) },
           },
@@ -74,6 +75,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
       token,
       stop,
       telemetry,
+      progressBubbles: settings.progress_bubbles,
       ...(codexResource?.projectView === null || codexResource === null
         ? {}
         : {projectView: codexResource.projectView}),

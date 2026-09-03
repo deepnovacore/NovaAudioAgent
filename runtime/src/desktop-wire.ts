@@ -329,7 +329,7 @@ export function codexApprovalMessage(view: CodexApprovalView, now: number): stri
     typeof approvalId !== 'string'
     || approvalId === ''
     || codePointLengthLikePython(approvalId) > 128
-    || view.kind !== 'file_change' && view.kind !== 'command_execution'
+    || !['file_change', 'command_execution', 'network', 'permissions'].includes(view.kind ?? '')
     || detail?.kind !== view.kind
     || typeof view.operation_summary !== 'string'
     || stripLikePython(view.operation_summary) === ''
@@ -338,6 +338,10 @@ export function codexApprovalMessage(view: CodexApprovalView, now: number): stri
     || !Number.isFinite(view.expires_at)
   ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
   const localDetail = validateCodexApprovalLocalDetail(detail)
+  const allowed = view.allowed_decisions
+  if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length === 0 || allowed.length > 3
+    || allowed.some((value: unknown) => typeof value !== 'string' || !['accept', 'acceptForSession', 'decline'].includes(value))
+    || !allowed.includes('decline'))) throw new DesktopProtocolError('desktop Codex approval view is invalid')
   const expiresInSeconds = Math.min(
     CODEX_APPROVAL_TTL_SECONDS,
     Math.max(0, view.expires_at - now),
@@ -351,6 +355,7 @@ export function codexApprovalMessage(view: CodexApprovalView, now: number): stri
     local_detail: localDetail,
     operation_summary: view.operation_summary,
     expires_in_seconds: expiresInSeconds,
+    ...(allowed === undefined ? {} : {allowed_decisions: allowed}),
   })
   if (new TextEncoder().encode(message).length > MAX_DESKTOP_JSON_BYTES) {
     throw new DesktopProtocolError('desktop Codex approval view is too large')
@@ -361,9 +366,16 @@ export function codexApprovalMessage(view: CodexApprovalView, now: number): stri
 function validateCodexApprovalLocalDetail(
   detail: CodexApprovalLocalDetail,
 ): CodexApprovalLocalDetail {
-  if (detail.kind === 'command_execution') {
+  if ('scope' in detail && (typeof detail.scope !== 'string' || stripLikePython(detail.scope) === '' || codePointLengthLikePython(detail.scope) > 1024)) {
+    throw new DesktopProtocolError('desktop Codex approval view is invalid')
+  }
+  if (detail.kind === 'permissions') {
+    if (Object.keys(detail).sort().join(',') !== 'kind,scope') throw new DesktopProtocolError('desktop Codex approval view is invalid')
+    return detail
+  }
+  if (detail.kind === 'command_execution' || detail.kind === 'network') {
     if (
-      Object.keys(detail).sort().join(',') !== 'command,cwd,kind'
+      Object.keys(detail).sort().join(',') !== (detail.scope === undefined ? 'command,cwd,kind' : 'command,cwd,kind,scope')
       || typeof detail.command !== 'string'
       || stripLikePython(detail.command) === ''
       || codePointLengthLikePython(detail.command) > 4096
@@ -373,6 +385,7 @@ function validateCodexApprovalLocalDetail(
     ) throw new DesktopProtocolError('desktop Codex approval view is invalid')
     return detail
   }
+  if (detail.kind !== 'file_change') throw new DesktopProtocolError('desktop Codex approval view is invalid')
   const rawChanges: unknown = detail.changes
   if (
     Object.keys(detail).sort().join(',') !== 'changes,kind'

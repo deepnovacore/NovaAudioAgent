@@ -239,8 +239,8 @@ test('commands require one bounded complete command at the exact canonical works
     params => { params.threadId = 'thread-stale' },
     params => { params.networkApprovalContext = {host: 'private.example'} },
     params => { params.additionalPermissions = {filesystem: 'write'} },
-    params => { params.proposedExecpolicyAmendment = [] },
-    params => { params.proposedNetworkPolicyAmendments = [] },
+    params => { params.proposedExecpolicyAmendment = [1] },
+    params => { params.proposedNetworkPolicyAmendments = [{host: 'example.com'}] },
     params => { params.environmentId = 'additional-environment' },
     params => { params.kind = 'writeStdin' },
     params => { params.kind = 'futureAuthority' },
@@ -257,6 +257,155 @@ test('commands require one bounded complete command at the exact canonical works
     assert.notEqual(declined, undefined)
     assert.deepEqual(await declined, {result: {decision: 'decline'}})
     assert.equal(controller.pending, false)
+  }
+})
+
+test('approval command and file displays redact common credential forms', async t => {
+  const {base, controller, fileItem, workspace} = fixture(t)
+  const command = [
+    'env AWS_SECRET_ACCESS_KEY=aws-secret-marker AWS_ACCESS_KEY_ID=aws-id-secret-marker',
+    '--api-key="cli-secret-marker"',
+    "--password 'quoted-secret-marker'",
+    '-H "Authorization: Basic basic-secret-marker"',
+    'https://alice:url-secret-marker@example.test/?token=url-token-marker',
+  ].join(' ')
+  const commandRequest = routeCodexApprovalServerRequest({
+    ...base,
+    method: 'item/commandExecution/requestApproval',
+    params: {
+      ...commandParams(workspace), command, availableDecisions: ['accept', 'decline'], additionalPermissions: null,
+    },
+    signal: new AbortController().signal,
+  })
+  assert.notEqual(commandRequest, undefined)
+  const commandDisplay = JSON.stringify(controller.view.local_detail)
+  for (const marker of [
+    'aws-secret-marker', 'aws-id-secret-marker', 'cli-secret-marker', 'quoted-secret-marker', 'basic-secret-marker', 'url-secret-marker', 'url-token-marker',
+  ]) assert.equal(commandDisplay.includes(marker), false, marker)
+  assert.match(commandDisplay, /AWS_SECRET_ACCESS_KEY=\[REDACTED\]/u)
+  assert.match(commandDisplay, /Authorization: Basic \[REDACTED\]/u)
+  assert.match(commandDisplay, /alice:\[REDACTED\]@example\.test/u)
+  assert.equal(controller.acceptDecision({approvalId: 'public-1', decision: 'decline'}), true)
+  assert.deepEqual(await commandRequest, {result: {decision: 'decline'}})
+
+  const item = structuredClone(fileItem) as Record<string, unknown>
+  item.changes = [{
+    path: 'src/token=relative-file-path-secret.txt',
+    diff: 'x',
+    kind: {type: 'update', move_path: 'src/password=move-path-secret-secret.txt'},
+  }]
+  const fileRequest = routeCodexApprovalServerRequest({
+    ...base,
+    fileChangeItem: () => item,
+    method: 'item/fileChange/requestApproval',
+    params: fileParams,
+    signal: new AbortController().signal,
+  })
+  assert.notEqual(fileRequest, undefined)
+  const fileDisplay = JSON.stringify(controller.view.local_detail)
+  assert.equal(fileDisplay.includes('relative-file-path-secret'), false)
+  assert.equal(fileDisplay.includes('move-path-secret-secret'), false)
+  assert.match(fileDisplay, /src\/token=\[REDACTED\]/u)
+  assert.match(fileDisplay, /src\/password=\[REDACTED\]/u)
+  assert.equal(controller.acceptDecision({approvalId: 'public-2', decision: 'decline'}), true)
+  assert.deepEqual(await fileRequest, {result: {decision: 'decline'}})
+})
+
+test('permission summaries identify broad scopes and keep the exact grant snapshot', async t => {
+  const {base, controller, workspace} = fixture(t)
+  const requested = {
+    fileSystem: {
+      entries: [
+        {access: 'write', path: {type: 'special', value: {kind: 'root'}}},
+        {access: 'read', path: {type: 'special', value: {kind: 'project_roots', subpath: 'token=project-secret-marker'}}},
+        {access: 'read', path: {type: 'special', value: {kind: 'tmpdir'}}},
+        {access: 'deny', path: {type: 'glob_pattern', pattern: resolve(workspace, 'src', '**', '*.env') }},
+        {access: 'deny', path: {type: 'glob_pattern', pattern: resolve(workspace, '..', 'external', '**', '*.env') }},
+        {access: 'write', path: {type: 'path', path: resolve(workspace, 'password=workspace-secret-marker.txt')}},
+        {access: 'read', path: {type: 'path', path: resolve(workspace, '..', 'external-secret-marker.txt')}},
+      ],
+    },
+    network: {enabled: true},
+  }
+  const request = routeCodexApprovalServerRequest({
+    ...base,
+    method: 'item/permissions/requestApproval',
+    params: {
+      itemId: 'item-permissions', startedAtMs: 1000, threadId: 'thread-active', turnId: 'turn-active',
+      cwd: workspace, permissions: requested,
+    },
+    signal: new AbortController().signal,
+  })
+  assert.notEqual(request, undefined)
+  const display = JSON.stringify(controller.view.local_detail)
+  assert.match(display, /全文件系统（根目录）/u)
+  assert.match(display, /项目根目录\/token=\[REDACTED\]/u)
+  assert.match(display, /临时目录/u)
+  assert.match(display, /glob：src\/\*\*\/\*\.env/u)
+  assert.match(display, /glob：工作区外（路径已脱敏）/u)
+  assert.match(display, /工作区外（路径已脱敏）/u)
+  for (const marker of ['project-secret-marker', 'glob-secret-marker', 'workspace-secret-marker', 'external-secret-marker']) {
+    assert.equal(display.includes(marker), false, marker)
+  }
+  assert.equal(controller.acceptDecision({approvalId: 'public-1', decision: 'acceptForSession'}), true)
+  assert.deepEqual(await request, {result: {permissions: requested, scope: 'session'}})
+})
+
+test('network and permission approvals return exact turn/session grants with no persistent rule', async t => {
+  const {base, controller, workspace} = fixture(t)
+  const permissions = {network: {enabled: true}, fileSystem: {write: [resolve(workspace, '..', 'private')]}}
+  for (const kind of ['file_change', 'command_execution', 'network', 'permissions']) {
+    for (const decision of ['accept', 'acceptForSession', 'decline'] as const) {
+      const params = kind === 'file_change' ? fileParams : kind === 'permissions'
+        ? {...fileParams, grantRoot: undefined, cwd: workspace, permissions}
+        : {...commandParams(workspace), availableDecisions: ['accept', 'acceptForSession', 'decline'],
+            proposedExecpolicyAmendment: ['npm'], ...(kind === 'network' ? {
+              networkApprovalContext: {host: 'registry.npmjs.org', protocol: 'https'},
+              proposedNetworkPolicyAmendments: [{host: 'registry.npmjs.org', action: 'allow'}],
+            } : {})}
+      if (kind === 'permissions') delete (params as Record<string, unknown>).grantRoot
+      const routed = routeCodexApprovalServerRequest({
+        ...base, method: kind === 'file_change' ? 'item/fileChange/requestApproval'
+          : kind === 'permissions' ? 'item/permissions/requestApproval' : 'item/commandExecution/requestApproval',
+        params, signal: new AbortController().signal,
+      })
+      assert.equal(controller.pending, true, kind)
+      assert.equal(controller.view.kind, kind)
+      if (kind === 'permissions') {
+        assert.match(JSON.stringify(controller.view.local_detail), /工作区外/u)
+        assert.equal(JSON.stringify(controller.view.local_detail).includes(workspace), false)
+      }
+      assert.equal(controller.acceptDecision({approvalId: controller.view.pending_approval_id!, decision}), true)
+      assert.deepEqual(await routed, {result: kind === 'permissions'
+        ? {permissions: decision === 'decline' ? {} : permissions, scope: decision === 'acceptForSession' ? 'session' : 'turn'}
+        : {decision}})
+    }
+  }
+})
+
+test('available decisions constrain session approval and permission expiry grants nothing', async t => {
+  const {base, controller, workspace} = fixture(t)
+  const waiting = routeCodexApprovalServerRequest({
+    ...base, method: 'item/commandExecution/requestApproval',
+    params: {...commandParams(workspace), availableDecisions: ['accept', 'decline']},
+    signal: new AbortController().signal,
+  })
+  assert.equal(controller.acceptDecision({approvalId: 'public-1', decision: 'acceptForSession'}), false)
+  controller.invalidate('lost')
+  await waiting
+  for (const end of ['ttl', 'lost']) {
+    const clock = new VirtualClock()
+    const approval = new CodexApprovalController({clock, idFactory: () => 'permissions'})
+    const signal = new AbortController()
+    const result = routeCodexApprovalServerRequest({
+      ...base, controller: approval, method: 'item/permissions/requestApproval',
+      params: {itemId: 'p', startedAtMs: 1, threadId: 'thread-active', turnId: 'turn-active',
+        cwd: workspace, permissions: {network: {enabled: true}}}, signal: signal.signal,
+    })
+    assert.equal(approval.pending, true)
+    if (end === 'ttl') clock.advanceTo(60)
+    else signal.abort()
+    assert.deepEqual(await result, {result: {permissions: {}, scope: 'turn'}})
   }
 })
 

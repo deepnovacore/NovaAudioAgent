@@ -17,6 +17,77 @@
     </header>
     <main>
       <section class="setting-section">
+        <h2>权限</h2>
+        <fieldset id="codex-approval-mode" class="segmented segmented-approval">
+          <legend>Codex 审批模式</legend>
+          <label class="choice">
+            <input type="radio" name="codexApprovalMode" value="ask">
+            <span class="option">
+              <span class="option-name">询问</span>
+              <span class="option-note">沙箱外操作、网络和权限升级需要审批</span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="codexApprovalMode" value="yolo">
+            <span class="option">
+              <span class="option-name">YOLO</span>
+              <span class="option-note">关闭沙箱与审批</span>
+            </span>
+          </label>
+        </fieldset>
+        <p id="codex-yolo-warning" class="warning" hidden>
+          YOLO 已选中：保存并重启后将关闭沙箱和审批，Codex 可访问主机文件与网络。
+        </p>
+      </section>
+      <section class="setting-section">
+        <h2>意图理解</h2>
+        <div class="field">
+          <label for="clarificationDepth">澄清深度</label>
+          <select id="clarificationDepth">
+            <option value="minimal">最少（最多 1 个问题）</option>
+            <option value="balanced">均衡（最多 3 个问题）</option>
+            <option value="thorough">充分（最多 5 个问题）</option>
+          </select>
+        </div>
+        <fieldset id="plan-readback" class="segmented compact-segmented segmented-readback">
+          <legend>规划回读</legend>
+          <label class="choice">
+            <input type="radio" name="planReadback" value="summary">
+            <span class="option"><span class="option-name">摘要</span></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="planReadback" value="confirm">
+            <span class="option"><span class="option-name">确认</span></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="planReadback" value="silent">
+            <span class="option"><span class="option-name">静默</span></span>
+          </label>
+        </fieldset>
+        <div class="field">
+          <label for="plannerModel">规划模型</label>
+          <input type="text" id="plannerModel" maxlength="64" autocomplete="off" spellcheck="false" placeholder="留空跟随 FastBrain">
+        </div>
+      </section>
+      <section class="setting-section">
+        <h2>通知</h2>
+        <fieldset id="progress-bubbles" class="segmented segmented-progress">
+          <legend>进度气泡</legend>
+          <label class="choice">
+            <input type="radio" name="progressBubbles" value="off">
+            <span class="option"><span class="option-name">关闭</span></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="progressBubbles" value="milestones">
+            <span class="option"><span class="option-name">里程碑</span></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="progressBubbles" value="all">
+            <span class="option"><span class="option-name">全部</span></span>
+          </label>
+        </fieldset>
+      </section>
+      <section class="setting-section">
         <h2>外观</h2>
         <fieldset id="palette" class="segmented segmented-palette">
           <legend>光球配色</legend>

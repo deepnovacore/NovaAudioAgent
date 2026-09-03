@@ -1,3 +1,8 @@
+import {buildAssembly} from '../src/assembly.js'
+import {settingsSchema} from '../src/config.js'
+import {buildRealtimeAssembly} from '../src/realtime-assembly.js'
+import type {HostContextItem, RealtimeProvider} from '../src/realtime/protocol.js'
+import type {IntakeModels} from '../src/realtime/intake-model.js'
 import assert from 'node:assert/strict'
 import {
   chmodSync,
@@ -302,6 +307,7 @@ function isErrno(error: unknown, code: string): boolean {
 
 class ProjectTransport implements CodexAppServerTransport {
   closeCalls = 0
+  readonly workOrders: string[] = []
   #remainingCloseFailures: number
 
   constructor(
@@ -329,6 +335,7 @@ class ProjectTransport implements CodexAppServerTransport {
     _deadline: TransportDeadline,
   ): Promise<TransportOutcome> {
     void _deadline
+    this.workOrders.push(_input.workOrder)
     this.onRun?.()
     if (this.reportThread) {
       observer.onThreadReady?.(this.threadId)
@@ -2541,3 +2548,124 @@ test('resume state changed after persistent-home setup is rejected before transp
     await rm(value.root, {recursive: true, force: true})
   }
 })
+
+
+test('intake target resolution is canonical and side-effect free for current, create, and resume', async () => {
+  const value = await fixture({preexistingSession: true})
+  try {
+    const before = await value.store.snapshot()
+    const workspace = await value.store.resolveWorkspace('alpha')
+    const current = await value.adapter.resolveIntakeTarget({action: 'start_session', session: 'Named', work_order: 'draft'})
+    assert.equal(current.workspace, workspace.canonical_path)
+    assert.equal(current.workspace_id, workspace.workspace_id)
+    assert.equal(current.session_title, 'Named')
+    const created = await value.adapter.resolveIntakeTarget({action: 'create_workspace', workspace: 'beta', work_order: 'draft'})
+    assert.equal(created.action, 'create')
+    assert.equal(created.workspace_id, null)
+    const resumed = await value.adapter.resolveIntakeTarget({action: 'resume_session', workspace: 'alpha', session: 'Existing', work_order: 'draft'})
+    assert.equal(resumed.action, 'resume')
+    assert.equal(resumed.session_title, 'Existing')
+    assert.ok(resumed.session_id)
+    assert.deepEqual(await value.store.snapshot(), before)
+    assert.deepEqual(readdirSync(join(value.root, 'managed')), [])
+    assert.equal(value.confirmation.pending, false)
+    assert.equal(value.factory.calls.length, 0)
+    await assert.rejects(value.adapter.resolveIntakeTarget({action: 'start_session', workspace: 'alpha', work_order: 'invalid'}))
+  } finally { await value.adapter.close(); await value.store.close(); await rm(value.root, {recursive: true, force: true}) }
+})
+
+function intakeProvider(): RealtimeProvider {
+  let epoch = 0
+  const inject = (item: HostContextItem) => Promise.resolve(({session_epoch: epoch, host_item_id: item.host_item_id, provider_item_id: `p:${item.host_item_id}`}))
+  return {
+    connect: () => Promise.resolve(({epoch: ++epoch, provider_session_id: `provider-${epoch}`})),
+    injectHostItem: inject,
+    injectWorkspaceContext: item => Promise.resolve(({item, asUserActivation: false, delivery: {
+      capability: 'refresh_session', delivered: true, session_epoch: epoch,
+      workspace_instance_id: item.workspace_instance_id, revision: item.revision,
+      prior_provider_item_id: null, refresh_id: `refresh-${item.host_item_id}`,
+    }})),
+    createResponse: () => Promise.resolve(undefined), cancelResponse: () => Promise.resolve(undefined),
+    sendAudio: () => Promise.resolve(undefined), close: () => Promise.resolve(undefined),
+    async *events(signal) {
+      if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), {once: true}))
+    },
+  }
+}
+
+function readyIntakeModels(onPlan: () => void): IntakeModels {
+  return {
+    assess: input => Promise.resolve(({intake_id: input.intake_id, revision: input.revision,
+      slots: {
+        goal: {state: 'stated', note: 'Fix login'}, scope: {state: 'stated', note: 'Login only'},
+        acceptance: {state: 'stated', note: 'Show validation error'}, constraints: {state: 'stated', note: 'Keep API'},
+      }, readiness: 1, intent_to_proceed: true, candidate_question: null, discovery: ['Find tests'], early_exit: false, abandon: false})),
+    plan: input => {
+      onPlan()
+      return Promise.resolve({intake_id: input.intake_id, revision: input.revision,
+        work_order: {objective: 'Fix login', scope_in: ['Login only'], acceptance: ['Show validation error']}})
+    },
+  }
+}
+
+for (const [mode, action] of [['summary', 'start_session'], ['silent', 'start_session'], ['confirm', 'start_session'], ['summary', 'create_workspace'], ['silent', 'resume_session']] as const) {
+  test(`intake assembly ${action}/${mode}: actual compiled work reaches transport once through runtime`, async () => {
+    const value = await fixture({preexistingSession: true})
+    let plans = 0
+    let runEntered!: () => void
+    const entered = new Promise<void>(resolve => { runEntered = resolve })
+    value.factory.onRun = runEntered
+    const core = buildAssembly({
+      settings: settingsSchema.parse({executors: ['codex']}), searchTransport: {search: () => { return Promise.reject(new Error('not used')) }}, clock: value.clock, executors: [value.adapter], realtimeFrontbrain: true,
+      gateway: {async *stream() { await Promise.resolve();  throw new Error('no front model') }, complete: () => Promise.resolve(({text: '{"speak":false,"reason":"silent"}'}))},
+    })
+    const originalStructured = structuredClone(core.runtime.memory.structured)
+    const assembly = buildRealtimeAssembly({core, provider: intakeProvider(), projectAdapter: value.adapter,
+      intake: {models: readyIntakeModels(() => { plans++ }), settings: {clarification_depth: 'balanced', plan_readback: mode}}, onDiagnostic: () => undefined})
+    try {
+      await assembly.start()
+      const service = assembly.service
+      await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'u1', text: 'Fix login; keep API and show validation error'})
+      await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
+      const request = {action, work_order: 'PROVIDER DRAFT MUST NOT EXECUTE', session: action === 'resume_session' ? 'Existing' : 'Named',
+        ...(action === 'create_workspace' ? {workspace: 'beta'} : {})}
+      await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 'tool1', call_id: 'call1', name: 'codex__project', arguments: request})
+      assert.equal(service.toolCallAcceptances().at(-1)?.acceptance.code, 'intake_opened')
+      await service.settleIntakeForTest()
+      if (mode === 'confirm' || action !== 'start_session') {
+        assert.equal(value.factory.calls.length, 0)
+        assert.equal(service.intakeSession?.state, 'readback')
+        assert.equal(plans, 1)
+        if (action === 'create_workspace') assert.deepEqual(readdirSync(join(value.root, 'managed')), [])
+        const proposalId = service.intakeSession.proposal_id!
+        if (mode === 'confirm') {
+          await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: 'r1', status: 'completed', reason: 'done'})
+          for (const response_id of ['receipt', 'readback']) {
+            await service.flushHostItems()
+            await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id})
+            await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id, status: 'completed', reason: 'done'})
+          }
+          await service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 'confirm-speech', provider_item_id: 'u2'})
+          await service.handleEvent({kind: 'user_speech_ended', session_epoch: 1, speech_id: 'confirm-speech', provider_item_id: 'u2'})
+          await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r2'})
+          await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'u2', text: '确认'})
+          assert.equal(service.intakeSession?.revision, 1)
+          await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r2', item_id: 'confirm-tool', call_id: 'confirm-call', name: 'codex__confirm_project_action', arguments: {proposal_id: proposalId, confirmed: true}})
+        } else await service.projectConfirmationDecision(proposalId, true)
+      }
+      await settleWithin('compiled transport run', entered)
+      assert.equal(service.intakeSession?.outcome, 'dispatched')
+      assert.equal(service.intakeSession?.revision, 1)
+      assert.equal(plans, 1)
+      const delivered = value.factory.transports[0]!.workOrders
+      assert.equal(delivered.length, 1)
+      assert.match(delivered[0]!, /^WorkOrder v2/)
+      assert.doesNotMatch(delivered[0]!, /PROVIDER DRAFT/)
+      assert.equal(value.factory.calls[0]!.resume, action === 'resume_session')
+      assert.equal(service.intakeSession?.codex_session, request.session)
+      const items = core.runtime.memory.channels.get('codex')!.items
+      assert.ok(items.some(item => item.content.kind === 'plan.compile'))
+      assert.deepEqual(core.runtime.memory.structured, originalStructured)
+    } finally { await assembly.stop(); await value.store.close(); await rm(value.root, {recursive: true, force: true}) }
+  })
+}

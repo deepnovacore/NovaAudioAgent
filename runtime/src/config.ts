@@ -12,6 +12,12 @@ const cascadedTtsProviderNameSchema = z.enum(['volcengine'])
 const qwenGuardHistoryRecoverySchema = z.enum(['none', 'packed'])
 const qwenGuardHistoryPairsSchema = z.union([z.literal(1), z.literal(2), z.literal(4)])
 const executorNameSchema = z.enum(['fast_sim', 'slow_sim', 'codex'])
+const codexApprovalModeSchema = z.enum(['ask', 'yolo'])
+const clarificationDepthSchema = z.enum(['minimal', 'balanced', 'thorough'])
+const planReadbackSchema = z.enum(['summary', 'confirm', 'silent'])
+const progressBubblesSchema = z.enum(['off', 'milestones', 'all'])
+const embeddingProviderSchema = z.enum(['dashscope', 'local'])
+const searchProviderSchema = z.enum(['mcp', 'tavily'])
 const volcFloatSchema = z.custom<number>(value => typeof value === 'number')
 const loopbackUrlSchema = z.string().url().refine(value => {
   try {
@@ -91,6 +97,18 @@ export const settingsSchema = z.object({
   codex_working_interval: z.number().finite().min(5).max(600).default(30),
   suggestion_cooldown: z.number().finite().nonnegative().nullable().default(null),
   fresh_window: z.number().finite().nonnegative().nullable().default(null),
+  codex_approval_mode: codexApprovalModeSchema.default('ask'),
+  clarification_depth: clarificationDepthSchema.default('balanced'),
+  plan_readback: planReadbackSchema.default('summary'),
+  planner_model: z.string().default(''),
+  progress_bubbles: progressBubblesSchema.default('milestones'),
+  capabilities_config_path: z.string().default('~/.nova-audio-agent/capabilities.json'),
+  search_provider: searchProviderSchema.default('tavily'),
+  search_mcp_url: z.string().default(''),
+  search_mcp_tool: z.string().default('web_search'),
+  knowledge_path: z.string().default('~/.nova-audio-agent/knowledge.sqlite'),
+  embedding_provider: embeddingProviderSchema.default('dashscope'),
+  embedding_model: z.string().default('text-embedding-v4'),
   workspace_graph_enabled: z.boolean().default(false),
   workspace_graph_path: z.string().min(1).default('~/.nova-audio-agent/workspace-graph.sqlite'),
   mycontext_provider_url: loopbackUrlSchema.nullable().default(null),
@@ -315,6 +333,26 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
       environment.NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN,
     ),
     fresh_window: optionalPydanticFloat(environment.NOVA_AUDIO_AGENT_FRESH_WINDOW),
+    codex_approval_mode: parseCodexApprovalMode(
+      environment.NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE,
+    ),
+    clarification_depth: parseClarificationDepth(
+      environment.NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH,
+    ),
+    plan_readback: parsePlanReadback(environment.NOVA_AUDIO_AGENT_PLAN_READBACK),
+    planner_model: optionalString(environment.NOVA_AUDIO_AGENT_PLANNER_MODEL),
+    progress_bubbles: parseProgressBubbles(environment.NOVA_AUDIO_AGENT_PROGRESS_BUBBLES),
+    capabilities_config_path: optionalString(
+      environment.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG,
+    ),
+    search_provider: parseSearchProvider(environment.NOVA_AUDIO_AGENT_SEARCH_PROVIDER),
+    search_mcp_url: optionalString(environment.NOVA_AUDIO_AGENT_SEARCH_MCP_URL),
+    search_mcp_tool: optionalString(environment.NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL),
+    knowledge_path: optionalString(environment.NOVA_AUDIO_AGENT_KNOWLEDGE_PATH),
+    embedding_provider: parseEmbeddingProvider(
+      environment.NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER,
+    ),
+    embedding_model: optionalString(environment.NOVA_AUDIO_AGENT_EMBEDDING_MODEL),
     workspace_graph_enabled: optionalBoolean(
       environment.NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED,
     ),
@@ -562,6 +600,35 @@ function parseCascadedTtsProvider(value: string | undefined): CascadedTtsProvide
     'volcengine',
     'NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER',
   )
+}
+
+function parseCodexApprovalMode(value: string | undefined): z.infer<typeof codexApprovalModeSchema> {
+  return parseSafeSelector(codexApprovalModeSchema, value, 'ask')
+}
+
+function parseClarificationDepth(value: string | undefined): z.infer<typeof clarificationDepthSchema> {
+  return parseSafeSelector(clarificationDepthSchema, value, 'balanced')
+}
+
+function parsePlanReadback(value: string | undefined): z.infer<typeof planReadbackSchema> {
+  return parseSafeSelector(planReadbackSchema, value, 'summary')
+}
+
+function parseProgressBubbles(value: string | undefined): z.infer<typeof progressBubblesSchema> {
+  return parseSafeSelector(progressBubblesSchema, value, 'milestones')
+}
+
+function parseEmbeddingProvider(value: string | undefined): z.infer<typeof embeddingProviderSchema> {
+  return parseSafeSelector(embeddingProviderSchema, value, 'dashscope')
+}
+
+function parseSearchProvider(value: string | undefined): z.infer<typeof searchProviderSchema> {
+  return parseSafeSelector(searchProviderSchema, value, 'tavily')
+}
+
+function parseSafeSelector<T extends string>(schema: z.ZodType<T>, value: string | undefined, fallback: T): T {
+  const result = schema.safeParse(optionalString(value) ?? fallback)
+  return result.success ? result.data : fallback
 }
 
 function parseSelector<T extends string>(

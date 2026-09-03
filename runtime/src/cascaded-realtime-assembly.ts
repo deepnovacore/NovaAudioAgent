@@ -1,3 +1,4 @@
+import {intakeModels} from './realtime/intake-model.js'
 /** Provider-neutral cascaded production assembly over closed, host-owned node registries. */
 
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
@@ -300,6 +301,8 @@ export function buildCascadedRealtimeAssembly(
   return buildRealtimeAssembly({
     core,
     provider,
+    intake: options.intake ?? {models: intakeModels(support.gateway, options.settings.surrogate_model, options.settings.planner_model || options.settings.fast_model), settings: options.settings},
+    ...(options.onExecutorSuggestion === undefined ? {} : {onExecutorSuggestion: options.onExecutorSuggestion}),
     idFactory: () => ids.next('realtime'),
     controlledGuardReconnect: false,
     guardHistoryRecovery: 'none',

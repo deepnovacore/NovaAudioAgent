@@ -51,6 +51,9 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   graphBoard: Object.freeze({
     request: () => ipcRenderer.invoke('nova:workspace-graph-board:request'),
   }),
+  executorResult: Object.freeze({
+    open: result => ipcRenderer.invoke('nova:executor-result:open', result),
+  }),
   nativeAudio: Object.freeze({
     setCaptureEnabled: enabled => ipcRenderer.invoke(
       'nova:native-audio:capture',
@@ -99,6 +102,15 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
       }
       ipcRenderer.on('nova:confirmation-placement', listener)
       return () => ipcRenderer.removeListener('nova:confirmation-placement', listener)
+    },
+    reserveBubbleArea: rows => ipcRenderer.invoke(
+      'nova:bubbles:reserve', Number.isInteger(rows) && rows >= 0 && rows <= 3 ? rows : -1,
+    ),
+    onBubbleLayout: callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, layout) => callback(layout)
+      ipcRenderer.on('nova:bubble-layout', listener)
+      return () => ipcRenderer.removeListener('nova:bubble-layout', listener)
     },
   }),
   settings: Object.freeze({

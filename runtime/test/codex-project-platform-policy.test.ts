@@ -4,25 +4,20 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
 
-import {codexApprovalPolicyForTransport} from '../src/codex-factory.js'
+import {resolveCodexLaunchProfile} from '../src/codex-launch-profile.js'
 import {
   ProjectStateError,
   hostManagedProjectRootForTest,
   hostProjectRootForTest,
 } from '../src/codex-project-store.js'
 
-test('only a Windows foreground project broker selects on-request approval', () => {
-  assert.equal(codexApprovalPolicyForTransport({
-    platform: 'win32', mode: 'project', foregroundBroker: true,
-  }), 'on-request')
-  for (const input of [
-    {platform: 'win32' as const, mode: 'project' as const, foregroundBroker: false},
-    {platform: 'win32' as const, mode: 'ordinary' as const, foregroundBroker: true},
-    {platform: 'win32' as const, mode: 'live' as const, foregroundBroker: true},
-    {platform: 'darwin' as const, mode: 'project' as const, foregroundBroker: true},
-    {platform: 'darwin' as const, mode: 'project' as const, foregroundBroker: false},
-    {platform: 'linux' as const, mode: 'project' as const, foregroundBroker: true},
-  ]) assert.equal(codexApprovalPolicyForTransport(input), 'never')
+test('every foreground project broker selects ask and every missing broker selects headless ask', () => {
+  assert.equal(resolveCodexLaunchProfile({
+    approvalMode: 'ask', project: true, foregroundBroker: true,
+  }).thread.approvalPolicy, 'on-request')
+  assert.equal(resolveCodexLaunchProfile({
+    approvalMode: 'ask', project: true, foregroundBroker: false,
+  }).id, 'ask_headless')
 })
 
 test('Windows root admission defers ownership and ACL authority to the native handle probe', async () => {

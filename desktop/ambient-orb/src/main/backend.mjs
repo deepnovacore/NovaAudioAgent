@@ -28,6 +28,15 @@ const SETTINGS_DEFAULTS = Object.freeze({
   }),
   cascadedTtsProvider: 'volcengine',
   cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
+  codexApprovalMode: 'ask',
+  clarificationDepth: 'balanced',
+  planReadback: 'summary',
+  plannerModel: '',
+  progressBubbles: 'milestones',
+  embeddingProvider: 'dashscope',
+  embeddingModel: 'text-embedding-v4',
+  capabilitiesConfigPath: '',
+  knowledgePath: '',
 })
 
 // Duplicated from settings-store.mjs for the same reason SETTINGS_DEFAULTS is:
@@ -165,6 +174,17 @@ export function backendLaunchSpec({
   const codexHeartbeatSeconds = settings?.codexHeartbeatSeconds
     ?? SETTINGS_DEFAULTS.codexHeartbeatSeconds
   const pipelineMode = settings?.pipelineMode ?? SETTINGS_DEFAULTS.pipelineMode
+  const v4 = {
+    NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE: settings?.codexApprovalMode
+      ?? SETTINGS_DEFAULTS.codexApprovalMode,
+    NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH: settings?.clarificationDepth
+      ?? SETTINGS_DEFAULTS.clarificationDepth,
+    NOVA_AUDIO_AGENT_PLAN_READBACK: settings?.planReadback ?? SETTINGS_DEFAULTS.planReadback,
+    NOVA_AUDIO_AGENT_PROGRESS_BUBBLES: settings?.progressBubbles
+      ?? SETTINGS_DEFAULTS.progressBubbles,
+    NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER: settings?.embeddingProvider
+      ?? SETTINGS_DEFAULTS.embeddingProvider,
+  }
   const env = {
     ...parentEnv,
     NOVA_AUDIO_AGENT_DESKTOP_TOKEN: token,
@@ -176,6 +196,17 @@ export function backendLaunchSpec({
     NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
     NOVA_AUDIO_AGENT_PIPELINE_MODE: pipelineMode,
     NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH: nodeResourcesPath,
+    ...v4,
+  }
+  for (const [name, value] of [
+    ['NOVA_AUDIO_AGENT_PLANNER_MODEL', settings?.plannerModel ?? SETTINGS_DEFAULTS.plannerModel],
+    ['NOVA_AUDIO_AGENT_EMBEDDING_MODEL', settings?.embeddingModel
+      ?? SETTINGS_DEFAULTS.embeddingModel],
+    ['NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG', settings?.capabilitiesConfigPath
+      ?? SETTINGS_DEFAULTS.capabilitiesConfigPath],
+    ['NOVA_AUDIO_AGENT_KNOWLEDGE_PATH', settings?.knowledgePath ?? SETTINGS_DEFAULTS.knowledgePath],
+  ]) {
+    if (typeof value === 'string' && value) env[name] = value
   }
   const inheritedProxy = parentEnv.HTTPS_PROXY
     ?? parentEnv.https_proxy

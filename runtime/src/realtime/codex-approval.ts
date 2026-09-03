@@ -1,5 +1,6 @@
 import {lstatSync, realpathSync} from 'node:fs'
 import {isAbsolute, relative, resolve, sep} from 'node:path'
+import {z} from 'zod'
 
 import type {Clock} from '../clock.js'
 import {snapshotJsonRecord} from '../codex-safe-json.js'
@@ -16,8 +17,33 @@ const CODEX_APPROVAL_REASON_LIMIT = 1024
 const CODEX_APPROVAL_DIFF_LIMIT = 65_536
 const CODEX_APPROVAL_ACTIONS_LIMIT = 16_384
 
-export type CodexApprovalDecision = 'accept' | 'decline'
-export type CodexApprovalKind = 'file_change' | 'command_execution'
+export type CodexApprovalDecision = 'accept' | 'acceptForSession' | 'decline'
+export type CodexApprovalKind = 'file_change' | 'command_execution' | 'network' | 'permissions'
+
+const permissionPath = z.string().min(1).max(CODEX_APPROVAL_PATH_LIMIT).refine(isWellFormed)
+const specialPath = z.union([
+  z.strictObject({kind: z.enum(['root', 'minimal', 'tmpdir', 'slash_tmp'])}),
+  z.strictObject({kind: z.literal('project_roots'), subpath: permissionPath.nullish()}),
+  z.strictObject({kind: z.literal('unknown'), path: permissionPath, subpath: permissionPath.nullish()}),
+])
+const fileSystemPath = z.union([
+  z.strictObject({type: z.literal('path'), path: permissionPath}),
+  z.strictObject({type: z.literal('glob_pattern'), pattern: permissionPath}),
+  z.strictObject({type: z.literal('special'), value: specialPath}),
+])
+const permissionProfileSchema = z.strictObject({
+  fileSystem: z.strictObject({
+    entries: z.array(z.strictObject({access: z.enum(['read', 'write', 'deny']), path: fileSystemPath})).max(64).nullish(),
+    read: z.array(permissionPath).max(64).nullish(),
+    write: z.array(permissionPath).max(64).nullish(),
+    globScanMaxDepth: z.number().int().positive().nullish(),
+  }).nullish(),
+  network: z.strictObject({enabled: z.boolean().nullish()}).nullish(),
+})
+type PermissionProfile = z.infer<typeof permissionProfileSchema>
+type PermissionFileSystemPath = NonNullable<NonNullable<PermissionProfile['fileSystem']>['entries']>[number]['path']
+type PermissionSpecialPath = Extract<PermissionFileSystemPath, {type: 'special'}>['value']
+const SESSION_DECISIONS = Object.freeze(['accept', 'acceptForSession', 'decline'] as const)
 
 export interface CodexFileChangeDisplay {
   readonly change: 'add' | 'delete' | 'update'
@@ -31,15 +57,21 @@ export type CodexApprovalLocalDetail =
     readonly changes: readonly CodexFileChangeDisplay[]
   }
   | {
-    readonly kind: 'command_execution'
+    readonly kind: 'command_execution' | 'network'
     readonly command: string
     readonly cwd: string
+    readonly scope?: string
+  }
+  | {
+    readonly kind: 'permissions'
+    readonly scope: string
   }
 
 export interface CodexApprovalOffer {
   readonly kind: CodexApprovalKind
   readonly local_detail: CodexApprovalLocalDetail
   readonly operation_summary: string
+  readonly allowed_decisions?: readonly CodexApprovalDecision[]
 }
 
 export interface CodexApprovalView {
@@ -50,6 +82,7 @@ export interface CodexApprovalView {
   readonly local_detail: CodexApprovalLocalDetail | null
   readonly operation_summary: string | null
   readonly expires_at: number | null
+  readonly allowed_decisions?: readonly CodexApprovalDecision[]
 }
 
 export interface CodexApprovalResolution {
@@ -88,6 +121,7 @@ export interface CodexApprovalServerRequestRouteOptions {
 
 export interface CodexApprovalServerResponse {
   readonly result: {readonly decision: CodexApprovalDecision}
+    | {readonly permissions: PermissionProfile; readonly scope: 'turn' | 'session'}
 }
 
 /** Owns one short-lived, request-bound Codex permission decision. */
@@ -113,6 +147,7 @@ export class CodexApprovalController {
       local_detail: current.offer.local_detail,
       operation_summary: current.offer.operation_summary,
       expires_at: current.expiresAt,
+      ...(current.offer.allowed_decisions === undefined ? {} : {allowed_decisions: current.offer.allowed_decisions}),
     }
   }
 
@@ -167,7 +202,7 @@ export class CodexApprovalController {
       current?.state !== 'pending'
       || typeof input.approvalId !== 'string'
       || input.approvalId !== current.id
-      || (input.decision !== 'accept' && input.decision !== 'decline')
+      || !(current.offer.allowed_decisions ?? ['accept', 'decline']).includes(input.decision)
     ) return false
     if (this.#clock.now() >= current.expiresAt || current.signal.aborted) {
       this.#invalidateCurrent(current)
@@ -250,6 +285,7 @@ export function routeCodexApprovalServerRequest(
   if (
     options.method !== 'item/fileChange/requestApproval'
     && options.method !== 'item/commandExecution/requestApproval'
+    && options.method !== 'item/permissions/requestApproval'
   ) return undefined
   return routeSupportedCodexApproval(options)
 }
@@ -257,16 +293,22 @@ export function routeCodexApprovalServerRequest(
 async function routeSupportedCodexApproval(
   options: CodexApprovalServerRequestRouteOptions,
 ): Promise<CodexApprovalServerResponse> {
+  const isPermissions = options.method === 'item/permissions/requestApproval'
+  let requested: PermissionProfile = {}
+  const respond = (decision: CodexApprovalDecision): CodexApprovalServerResponse => isPermissions
+    ? {result: {permissions: decision === 'decline' ? {} : requested, scope: decision === 'acceptForSession' ? 'session' : 'turn'}}
+    : approvalResponse(decision)
   try {
+    if (isPermissions) requested = permissionProfileSchema.parse(snapshotJsonRecord(options.params).permissions)
     const offer = options.method === 'item/fileChange/requestApproval'
       ? fileChangeOffer(options)
-      : commandExecutionOffer(options)
-    if (offer === null || options.signal.aborted) return approvalResponse('decline')
+      : isPermissions ? permissionsOffer(options, requested) : commandExecutionOffer(options)
+    if (offer === null || options.signal.aborted) return respond('decline')
     const resolution = await options.controller.offer(offer, options.signal)
-    if (resolution === null) return approvalResponse('decline')
-    return approvalResponse(options.controller.consume(resolution))
+    if (resolution === null) return respond('decline')
+    return respond(options.controller.consume(resolution))
   } catch {
-    return approvalResponse('decline')
+    return respond('decline')
   }
 }
 
@@ -304,7 +346,7 @@ function fileChangeOffer(options: CodexApprovalServerRequestRouteOptions): Codex
     if (!isWellFormed(change.diff)) return null
     totalDiff += codePointLengthLikePython(change.diff)
     if (totalDiff > CODEX_APPROVAL_DIFF_LIMIT) return null
-    const path = normalizedWorkspaceRelativePath(change.path, workspace)
+    const path = redactApprovalDetail(normalizedWorkspaceRelativePath(change.path, workspace))
     const kind = snapshotJsonRecord(change.kind)
     if (kind.type === 'add' || kind.type === 'delete') {
       if (!exactKeys(kind, ['type'])) return null
@@ -314,13 +356,14 @@ function fileChangeOffer(options: CodexApprovalServerRequestRouteOptions): Codex
     if (kind.type !== 'update' || !exactKeys(kind, ['move_path', 'type'])) return null
     const movePath = kind.move_path === undefined || kind.move_path === null
       ? null
-      : normalizedWorkspaceRelativePath(kind.move_path, workspace)
+      : redactApprovalDetail(normalizedWorkspaceRelativePath(kind.move_path, workspace))
     changes.push(Object.freeze({change: 'update', path, move_path: movePath}))
   }
   return Object.freeze({
     kind: 'file_change',
     local_detail: Object.freeze({kind: 'file_change', changes: Object.freeze(changes)}),
     operation_summary: 'Codex 请求修改工作区文件。',
+    allowed_decisions: SESSION_DECISIONS,
   })
 }
 
@@ -330,20 +373,15 @@ function commandExecutionOffer(
   const workspace = canonicalWorkspace(options.workspace)
   const params = snapshotJsonRecord(options.params)
   if (!exactKeys(params, [
-    'approvalId', 'command', 'commandActions', 'cwd', 'environmentId', 'itemId',
+    'approvalId', 'command', 'commandActions', 'cwd', 'environmentId', 'itemId', 'availableDecisions', 'additionalPermissions',
     'kind', 'networkApprovalContext', 'proposedExecpolicyAmendment',
     'proposedNetworkPolicyAmendments', 'reason', 'startedAtMs', 'threadId', 'turnId',
   ])) return null
   if (approvalCore(params, options.activePair) === null) return null
   if (
-    params.approvalId !== undefined && params.approvalId !== null
+    !nullableBoundedText(params.approvalId, CODEX_APPROVAL_PROTOCOL_ID_LIMIT)
     || params.kind !== undefined && params.kind !== 'command'
     || params.environmentId !== undefined && params.environmentId !== null
-    || params.networkApprovalContext !== undefined && params.networkApprovalContext !== null
-    || params.proposedExecpolicyAmendment !== undefined
-      && params.proposedExecpolicyAmendment !== null
-    || params.proposedNetworkPolicyAmendments !== undefined
-      && params.proposedNetworkPolicyAmendments !== null
     || !nullableBoundedText(params.reason, CODEX_APPROVAL_REASON_LIMIT)
     || typeof params.command !== 'string'
     || !isWellFormed(params.command)
@@ -356,13 +394,104 @@ function commandExecutionOffer(
     if (!Array.isArray(params.commandActions)) return null
     if (JSON.stringify(params.commandActions).length > CODEX_APPROVAL_ACTIONS_LIMIT) return null
   }
+  const network = z.strictObject({host: z.string().min(1).max(253), protocol: z.enum(['http', 'https', 'socks5Tcp', 'socks5Udp'])})
+    .nullish().parse(params.networkApprovalContext)
+  const amendments = z.array(z.strictObject({host: z.string().min(1).max(253), action: z.enum(['allow', 'deny'])}))
+    .max(64).nullish().parse(params.proposedNetworkPolicyAmendments)
+  z.array(z.string().max(4096)).max(64).nullish().parse(params.proposedExecpolicyAmendment)
+  const extra = permissionProfileSchema.nullish().parse(params.additionalPermissions)
+  const rawDecisions = params.availableDecisions
+  if (rawDecisions != null && (!Array.isArray(rawDecisions) || rawDecisions.length > 16)) return null
+  // Persistent rule amendments are intentionally never emitted, even when advertised by Codex.
+  const allowed = rawDecisions == null ? ['accept', 'decline'] as const
+    : SESSION_DECISIONS.filter(value => (rawDecisions as unknown[]).includes(value))
+  if (!allowed.includes('decline')) return null
+  const isNetwork = network != null || amendments != null
+  const hosts = [...new Set([...(network ? [network.host] : []), ...(amendments ?? []).map(item => item.host)])]
+  if (hosts.some(host => !/^[a-z\d.:\[\]-]+$/iu.test(host))) return null
+  const networkScope = [
+    ...(network ? [`网络：${network.host}（协议：${network.protocol}）`] : []),
+    ...(amendments ?? [])
+      .filter(item => network?.host !== item.host)
+      .map(item => `网络：${item.host}（协议：未指定）`),
+  ]
+  const scope = [...networkScope, extra ? permissionSummary(extra, workspace) : ''].filter(Boolean).join('；')
+  if (scope.length > 1024) return null
   return Object.freeze({
-    kind: 'command_execution',
+    kind: isNetwork ? 'network' : 'command_execution',
     local_detail: Object.freeze({
-      kind: 'command_execution', command: params.command, cwd: workspace,
+      kind: isNetwork ? 'network' : 'command_execution', command: redactApprovalDetail(params.command), cwd: workspace,
+      ...(scope ? {scope} : {}),
     }),
-    operation_summary: 'Codex 请求执行一条工作区命令。',
+    operation_summary: isNetwork ? 'Codex 请求访问网络。' : extra ? 'Codex 请求提升命令权限。' : 'Codex 请求执行一条工作区命令。',
+    allowed_decisions: Object.freeze([...allowed]),
   })
+}
+
+function permissionsOffer(options: CodexApprovalServerRequestRouteOptions, requested: PermissionProfile): CodexApprovalOffer | null {
+  const workspace = canonicalWorkspace(options.workspace)
+  const params = snapshotJsonRecord(options.params)
+  if (!exactKeys(params, ['cwd', 'environmentId', 'itemId', 'permissions', 'reason', 'startedAtMs', 'threadId', 'turnId'])
+    || approvalCore(params, options.activePair) === null
+    || params.environmentId != null
+    || !nullableBoundedText(params.reason, CODEX_APPROVAL_REASON_LIMIT)
+    || typeof params.cwd !== 'string' || !isCanonicalWorkspace(params.cwd, workspace)) return null
+  return {
+    kind: 'permissions', local_detail: {kind: 'permissions', scope: permissionSummary(requested, workspace)},
+    operation_summary: 'Codex 请求提升文件或网络权限。', allowed_decisions: SESSION_DECISIONS,
+  }
+}
+
+function permissionSummary(profile: PermissionProfile, workspace: string): string {
+  const describePath = (path: string): string => {
+    try { return redactApprovalDetail(normalizedWorkspaceRelativePath(path, workspace)) }
+    catch { return '工作区外（路径已脱敏）' }
+  }
+  const describeSpecialPath = (path: PermissionSpecialPath): string => {
+    if (path.kind === 'root') return '全文件系统（根目录）'
+    if (path.kind === 'minimal') return '最小文件系统范围'
+    if (path.kind === 'tmpdir' || path.kind === 'slash_tmp') return '临时目录'
+    if (path.kind === 'project_roots') {
+      return path.subpath === undefined || path.subpath === null
+        ? '项目根目录'
+        : `项目根目录/${redactApprovalDetail(path.subpath)}`
+    }
+    return '工作区外（路径已脱敏）'
+  }
+  const describePermissionPath = (path: PermissionFileSystemPath): string => {
+    if (path.type === 'path') return describePath(path.path)
+    if (path.type === 'glob_pattern') return `glob：${describeGlobPattern(path.pattern, workspace)}`
+    return describeSpecialPath(path.value)
+  }
+  const fs = profile.fileSystem
+  const entries = [
+    ...(fs?.read ?? []).map(path => `read: ${describePath(path)}`),
+    ...(fs?.write ?? []).map(path => `write: ${describePath(path)}`),
+    ...(fs?.entries ?? []).map(entry => `${entry.access}: ${describePermissionPath(entry.path)}`),
+  ]
+  const summary = [...entries, `网络：${profile.network?.enabled === true ? '请求访问' : '未请求'}`].join('；')
+  // Do not hide an unreviewed tail of a permission grant behind truncation.
+  if (summary.length > 1024) throw new TypeError('permission summary too large')
+  return summary
+}
+
+function describeGlobPattern(pattern: string, workspace: string): string {
+  if (!isAbsolute(pattern)) return redactApprovalDetail(pattern)
+  const displayed = relative(workspace, resolve(pattern))
+  if (displayed === '' || displayed === '..' || displayed.startsWith(`..${sep}`) || isAbsolute(displayed)) {
+    return '工作区外（路径已脱敏）'
+  }
+  return redactApprovalDetail(displayed)
+}
+
+function redactApprovalDetail(value: string): string {
+  return value
+    .replace(/((?:[a-z][a-z\d+.-]*):\/\/[^/\s:@]+:)[^/\s@]+(@)/giu, '$1[REDACTED]$2')
+    .replace(/((?:proxy-)?authorization\s*:\s*basic\s+)[^\s"';&]+/giu, '$1[REDACTED]')
+    .replace(/((?:^|[\s;&])(?:-u|--user|--username)\s+)(?:"[^"]*"|'[^']*'|[^\s;&]+)/giu, '$1[REDACTED]')
+    .replace(/((?:^|[\s;&?#,{\\/])["']?(?:--?|\/)?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:token|password|passwd|pwd|api[_-]?key|access[_-]?key(?:[_-]?(?:id|secret))?|secret(?:[_-]?key)?|client[_-]?secret|private[_-]?key|authorization|auth|credential(?:s)?)\b["']?\s*(?:=|:)\s*)(?!(?:basic|bearer)\s+)(?:"[^"]*"|'[^']*'|[^\s;&]+)/giu, '$1[REDACTED]')
+    .replace(/((?:^|[\s;&])(?:--?|\/)?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:token|password|passwd|pwd|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret|private[_-]?key|authorization)\b\s+)(?!(?:basic|bearer)\s+)(?:"[^"]*"|'[^']*'|[^\s;&]+)/giu, '$1[REDACTED]')
+    .replace(/(?:bearer\s+\S+|(?:sk|rk|pk)-[A-Za-z0-9_./+=-]{8,})/giu, '[REDACTED]')
 }
 
 function approvalCore(
@@ -486,15 +615,24 @@ function validateApprovalId(value: string): string {
 
 function validateAndSnapshotOffer(input: CodexApprovalOffer): CodexApprovalOffer {
   const summary = boundedText(input.operation_summary, CODEX_APPROVAL_SUMMARY_LIMIT)
-  if (input.kind === 'command_execution' && input.local_detail.kind === 'command_execution') {
+  const allowed = input.allowed_decisions
+  if (allowed !== undefined && (allowed.length > 3 || allowed.length === 0
+    || allowed.some(value => !SESSION_DECISIONS.includes(value)) || !allowed.includes('decline'))) throw new TypeError('invalid approval decisions')
+  const decisions = allowed === undefined ? {} : {allowed_decisions: Object.freeze([...new Set(allowed)])}
+  if (input.kind === 'permissions' && input.local_detail.kind === 'permissions') {
+    return Object.freeze({kind: input.kind, local_detail: Object.freeze({kind: input.kind, scope: boundedText(input.local_detail.scope, 1024)}), operation_summary: summary, ...decisions})
+  }
+  if ((input.kind === 'command_execution' || input.kind === 'network') && input.local_detail.kind === input.kind) {
     return Object.freeze({
       kind: input.kind,
       local_detail: Object.freeze({
         kind: input.local_detail.kind,
         command: boundedText(input.local_detail.command, CODEX_APPROVAL_COMMAND_LIMIT, false),
         cwd: boundedText(input.local_detail.cwd, CODEX_APPROVAL_PATH_LIMIT, false),
+        ...(input.local_detail.scope === undefined ? {} : {scope: boundedText(input.local_detail.scope, 1024)}),
       }),
       operation_summary: summary,
+      ...decisions,
     })
   }
   const rawChanges: unknown = input.local_detail.kind === 'file_change'
@@ -519,16 +657,17 @@ function validateAndSnapshotOffer(input: CodexApprovalOffer): CodexApprovalOffer
     }
     return Object.freeze({
       change: change.change,
-      path: boundedText(change.path, CODEX_APPROVAL_PATH_LIMIT, false),
+      path: redactApprovalDetail(boundedText(change.path, CODEX_APPROVAL_PATH_LIMIT, false)),
       move_path: change.move_path === null
         ? null
-        : boundedText(change.move_path, CODEX_APPROVAL_PATH_LIMIT, false),
+        : redactApprovalDetail(boundedText(change.move_path, CODEX_APPROVAL_PATH_LIMIT, false)),
     })
   })
   return Object.freeze({
     kind: input.kind,
     local_detail: Object.freeze({kind: input.local_detail.kind, changes: Object.freeze(changes)}),
     operation_summary: summary,
+    ...decisions,
   })
 }
 

@@ -35,6 +35,7 @@ import {consumeHostExecutorCapability} from '../host-executor-capability.js'
 import {USER_PRIORITY} from '../memory.js'
 import type {DelegateRequest} from '../ports.js'
 import type {CodexApprovalController} from '../realtime/codex-approval.js'
+import type {IntakeTarget} from '../realtime/intake.js'
 import type {
   ConfirmedProjectOperation,
   ProjectConfirmationController,
@@ -164,6 +165,41 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     return snapshot.workspaces.find(
       workspace => workspace.workspace_id === snapshot.active_workspace_id,
     ) ?? null
+  }
+
+  /** Resolve only: no directory, session, proposal, or dispatch is created by intake. */
+  async resolveIntakeTarget(request: Readonly<Record<string, JsonValue>>): Promise<IntakeTarget> {
+    const admitted = validateCodexRequest('project', 'project', request)
+    if (!admitted.ok) throw new TypeError('invalid_intake_action')
+    const input = admitted.value
+    const action = input.action
+    if (action !== 'start_session' && action !== 'create_workspace' && action !== 'resume_session') {
+      throw new TypeError('invalid_intake_action')
+    }
+    let workspace: WorkspaceRecord
+    try {
+      workspace = await this.#store.resolveWorkspace(typeof input.workspace === 'string' ? input.workspace : null)
+    } catch (error) {
+      if (action !== 'create_workspace' || !(error instanceof ProjectStateError) || error.code !== 'workspace_not_found') throw error
+      const name = await this.#store.validateManagedCreate(String(input.workspace))
+      return {
+        workspace: name, action: 'create', workspace_display_name: name, workspace_id: null,
+        session_title: typeof input.session === 'string' ? input.session : null, session_id: null,
+      }
+    }
+    await this.#store.revalidateWorkspace(workspace.workspace_id)
+    const session = action === 'resume_session'
+      ? await this.#store.resolveSession(workspace.workspace_id, typeof input.session === 'string' ? input.session : null)
+      : null
+    if (session !== null && (session.state !== 'ready' || session.codex_thread_id === null)) {
+      throw new ProjectStateError('session_unavailable')
+    }
+    return {
+      workspace: workspace.canonical_path, action: session === null ? 'reuse' : 'resume',
+      workspace_display_name: workspace.display_name, workspace_id: workspace.workspace_id,
+      session_title: session?.display_title ?? (typeof input.session === 'string' ? input.session : null),
+      session_id: session?.session_id ?? null,
+    }
   }
 
   observeProjectView(observer: ProjectViewObserver): () => void {

@@ -51,7 +51,7 @@ interface ClarificationFixture {
     readonly id: string
     readonly turns: readonly {
       readonly utterance: string
-      readonly expectation: 'clarify' | 'dispatch' | 'respond'
+      readonly expectation: 'clarify' | 'dispatch' | 'respond' | 'intake'
       readonly required_work_order_terms?: readonly string[]
     }[]
   }[]
@@ -277,7 +277,7 @@ test('Qwen live routing fixture distinguishes progress from explicit liveness', 
 
 test('Qwen clarification fixture covers adaptive first-turn and merged multi-turn behavior', () => {
   const fixture = loadJson<ClarificationFixture>('codex-clarification.json')
-  assert.equal(fixture.schema_version, 1)
+  assert.equal(fixture.schema_version, 2)
   assert.deepEqual(fixture.cases.map(value => value.id), [
     'broad_optimization',
     'broad_creation',
@@ -287,7 +287,7 @@ test('Qwen clarification fixture covers adaptive first-turn and merged multi-tur
   ])
   assert.equal(fixture.cases.flatMap(value => value.turns).length, 6)
   assert.deepEqual(fixture.cases[0]?.turns.map(turn => turn.expectation), [
-    'clarify', 'dispatch',
+    'intake', 'intake',
   ])
   assert.ok(fixture.cases.every(value => value.turns.every(turn => turn.utterance.trim() !== '')))
   assert.ok(fixture.cases.flatMap(value => value.turns)
@@ -320,7 +320,7 @@ test('Qwen project instructions route the six actions and structured confirmatio
   assert.match(FRONTEND_INSTRUCTIONS, /不得依赖固定产品名称/u)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /俄罗斯方块/u)
   assert.match(FRONTEND_INSTRUCTIONS, /不要改写成问句复述/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /普通澄清后的明确肯定.*只发起一次/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /用户回答宿主问题后等待宿主规划，不重复创建任务/u)
   assert.match(FRONTEND_INSTRUCTIONS, /已提交、正在启动.*host 生命周期事实.*已开始处理/su)
   assert.match(FRONTEND_INSTRUCTIONS, /没有工具事件或 host 事实.*不得声称已经提交/su)
   assert.match(
@@ -391,26 +391,14 @@ test('Qwen provider emits approval instructions only for an approval-enabled ses
   }
 })
 
-test('Qwen project instructions calibrate clarification before a new coding dispatch', () => {
-  // Break caught: a broad coding noun phrase is treated as ready and dispatched before the
-  // user has supplied the material scope or a success boundary.
-  assert.match(
-    FRONTEND_INSTRUCTIONS,
-    /新的 Codex 编程任务.*可执行目标.*实质范围.*成功标准或验证方式/su,
-  )
-  assert.match(
-    FRONTEND_INSTRUCTIONS,
-    /只有动作词和宽泛对象.*信息不足.*追问一个.*不得调用 codex__project/su,
-  )
-  assert.match(
-    FRONTEND_INSTRUCTIONS,
-    /具体故障或目标行为.*范围.*验证方式.*直接调用 codex__project/su,
-  )
-  assert.match(FRONTEND_INSTRUCTIONS, /先讨论、先规划或先澄清.*不得调用 codex__project/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /按合理默认直接做.*只覆盖非关键偏好/su)
-  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /不存在这类缺失时，直接调用 codex__project/u)
+test('Qwen hands coding intake to the host and does not invent additional questions', () => {
+  assert.match(FRONTEND_INSTRUCTIONS, /新的 Codex 编程任务.*codex__project.*work_order 草稿.*宿主 intake/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /intake_opened.*intake_in_progress.*尚未派单/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /只问给定的那一个问题.*不调用另一项编码任务/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /仓库技术栈、入口、测试命令交给 Codex 探索/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /ready.*planning.*readback.*committing.*不自行追问/su)
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /不得重复追问，也不得拆成多个 Codex 任务/u)
 })
-
 
 test('the emitted session.update matches the pinned outbound payload', async () => {
   // The session instructions are model-visible behavior. Comparing the TypeScript

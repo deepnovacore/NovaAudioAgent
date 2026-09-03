@@ -140,12 +140,15 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
     }
     if (message.method === 'config/read') {
       if (params.includeLayers !== true || typeof params.cwd !== 'string') fail('invalid_config')
-      send({id: message.id, result: effectiveConfig(process.cwd())})
+      send({id: message.id, result: effectiveConfig(process.cwd(), isApprovalScenario() ? 'on-request' : 'never')})
       return
     }
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
       const approvalScenario = isApprovalScenario()
       if (params.approvalPolicy !== (approvalScenario ? 'on-request' : 'never')) fail('invalid_thread')
+      if (params.approvalsReviewer !== 'user' || params.permissions !== 'nova_audio_agent') {
+        fail('invalid_thread_profile')
+      }
       if (message.method === 'thread/resume') {
         if (typeof params.threadId !== 'string') fail('invalid_resume')
         threadId = params.threadId
@@ -213,7 +216,9 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
             id: 910,
             method: 'item/commandExecution/requestApproval',
             params: {
+              additionalPermissions: null,
               approvalId: null,
+              availableDecisions: ['accept', 'acceptForSession', 'decline'],
               command: 'node --version',
               commandActions: null,
               cwd: process.cwd(),
@@ -366,9 +371,10 @@ function fail(code) {
   process.exit(91)
 }
 
-function effectiveConfig(workspace) {
+function effectiveConfig(workspace, approvalPolicy) {
   return {
     config: {
+      approval_policy: approvalPolicy, approvals_reviewer: 'user',
       default_permissions: 'nova_audio_agent', web_search: 'disabled', cwd: workspace,
       permissions: {nova_audio_agent: {
         filesystem: {':root': 'read', ':workspace_roots': {
@@ -389,7 +395,7 @@ function effectiveConfig(workspace) {
 
 function threadResponse(workspace, id, persistent, approvalPolicy = 'never') {
   return {
-    approvalPolicy, cwd: workspace, sandbox: {},
+    approvalPolicy, approvalsReviewer: 'user', cwd: workspace, sandbox: {},
     activePermissionProfile: {id: 'nova_audio_agent'},
     ...(persistent ? {runtimeWorkspaceRoots: [workspace]} : {}),
     thread: {

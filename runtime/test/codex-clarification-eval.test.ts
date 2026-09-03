@@ -4,7 +4,7 @@ import {test} from 'node:test'
 import {pathToFileURL} from 'node:url'
 
 interface Criterion {
-  readonly expectation: 'clarify' | 'dispatch' | 'respond'
+  readonly expectation: 'clarify' | 'dispatch' | 'respond' | 'intake'
   readonly requiredWorkOrderTerms?: readonly string[]
 }
 
@@ -76,4 +76,9 @@ test('discussion requests require a response without project dispatch', () => {
     'unexpected codex__project dispatch',
     'response is empty',
   ])
+})
+
+
+test('intake label expects one draft proposal without claiming actual dispatch', () => {
+  assert.deepEqual(scoreCodexClarificationTurn({expectation: 'intake'}, {transcript: '', toolCalls: [projectCall()]}), [])
 })

@@ -72,7 +72,7 @@ async function withTempDirectory(run) {
 
 test('the default settings are the documented schema', () => {
   assert.deepEqual(DEFAULT_SETTINGS, {
-    version: 3,
+    version: 4,
     palette: 'ember',
     proactivity: 'balanced',
     codexHeartbeatSeconds: 30,
@@ -92,19 +92,29 @@ test('the default settings are the documented schema', () => {
     cascadedLlmModels: { qwen: 'qwen-flash', ark: 'doubao-seed-2-0-pro-260215' },
     cascadedTtsProvider: 'volcengine',
     cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
+    codexApprovalMode: 'ask',
+    clarificationDepth: 'balanced',
+    planReadback: 'summary',
+    plannerModel: '',
+    progressBubbles: 'milestones',
+    embeddingProvider: 'dashscope',
+    embeddingModel: 'text-embedding-v4',
+    capabilitiesConfigPath: '',
+    knowledgePath: '',
     secrets: {},
   })
   assert.deepEqual([...SECRET_KEYS], ALL_SECRET_KEYS)
 })
 
-test('version 3 supplies packaged desktop configuration without an env file', () => {
+test('version 3 migrates to v4 defaults while preserving existing desktop fields', () => {
   const migrated = normalizeSettings({
     version: 2,
     integratedModel: 'qwen-custom',
     integratedVoice: 'longanqian',
+    codexApprovalMode: 'yolo',
   })
 
-  assert.equal(migrated.version, 3)
+  assert.equal(migrated.version, 4)
   assert.equal(migrated.integratedModel, 'qwen-custom')
   assert.equal(migrated.codexBinaryMode, 'auto')
   assert.equal(migrated.codexBinaryPath, '')
@@ -113,6 +123,67 @@ test('version 3 supplies packaged desktop configuration without an env file', ()
   assert.equal(migrated.codexManagedRoot, '')
   assert.equal(migrated.modelBaseUrl, '')
   assert.equal(migrated.startListeningOnLaunch, false)
+  assert.equal(migrated.codexApprovalMode, 'ask')
+  assert.equal(migrated.clarificationDepth, 'balanced')
+  assert.equal(migrated.planReadback, 'summary')
+  assert.equal(migrated.plannerModel, '')
+  assert.equal(migrated.progressBubbles, 'milestones')
+  assert.equal(migrated.embeddingProvider, 'dashscope')
+  assert.equal(migrated.embeddingModel, 'text-embedding-v4')
+  assert.equal(migrated.capabilitiesConfigPath, '')
+  assert.equal(migrated.knowledgePath, '')
+  assert.deepEqual(normalizeSettings(migrated), migrated)
+})
+
+test('v4 fields round-trip and invalid enums fail closed to their defaults', () => {
+  const normalized = normalizeSettings({
+    version: 4,
+    codexApprovalMode: 'yolo',
+    clarificationDepth: 'thorough',
+    planReadback: 'confirm',
+    plannerModel: 'planner-model',
+    progressBubbles: 'all',
+    embeddingProvider: 'local',
+    embeddingModel: 'custom-embedding',
+    capabilitiesConfigPath: '/state/capabilities.json',
+    knowledgePath: '/state/knowledge.sqlite',
+  })
+
+  assert.deepEqual({
+    codexApprovalMode: normalized.codexApprovalMode,
+    clarificationDepth: normalized.clarificationDepth,
+    planReadback: normalized.planReadback,
+    plannerModel: normalized.plannerModel,
+    progressBubbles: normalized.progressBubbles,
+    embeddingProvider: normalized.embeddingProvider,
+    embeddingModel: normalized.embeddingModel,
+    capabilitiesConfigPath: normalized.capabilitiesConfigPath,
+    knowledgePath: normalized.knowledgePath,
+  }, {
+    codexApprovalMode: 'yolo',
+    clarificationDepth: 'thorough',
+    planReadback: 'confirm',
+    plannerModel: 'planner-model',
+    progressBubbles: 'all',
+    embeddingProvider: 'local',
+    embeddingModel: 'custom-embedding',
+    capabilitiesConfigPath: '/state/capabilities.json',
+    knowledgePath: '/state/knowledge.sqlite',
+  })
+
+  const invalid = normalizeSettings({version: 4, ...{
+    codexApprovalMode: 'unsafe',
+    clarificationDepth: 'deep',
+    planReadback: 'always',
+    progressBubbles: 'verbose',
+    embeddingProvider: 'remote',
+  }})
+  assert.equal(invalid.codexApprovalMode, 'ask')
+  assert.equal(invalid.clarificationDepth, 'balanced')
+  assert.equal(invalid.planReadback, 'summary')
+  assert.equal(invalid.progressBubbles, 'milestones')
+  assert.equal(invalid.embeddingProvider, 'dashscope')
+  assert.equal(Object.hasOwn(invalid, 'searchProvider'), false)
 })
 
 test('model base URL accepts HTTPS and loopback HTTP but refuses unsafe schemes', () => {
@@ -168,7 +239,7 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
   })
 
   assert.deepEqual(normalized, {
-    version: 3,
+    version: 4,
     palette: 'graphite',
     proactivity: 'balanced',
     codexHeartbeatSeconds: 45,
@@ -188,6 +259,15 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     cascadedLlmModels: { qwen: 'qwen-plus', ark: 'doubao-custom' },
     cascadedTtsProvider: 'volcengine',
     cascadedTtsVoice: 'zh_female_custom',
+    codexApprovalMode: 'ask',
+    clarificationDepth: 'balanced',
+    planReadback: 'summary',
+    plannerModel: '',
+    progressBubbles: 'milestones',
+    embeddingProvider: 'dashscope',
+    embeddingModel: 'text-embedding-v4',
+    capabilitiesConfigPath: '',
+    knowledgePath: '',
     secrets: {},
   })
 })
@@ -231,24 +311,33 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
   })
 
   assert.deepEqual(Object.keys(normalized).sort(), [
+    'capabilitiesConfigPath',
     'cascadedAsrProvider',
     'cascadedEndpointingProvider',
     'cascadedLlmModels',
     'cascadedLlmProvider',
     'cascadedTtsProvider',
     'cascadedTtsVoice',
+    'clarificationDepth',
+    'codexApprovalMode',
     'codexBinaryMode',
     'codexBinaryPath',
     'codexHeartbeatSeconds',
     'codexManagedRoot',
     'codexWorkspace',
+    'embeddingModel',
+    'embeddingProvider',
     'integratedModel',
     'integratedProvider',
     'integratedVoice',
+    'knowledgePath',
     'modelBaseUrl',
     'palette',
     'pipelineMode',
+    'planReadback',
+    'plannerModel',
     'proactivity',
+    'progressBubbles',
     'secrets',
     'startListeningOnLaunch',
     'version',
@@ -596,6 +685,8 @@ test('publicSettings never carries the secrets object', () => {
     'cascadedLlmProvider',
     'cascadedTtsProvider',
     'cascadedTtsVoice',
+    'clarificationDepth',
+    'codexApprovalMode',
     'codexBinaryMode',
     'codexBinaryPath',
     'codexHeartbeatSeconds',
@@ -607,7 +698,10 @@ test('publicSettings never carries the secrets object', () => {
     'modelBaseUrl',
     'palette',
     'pipelineMode',
+    'planReadback',
+    'plannerModel',
     'proactivity',
+    'progressBubbles',
     'startListeningOnLaunch',
     'version',
   ])

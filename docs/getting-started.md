@@ -222,6 +222,18 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | No | balanced | Proactivity preset. |
 | `NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN` | `core` | No | preset | Suggestion cooldown override in seconds. |
 | `NOVA_AUDIO_AGENT_FRESH_WINDOW` | `core` | No | preset | Fresh-context window override in seconds. |
+| `NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE` | `codex` | No | ask | Codex approval mode. |
+| `NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH` | `core` | No | balanced | Maximum clarification depth for intake. |
+| `NOVA_AUDIO_AGENT_PLAN_READBACK` | `core` | No | summary | Plan readback mode. |
+| `NOVA_AUDIO_AGENT_PLANNER_MODEL` | `core` | No | None | Optional planner model override. |
+| `NOVA_AUDIO_AGENT_PROGRESS_BUBBLES` | `core` | No | milestones | Progress bubble display mode. |
+| `NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG` | `core` | No | ~/.nova-audio-agent/capabilities.json | Capabilities registry path. |
+| `NOVA_AUDIO_AGENT_SEARCH_PROVIDER` | `search` | No | tavily | CLI or CI search provider override. |
+| `NOVA_AUDIO_AGENT_SEARCH_MCP_URL` | `search` | No | None | Web search MCP endpoint. |
+| `NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL` | `search` | No | web_search | Web search MCP tool name. |
+| `NOVA_AUDIO_AGENT_KNOWLEDGE_PATH` | `core` | No | ~/.nova-audio-agent/knowledge.sqlite | Knowledge SQLite database path. |
+| `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER` | `core` | No | dashscope | Knowledge embedding provider. |
+| `NOVA_AUDIO_AGENT_EMBEDDING_MODEL` | `core` | No | text-embedding-v4 | Knowledge embedding model. |
 | `DASHSCOPE_API_KEY` | `qwen` | When selected | None | Qwen realtime credential. |
 | `NOVA_AUDIO_AGENT_QWEN_REALTIME_URL` | `qwen` | No | DashScope realtime endpoint | Qwen secure realtime endpoint. |
 | `NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL` | `qwen` | No | qwen-audio-3.0-realtime-plus | Qwen realtime model. |

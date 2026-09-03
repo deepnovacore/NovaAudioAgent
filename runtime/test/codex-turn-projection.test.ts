@@ -4,6 +4,7 @@ import type {ExecutorProgress} from '../src/causal-runtime.js'
 import {VirtualClock, type Clock} from '../src/clock.js'
 import {CodexProtocolError, MAX_FINAL_TEXT_INPUT, MAX_INTERNAL_ACTIVITY} from '../src/codex-protocol.js'
 import {AppServerTurnProjection} from '../src/codex-turn-projection.js'
+import {resolveCodexLaunchProfile} from '../src/codex-launch-profile.js'
 
 function ephemeralThread(
   id = 'PRIVATE-THREAD',
@@ -13,6 +14,7 @@ function ephemeralThread(
     thread: {id, ephemeral: true, path: null, cwd: '/workspace'},
     cwd: '/workspace',
     approvalPolicy,
+    approvalsReviewer: 'user',
     activePermissionProfile: {id: 'nova_audio_agent'},
   }
 }
@@ -28,6 +30,7 @@ function persistentThread(): Record<string, unknown> {
     cwd: '/workspace',
     runtimeWorkspaceRoots: ['/workspace'],
     approvalPolicy: 'never',
+    approvalsReviewer: 'user',
     activePermissionProfile: {id: 'nova_audio_agent'},
   }
 }
@@ -83,6 +86,37 @@ test('thread binding requires the response policy to equal the requested policy'
       ephemeralThread('PRIVATE-THREAD', approvalPolicy === 'never' ? 'on-request' : 'never'),
       {workspace: '/workspace', approvalPolicy},
     ), error => code(error) === 'unsupported_protocol')
+  }
+})
+
+test('every launch profile requires the user reviewer and yolo requires dangerFullAccess', () => {
+  for (const launchProfile of [
+    resolveCodexLaunchProfile({approvalMode: 'ask', project: true, foregroundBroker: true}),
+    resolveCodexLaunchProfile({approvalMode: 'ask', project: true, foregroundBroker: false}),
+    resolveCodexLaunchProfile({approvalMode: 'yolo', project: true, foregroundBroker: true}),
+  ]) {
+    const response = ephemeralThread('PRIVATE-THREAD', launchProfile.thread.approvalPolicy)
+    if (launchProfile.id === 'yolo') {
+      response.activePermissionProfile = null
+      response.sandbox = {type: 'dangerFullAccess'}
+    }
+    const options = {workspace: '/workspace', launchProfile}
+    const create = (): AppServerTurnProjection => new AppServerTurnProjection({clock: new VirtualClock()})
+    assert.doesNotThrow(() => create().bindThread(response, options))
+    for (const approvalsReviewer of ['auto_review', 'guardian_subagent', null, undefined]) {
+      const projection = create()
+      assert.throws(() => projection.bindThread({...response, approvalsReviewer}, options),
+        error => code(error) === 'unsupported_protocol')
+      assert.equal(projection.threadId, null)
+    }
+    if (launchProfile.id === 'yolo') {
+      for (const sandbox of [{type: 'readOnly'}, {type: 'workspaceWrite'}, {}, null, undefined]) {
+        const projection = create()
+        assert.throws(() => projection.bindThread({...response, sandbox}, options),
+          error => code(error) === 'unsupported_protocol')
+        assert.equal(projection.threadId, null)
+      }
+    }
   }
 })
 

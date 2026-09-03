@@ -9,13 +9,15 @@ const METHODS = {
   ],
   'thread/start': ['v2/ThreadStartParams.json', {
     ephemeral: 'boolean', approvalPolicy: 'string', developerInstructions: 'string',
+    approvalsReviewer: 'string', permissions: 'string', sandbox: 'string',
     cwd: 'string',
-  }, [], ['ephemeral', 'approvalPolicy', 'developerInstructions', 'cwd'], {
+  }, [], ['ephemeral', 'approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'], {
     approvalPolicy: ['string', 'object', 'null'],
   }],
   'thread/resume': ['v2/ThreadResumeParams.json', {
     threadId: 'string', approvalPolicy: 'string', developerInstructions: 'string', cwd: 'string',
-  }, ['threadId'], ['approvalPolicy', 'developerInstructions', 'cwd'], {
+    approvalsReviewer: 'string', permissions: 'string', sandbox: 'string',
+  }, ['threadId'], ['approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'], {
     approvalPolicy: ['string', 'object', 'null'],
   }],
   'turn/start': [
@@ -32,13 +34,13 @@ const METHODS = {
 const INBOUND = [
   ['v2/ConfigReadResponse.json', {config: 'object', origins: 'object'}, ['config', 'origins'], null],
   ['v2/ThreadStartResponse.json', {
-    approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
-  }, ['approvalPolicy', 'cwd', 'sandbox', 'thread'], ['thread', {
+    approvalPolicy: 'string', approvalsReviewer: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
+  }, ['approvalPolicy', 'approvalsReviewer', 'cwd', 'sandbox', 'thread'], ['thread', {
     id: 'string', cwd: 'string', ephemeral: 'boolean', path: 'string',
   }, ['id', 'cwd', 'ephemeral']]],
   ['v2/ThreadResumeResponse.json', {
-    approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
-  }, ['approvalPolicy', 'cwd', 'sandbox', 'thread'], ['thread', {
+    approvalPolicy: 'string', approvalsReviewer: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
+  }, ['approvalPolicy', 'approvalsReviewer', 'cwd', 'sandbox', 'thread'], ['thread', {
     id: 'string', cwd: 'string', ephemeral: 'boolean', path: 'string',
   }, ['id', 'cwd', 'ephemeral']]],
   ['v2/TurnStartResponse.json', {turn: 'object'}, ['turn'], ['turn', {

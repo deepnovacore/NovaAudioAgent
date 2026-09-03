@@ -129,6 +129,14 @@ test('preload exposes one bounded native playback mute command', async () => {
   ])
 })
 
+test('preload forwards the last-result panel payload only through its dedicated IPC', async () => {
+  const { exposed, invokes } = await loadPreload()
+  const result = {delegateId: 'delegate-7', outcome: 'ok'}
+
+  await exposed.executorResult.open(result)
+  assert.deepEqual(invokes, [{channel: 'nova:executor-result:open', payload: result}])
+})
+
 test('preload reports confirmation mode as a strict boolean and sanitizes placement pushes', async () => {
   const {exposed, ipcRenderer, sends} = await loadPreload()
 
@@ -149,8 +157,8 @@ test('preload reports confirmation mode as a strict boolean and sanitizes placem
   assert.deepEqual(placements, ['above', 'below'])
 })
 
-test('preload exposes direct read-only Memory and workspace graph board requests', async () => {
-  const { exposed, invokes } = await loadPreload()
+test('preload exposes read-only board requests', async () => {
+  const { exposed, invokes, sends } = await loadPreload()
 
   assert.deepEqual(Object.keys(exposed.memoryBoard).sort(), ['copyJson', 'export', 'request'])
   assert.deepEqual(Object.keys(exposed.graphBoard).sort(), ['request'])
@@ -169,6 +177,7 @@ test('preload exposes direct read-only Memory and workspace graph board requests
     {channel: 'nova:workspace-graph-board:request', payload: undefined},
   ])
   assert.equal(exposed.graphBoard.export, undefined)
+  assert.deepEqual(sends, [])
 })
 
 test('preload declares each bridge namespace exactly once', async () => {

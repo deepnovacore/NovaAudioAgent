@@ -1,0 +1,180 @@
+[
+  {
+    "name": "ask ThreadStart",
+    "schema": "v2/ThreadStartParams.json",
+    "value": {
+      "approvalPolicy": "on-request",
+      "permissions": "nova_audio_agent",
+      "approvalsReviewer": "user"
+    }
+  },
+  {
+    "name": "ask ThreadResume",
+    "schema": "v2/ThreadResumeParams.json",
+    "value": {
+      "approvalPolicy": "on-request",
+      "permissions": "nova_audio_agent",
+      "approvalsReviewer": "user",
+      "threadId": "thread-1"
+    }
+  },
+  {
+    "name": "ask_headless ThreadStart",
+    "schema": "v2/ThreadStartParams.json",
+    "value": {
+      "approvalPolicy": "never",
+      "permissions": "nova_audio_agent",
+      "approvalsReviewer": "user"
+    }
+  },
+  {
+    "name": "ask_headless ThreadResume",
+    "schema": "v2/ThreadResumeParams.json",
+    "value": {
+      "approvalPolicy": "never",
+      "permissions": "nova_audio_agent",
+      "approvalsReviewer": "user",
+      "threadId": "thread-1"
+    }
+  },
+  {
+    "name": "yolo ThreadStart",
+    "schema": "v2/ThreadStartParams.json",
+    "value": {
+      "approvalPolicy": "never",
+      "sandbox": "danger-full-access",
+      "approvalsReviewer": "user"
+    }
+  },
+  {
+    "name": "yolo ThreadResume",
+    "schema": "v2/ThreadResumeParams.json",
+    "value": {
+      "approvalPolicy": "never",
+      "sandbox": "danger-full-access",
+      "approvalsReviewer": "user",
+      "threadId": "thread-1"
+    }
+  },
+  {
+    "name": "file change request",
+    "schema": "FileChangeRequestApprovalParams.json",
+    "value": {
+      "itemId": "item-1",
+      "startedAtMs": 0,
+      "threadId": "thread-1",
+      "turnId": "turn-1"
+    }
+  },
+  {
+    "name": "network request",
+    "schema": "CommandExecutionRequestApprovalParams.json",
+    "value": {
+      "itemId": "item-1",
+      "startedAtMs": 0,
+      "threadId": "thread-1",
+      "turnId": "turn-1",
+      "cwd": "/workspace",
+      "command": "npm install",
+      "networkApprovalContext": {
+        "host": "registry.npmjs.org",
+        "protocol": "https"
+      },
+      "availableDecisions": [
+        "accept",
+        "acceptForSession",
+        "decline"
+      ]
+    }
+  },
+  {
+    "name": "permissions request",
+    "schema": "PermissionsRequestApprovalParams.json",
+    "value": {
+      "itemId": "item-1",
+      "startedAtMs": 0,
+      "threadId": "thread-1",
+      "turnId": "turn-1",
+      "cwd": "/workspace",
+      "permissions": {
+        "network": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  {
+    "name": "FileChangeRequestApprovalResponse accept",
+    "schema": "FileChangeRequestApprovalResponse.json",
+    "value": {
+      "decision": "accept"
+    }
+  },
+  {
+    "name": "FileChangeRequestApprovalResponse acceptForSession",
+    "schema": "FileChangeRequestApprovalResponse.json",
+    "value": {
+      "decision": "acceptForSession"
+    }
+  },
+  {
+    "name": "FileChangeRequestApprovalResponse decline",
+    "schema": "FileChangeRequestApprovalResponse.json",
+    "value": {
+      "decision": "decline"
+    }
+  },
+  {
+    "name": "CommandExecutionRequestApprovalResponse accept",
+    "schema": "CommandExecutionRequestApprovalResponse.json",
+    "value": {
+      "decision": "accept"
+    }
+  },
+  {
+    "name": "CommandExecutionRequestApprovalResponse acceptForSession",
+    "schema": "CommandExecutionRequestApprovalResponse.json",
+    "value": {
+      "decision": "acceptForSession"
+    }
+  },
+  {
+    "name": "CommandExecutionRequestApprovalResponse decline",
+    "schema": "CommandExecutionRequestApprovalResponse.json",
+    "value": {
+      "decision": "decline"
+    }
+  },
+  {
+    "name": "permission grant turn",
+    "schema": "PermissionsRequestApprovalResponse.json",
+    "value": {
+      "permissions": {
+        "network": {
+          "enabled": true
+        }
+      },
+      "scope": "turn"
+    }
+  },
+  {
+    "name": "permission grant session",
+    "schema": "PermissionsRequestApprovalResponse.json",
+    "value": {
+      "permissions": {
+        "network": {
+          "enabled": true
+        }
+      },
+      "scope": "session"
+    }
+  },
+  {
+    "name": "permissions decline or expiry",
+    "schema": "PermissionsRequestApprovalResponse.json",
+    "value": {
+      "permissions": {},
+      "scope": "turn"
+    }
+  }
+]

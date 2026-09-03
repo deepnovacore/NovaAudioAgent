@@ -25,6 +25,8 @@ import type {CodexApprovalView} from './realtime/codex-approval.js'
 import type {CaptionFrame} from './realtime/session-state.js'
 import type {CodexState} from './realtime/service-state.js'
 import type {RealtimeTelemetry} from './realtime/telemetry.js'
+import type {Suggestion} from './suggestions.js'
+import {projectExecutorEvent, projectExecutorSuggestion, type ProgressMode} from './desktop-progress.js'
 
 export const DESKTOP_OWNER_SHUTDOWN_GRACE_MS = 1_000
 
@@ -39,6 +41,7 @@ export interface DesktopRealtimeTransportOwner {
 }
 
 export interface DesktopOutputCallbacks {
+  readonly onExecutorSuggestion: (suggestion: Suggestion) => void
   readonly onAudioFrame: (frame: PlaybackFrame) => void
   readonly onAudioClear: (utteranceId: string, generationEpoch: number) => void
   readonly onAudioAlert: (utteranceId: string | null, generationEpoch: number | null) => void
@@ -50,6 +53,7 @@ export interface DesktopOutputCallbacks {
 }
 
 export interface BuildDesktopRealtimeCompositionOptions {
+  readonly progressBubbles?: ProgressMode
   readonly token: string
   readonly stop: AbortController
   readonly buildRealtime: (
@@ -116,6 +120,10 @@ export function buildDesktopRealtimeComposition(
     },
   }
   const realtime = options.buildRealtime({
+    onExecutorSuggestion: suggestion => {
+      const progress = projectExecutorSuggestion(suggestion, requireRealtime().runtime.clock.now())
+      if (progress !== null) requireDesktop().bridge.onExecutorProgress(progress)
+    },
     onAudioFrame: frame => requireDesktop().bridge.onAudioFrame(frame),
     onAudioClear: (utteranceId, generationEpoch) => {
       requireDesktop().bridge.onAudioClear(utteranceId, generationEpoch)
@@ -147,12 +155,19 @@ export function buildDesktopRealtimeComposition(
     ),
     workspaceGraphBoard: requestId => workspaceGraphBoardForRealtime(requestId, realtime),
     clock: realtime.runtime.clock,
+    ...(options.progressBubbles === undefined ? {} : {progressBubbles: options.progressBubbles}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...(options.projectView === undefined ? {} : {projectView: options.projectView}),
     ...(options.approvalView === undefined ? {} : {approvalView: options.approvalView}),
     ...(options.createServer === undefined ? {} : {createServer: options.createServer}),
   })
   holder.desktop = desktop
+  const unsubscribeProgress = realtime.runtime.observe(event => {
+    const projected = projectExecutorEvent(event, realtime.runtime)
+    if (projected !== null) desktop.bridge.onExecutorProgress(projected.progress, projected.result)
+  })
+  if (options.stop.signal.aborted) unsubscribeProgress()
+  else options.stop.signal.addEventListener('abort', unsubscribeProgress, {once: true})
   return {realtime, desktop}
 }
 

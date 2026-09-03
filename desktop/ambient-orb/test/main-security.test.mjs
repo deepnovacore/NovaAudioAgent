@@ -24,10 +24,13 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:backend-status',
     'nova:backend:retry',
     'nova:bootstrap',
+    'nova:bubble-layout',
+    'nova:bubbles:reserve',
     'nova:camera:permission',
     'nova:codex:rescan',
     'nova:confirmation-mode',
     'nova:confirmation-placement',
+    'nova:executor-result:open',
     'nova:memory-board:copy-json',
     'nova:memory-board:export',
     'nova:memory-board:request',
@@ -650,7 +653,7 @@ test('drag and orb menu paths stay sender validated and bounded', async () => {
   assert.match(mainSource, /event\.sender === mainWindow\.webContents/)
   assert.match(mainSource, /validDragDelta/)
   assert.match(mainSource, /ipcMain\.on\('nova:confirmation-mode', \(event, active\) => \{\n\s*if \(!mainWindow \|\| event\.sender !== mainWindow\.webContents\) return\n\s*if \(typeof active !== 'boolean'\) return/u)
-  assert.match(mainSource, /confirmationWindow\.finishDrag\(position\)/u)
+  assert.match(mainSource, /orbWindow\.finishDrag\(position\)/u)
   assert.match(mainSource, /label: '退出 Nova Audio Agent'/)
   assert.match(mainSource, /click: \(\) => app\.quit\(\)/)
   assert.doesNotMatch(rendererSource, /orb\.addEventListener\('click'/)

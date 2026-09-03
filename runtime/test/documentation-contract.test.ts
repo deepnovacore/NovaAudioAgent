@@ -104,6 +104,24 @@ test('the public contract exposes product-shaped pipeline selectors and retires 
   assert.equal(publicNames.has('NOVA_AUDIO_AGENT_REALTIME_PROVIDER'), false)
 })
 
+test('the v4 settings environment additions are classified as public overrides', () => {
+  const publicNames = new Set(publicEnvironmentContract().map(entry => entry.name))
+  assert.deepEqual([
+    'NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE',
+    'NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH',
+    'NOVA_AUDIO_AGENT_PLAN_READBACK',
+    'NOVA_AUDIO_AGENT_PLANNER_MODEL',
+    'NOVA_AUDIO_AGENT_PROGRESS_BUBBLES',
+    'NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG',
+    'NOVA_AUDIO_AGENT_SEARCH_PROVIDER',
+    'NOVA_AUDIO_AGENT_SEARCH_MCP_URL',
+    'NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL',
+    'NOVA_AUDIO_AGENT_KNOWLEDGE_PATH',
+    'NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER',
+    'NOVA_AUDIO_AGENT_EMBEDDING_MODEL',
+  ].every(name => publicNames.has(name)), true)
+})
+
 test('the generic model credential is an optional support-model override only', () => {
   const entry = environmentContract.find(candidate =>
     candidate.name === 'NOVA_AUDIO_AGENT_MODEL_API_KEY')

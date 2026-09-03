@@ -27,6 +27,86 @@ html, body {
   user-select: none;
 }
 
+#bubble-stack {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  display: flex;
+  /* Newest is first: column-reverse puts it closest to the orb above it. */
+  flex-direction: column-reverse;
+  align-items: center;
+  pointer-events: none;
+}
+#bubble-stack[data-placement='below'] { inset: auto 0 0; flex-direction: column; }
+#bubble-stack[data-alignment='left'] { align-items: flex-start; }
+#bubble-stack[data-alignment='right'] { align-items: flex-end; }
+.progress-bubble {
+  width: calc(100% - 12px);
+  max-width: 308px;
+  height: 48px;
+  flex: 0 0 48px;
+  margin: 4px 6px;
+  padding: 6px 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 14px;
+  background: rgba(19, 22, 31, .96);
+  color: #f5f5f7;
+  font: 500 11px/1.5 system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.progress-bubble[data-level='milestone'] { border-color: rgba(137, 194, 175, .6); }
+.progress-bubble:focus-visible, #last-result:focus-visible { outline: 2px solid #a6d6ff; outline-offset: -2px; }
+#last-result {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: 8px;
+  padding: 1px 7px;
+  color: #c9d8ed;
+  background: rgba(19, 22, 31, .9);
+  font: 10px/1.2 system-ui, sans-serif;
+  cursor: pointer;
+}
+#last-result[hidden] { display: none; }
+#shell[data-bubbles='true'] { display: block; }
+#shell[data-bubbles='true'] #orb {
+  position: absolute;
+  width: 98px;
+  height: 98px;
+  left: var(--bubble-orb-x);
+  top: calc(var(--bubble-orb-y) - 49px);
+  transform: translateX(-50%);
+}
+#shell[data-bubbles='true'] #state-label {
+  position: absolute;
+  top: calc(var(--bubble-orb-y) + 51px);
+  left: var(--bubble-orb-x);
+  transform: translateX(-50%);
+  margin: 0;
+}
+#shell[data-bubbles='true'] #last-result {
+  top: calc(var(--bubble-orb-y) + 64px);
+  bottom: auto;
+  left: var(--bubble-orb-x);
+}
+#shell[data-bubbles='true'] #orb-rail {
+  top: var(--bubble-orb-y);
+  right: auto;
+  left: min(calc(var(--bubble-orb-x) + 54px), calc(100% - 27px));
+}
+/* Bubbles share main-owned bounds; approval remains on the opposite side. */
+#shell[data-bubbles='true'][data-confirmation-placement]:has(#codex-label[data-mode='confirmation']) #orb { top: calc(var(--bubble-orb-y) - 49px); left: var(--bubble-orb-x); }
+#shell[data-bubbles='true'][data-confirmation-placement]:has(#codex-label[data-mode='confirmation']) #orb-rail { top: var(--bubble-orb-y); }
+#shell[data-bubbles='true'] #codex-label[data-mode='confirmation'] { top: calc(var(--bubble-orb-y) + 55px); left: var(--bubble-orb-x); }
+#shell[data-bubbles='true'][data-confirmation-placement='above'] #codex-label[data-mode='confirmation'] { top: calc(var(--bubble-orb-y) - 103px); }
+#shell:has(#codex-label[data-mode='confirmation']) #last-result { display: none; }
+@media (prefers-reduced-motion: reduce) { .progress-bubble { animation: none; transition: none; } }
+
 /* Opaque fallback (NOVA_ORB_OPAQUE=1): compositors that can't do a
    transparent, frameless surface get a rounded dark plate instead of a
    broken/black window. */
@@ -424,6 +504,8 @@ body:hover #orb-rail,
 }
 
 #codex-confirmation-actions[hidden] { display: none; }
+#codex-confirmation-actions button[hidden] { display: none; }
+#codex-confirmation-actions #codex-allow-session { width: auto; padding: 0 7px; font-size: 10px; }
 
 #codex-confirmation-actions button {
   width: 20px;

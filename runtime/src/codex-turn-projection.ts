@@ -2,6 +2,7 @@ import {resolve} from 'node:path'
 import type {ExecutorProgress} from './causal-runtime.js'
 import type {Clock} from './clock.js'
 import {snapshotJsonRecord} from './codex-safe-json.js'
+import type {CodexLaunchProfile} from './codex-launch-profile.js'
 import {PROGRESS_SUMMARY_LIMIT, validProgressSummary} from './events.js'
 import {isPythonSpace} from './python-text.js'
 import {
@@ -88,6 +89,7 @@ export class AppServerTurnProjection {
       readonly ephemeral?: boolean
       readonly expectedThreadId?: string
       readonly approvalPolicy?: 'never' | 'on-request'
+      readonly launchProfile?: CodexLaunchProfile
     },
   ): void {
     try {
@@ -113,11 +115,21 @@ export class AppServerTurnProjection {
           throw new TypeError('workspace roots')
         }
       }
-      if (envelope.approvalPolicy !== (options.approvalPolicy ?? 'never')) {
+      const launchProfile = options.launchProfile
+      if (envelope.approvalPolicy !== (launchProfile?.thread.approvalPolicy ?? options.approvalPolicy ?? 'never')) {
         throw new TypeError('approval')
       }
-      const profile = requireObject(envelope.activePermissionProfile)
-      if (profile.id !== 'nova_audio_agent') throw new TypeError('profile')
+      if (envelope.approvalsReviewer !== 'user') throw new TypeError('reviewer')
+      if (launchProfile !== undefined && 'sandbox' in launchProfile.thread) {
+        if (requireObject(envelope.sandbox).type !== 'dangerFullAccess') throw new TypeError('sandbox')
+        if (envelope.activePermissionProfile !== null && envelope.activePermissionProfile !== undefined) {
+          const profile = requireObject(envelope.activePermissionProfile)
+          if (profile.id === 'nova_audio_agent') throw new TypeError('profile')
+        }
+      } else {
+        const profile = requireObject(envelope.activePermissionProfile)
+        if (profile.id !== 'nova_audio_agent') throw new TypeError('profile')
+      }
       this.#threadId = threadId
     } catch {
       throw new CodexProtocolError('unsupported_protocol')

@@ -27,6 +27,10 @@ import {
   type HostWorkspace,
   type OwnedCodexProcess,
 } from './codex-process-owner.js'
+import {
+  resolveCodexLaunchProfile,
+  type CodexLaunchProfile,
+} from './codex-launch-profile.js'
 import {snapshotJsonRecord} from './codex-safe-json.js'
 import {AppServerTurnProjection, type TurnCompletion} from './codex-turn-projection.js'
 import type {ExecutorProgress} from './causal-runtime.js'
@@ -86,14 +90,15 @@ export interface CodexAppServerLaunchConfig {
   readonly workingInterval?: number
   readonly approvalPolicy?: 'never' | 'on-request'
   readonly approvalController?: CodexApprovalController
+  readonly launchProfile?: CodexLaunchProfile
 }
 
 type ValidatedCodexAppServerLaunchConfig = Omit<
   CodexAppServerLaunchConfig,
-  'workingInterval' | 'approvalPolicy'
+  'workingInterval' | 'approvalPolicy' | 'launchProfile'
 > & {
   readonly workingInterval: number
-  readonly approvalPolicy: 'never' | 'on-request'
+  readonly launchProfile: CodexLaunchProfile
 }
 
 export interface TransportDeadline {
@@ -697,6 +702,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         workspace: this.#config.workspace,
         codexHome: this.#config.codexHome,
         environment,
+        launchProfile: this.#config.launchProfile,
       })
       const spawnController = new AbortController()
       const abortSpawn = (): void => { spawnController.abort() }
@@ -789,6 +795,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       }, deadline)
       validateEffectiveCodexConfig(configResponse, hostWorkspacePath(this.#config.workspace), {
         allowReplacementInstructions: false,
+        launchProfile: this.#config.launchProfile,
       })
       const thread = this.#threadRequest()
       let threadResponse: unknown
@@ -1025,7 +1032,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     readonly params: Readonly<Record<string, unknown>>
   } {
     const workspace = hostWorkspacePath(this.#config.workspace)
-    const common: Record<string, unknown> = {approvalPolicy: this.#config.approvalPolicy}
+    const common: Record<string, unknown> = {...this.#config.launchProfile.thread}
     if (this.#config.developerInstructions !== null) {
       common.developerInstructions = this.#config.developerInstructions
     }
@@ -1050,7 +1057,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       projection.bindThread(response, {
         workspace: hostWorkspacePath(this.#config.workspace),
         ephemeral: !this.#config.persistent,
-        approvalPolicy: this.#config.approvalPolicy,
+        launchProfile: this.#config.launchProfile,
         ...(this.#config.resumeThreadId === null
           ? {}
           : {expectedThreadId: this.#config.resumeThreadId}),
@@ -1468,12 +1475,22 @@ function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCode
     ? null
     : validateThreadId(config.resumeThreadId)
   if (!config.persistent && resumeThreadId !== null) throw new CodexTransportError('resume_unavailable')
-  const approvalPolicy = config.approvalPolicy ?? 'never'
+  const launchProfile = config.launchProfile ?? resolveCodexLaunchProfile({
+    approvalMode: 'ask',
+    project: config.approvalPolicy === 'on-request',
+    foregroundBroker: config.approvalPolicy === 'on-request',
+  })
+  const approvalPolicy = launchProfile.thread.approvalPolicy
   if (
     (approvalPolicy !== 'never' && approvalPolicy !== 'on-request')
+    || (config.approvalPolicy !== undefined && config.approvalPolicy !== approvalPolicy)
     || (approvalPolicy === 'on-request' && !(config.approvalController instanceof CodexApprovalController))
     || (approvalPolicy === 'never' && config.approvalController !== undefined)
   ) throw new CodexTransportError('workspace_invalid')
+  if (launchProfile.thread.approvalPolicy !== approvalPolicy
+    || (launchProfile.controller === 'present') !== (config.approvalController !== undefined)) {
+    throw new CodexTransportError('workspace_invalid')
+  }
   return Object.freeze({
     binary: config.binary,
     prefixArgs: Object.freeze([...(config.prefixArgs ?? [])]),
@@ -1483,7 +1500,7 @@ function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCode
     developerInstructions,
     resumeThreadId,
     persistent: config.persistent,
-    approvalPolicy,
+    launchProfile,
     ...(config.approvalController === undefined
       ? {}
       : {approvalController: config.approvalController}),

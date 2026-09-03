@@ -43,7 +43,7 @@ test('anchors a larger window to the work area top-left', () => {
   )
 })
 
-test('confirmation layout keeps 100% at 160 square and expands only height at 125% and 150%', () => {
+test('confirmation layout retains a 160 CSS-pixel surface at elevated zoom and preserves the orb anchor', () => {
   const normalBounds = {x: 600, y: 200, width: 160, height: 160}
   const workArea = {x: 0, y: 0, width: 1440, height: 900}
   const layouts = [1, 1.25, 1.5].map(zoomFactor => confirmationWindowLayout({
@@ -52,10 +52,11 @@ test('confirmation layout keeps 100% at 160 square and expands only height at 12
     workArea,
   }))
 
-  assert.deepEqual(layouts.map(layout => layout.bounds.width), [160, 160, 160])
+  assert.deepEqual(layouts.map(layout => layout.bounds.width), [160, 200, 240])
   assert.deepEqual(layouts.map(layout => layout.bounds.height), [160, 200, 240])
   assert.deepEqual(layouts.map(layout => layout.placement), ['below', 'below', 'below'])
   for (const layout of layouts) {
+    assert.ok(layout.bounds.width / [1, 1.25, 1.5][layouts.indexOf(layout)] >= 160)
     assert.deepEqual(layout.orbScreenCenter, {x: 680, y: 280})
     assert.ok(Math.abs(layout.renderedOrbScreenCenter.y - 280) <= 1)
   }
@@ -116,12 +117,12 @@ test('confirmation window controller restores bounds and persists only a dragged
   })
 
   controller.setMode(true)
-  assert.deepEqual(bounds, {x: 600, y: 659, width: 160, height: 240})
+  assert.deepEqual(bounds, {x: 560, y: 659, width: 240, height: 240})
   const dragged = controller.finishDrag({x: 500, y: 559})
-  assert.deepEqual(dragged, {x: 500, y: 640})
-  assert.deepEqual(bounds, {x: 500, y: 640, width: 160, height: 240})
+  assert.deepEqual(dragged, {x: 540, y: 640})
+  assert.deepEqual(bounds, {x: 500, y: 640, width: 240, height: 240})
   controller.setMode(false)
-  assert.deepEqual(bounds, {x: 500, y: 640, width: 160, height: 160})
+  assert.deepEqual(bounds, {x: 540, y: 640, width: 160, height: 160})
   assert.deepEqual(placements, ['above', 'below', 'below'])
   assert.equal(applied.length, 3)
 })

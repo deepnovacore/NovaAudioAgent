@@ -6,7 +6,7 @@ export function scoreCodexClarificationTurn(criterion, observation) {
   const transcript = observation.transcript.trim()
   const projectCalls = observation.toolCalls.filter(call => call.name === 'codex__project')
 
-  if (criterion.expectation === 'dispatch') {
+  if ((criterion.expectation === 'dispatch' || criterion.expectation === 'intake')) {
     if (projectCalls.length !== 1) {
       failures.push(`expected exactly one codex__project dispatch, got ${projectCalls.length}`)
     }

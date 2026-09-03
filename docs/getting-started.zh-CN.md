@@ -195,6 +195,18 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 | `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | 否 | balanced | 主动性预设。 |
 | `NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN` | `core` | 否 | preset | 建议冷却秒数覆盖。 |
 | `NOVA_AUDIO_AGENT_FRESH_WINDOW` | `core` | 否 | preset | 新鲜上下文窗口秒数覆盖。 |
+| `NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE` | `codex` | 否 | ask | Codex 审批模式。 |
+| `NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH` | `core` | 否 | balanced | 意图理解的最大澄清深度。 |
+| `NOVA_AUDIO_AGENT_PLAN_READBACK` | `core` | 否 | summary | 规划回读模式。 |
+| `NOVA_AUDIO_AGENT_PLANNER_MODEL` | `core` | 否 | 无 | 可选的规划模型覆盖。 |
+| `NOVA_AUDIO_AGENT_PROGRESS_BUBBLES` | `core` | 否 | milestones | 进度气泡显示模式。 |
+| `NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG` | `core` | 否 | ~/.nova-audio-agent/capabilities.json | 能力注册表路径。 |
+| `NOVA_AUDIO_AGENT_SEARCH_PROVIDER` | `search` | 否 | tavily | CLI 或 CI 搜索提供方覆盖。 |
+| `NOVA_AUDIO_AGENT_SEARCH_MCP_URL` | `search` | 否 | 无 | 网页搜索 MCP 地址。 |
+| `NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL` | `search` | 否 | web_search | 网页搜索 MCP 工具名。 |
+| `NOVA_AUDIO_AGENT_KNOWLEDGE_PATH` | `core` | 否 | ~/.nova-audio-agent/knowledge.sqlite | 知识库 SQLite 数据库路径。 |
+| `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER` | `core` | 否 | dashscope | 知识库 embedding 提供方。 |
+| `NOVA_AUDIO_AGENT_EMBEDDING_MODEL` | `core` | 否 | text-embedding-v4 | 知识库 embedding 模型。 |
 | `DASHSCOPE_API_KEY` | `qwen` | 选择该能力时 | 无 | Qwen 实时凭据。 |
 | `NOVA_AUDIO_AGENT_QWEN_REALTIME_URL` | `qwen` | 否 | DashScope realtime endpoint | Qwen 安全实时地址。 |
 | `NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL` | `qwen` | 否 | qwen-audio-3.0-realtime-plus | Qwen 实时模型。 |

@@ -263,6 +263,63 @@ test('resolved desktop settings override inherited Codex and model configuration
   assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_BASE_URL, 'https://settings.example/v1')
 })
 
+test('launch spec maps v4 runtime settings and omits empty optional overrides', () => {
+  const spec = nodeLaunchSpec({
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {
+      NOVA_AUDIO_AGENT_PLANNER_MODEL: 'parent-planner',
+      NOVA_AUDIO_AGENT_EMBEDDING_MODEL: 'parent-embedding',
+      NOVA_AUDIO_AGENT_KNOWLEDGE_PATH: '/parent/knowledge.sqlite',
+    },
+    settings: {
+      codexApprovalMode: 'yolo',
+      clarificationDepth: 'thorough',
+      planReadback: 'confirm',
+      plannerModel: 'settings-planner',
+      progressBubbles: 'all',
+      embeddingProvider: 'local',
+      embeddingModel: 'custom-embedding',
+      capabilitiesConfigPath: '/settings/capabilities.json',
+      knowledgePath: '/settings/knowledge.sqlite',
+    },
+  })
+
+  assert.deepEqual({
+    approval: spec.env.NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE,
+    depth: spec.env.NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH,
+    readback: spec.env.NOVA_AUDIO_AGENT_PLAN_READBACK,
+    planner: spec.env.NOVA_AUDIO_AGENT_PLANNER_MODEL,
+    bubbles: spec.env.NOVA_AUDIO_AGENT_PROGRESS_BUBBLES,
+    embeddingProvider: spec.env.NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER,
+    embeddingModel: spec.env.NOVA_AUDIO_AGENT_EMBEDDING_MODEL,
+    capabilities: spec.env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG,
+    knowledge: spec.env.NOVA_AUDIO_AGENT_KNOWLEDGE_PATH,
+  }, {
+    approval: 'yolo', depth: 'thorough', readback: 'confirm', planner: 'settings-planner',
+    bubbles: 'all', embeddingProvider: 'local', embeddingModel: 'custom-embedding',
+    capabilities: '/settings/capabilities.json', knowledge: '/settings/knowledge.sqlite',
+  })
+
+  const empty = nodeLaunchSpec({
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {
+      NOVA_AUDIO_AGENT_PLANNER_MODEL: 'parent-planner',
+      NOVA_AUDIO_AGENT_EMBEDDING_MODEL: 'parent-embedding',
+    },
+    settings: {
+      plannerModel: '', embeddingModel: '', capabilitiesConfigPath: '', knowledgePath: '',
+    },
+  })
+  assert.equal(empty.env.NOVA_AUDIO_AGENT_PLANNER_MODEL, 'parent-planner')
+  assert.equal(empty.env.NOVA_AUDIO_AGENT_EMBEDDING_MODEL, 'parent-embedding')
+  assert.equal('NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG' in empty.env, false)
+  assert.equal('NOVA_AUDIO_AGENT_KNOWLEDGE_PATH' in empty.env, false)
+})
+
 test('the runtime receives the exact state root resolved for desktop maintenance', () => {
   const resolvedConfig = resolveDesktopConfig({
     settings: {},

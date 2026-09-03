@@ -229,10 +229,18 @@ legend {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.segmented-approval {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.segmented-progress { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
 .compact-segmented {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 8px;
 }
+
+.segmented-readback { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .segmented label.choice {
   position: relative;

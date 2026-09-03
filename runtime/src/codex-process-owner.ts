@@ -4,6 +4,11 @@ import {isAbsolute} from 'node:path'
 import type {Readable, Writable} from 'node:stream'
 
 import {isWellFormed} from './python-text.js'
+import {
+  codexAppServerArgv,
+  resolveCodexLaunchProfile,
+  type CodexLaunchProfile,
+} from './codex-launch-profile.js'
 
 const hostBinaryBrand: unique symbol = Symbol('HostBinary')
 const hostWorkspaceBrand: unique symbol = Symbol('HostWorkspace')
@@ -34,23 +39,9 @@ const homeValues = new WeakMap<HostCodexHome, CodexHomeValue>()
 const spawnValues = new WeakMap<ApprovedSpawnSpec, ApprovedSpawnDetails>()
 const unconfirmedOwnerErrors = new WeakMap<CodexProcessOwnerError, OwnedCodexProcess>()
 
-export const CODEX_APP_SERVER_ARGV: readonly string[] = Object.freeze([
-  '-a', 'never',
-  '--disable', 'hooks',
-  '--disable', 'multi_agent',
-  '--disable', 'apps',
-  '--disable', 'plugins',
-  '--disable', 'remote_plugin',
-  '--disable', 'plugin_sharing',
-  '--disable', 'tool_suggest',
-  '-c', 'web_search="disabled"',
-  '-c', 'default_permissions="nova_audio_agent"',
-  '-c', 'permissions.nova_audio_agent={ filesystem = { ":root" = "read", ":workspace_roots" = { "." = "write", ".git" = "read", ".agents" = "read", ".codex" = "read" } }, network = { enabled = false } }',
-  '-c', 'shell_environment_policy.inherit="core"',
-  '-c', 'shell_environment_policy.include_only=["PATH","LANG","LC_ALL","TERM"]',
-  '-c', 'mcp_servers={}',
-  'app-server', '--strict-config', '--stdio',
-])
+export const CODEX_APP_SERVER_ARGV = codexAppServerArgv(resolveCodexLaunchProfile({
+  approvalMode: 'ask', project: false, foregroundBroker: false,
+}))
 
 const CHILD_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'PATH',
@@ -193,6 +184,7 @@ export function createApprovedCodexSpawnSpec(input: {
   readonly workspace: HostWorkspace
   readonly codexHome: HostCodexHome
   readonly environment: Readonly<Record<string, string>>
+  readonly launchProfile?: CodexLaunchProfile
 }): ApprovedSpawnSpec {
   const binary = hostBinaryPath(input.binary)
   const cwd = hostWorkspacePath(input.workspace)
@@ -203,7 +195,9 @@ export function createApprovedCodexSpawnSpec(input: {
     binary,
     argv: Object.freeze([
       ...validateBinaryPrefixArgs(input.prefixArgs),
-      ...CODEX_APP_SERVER_ARGV,
+      ...codexAppServerArgv(input.launchProfile ?? resolveCodexLaunchProfile({
+        approvalMode: 'ask', project: false, foregroundBroker: false,
+      })),
     ]),
     cwd,
     environment,

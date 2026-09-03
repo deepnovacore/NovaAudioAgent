@@ -23,6 +23,8 @@ export type ConfirmationKind = 'confirmed' | 'cancelled' | 'invalid' | 'expired'
 export const PROJECT_CONFIRMATION_TTL_SECONDS = 360
 
 export interface ProjectProposal {
+  readonly intake_id?: string
+  readonly plan_revision?: number
   readonly action: ProjectAction
   readonly workspace_display_name: string
   readonly workspace_id: string | null
@@ -37,6 +39,8 @@ export interface ProjectProposal {
 
 /** A proposal the user confirmed. Holding one is the authority to commit, once. */
 export interface ConfirmedProjectOperation {
+  readonly intake_id?: string
+  readonly plan_revision?: number
   readonly action: ProjectAction
   readonly workspace_display_name: string
   readonly workspace_id: string | null
@@ -154,6 +158,8 @@ export class ProjectConfirmationController {
    * the newest one is the one the user was just told about.
    */
   prepare(input: {
+    readonly intake_id?: string
+    readonly plan_revision?: number
     readonly action: ProjectAction
     readonly workspace_display_name: string
     readonly workspace_id: string | null
@@ -535,6 +541,7 @@ function outcome(
 
 function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
   const operation: ConfirmedProjectOperation = Object.freeze({
+    ...(proposal.intake_id === undefined ? {} : {intake_id: proposal.intake_id, plan_revision: proposal.plan_revision!}),
     action: proposal.action,
     workspace_display_name: proposal.workspace_display_name,
     workspace_id: proposal.workspace_id,
@@ -553,6 +560,8 @@ function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
 }
 
 function validatePrepared(input: {
+  readonly intake_id?: string
+  readonly plan_revision?: number
   readonly action: ProjectAction
   readonly workspace_display_name: string
   readonly workspace_id: string | null
@@ -561,6 +570,11 @@ function validatePrepared(input: {
   readonly work_order: string | null
   readonly origin_ref: string
 }): void {
+  if ((input.intake_id === undefined) !== (input.plan_revision === undefined)
+    || (input.intake_id !== undefined && (typeof input.intake_id !== 'string' || input.intake_id.length === 0
+      || input.intake_id.length > 128 || !Number.isInteger(input.plan_revision) || input.plan_revision! < 1))) {
+    throw new TypeError('invalid intake plan binding')
+  }
   if (
     input.action !== 'create'
     && input.action !== 'reuse'

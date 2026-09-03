@@ -43,19 +43,13 @@ import {
   type CodexApprovalView,
 } from './realtime/codex-approval.js'
 import {basename} from 'node:path'
+import {
+  resolveCodexLaunchProfile,
+  type CodexLaunchProfile,
+} from './codex-launch-profile.js'
 
 export type CodexAssemblyMode = 'ordinary' | 'live' | 'project'
 export type CodexApprovalPolicy = 'never' | 'on-request'
-
-export function codexApprovalPolicyForTransport(input: {
-  readonly platform: NodeJS.Platform
-  readonly mode: CodexAssemblyMode
-  readonly foregroundBroker: boolean
-}): CodexApprovalPolicy {
-  return input.platform === 'win32' && input.mode === 'project' && input.foregroundBroker
-    ? 'on-request'
-    : 'never'
-}
 
 export interface CodexTransportBinding {
   readonly mode: CodexAssemblyMode
@@ -66,7 +60,7 @@ export interface CodexTransportBinding {
   readonly credential: CodexCredentialProfile
   readonly resumeThreadId: string | null
   readonly workingInterval: number
-  readonly approvalPolicy: CodexApprovalPolicy
+  readonly launchProfile: CodexLaunchProfile
   readonly approvalController: CodexApprovalController | null
 }
 
@@ -107,7 +101,7 @@ export class OwnedCodexBackendTransportFactory implements CodexBackendTransportF
         resumeThreadId: binding.resumeThreadId,
         persistent: project,
         workingInterval: binding.workingInterval,
-        approvalPolicy: binding.approvalPolicy,
+        launchProfile: binding.launchProfile,
         ...(binding.approvalController === null
           ? {}
           : {approvalController: binding.approvalController}),
@@ -204,6 +198,7 @@ export interface CreateCodexAssemblyResourceOptions {
   readonly codexApprovalBroker?: {
     readonly publish: (view: CodexApprovalView) => void
   }
+  readonly onDiagnostic?: (code: string) => void
 }
 
 export async function createCodexAssemblyResource(
@@ -226,7 +221,9 @@ export async function createCodexAssemblyResource(
     credential: options.config.credential,
     resumeThreadId: null,
     workingInterval: options.config.workingInterval,
-    approvalPolicy: 'never',
+    launchProfile: resolveCodexLaunchProfile({
+      approvalMode: options.config.codexApprovalMode, project: false, foregroundBroker: false,
+    }),
     approvalController: null,
   })
   let transport: CodexAppServerTransport
@@ -264,14 +261,17 @@ async function createProjectResource(
   const host = options.projectHost
   const stateRoot = options.config.stateRoot
   const managedRoot = options.config.managedRoot
-  const approvalPolicy = codexApprovalPolicyForTransport({
-    platform: options.platform ?? process.platform,
-    mode: 'project',
+  const launchProfile = resolveCodexLaunchProfile({
+    approvalMode: options.config.codexApprovalMode,
+    project: true,
     foregroundBroker: options.codexApprovalBroker !== undefined,
   })
-  const approvalController = approvalPolicy === 'on-request'
+  const approvalController = launchProfile.controller === 'present'
     ? new CodexApprovalController({clock: options.clock, idFactory: options.idFactory})
     : null
+  if (launchProfile.id === 'ask_headless') {
+    try { options.onDiagnostic?.('ask_headless_no_broker') } catch { /* diagnostics are advisory */ }
+  }
   const unsubscribeApproval = approvalController === null
     ? null
     : approvalController.observe(view => { options.codexApprovalBroker?.publish(view) })
@@ -290,7 +290,9 @@ async function createProjectResource(
       credential: options.config.credential,
       resumeThreadId: null,
       workingInterval: options.config.workingInterval,
-      approvalPolicy: 'never',
+      launchProfile: resolveCodexLaunchProfile({
+        approvalMode: options.config.codexApprovalMode, project: false, foregroundBroker: false,
+      }),
       approvalController: null,
     }))
     if (!isCodexTransport(startupTransport)) {
@@ -326,7 +328,7 @@ async function createProjectResource(
             credential: options.config.credential,
             resumeThreadId: binding.resumeThreadId,
             workingInterval: options.config.workingInterval,
-            approvalPolicy,
+            launchProfile,
             approvalController,
           }))
           if (!isCodexTransport(transport)) {
@@ -341,7 +343,7 @@ async function createProjectResource(
     return new ProjectCodexAssemblyResource(
       adapter,
       startupTransport,
-      approvalPolicy,
+      launchProfile.thread.approvalPolicy,
       approvalController,
       unsubscribeApproval,
     )

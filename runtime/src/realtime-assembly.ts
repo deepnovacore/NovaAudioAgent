@@ -39,6 +39,9 @@ import type {PublishedGraphSnapshot} from './workspace-graph/store.js'
 import type {GraphContext} from './workspace-graph/context.js'
 import type {Suggestion} from './suggestions.js'
 import type {WakeReason} from './slots.js'
+import {USER_PRIORITY} from './memory.js'
+import type {IntakeModels} from './realtime/intake-model.js'
+import type {IntakeSettings, IntakeSession} from './realtime/intake.js'
 
 export interface RealtimeWorkspaceGraph {
   readonly publishedSnapshot: PublishedGraphSnapshot
@@ -67,6 +70,8 @@ interface AdmittedCommittedWorkspace {
 }
 
 export interface RealtimeAssemblyOptions {
+  readonly intake?: {readonly models: IntakeModels; readonly settings: IntakeSettings}
+  readonly onExecutorSuggestion?: (suggestion: Suggestion) => void
   readonly core: Assembly
   readonly provider: RealtimeProvider
   readonly idFactory?: () => string
@@ -576,6 +581,7 @@ export class RealtimeAssembly {
   }
 
   #acceptProjectContext(context: PublicProjectContext): void {
+    this.service.onProjectWorkspaceChanged(context.workspace_id)
     this.#latestProjectView = Object.freeze({...context.view})
     this.#currentHostWorkspaceId = context.workspace_id
     this.#currentWorkspaceInstanceId = context.workspace_id === null
@@ -814,6 +820,20 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     providerSchemas,
     session,
     bridge,
+    ...(options.intake === undefined || projectAdapter === undefined ? {} : {intake: {
+      ...options.intake,
+      resolveTarget: (request: Readonly<Record<string, JsonValue>>) => projectAdapter.resolveIntakeTarget(request),
+      dispatch: (intake: IntakeSession) => core.runtime.dispatchExternal({
+        executor: 'codex', op: 'project', origin_ref: intake.origin_ref,
+        request: {...intake.request, work_order: intake.work_order!},
+      }, {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null}),
+      record: (intake: IntakeSession, kind: string, data: Readonly<Record<string, JsonValue>>) => {
+        core.runtime.memory.append('codex', {
+          ts: core.runtime.clock.now(), trust: 'trusted_system', priority: USER_PRIORITY - 1,
+          content: {kind, intake_id: intake.intake_id, revision: intake.revision, ...data}, refs: [intake.origin_ref],
+        })
+      },
+    }}),
     idFactory,
     onProviderTerminal: generation => {
       options.onAudioTerminal?.(generation.utterance_id, generation.generation_epoch)
@@ -854,6 +874,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   })
   const unbindSuggestionSelected = core.runtime.bindSuggestionSelected(
     (suggestion: Suggestion, reason: WakeReason) => {
+      try { options.onExecutorSuggestion?.(suggestion) } catch { /* observability cannot own speech */ }
       service.onSuggestionSelected(suggestion, reason)
     },
   )

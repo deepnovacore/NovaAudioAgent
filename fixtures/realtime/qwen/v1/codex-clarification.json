@@ -1,17 +1,21 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cases": [
     {
       "id": "broad_optimization",
       "turns": [
         {
           "utterance": "帮我把登录功能优化一下",
-          "expectation": "clarify"
+          "expectation": "intake"
         },
         {
           "utterance": "主要修复空密码提交会返回五百的问题，改成显示校验错误，并运行现有登录测试",
-          "expectation": "dispatch",
-          "required_work_order_terms": ["空密码", "校验错误", "现有"]
+          "expectation": "intake",
+          "required_work_order_terms": [
+            "空密码",
+            "校验错误",
+            "现有"
+          ]
         }
       ]
     },
@@ -20,7 +24,7 @@
       "turns": [
         {
           "utterance": "帮我做一个小游戏",
-          "expectation": "clarify"
+          "expectation": "intake"
         }
       ]
     },
@@ -29,8 +33,12 @@
       "turns": [
         {
           "utterance": "修复当前项目里空密码登录返回五百的问题，改成显示校验错误，并运行现有登录测试",
-          "expectation": "dispatch",
-          "required_work_order_terms": ["空密码", "校验错误", "现有"]
+          "expectation": "intake",
+          "required_work_order_terms": [
+            "空密码",
+            "校验错误",
+            "现有"
+          ]
         }
       ]
     },
@@ -48,8 +56,85 @@
       "turns": [
         {
           "utterance": "在当前项目增加一个本地设置页面，支持保存和重载主题选项，沿用现有样式和测试框架，按合理默认直接实现并运行相关测试",
-          "expectation": "dispatch",
-          "required_work_order_terms": ["设置页面", "保存", "重载", "测试"]
+          "expectation": "intake",
+          "required_work_order_terms": [
+            "设置页面",
+            "保存",
+            "重载",
+            "测试"
+          ]
+        }
+      ]
+    }
+  ],
+  "intake_cases": [
+    {
+      "id": "user_preference_rounds",
+      "depth": "balanced",
+      "turns": [
+        {
+          "utterance": "帮我优化登录",
+          "label": "ask(user-owned)",
+          "goal": "优化登录",
+          "question": {
+            "owner": "user",
+            "text": "登录出现什么问题？"
+          }
+        },
+        {
+          "utterance": "空密码返回五百，应显示校验错误",
+          "label": "ready",
+          "goal": "修复空密码登录",
+          "scope": "登录表单",
+          "acceptance": "显示校验错误"
+        }
+      ]
+    },
+    {
+      "id": "repo_discovery",
+      "depth": "balanced",
+      "turns": [
+        {
+          "utterance": "修复空密码登录，沿用项目约定",
+          "label": "infer",
+          "goal": "修复空密码登录",
+          "question": {
+            "owner": "repo",
+            "text": "查找技术栈、入口和测试命令"
+          }
+        }
+      ]
+    },
+    {
+      "id": "zero_questions",
+      "depth": "thorough",
+      "turns": [
+        {
+          "utterance": "只修复登录空密码五百，显示校验错误并保持接口不变",
+          "label": "ready",
+          "goal": "修复登录空密码五百",
+          "scope": "只改登录",
+          "acceptance": "显示校验错误",
+          "constraints": "保持接口不变"
+        }
+      ]
+    },
+    {
+      "id": "unrelated_topic",
+      "depth": "balanced",
+      "turns": [
+        {
+          "utterance": "帮我优化登录",
+          "label": "ask(user-owned)",
+          "goal": "优化登录",
+          "question": {
+            "owner": "user",
+            "text": "希望改善什么行为？"
+          }
+        },
+        {
+          "utterance": "算了，聊聊天气吧",
+          "label": "abandon"
         }
       ]
     }

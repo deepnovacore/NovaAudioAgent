@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
-// `normalizeSettings` always rebuilds and stamps the latest shape, so a v2 file
+// `normalizeSettings` always rebuilds and stamps the latest shape, so an older file
 // keeps its provider choices while gaining packaged-desktop configuration.
-export const SETTINGS_VERSION = 3
+export const SETTINGS_VERSION = 4
 
 export const SECRET_KEYS = Object.freeze([
   'dashscopeApiKey',
@@ -56,6 +56,15 @@ export const DEFAULT_SETTINGS = Object.freeze({
   }),
   cascadedTtsProvider: 'volcengine',
   cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
+  codexApprovalMode: 'ask',
+  clarificationDepth: 'balanced',
+  planReadback: 'summary',
+  plannerModel: '',
+  progressBubbles: 'milestones',
+  embeddingProvider: 'dashscope',
+  embeddingModel: 'text-embedding-v4',
+  capabilitiesConfigPath: '',
+  knowledgePath: '',
   secrets: Object.freeze({}),
 })
 
@@ -69,6 +78,11 @@ const CASCADED_LLM_PROVIDER_SET = new Set(CASCADED_LLM_PROVIDERS)
 const CASCADED_TTS_PROVIDER_SET = new Set(CASCADED_TTS_PROVIDERS)
 const SECRET_KEY_SET = new Set(SECRET_KEYS)
 const CODEX_BINARY_MODES = new Set(['auto', 'manual'])
+const CODEX_APPROVAL_MODES = new Set(['ask', 'yolo'])
+const CLARIFICATION_DEPTHS = new Set(['minimal', 'balanced', 'thorough'])
+const PLAN_READBACK_MODES = new Set(['summary', 'confirm', 'silent'])
+const PROGRESS_BUBBLE_MODES = new Set(['off', 'milestones', 'all'])
+const EMBEDDING_PROVIDERS = new Set(['dashscope', 'local'])
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 // Control characters would survive into an env value handed to a child process.
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
@@ -136,6 +150,11 @@ const validCascadedEndpointingProvider = enumValidator(CASCADED_ENDPOINTING_PROV
 const validCascadedAsrProvider = enumValidator(CASCADED_ASR_PROVIDER_SET)
 const validCascadedLlmProvider = enumValidator(CASCADED_LLM_PROVIDER_SET)
 const validCascadedTtsProvider = enumValidator(CASCADED_TTS_PROVIDER_SET)
+const validCodexApprovalMode = enumValidator(CODEX_APPROVAL_MODES)
+const validClarificationDepth = enumValidator(CLARIFICATION_DEPTHS)
+const validPlanReadback = enumValidator(PLAN_READBACK_MODES)
+const validProgressBubbles = enumValidator(PROGRESS_BUBBLE_MODES)
+const validEmbeddingProvider = enumValidator(EMBEDDING_PROVIDERS)
 
 function validModelOrVoice(value) {
   if (typeof value !== 'string') return null
@@ -222,6 +241,12 @@ function normalizeSecrets(raw) {
 export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
   const source = isRecord(raw) ? raw : {}
   const fallback = isRecord(base) ? base : DEFAULT_SETTINGS
+  const rawVersion = ownEnumerableDataValue(source, 'version')
+  const baseVersion = ownEnumerableDataValue(fallback, 'version')
+  const acceptsV4Fields = rawVersion === MISSING_PROPERTY
+    ? baseVersion === MISSING_PROPERTY
+      || (typeof baseVersion === 'number' && baseVersion >= SETTINGS_VERSION)
+    : typeof rawVersion === 'number' && rawVersion >= SETTINGS_VERSION
   return {
     version: SETTINGS_VERSION,
     palette: pick(
@@ -336,6 +361,60 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
       DEFAULT_SETTINGS.cascadedTtsVoice,
       validModelOrVoice,
     ),
+    codexApprovalMode: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'codexApprovalMode') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'codexApprovalMode') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.codexApprovalMode,
+      validCodexApprovalMode,
+    ),
+    clarificationDepth: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'clarificationDepth') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'clarificationDepth') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.clarificationDepth,
+      validClarificationDepth,
+    ),
+    planReadback: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'planReadback') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'planReadback') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.planReadback,
+      validPlanReadback,
+    ),
+    plannerModel: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'plannerModel') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'plannerModel') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.plannerModel,
+      validDesktopString,
+    ),
+    progressBubbles: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'progressBubbles') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'progressBubbles') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.progressBubbles,
+      validProgressBubbles,
+    ),
+    embeddingProvider: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'embeddingProvider') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'embeddingProvider') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.embeddingProvider,
+      validEmbeddingProvider,
+    ),
+    embeddingModel: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'embeddingModel') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'embeddingModel') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.embeddingModel,
+      validDesktopString,
+    ),
+    capabilitiesConfigPath: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'capabilitiesConfigPath') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'capabilitiesConfigPath') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.capabilitiesConfigPath,
+      validDesktopString,
+    ),
+    knowledgePath: pick(
+      acceptsV4Fields ? ownEnumerableDataValue(source, 'knowledgePath') : MISSING_PROPERTY,
+      acceptsV4Fields ? ownEnumerableDataValue(fallback, 'knowledgePath') : MISSING_PROPERTY,
+      DEFAULT_SETTINGS.knowledgePath,
+      validDesktopString,
+    ),
     secrets: normalizeSecrets(ownEnumerableDataValue(source, 'secrets')),
   }
 }
@@ -365,6 +444,11 @@ export function publicSettings(settings) {
     cascadedLlmModels: { ...normalized.cascadedLlmModels },
     cascadedTtsProvider: normalized.cascadedTtsProvider,
     cascadedTtsVoice: normalized.cascadedTtsVoice,
+    codexApprovalMode: normalized.codexApprovalMode,
+    clarificationDepth: normalized.clarificationDepth,
+    planReadback: normalized.planReadback,
+    plannerModel: normalized.plannerModel,
+    progressBubbles: normalized.progressBubbles,
   }
 }
 
@@ -532,6 +616,15 @@ export function applySettingsUpdate(current, patch, codec) {
     cascadedLlmModels: ownEnumerableDataValue(source, 'cascadedLlmModels'),
     cascadedTtsProvider: ownEnumerableDataValue(source, 'cascadedTtsProvider'),
     cascadedTtsVoice: ownEnumerableDataValue(source, 'cascadedTtsVoice'),
+    codexApprovalMode: ownEnumerableDataValue(source, 'codexApprovalMode'),
+    clarificationDepth: ownEnumerableDataValue(source, 'clarificationDepth'),
+    planReadback: ownEnumerableDataValue(source, 'planReadback'),
+    plannerModel: ownEnumerableDataValue(source, 'plannerModel'),
+    progressBubbles: ownEnumerableDataValue(source, 'progressBubbles'),
+    embeddingProvider: ownEnumerableDataValue(source, 'embeddingProvider'),
+    embeddingModel: ownEnumerableDataValue(source, 'embeddingModel'),
+    capabilitiesConfigPath: ownEnumerableDataValue(source, 'capabilitiesConfigPath'),
+    knowledgePath: ownEnumerableDataValue(source, 'knowledgePath'),
   }, stored)
   const { secrets, rejected } = updatedSecrets(
     stored.secrets,

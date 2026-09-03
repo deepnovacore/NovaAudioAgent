@@ -272,8 +272,8 @@ export function createSettingsController({ api, render, status, notice = () => {
       const failurePhase = applyFailurePhase()
       status(!persisted ? '保存失败'
         : rejectedPublicFields.length > 0 ? '部分设置未保存'
-        : failurePhase === 'restart_failed' ? '设置已保存，但后台重启失败'
-        : failurePhase === 'failed' ? '设置已保存，但配置应用失败'
+        : failurePhase === 'restart_failed' ? '已保存·后端未启动'
+        : failurePhase === 'failed' ? '已保存·未生效'
         : '设置已保存')
       if (
         persisted
