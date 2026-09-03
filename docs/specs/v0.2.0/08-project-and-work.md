@@ -600,37 +600,54 @@ first, Windows second). Each row records transcript, tool calls, and Codex
 - [ ] **Direct dispatch.** With `blog` existing and not active, say
       "改博客的暗色模式". Expect exactly one `dispatch(executor:'codex', …)`,
       no confirmation prompt, active project switched, bubble within 3 s.
-- [ ] **New session + title.** Say "在博客里重新开一个，把 README 翻译成英文".
+      *2026-09-04: not run — needs a live voice session; only the coordinator
+      half (non-active pick with verbatim evidence) is covered by the eval.*
+- [x] **New session + title.** Say "在博客里重新开一个，把 README 翻译成英文".
       Expect coordinator chooses `session:'new'`, a new thread, and `thread/list`
       showing a name derived from the objective.
+      *2026-09-04: `session:'new'` from `qwen-flash` on this utterance (eval);
+      new thread + `thread/name/set` ok + `thread/list` name `新建 hello.txt`
+      from the adapter smoke on real Codex 0.152.0 — not via voice.*
 - [ ] **Concurrency.** Start a long task in A, then dispatch B. Expect both
       progressing, desktop roster showing two `running`, `active_executor_context`
       naming both projects, and a Guard alert still preempting speech
       mid-progress. Then dispatch a third objective into A → `busy_project`
       and a spoken `steer` / `cancel` offer.
+      *2026-09-04: not run — single workspace, no parallel real children.*
 - [ ] **Approval collision.** With two long tasks running under `ask`, drive
       both into a `file_change` approval. Expect one prompt at a time, naming
       its project; after answering it, the second prompt arrives on its own and
       its Codex request completes normally (no timeout, no lost approval).
+      *2026-09-04: not run — smoke ran `ask_headless` (no approvals).*
 - [ ] **Cancel.** Say "取消博客那个" with two works running. Expect one
       `resolveCancelTarget` call, `turn/interrupt` on the blog work only,
       terminal "已停" within the op deadline, the other work still progressing,
       and the session still listed.
+      *2026-09-04: partial — `resolveCancelTarget` live with two works → `w-blog`
+      (eval); one `turn/interrupt` + `cancelled` handoff + session still in
+      `thread/list` with one running work (smoke). Two-works-live half not run.*
 - [ ] **Unknown / ambiguous.** Say "改一下 pricing 那个" with both
       `pricing-svc` and `pricing-web` present → coordinator asks which; say
       "改 foo" with no `foo` → one clarifying question, **no** create proposal;
       say "新建一个项目叫 foo，把 README 翻译成英文" → create proposal carrying
       the work order → confirm → workspace created and the order runs.
+      *2026-09-04: coordinator halves pass in the eval (`unclear` ×2, `create`);
+      confirm → workspace creation → run not exercised live.*
 - [ ] **Regression.** One `file_change` approval accepted by voice under
       `ask`; one declined via banner; YOLO profile runs a command without a
       prompt; both via `confirm(id, accepted)`.
+      *2026-09-04: not run — no voice; `yolo` live is blocked by the
+      `permissions: null` validator gap noted in IMPLEMENTATION.md.*
 - [ ] **Latency.** Log tool round-trips per dispatch over 10 utterances;
       median must be 1 (today ≥3).
+      *2026-09-04: not run — needs a live voice session.*
 
-Coordinator eval (DashScope `surrogate_model`, default `qwen-flash` — the same
-model 02 pins for `intake.assess`; fixed roster, ~10 Chinese utterances
-covering switch / create / steer / cancel / ambiguity) with threshold in test;
-evidence in IMPLEMENTATION.md.
+- [x] Coordinator eval (DashScope `surrogate_model`, default `qwen-flash` — the
+  same model 02 pins for `intake.assess`; fixed roster, ~10 Chinese utterances
+  covering switch / create / steer / cancel / ambiguity) with threshold in test;
+  evidence in IMPLEMENTATION.md.
+  *2026-09-04: `runtime/test/coding-coordinator-eval.test.ts`, 10/10 ×3 runs,
+  safety 10/10, `resolveCancelTarget` 1/1.*
 
 ## Decision-record delta (apply on merge)
 

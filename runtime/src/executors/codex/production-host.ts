@@ -554,7 +554,9 @@ export class NativeCodexLiveSchemaProbe implements CodexLiveSchemaProbe {
         binary: hostBinaryPath(config.binary),
         argv: Object.freeze([
           ...(config.prefixArgs ?? []),
-          'app-server', 'generate-json-schema', '--out', directory,
+          // The pinned 0.152.0 bundle (spec 01) is the `--experimental` output; the live probe must
+          // generate the same surface or the approval params fail validation.
+          'app-server', 'generate-json-schema', '--experimental', '--out', directory,
         ]),
         cwd: hostWorkspacePath(config.workspace),
         environment: this.#environment,

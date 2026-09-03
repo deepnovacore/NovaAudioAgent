@@ -381,6 +381,14 @@ export function executorApprovalMessage(view: ExecutorApprovalView, now: number,
     APPROVAL_TTL_SECONDS,
     Math.max(0, view.expires_at - now),
   )
+  // Spec 08: the pill names the asking work's project and session title, so two running works are told apart.
+  const work = view.work
+  if (work !== null && (
+    typeof work.work_id !== 'string' || work.work_id === '' || codePointLengthLikePython(work.work_id) > 128
+    || typeof work.project !== 'string' || stripLikePython(work.project) === ''
+    || typeof work.title !== 'string' || stripLikePython(work.title) === ''
+  )) throw new DesktopProtocolError('desktop executor approval view is invalid')
+  const clip = (value: string): string => [...value].slice(0, 120).join('')
   const message = unicodeJson({
     type: 'executor.approval',
     ...executor,
@@ -392,6 +400,7 @@ export function executorApprovalMessage(view: ExecutorApprovalView, now: number,
     operation_summary: view.operation_summary,
     expires_in_seconds: expiresInSeconds,
     ...(allowed === undefined ? {} : {allowed_decisions: allowed}),
+    ...(work === null ? {} : {work: {work_id: work.work_id, project: clip(work.project), title: clip(work.title)}}),
   })
   if (new TextEncoder().encode(message).length > MAX_DESKTOP_JSON_BYTES) {
     throw new DesktopProtocolError('desktop executor approval view is too large')

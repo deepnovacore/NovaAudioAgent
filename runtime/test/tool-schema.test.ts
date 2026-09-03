@@ -220,6 +220,9 @@ test('agent executors fold into the three host tools while keeping their delegat
   for (const name of ['codex__run', 'codex__status']) {
     assert.equal(compiled.bindings.get(name)?.kind, 'delegate', `${name} binding survives for dispatch rewriting`)
   }
+  // The surviving agent bindings are host-only: the provider must be refused when it names them directly.
+  assert.deepEqual([...compiled.hidden].sort(), ['codex__run', 'codex__status'])
+  assert.equal(compiled.hidden.has('sim__peek'), false)
   for (const name of ['dispatch', 'cancel', 'confirm']) {
     assert.deepEqual(compiled.bindings.get(name), {
       kind: 'host', logical_name: `host.${name}`, executor: null, op: null, target: null, sync_result: false,
@@ -235,4 +238,5 @@ test('agent executors fold into the three host tools while keeping their delegat
   const bare = compileToolSchema([plain])
   assert.deepEqual(names(bare.schemas), ['sim__peek'])
   assert.equal(bare.bindings.has('dispatch'), false)
+  assert.equal(bare.hidden.size, 0)
 })

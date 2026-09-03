@@ -652,6 +652,16 @@ test('effective config accepts only the resolved yolo shape', () => {
   assert.throws(() => validateEffectiveCodexConfig(yolo, '/workspace', {
     allowReplacementInstructions: false,
   }), expectCode('config_not_isolated'))
+  // Live 0.152.0 reports an unset permissions table as null; only yolo may read it as empty.
+  const live = clone(yolo)
+  nested(live, 'config').permissions = null
+  assert.equal(validateEffectiveCodexConfig(live, '/workspace', {
+    allowReplacementInstructions: false, launchProfile: profile,
+  }).default_permissions, null)
+  const ask = resolveCodexLaunchProfile({approvalMode: 'ask', project: true, foregroundBroker: true})
+  assert.throws(() => validateEffectiveCodexConfig(live, '/workspace', {
+    allowReplacementInstructions: false, launchProfile: ask,
+  }), expectCode('config_not_isolated'))
 })
 
 test('effective config rejects each other launch profile approval binding', () => {

@@ -998,11 +998,13 @@ test('intake target resolution is canonical and side-effect free for work, creat
       (error: unknown) => error instanceof ProjectResolutionError && error.code === 'unknown_project'
         && error.detail.hint === 'create' && JSON.stringify(error.detail.suggestions) === '["alpha"]',
     )
-    // `switch` is the one decision with a side effect: it activates the named project, unconfirmed.
+    // `switch` resolves without side effects; `activateProject` then activates the named project, unconfirmed.
     const beta = await value.store.createManaged('beta')
     assert.equal((await value.store.resolveWorkspace(null)).workspace_id, beta.workspace_id)
     const switched = await value.adapter.resolveIntakeTarget({kind: 'switch', project: 'alpha', session: 'latest'})
     assert.equal(switched.action, 'resume')
+    assert.equal((await value.store.resolveWorkspace(null)).workspace_id, beta.workspace_id)
+    await value.adapter.activateProject(switched)
     assert.equal((await value.store.resolveWorkspace(null)).workspace_id, workspace.workspace_id)
     assert.equal(value.adapter.publicProjectView(false).workspace_display_name, 'alpha')
   } finally {

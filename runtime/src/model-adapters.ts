@@ -181,7 +181,8 @@ export function decodeToolCall(
   rawArguments: string,
 ): ActionDelta | ContractFailureDelta {
   const binding = tools.bindings.get(name)
-  if (binding === undefined) {
+  // A hidden agent op (spec 08) was never offered to the model; naming it is the same as naming nothing.
+  if (binding === undefined || tools.hidden.has(name)) {
     return {kind: 'contract_failure', code: 'unknown_tool', tool_name: name === '' ? null : name}
   }
   let parsed: unknown

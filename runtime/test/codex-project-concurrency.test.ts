@@ -194,6 +194,14 @@ test('cancel with several running works asks resolveCancelTarget once and report
         return Promise.resolve(answer)
       },
     })
+    // A user correction during the resolver call withdraws the cancel: resolved target, nothing aborted.
+    assert.deepEqual(
+      await value.adapter.cancel('the beta one', {...resolver('work-beta'), stillWanted: () => false}),
+      {code: 'ambiguous_work', running},
+    )
+    assert.deepEqual(value.adapter.running(), running)
+    asked.length = 0
+
     assert.deepEqual(await value.adapter.cancel('the beta one', resolver('work-beta')), {
       code: 'cancelled', work: {work_id: 'work-beta', project: 'beta', title: 'beta'},
     })
@@ -338,8 +346,12 @@ test('resolveIntakeTarget refuses busy and full deterministically while switch s
     )
 
     // Switching to a busy or idle project is allowed while full: it changes focus, not capacity.
+    // Resolution is side-effect-free; only `activateProject` (after the intake staleness re-check) moves focus.
+    const before = (await value.store.resolveWorkspace(null)).display_name
     const switched = await value.adapter.resolveIntakeTarget({kind: 'switch', project: 'delta', session: 'latest'})
     assert.equal(switched.action, 'reuse')
+    assert.equal((await value.store.resolveWorkspace(null)).display_name, before)
+    await value.adapter.activateProject(switched)
     assert.equal((await value.store.resolveWorkspace(null)).display_name, 'delta')
     assert.equal(value.adapter.publicProjectView(false).workspace_display_name, 'delta')
     const focusBusy = await value.adapter.resolveIntakeTarget({kind: 'switch', project: 'alpha', session: 'latest'})

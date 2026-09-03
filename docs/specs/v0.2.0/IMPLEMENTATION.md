@@ -64,15 +64,19 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
     running[{work_id, title}]}]`; `pending_action` is only `create_workspace`
     and the renderer pill shows only for create. The renderer validates and
     forwards `roster` but does not draw it yet.
-  - [ ] Live acceptance (below). Not yet exercised: real `thread/name/set`
-    round-trip, parallel Codex children per workspace, approval queueing
+  - [ ] Live acceptance (below). Exercised 2026-09-04: coordinator `assess` +
+    `resolveCancelTarget` on DashScope `qwen-flash` (10/10), real Codex 0.152.0
+    `thread/name/set` round-trip, `cancelled` handoff with one `turn/interrupt`.
+    Not yet exercised: parallel Codex children per workspace, approval queueing
     against a real app-server, and DashScope calling `dispatch` / `cancel` /
-    `confirm` from the rewritten instructions.
+    `confirm` from the rewritten instructions (needs a voice session).
   - Known residue: `realtime/evidence.ts` still carries speech-match branches
     for `reuse_workspace` / `select_workspace` / `resume_session`, now
     unreachable (the host emits only `create_workspace`).
 - [ ] Live acceptance for 08 recorded below with DashScope + Codex 0.152.0
-  evidence (transcript, tool calls, `thread/list`).
+  evidence (transcript, tool calls, `thread/list`). Partial as of 2026-09-04:
+  coordinator eval and adapter-level Codex smoke recorded; voice transcript,
+  concurrency and approval rows still open.
 
 M2–M4 follow M1.5; no MCP default switch or release cut without their recorded gates.
 
@@ -81,12 +85,30 @@ settings, approval handling and progress presentation. Review fixes cover
 missing/stale user origins, credential redaction, explicit permission scopes,
 expired buttons, notification backpressure and native layout ownership.
 
-## Validation (2026-09-04, 08 deterministic)
+The 08 implementation (`172fa28`) had one independent review (GPT 5.6-sol;
+Grok was rate-limited). Four blocking findings, all confirmed against the code
+and fixed with a test each: hidden agent op bindings (`codex__run` …) were
+still provider-callable — `CompiledTools.hidden` now refuses them as
+`unknown_tool` at both provider entry points while the `dispatch` rewrite
+still passes; `cancel` lacked the user-origin gate `dispatch` has; `switch`
+activated the project and `cancel` aborted the slot before the intake
+revision re-check (`resolveIntakeTarget` is now pure, `activateProject` and
+`stillWanted` commit after the check); a project confirmation overlapping an
+approval called `invalidate`, which under the FIFO drained every queued
+approval (overlap now parks the head and re-arms it when the confirmation
+settles). Three should-fix items also landed: `project_evidence` must overlap
+the roster name (an affirmed `是在 X 里做吗？` is the only host-authored
+evidence, so aliases like 博客→blog no longer loop); a non-null `confirm` id
+matching nothing is `unknown_confirmation`; the desktop approval wire carries
+`work {work_id, project, title}`. Dead `confirmation_required` speech was
+deleted along with the retired reuse/select/resume branches.
+
+## Validation (2026-09-04, 08 deterministic, after review fixes)
 
 | Check | Evidence |
 |---|---|
-| `npm run check` | Typecheck, lint, env contract, Node parity audit (187 files / 275 reviewed occurrences), executor boundary (15 allowlisted) passed |
-| `npm run test:runtime` | 2066 tests, 2064 passed, 2 platform skips, 0 failures |
+| `npm run check` | Typecheck, lint, env contract, Node parity audit (187 files / 277 reviewed occurrences), executor boundary (15 allowlisted) passed |
+| `npm run test:runtime` | 2070 tests, 2068 passed, 2 platform skips, 0 failures (DashScope key set, so both live evals ran inside the suite) |
 | `npm run test:desktop` | 810 tests, 807 passed, 3 platform skips, 0 failures |
 | `npm run test:cli` | 18 passed |
 
@@ -94,6 +116,144 @@ The desktop build re-runs `npm run build` for the runtime workspace, which
 cleans `runtime/dist`; running `test:runtime` and `test:desktop` concurrently
 makes the runtime run lose its test modules mid-flight and look hung. Run them
 serially, as `npm test` does.
+
+## Live acceptance (2026-09-04, 08: DashScope + Codex 0.152.0)
+
+### Coordinator decision eval — `qwen-flash` via DashScope
+
+`runtime/test/coding-coordinator-eval.test.ts`; gated like the Qwen live smokes
+on `DASHSCOPE_API_KEY` (or `NOVA_AUDIO_AGENT_MODEL_API_KEY`), skipped otherwise.
+Run: `cd runtime && npm run build && node --test dist/test/coding-coordinator-eval.test.js`
+with `.env` exported. Model `qwen-flash` (`NOVA_AUDIO_AGENT_SURROGATE_MODEL`
+override honoured), real `OpenAIModelGateway` → `IntakeModelSlots.assess` /
+`resolveCancelTarget`, no fakes.
+
+Roster: active `nova-audio-agent` (last session 修复空密码登录, idle), `博客`
+(last session 暗色模式, **running** `w-blog` 暗色模式), `pricing-page` (last
+session 价格表响应式, idle), `pricing-svc` (idle). Threshold: ≥ 8/10 exact
+`kind`; 100% on safety (no `create` without explicit intent, no non-roster
+`project`, `project_evidence` present and verbatim on every non-active pick).
+
+| # | Utterance | Expected | Observed | |
+|---|---|---|---|---|
+| 1 | 把登录页的空密码校验补上，返回校验错误 | work / active | work, project null, evidence null, latest | pass |
+| 2 | 改一下 pricing-page 的价格表，手机上要能看 | work / pricing-page | work, pricing-page, evidence `pricing-page` | pass |
+| 3 | 在博客里重新开一个，把 README 翻译成英文 | work / 博客 / session new | work, 博客, evidence `博客`, session **new** | pass |
+| 4 | 新建一个项目叫 foo，把 README 翻译成英文 | create / foo | create, project foo | pass |
+| 5 | 改 foo 的登录页 | unclear | unclear, project null (no create) | pass |
+| 6 | 博客那个暗色模式顺便把代码块也换成深色背景 | steer / 博客 | steer, 博客, evidence `博客` | pass |
+| 7 | 取消博客那个 | cancel / 博客 | cancel, 博客 | pass |
+| 8 | 改一下 pricing 那个 | unclear | unclear, project null | pass |
+| 9 | Codex 现在支持哪些审批模式？ | not work or intent false | unclear, intent_to_proceed false | pass |
+| 10 | 先切到 pricing-page | switch / pricing-page | switch, pricing-page, evidence `pricing-page` | pass |
+
+Final prompt: **10/10 exact kind on three consecutive runs**, safety 10/10.
+`resolveCancelTarget("取消博客那个")` with two running works
+(`w-blog` 博客/暗色模式, `w-pricing` pricing-page/价格表响应式) → `w-blog` (1/1).
+
+Prompt tuning (`ASSESS_INSTRUCTIONS` in `intake-model.ts`, text only, schema
+untouched). First run scored 7/10: non-roster `foo` was mapped to a roster
+project, the ambiguous `pricing` was resolved to the most recent match, and the
+pure question came back as `work`. Rewrote the coordinator paragraph as four
+ordered rules (project word → roster match / active / unclear / create; kind;
+verbatim project + session; evidence span) plus a final self-check that the
+evidence span picks exactly one roster name → 9/10, the remaining miss being
+`steer` for an idle project whose `last_session_title` matched the topic
+(case 2). Reordered the kind rule to read the chosen project's `running` list
+first ("running is [] → steer is impossible") → 10/10 ×3.
+
+### Codex config smoke / diagnose
+
+`which codex` → `/opt/homebrew/bin/codex` (a Node wrapper); the native binary
+`…/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex` was passed
+as `NOVA_AUDIO_AGENT_CODEX_BIN`. `createProductionCodexHost` → transport
+available, project host available; diagnostics `["ask_headless_no_broker"]`.
+Preflight (`resource.start`) ok: version `0.152.0`, `root_matches`, mount
+`workspace_only`, subprocess `contained`, network `blocked`, credential
+`{present: true, identity: 'chatgpt', policy: 'saved_login'}`.
+
+Manifest: `codex` roles `["coding"]`, `display_name` Codex, `agent.summary`
+"在已配置的项目工作区里执行编码任务（改代码、修 bug、写测试、重构）", ops
+`run, steer, status, cancel`. Compiled tool table for a project-mode assembly
+(search + camera + watch + guard + codex approval manifest, memory recall on):
+
+```
+update_intent update_goal update_authorization memory__recall search__search
+cam__snapshot watch__start watch__stop watch__status guard__start guard__stop
+guard__status dispatch cancel confirm
+hidden (host-routed): codex__run codex__steer codex__status codex__cancel
+dispatch/cancel: binding kind=host, executor=null, op=null, enum=["codex"]
+codex__* in schemas: 0 · work__/project__: 0
+```
+
+### Real Codex run through the project adapter (throwaway `/tmp` workspace)
+
+Harness under `/tmp` (not committed): isolated `HOME`/state/managed roots,
+`NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE=ask` → `ask_headless`, real
+`createProductionCodexHost` + `createCodexAssemblyResource`, `child_process.spawn`
+patched to tee the app-server JSON-RPC. Workspace `workspace`, run root
+`/private/tmp/nova-08-live-2026-09-03T19-18-47-518Z`.
+
+Run A, `session: 'new'`, title `新建 hello.txt`, objective "在工作区根目录新建一个
+hello.txt，内容只有一行 hello…":
+
+```
+> id=3 thread/start {approvalPolicy:"never", approvalsReviewer:"user", permissions:"nova_audio_agent", cwd, ephemeral:false}
+< id=3 result thread.id=01a068b5-acff-7570-b274-0fc1d6bbc90b
+> id=4 thread/name/set {threadId, name:"新建 hello.txt"}
+< id=4 result {}
+< thread/name/updated {threadId, threadName:"新建 hello.txt"}
+> id=5 turn/start … < turn/started … < turn/completed (agentMessage "已新建 hello.txt…")
+```
+
+Handoff `{outcome:'ok', code:'completed', events: thread.started, turn.started,
+internal_activity×4, turn.completed}`; `hello.txt` = `hello\n`; roster after A:
+`last_session_title: "新建 hello.txt"`, `running: []`.
+
+Run B, `session: 'latest'` (resumes A's thread), long objective, `cancel` after
+the first progress frame:
+
+```
+> id=3 thread/resume {…, threadId:01a068b5-acff-…}   < id=3 result (same thread)
+> id=4 turn/start … < turn/started
+> id=5 turn/interrupt {threadId, turnId}              < id=5 result {}
+< turn/completed status:"interrupted" (durationMs 7)
+```
+
+`cancel` #1 → `{code:'cancelled', work:{work_id:'work-b', project:'workspace',
+title:'新建 hello.txt'}}`; handoff `{outcome:'cancelled', trust:'trusted_system',
+content:{reason:'user_cancelled', work_id:'work-b'}}`; `cancel` #2 →
+`not_running`. Counts over the whole run: `thread/name/set` 1 request / 1 ok
+response / 0 errors, `turn/interrupt` 1, `thread/name/updated` 1. A fresh
+`codex app-server` on the same persistent `CODEX_HOME` answered `thread/list`
+with one thread, `name: "新建 hello.txt"`, `cwd` = the workspace, `cliVersion
+0.152.0` — the session record survives the cancel.
+
+Two transport fixes were needed before a real turn could start (both covered by
+existing unit tests, updated in place):
+
+- `NativeCodexLiveSchemaProbe` now runs `generate-json-schema --experimental`;
+  the pinned 0.152.0 fixture was generated with that flag, so the un-flagged
+  live bundle failed `validateCodexSchemaBundle` → `unsupported_protocol` at
+  preflight.
+- `initialize` now declares `capabilities: {experimentalApi: true}`; 0.152.0
+  rejects `thread/start.permissions` ("requires experimentalApi capability")
+  otherwise → `worker_refused` at `thread_start` for `ask` / `ask_headless`.
+
+Third calibration, found the same way: under `yolo`, live `config/read` returns
+`permissions: null`, while `validateEffectiveCodexConfig` required an empty
+object → `config_not_isolated` → `unsupported_protocol` at preflight.
+`validateEffectiveCodexConfig` now reads `null` as `{}` for `yolo` only (unit
+test added; the `yolo` live run itself has not been repeated).
+
+### Skipped / not exercised
+
+- Electron desktop smoke: skipped — `app.whenReady()` never resolves in this
+  headless shell.
+- Voice path (DashScope realtime calling `dispatch` / `cancel` / `confirm`),
+  two concurrent works, approval queue against a real app-server,
+  create → confirm → workspace creation, latency row: not run (no voice
+  session; single workspace only).
 
 ## Validation (2026-09-03)
 

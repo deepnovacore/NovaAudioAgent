@@ -178,8 +178,9 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   }
 
   /**
-   * Deterministic coordinator sink (spec 08): exact roster-name match, `switch` activates, `work`
-   * refuses busy/capacity. Resolve only — no directory, session, proposal, or dispatch is created.
+   * Deterministic coordinator sink (spec 08): exact roster-name match, `work` refuses busy/capacity.
+   * Resolve only — no directory, session, proposal, dispatch, or active-project change; a `switch`
+   * is committed by `activateProject` after the intake re-checks it is still wanted.
    */
   async resolveIntakeTarget(decision: CoordinatorDecision): Promise<IntakeTarget> {
     if (decision.kind === 'create') {
@@ -203,16 +204,19 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       }
     }
     await this.#store.revalidateWorkspace(workspace.workspace_id)
-    if (decision.kind === 'switch') {
-      await this.#store.selectWorkspaceExact(workspace.display_name, workspace.workspace_id)
-      await this.#refreshProjectContextBarrier()
-    }
     const session = decision.session === 'latest' ? await this.#latestReadySession(workspace) : null
     return {
       workspace: workspace.canonical_path, action: session === null ? 'reuse' : 'resume',
       workspace_display_name: workspace.display_name, workspace_id: workspace.workspace_id,
       session_title: session?.display_title ?? null, session_id: session?.session_id ?? null,
     }
+  }
+
+  /** Commit a resolved `switch`: make the project active and publish the context (spec 08, reversible, no proposal). */
+  async activateProject(target: IntakeTarget): Promise<void> {
+    if (target.workspace_id === null) throw new TypeError('activateProject needs a resolved workspace')
+    await this.#store.selectWorkspaceExact(target.workspace_display_name, target.workspace_id)
+    await this.#refreshProjectContextBarrier()
   }
 
   roster(): readonly RosterEntry[] {
@@ -240,6 +244,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     let target = running.length === 1 ? running[0] : undefined
     if (target === undefined && instruction !== undefined && instruction !== '') {
       const id = await context.resolveCancelTarget(instruction, running)
+      // The user may have corrected themselves during the model call: a stale cancel stops nothing.
+      if (context.stillWanted?.() === false) return {code: 'ambiguous_work', running}
       target = running.find(work => work.work_id === id)
     }
     if (target === undefined || !this.#cancelWork(target.work_id)) return {code: 'ambiguous_work', running}

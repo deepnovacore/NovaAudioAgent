@@ -65,6 +65,8 @@ export type CancelResult =
 export interface CancelContext {
   /** Same `surrogate_model` as `intake.assess`; `null` when the model could not pick one of `running`. */
   readonly resolveCancelTarget: (instruction: string, running: readonly RunningWork[]) => Promise<string | null>
+  /** Re-checked after the model call, before any slot is aborted; `false` means the request was superseded. */
+  readonly stillWanted?: () => boolean
 }
 
 /**
@@ -80,8 +82,10 @@ export interface AgentExecutor {
   running(): readonly RunningWork[]
   /** Async: >1 running works with an instruction needs one `resolveCancelTarget` call. */
   cancel(instruction: string | undefined, context: CancelContext): Promise<CancelResult>
-  /** Deterministic: exact roster-name match only; `switch` activates the project; throws `ProjectResolutionError`. */
+  /** Deterministic and side-effect-free: exact roster-name match only; throws `ProjectResolutionError`. */
   resolveIntakeTarget(decision: CoordinatorDecision): Promise<IntakeTarget>
+  /** Commit a resolved `switch` (make the project active); called only after the intake re-checks it is still wanted. */
+  activateProject(target: IntakeTarget): Promise<void>
 }
 
 export interface CommittedWorkspaceEvent {

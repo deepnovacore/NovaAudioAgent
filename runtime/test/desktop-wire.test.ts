@@ -339,6 +339,33 @@ test('Codex approval wire carries only bounded local display detail and relative
   }, 10, CODEX), DesktopProtocolError)
 })
 
+test('Codex approval wire names the asking work (spec 08 desktop pill), clipped and validated', () => {
+  const view = {
+    pending_approval: true as const,
+    pending_approval_busy: false,
+    pending_approval_id: 'approval-1',
+    kind: 'command_execution' as const,
+    local_detail: {kind: 'command_execution' as const, command: 'npm test', cwd: 'C:\\workspace'},
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+    expires_at: 70,
+    queued: 1,
+  }
+  const parsed = JSON.parse(executorApprovalMessage({
+    ...view, work: {work_id: 'work-1', project: 'blog', title: `暗色模式${'长'.repeat(130)}`},
+  }, 10, CODEX)) as {work: {work_id: string; project: string; title: string}}
+  assert.equal(parsed.work.work_id, 'work-1')
+  assert.equal(parsed.work.project, 'blog')
+  assert.equal([...parsed.work.title].length, 120)
+  for (const work of [
+    {work_id: '', project: 'blog', title: 't'},
+    {work_id: 'w'.repeat(129), project: 'blog', title: 't'},
+    {work_id: 'work-1', project: ' ', title: 't'},
+    {work_id: 'work-1', project: 'blog', title: ''},
+  ]) {
+    assert.throws(() => executorApprovalMessage({...view, work}, 10, CODEX), DesktopProtocolError, JSON.stringify(work))
+  }
+})
+
 test('every desktop wire case matches the Python-exported golden, byte for byte', () => {
   const divergent: string[] = []
   for (const [index, spec] of document.cases.entries()) {

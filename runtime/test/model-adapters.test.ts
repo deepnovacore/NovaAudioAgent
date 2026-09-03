@@ -173,6 +173,26 @@ test('tool calls decode into typed actions and bounded contract failures', () =>
   assert.equal(anonymous.kind === 'contract_failure' ? anonymous.tool_name : 'set', null)
 })
 
+test('hidden agent bindings are unknown to the provider while visible tools still decode', () => {
+  const agentTools = compileToolSchema([
+    manifest('slow_sim', [readonlyOp]),
+    executorManifestSchema.parse({
+      name: 'codex', display_name: 'Codex', roles: ['coding'], agent: {summary: 'code'},
+      policy: handoffPolicySchema.parse({channel: 'codex', priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8}),
+      ops: [readonlyOp, writeOp, {name: 'cancel', description: 'cancel', params: {type: 'object', properties: {}}}],
+    }),
+  ])
+  for (const name of ['codex__run', 'codex__cancel', 'codex__peek']) {
+    assert.ok(agentTools.bindings.has(name), `${name} keeps its binding for the host rewrite`)
+    const result = decodeToolCall(agentTools, name, '{"work_order":"x","origin_ref":"conversation:1"}')
+    assert.deepEqual(result, {kind: 'contract_failure', code: 'unknown_tool', tool_name: name}, name)
+  }
+  assert.equal(decodeToolCall(agentTools, 'slow_sim__peek', '{"origin_ref":"conversation:1"}').kind, 'action')
+  // Trigger filtering keeps the hidden set alongside the bindings it protects.
+  assert.deepEqual([...toolsForTrigger(agentTools, 'user_input', true).hidden], [...agentTools.hidden])
+  assert.equal(toolsForTrigger(agentTools, 'progress', true).hidden.size, agentTools.hidden.size)
+})
+
 test('numbers JSON cannot represent as finite binary64 are refused', () => {
   assert.equal(isFiniteBinary64Json({a: 1, b: [2, {c: 3.5}]}), true)
   assert.equal(isFiniteBinary64Json({a: Number.POSITIVE_INFINITY}), false)

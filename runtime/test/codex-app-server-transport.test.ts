@@ -65,6 +65,7 @@ test('a cold run follows the app-server handshake and returns bounded internal c
   assert.deepEqual(methods, [
     'initialize', 'initialized', 'config/read', 'thread/start', 'turn/start',
   ])
+  assert.deepEqual(owner.received[0]?.params.capabilities, {experimentalApi: true})
   assert.equal(outcome.classification, 'completed')
   assert.equal(outcome.code, 'completed')
   assert.equal(outcome.turnStartWritten, true)

@@ -1,7 +1,7 @@
 import { validProgressSummary, type JsonValue } from '../events.js'
 import { CONVERSATION_CHANNEL, type MemoryItem } from '../memory.js'
 import {pythonFloat} from '../python-number.js'
-import {codePointLengthLikePython, stripLikePython} from '../python-text.js'
+import {stripLikePython} from '../python-text.js'
 import { prepareForSpeech, SPEECH_FINAL_LIMIT } from './speech-prep.js'
 
 const GENERIC_SCALAR_KEYS = [
@@ -30,13 +30,12 @@ export interface CodingChannel {
 }
 
 /**
- * Speech for the coding executor's terminal handoff. The content vocabulary (`confirmation_required`,
- * startup-failure stages, `result.final_message`) is the coding-role handoff contract, not one
- * executor's private shape; only the display name is executor-specific.
+ * Speech for the coding executor's terminal handoff. The content vocabulary (startup-failure
+ * stages, `result.final_message`) is the coding-role handoff contract, not one executor's private
+ * shape; only the display name is executor-specific. Project confirmation is a host fact (spec 08),
+ * never a handoff.
  */
 export function finalSpeechView(outcome: string, content: unknown, displayName: string): string {
-  const confirmation = outcome === 'ok' ? codingConfirmationSpeech(content, displayName) : null
-  if (confirmation !== null) return confirmation
   if (outcome === 'cancelled') return `${displayName} 那个任务已经停了`
   let finalMessage: unknown
   let code: unknown
@@ -77,55 +76,6 @@ export function finalSpeechView(outcome: string, content: unknown, displayName: 
     return `${displayName} 任务失败${category}：${prepared.text}${note}`
   }
   return `${displayName} 任务结果不确定：${prepared.text}${note}`
-}
-
-/**
- * Render only a host-generated confirmation prompt whose exact shape matches the public action
- * fields beside it. This keeps proposal ids, work orders, and forged prose out of speech while still
- * preserving the question that used to be lost by the generic no-final-message fallback.
- */
-function codingConfirmationSpeech(content: unknown, displayName: string): string | null {
-  if (!isObject(content) || content.code !== 'confirmation_required') return null
-  const action = content.action
-  const workspace = content.workspace
-  const session = content.session
-  const prompt = content.confirmation_prompt
-  if (
-    typeof action !== 'string'
-    || typeof workspace !== 'string'
-    || stripLikePython(workspace) === ''
-    || codePointLengthLikePython(workspace) > 120
-    || typeof prompt !== 'string'
-    || codePointLengthLikePython(prompt) > 512
-  ) return genericCodingConfirmationSpeech(displayName)
-
-  let expected: readonly string[]
-  if (action === 'create_workspace') {
-    expected = [
-      `是否创建工作区“${workspace}”并开始任务？请确认或取消。`,
-      `准备创建并切换到工作区${workspace}，请确认或取消。`,
-    ]
-  } else if (action === 'reuse_workspace') {
-    expected = [`是否使用现有工作区“${workspace}”并开始任务？请确认或取消。`]
-  } else if (action === 'select_workspace') {
-    expected = [`准备切换到工作区${workspace}，请确认或取消。`]
-  } else if (
-    action === 'resume_session'
-    && typeof session === 'string'
-    && stripLikePython(session) !== ''
-    && codePointLengthLikePython(session) <= 120
-  ) {
-    expected = [`准备切换到${workspace}，并继续 Session“${session}”，请确认或取消。`]
-  } else {
-    return genericCodingConfirmationSpeech(displayName)
-  }
-  if (!expected.includes(prompt)) return genericCodingConfirmationSpeech(displayName)
-  return prompt
-}
-
-function genericCodingConfirmationSpeech(displayName: string): string {
-  return `${displayName} 有一项项目操作等待你的确认。`
-    + `这项操作尚未执行，${displayName} 也还没有开始任务。请确认或取消。`
 }
 
 function codingStartupFailureSpeech(category: string, stage: unknown, displayName: string): string | null {

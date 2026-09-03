@@ -398,9 +398,9 @@ test('production schema probe invokes the host binary and returns only the revie
         CODEX_API_KEY: 'must-not-cross-schema-probe',
       },
       commandRunner: async command => {
-        assert.deepEqual(command.argv.slice(0, 3), ['app-server', 'generate-json-schema', '--out'])
+        assert.deepEqual(command.argv.slice(0, 4), ['app-server', 'generate-json-schema', '--experimental', '--out'])
         assert.equal('CODEX_API_KEY' in command.environment, false)
-        const output = command.argv[3]
+        const output = command.argv[4]
         assert.notEqual(output, undefined)
         for (const [name, document] of Object.entries(bundle)) {
           const destination = join(output!, name)
@@ -456,7 +456,7 @@ test('Windows production schema probe derives HOME from USERPROFILE without a sy
           PATH: 'C:\\Windows\\System32',
           HOME: 'C:\\Users\\nova',
         })
-        const output = command.argv[3]
+        const output = command.argv[4]
         assert.notEqual(output, undefined)
         for (const [name, document] of Object.entries(bundle)) {
           const destination = join(output!, name)

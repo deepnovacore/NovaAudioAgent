@@ -35,6 +35,7 @@ function harness(options: HarnessOptions = {}) {
   const decisions: CoordinatorDecision[] = []
   const steered: string[] = [], cancelled: string[] = []
   const {models, resolveTarget = () => Promise.resolve(target), ...rest} = options
+  const activated: IntakeTarget[] = []
   const confirmation = new ProjectConfirmationController({clock: new VirtualClock(), idFactory: () => `proposal-${++sequence}`})
   const intake = new IntakeController({
     idFactory: () => `intake-${++sequence}`,
@@ -52,6 +53,7 @@ function harness(options: HarnessOptions = {}) {
     running: () => running,
     activeProject: () => 'Project',
     resolveTarget: decision => { decisions.push(decision); return resolveTarget(decision) },
+    activateProject: switched => { activated.push(switched); return Promise.resolve() },
     prepare: current => confirmation.prepare({...current.target!, intake_id: current.intake_id, plan_revision: current.plan_revision!, origin_ref: current.origin_ref, work_order: current.work_order}),
     dispatch: current => { dispatched.push(current); return {accepted: true, delegate_id: 'd1'} },
     steer: (_current, _project, instruction) => { steered.push(instruction); return {accepted: true, delegate_id: 'd-steer'} },
@@ -62,7 +64,7 @@ function harness(options: HarnessOptions = {}) {
     diagnostic: code => { diagnostics.push(code) },
     ...rest,
   })
-  return {intake, confirmation, facts, records, diagnostics, dispatched, decisions, steered, cancelled, planned: () => planned}
+  return {intake, confirmation, facts, records, diagnostics, dispatched, decisions, steered, cancelled, activated, planned: () => planned}
 }
 
 test('intake zero-question fast path compiles once, preserves target/session and closes only on acceptance', async () => {
@@ -270,15 +272,29 @@ test('coordinator: work on the active project resolves without evidence; a non-a
   assert.deepEqual(active.decisions, [{kind: 'work', project: 'Project', session: 'latest'}])
   assert.equal(active.intake.view?.outcome, 'dispatched')
 
-  const quoted = harness({models: {assess: input => Promise.resolve(assessment(input, {project: 'blog', project_evidence: '博客', session: 'new'}))}})
-  quoted.intake.open(request, '改一下博客的暗色模式', 'u1', 'e')
-  await quoted.intake.settled()
-  assert.deepEqual(quoted.decisions, [{kind: 'work', project: 'blog', session: 'new'}])
-  assert.equal(quoted.intake.view?.kind, 'work')
-  assert.equal(quoted.intake.view?.outcome, 'dispatched')
+  // The quoted span must occur in the utterance *and* overlap the roster name (either contains the other).
+  const roster = () => [
+    {name: 'Project', last_used_at: 1, last_session_title: null, running: []},
+    {name: 'blog', last_used_at: 0, last_session_title: null, running: []},
+    {name: '博客', last_used_at: 0, last_session_title: null, running: []},
+    {name: 'pricing-page', last_used_at: 0, last_session_title: null, running: []},
+  ]
+  for (const [project, evidence, utterance] of [
+    ['blog', 'Blog', '改一下 blog 的暗色模式'],
+    ['博客', '博客', '改一下博客的暗色模式'],
+    ['pricing-page', 'pricing', '改 pricing 的按钮'],
+  ] as const) {
+    const quoted = harness({roster, models: {assess: input => Promise.resolve(assessment(input, {project, project_evidence: evidence, session: 'new'}))}})
+    quoted.intake.open(request, utterance, 'u1', 'e')
+    await quoted.intake.settled()
+    assert.deepEqual(quoted.decisions, [{kind: 'work', project, session: 'new'}], `${project} quoted as ${evidence}`)
+    assert.equal(quoted.intake.view?.kind, 'work')
+    assert.equal(quoted.intake.view?.outcome, 'dispatched')
+  }
 
-  for (const evidence of [null, '博客']) {
-    const unverified = harness({models: {assess: input => Promise.resolve(assessment(input, {project: 'blog', project_evidence: evidence}))}})
+  // Missing, not in the utterance, or a filler ("改") that is in the utterance but does not name the project.
+  for (const evidence of [null, '博客', '改']) {
+    const unverified = harness({roster, models: {assess: input => Promise.resolve(assessment(input, {project: 'blog', project_evidence: evidence}))}})
     unverified.intake.open(request, '改一下暗色模式', 'u1', 'e')
     await unverified.intake.settled()
     assert.deepEqual(unverified.decisions, [], `evidence ${String(evidence)} never reaches the adapter`)
@@ -287,6 +303,26 @@ test('coordinator: work on the active project resolves without evidence; a non-a
     assert.ok(unverified.diagnostics.includes('intake_project_evidence_missing'))
     assert.ok(unverified.facts.some(text => text.includes('是在 blog 里做吗')))
     assert.equal(unverified.dispatched.length, 0)
+  }
+
+})
+
+test('coordinator: an affirmed host question is the only host-authored project evidence', async () => {
+  const roster = () => [
+    {name: 'Project', last_used_at: 1, last_session_title: null, running: []},
+    {name: 'blog', last_used_at: 0, last_session_title: null, running: []},
+  ]
+  // An alias (博客 → blog) can never be quoted; the host's own `是在 blog 里做吗？` becomes the evidence once
+  // the user affirms it -- and only then: a negative or a new instruction leaves the question unanswered.
+  for (const [answer, dispatched] of [['对', true], ['不是', false], ['先修登录', false]] as const) {
+    const alias = harness({roster, models: {assess: input => Promise.resolve(assessment(input, {project: 'blog', project_evidence: 'blog'}))}})
+    alias.intake.open(request, '改一下博客的暗色模式', 'u1', 'e')
+    await alias.intake.settled()
+    assert.equal(alias.intake.view?.kind, 'unclear', answer)
+    alias.intake.userTurn(answer, 'u2', 'e')
+    await alias.intake.settled()
+    assert.deepEqual(alias.decisions, dispatched ? [{kind: 'work', project: 'blog', session: 'latest'}] : [], answer)
+    assert.equal(alias.intake.view?.kind, dispatched ? 'work' : 'unclear', answer)
   }
 })
 
@@ -345,30 +381,78 @@ test('coordinator: create always confirms — with a goal it plans first, bare c
 })
 
 test('coordinator: switch, steer and cancel route straight to the adapter without a plan cycle', async () => {
-  const switched = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'switch', project: 'blog', project_evidence: '博客'}))}})
-  switched.intake.open(request, '切到博客', 'u1', 'e')
+  const switched = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'switch', project: 'blog', project_evidence: 'blog'}))}})
+  switched.intake.open(request, '切到 blog', 'u1', 'e')
   await switched.intake.settled()
   assert.deepEqual(switched.decisions, [{kind: 'switch', project: 'blog', session: 'latest'}])
+  assert.deepEqual(switched.activated, [target], 'the switch is committed through the port after the staleness re-check')
   assert.equal(switched.intake.view?.outcome, 'routed')
   assert.match(switched.facts.at(-1)!, /^code=switched：已切换到项目“Project”，没有开始任务。$/)
   assert.equal(switched.planned(), 0)
 
-  const steered = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'steer', project: 'blog', project_evidence: '博客'}))}})
-  steered.intake.open(request, '博客那个顺便把字体也调大', 'u1', 'e')
+  const steered = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'steer', project: 'blog', project_evidence: 'blog'}))}})
+  steered.intake.open(request, 'blog 那个顺便把字体也调大', 'u1', 'e')
   await steered.intake.settled()
-  assert.deepEqual(steered.steered, ['博客那个顺便把字体也调大'])
+  assert.deepEqual(steered.steered, ['blog 那个顺便把字体也调大'])
   assert.deepEqual(steered.decisions, [])
   assert.equal(steered.intake.view?.outcome, 'routed')
   assert.match(steered.facts.at(-1)!, /^code=steered：/)
 
-  const cancelled = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'cancel', project: 'blog', project_evidence: '博客'}))}})
-  cancelled.intake.open(request, '停掉博客那个', 'u1', 'e')
+  const cancelled = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'cancel', project: 'blog', project_evidence: 'blog'}))}})
+  cancelled.intake.open(request, '停掉 blog 那个', 'u1', 'e')
   await cancelled.intake.settled()
-  assert.deepEqual(cancelled.cancelled, ['停掉博客那个'])
+  assert.deepEqual(cancelled.cancelled, ['停掉 blog 那个'])
   assert.equal(cancelled.intake.view?.outcome, 'routed')
   assert.ok(cancelled.records.includes('intake.cancel'))
   assert.equal(cancelled.facts.at(-1), 'code=cancelled：已请求停止“blog/暗色模式”，稍后有终态事实。')
   assert.equal(cancelled.dispatched.length, 0)
+})
+
+test('coordinator: a revision bump during switch resolution or cancel resolution commits nothing stale', async () => {
+  // Switch: resolve is side-effect-free; the port commits only if the snapshot is still current.
+  let releaseTarget!: (value: IntakeTarget) => void
+  let enteredResolve!: () => void
+  const resolving = new Promise<void>(resolve => { enteredResolve = resolve })
+  let assessments = 0
+  const switched = harness({
+    models: {assess: input => Promise.resolve(assessment(input, ++assessments === 1
+      ? {kind: 'switch', project: 'blog', project_evidence: 'blog'}
+      : {kind: 'unclear', candidate_question: {owner: 'user', text: '要做什么？'}}))},
+    resolveTarget: () => { enteredResolve(); return new Promise(resolve => { releaseTarget = resolve }) },
+  })
+  switched.intake.open(request, '切到 blog', 'u1', 'e')
+  await resolving
+  switched.intake.userTurn('等等，别切', 'u2', 'e')
+  releaseTarget(target)
+  await switched.intake.settled()
+  assert.deepEqual(switched.activated, [], 'a stale switch never reaches activateProject')
+  assert.ok(!switched.facts.some(text => text.startsWith('code=switched')))
+  assert.ok(switched.diagnostics.includes('intake_stale_result'))
+
+  // Cancel: the adapter asks `stillWanted` after its own (model) target resolution; a bump answers false.
+  const wanted: boolean[] = []
+  let enteredCancel!: () => void
+  const cancelling = new Promise<void>(resolve => { enteredCancel = resolve })
+  let releaseCancel!: () => void
+  assessments = 0
+  const cancelled = harness({
+    models: {assess: input => Promise.resolve(assessment(input, ++assessments === 1
+      ? {kind: 'cancel', project: 'blog', project_evidence: 'blog'}
+      : {kind: 'unclear', candidate_question: {owner: 'user', text: '要做什么？'}}))},
+    cancel: async (_instruction, stillWanted) => {
+      enteredCancel()
+      await new Promise<void>(resolve => { releaseCancel = resolve })
+      wanted.push(stillWanted())
+      return {code: 'ambiguous_work', running}
+    },
+  })
+  cancelled.intake.open(request, '停掉 blog 那个', 'u1', 'e')
+  await cancelling
+  cancelled.intake.userTurn('不，别停', 'u2', 'e')
+  releaseCancel()
+  await cancelled.intake.settled()
+  assert.deepEqual(wanted, [false])
+  assert.ok(!cancelled.records.includes('intake.cancel'))
 })
 
 test('WorkOrder deterministic golden, optional truncation order, unicode and required-size refusal', () => {

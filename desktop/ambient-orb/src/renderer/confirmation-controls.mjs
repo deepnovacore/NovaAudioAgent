@@ -144,7 +144,9 @@ export function parseCodexApprovalMessage(message) {
   const keys = Object.keys(message).sort().join(',')
   const pending = message.pending_approval
   const expectedKeys = pending === true
-    ? [...APPROVAL_BASE_KEYS, 'pending_approval_id', ...(message.allowed_decisions === undefined ? [] : ['allowed_decisions'])].sort().join(',')
+    ? [...APPROVAL_BASE_KEYS, 'pending_approval_id',
+      ...(message.allowed_decisions === undefined ? [] : ['allowed_decisions']),
+      ...(message.work === undefined ? [] : ['work'])].sort().join(',')
     : [...APPROVAL_BASE_KEYS].sort().join(',')
   if (
     keys !== expectedKeys
@@ -177,7 +179,15 @@ export function parseCodexApprovalMessage(message) {
     || allowed.some(value => !['accept', 'acceptForSession', 'decline'].includes(value)) || !allowed.includes('decline'))) return null
   const detail = parseLocalDetail(message.local_detail, message.kind)
   if (detail === null) return null
-  return Object.freeze({...message, local_detail: detail, operation: approvalOperation(detail)})
+  // Spec 08: the asking work's project and session title, so two running works are told apart.
+  const work = message.work
+  if (work !== undefined && (
+    work === null || typeof work !== 'object' || Array.isArray(work)
+    || Object.keys(work).sort().join(',') !== 'project,title,work_id'
+    || !validText(work.work_id, 128) || !validText(work.project, 120) || !validText(work.title, 120)
+  )) return null
+  const prefix = work === undefined ? '' : `${work.project} / ${work.title}：`
+  return Object.freeze({...message, local_detail: detail, operation: `${prefix}${approvalOperation(detail)}`})
 }
 
 function parseLocalDetail(detail, kind) {

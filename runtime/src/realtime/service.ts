@@ -110,7 +110,7 @@ import type { RealtimeTelemetry } from './telemetry.js'
 import {UserOriginBindingLedger} from './user-origin-binding.js'
 
 const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
-const NO_PENDING_CONFIRMATION_TOOL_RESULT = JSON.stringify({code: 'no_pending_confirmation'})
+const UNKNOWN_CONFIRMATION_TOOL_RESULT = JSON.stringify({code: 'unknown_confirmation', state: 'refused'})
 const CODEX_APPROVAL_CLARIFICATION = '请明确说同意或拒绝。'
 
 type ProviderReconnectReason =
@@ -290,7 +290,7 @@ export interface ServiceProvider {
 export interface RealtimeServiceOptions {
   readonly intake?: Pick<
     IntakeOptions,
-    'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'dispatch' | 'steer' | 'cancel' | 'record'
+    'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'activateProject' | 'dispatch' | 'steer' | 'cancel' | 'record'
   >
   /** The coding executor's `cancel` port (spec 08); absent → `cancel` refuses `unsupported_tool`. */
   readonly agentExecutor?: Pick<AgentExecutor, 'cancel'>
@@ -2179,17 +2179,7 @@ export class RealtimeService {
       }
       return encoded
     }
-    const responseInstruction = content.code === 'confirmation_required'
-      ? [
-        '只简短转述 confirmation_prompt 一次，不得补充解释、背景或其他问句；',
-        '不得声称已提交、已创建、已切换或已开始任务，也不要朗读 id。',
-      ].join('')
-      : null
-    const encoded = JSON.stringify({
-      state: event.payload.outcome,
-      content,
-      ...(responseInstruction === null ? {} : {response_instruction: responseInstruction}),
-    })
+    const encoded = JSON.stringify({state: event.payload.outcome, content})
     return [...encoded].length <= MAX_HOST_FACT_CHARS
       ? encoded
       : JSON.stringify({state: event.payload.outcome, error: 'result_too_large'})
@@ -3152,9 +3142,10 @@ export class RealtimeService {
    * Which confirmation FSM a `confirm(id, accepted)` call answers (spec 08: one tool for both).
    *
    * An id the approval FSM knows -- live, still holding voice authority, or its expiry tombstone --
-   * wins, so a late answer keeps that FSM's own classification; then the project proposal's id; then
-   * whichever FSM is pending renders its own invalid-id result. `'none'` is a `confirm` with nothing
-   * pending anywhere, refused in `#interceptHost`; `null` is any other tool. The id is read through
+   * wins, so a late answer keeps that FSM's own classification; then the project proposal's id. Any
+   * other well-formed id names nothing and is `'none'` (`unknown_confirmation`, refused in
+   * `#interceptHost`); only a null / malformed id falls through to whichever FSM is pending, so each
+   * keeps its own malformed-call accounting. `null` is any other tool. The id is read through
    * `confirmArguments` so a provider-supplied accessor is never evaluated here.
    */
   #confirmTarget(event: ToolCallReady): 'approval' | 'project' | 'none' | null {
@@ -3168,6 +3159,7 @@ export class RealtimeService {
       || this.#executorApprovalExpiredIdentity?.approvalId === id
     )) return 'approval'
     if (id !== null && project?.lifecycleId === id) return 'project'
+    if (id !== null) return 'none'
     if (project?.pending === true) return 'project'
     if (approval?.pending_approval === true) return 'approval'
     if (
@@ -3573,7 +3565,10 @@ export class RealtimeService {
       readonly originRef?: string | null
     } = {},
   ): Promise<void> {
-    const event = this.#directDispatch(call) ?? call
+    const rewritten = this.#directDispatch(call)
+    const event = rewritten ?? call
+    // A hidden agent op named by the provider (spec 08) was never offered to it; only the rewrite may name one.
+    const hidden = rewritten === null && this.#tools.hidden.has(call.name)
     const key = callKey(event.session_epoch, event.call_id)
     const existing = this.#toolCallState(key)
     if (existing !== undefined) {
@@ -3639,7 +3634,7 @@ export class RealtimeService {
       this.#pruneTerminalToolState()
     }
     const callOverCapacity = this.#toolCalls.size >= MAX_TRACKED_TOOL_CALLS
-    const binding = this.#tools.bindings.get(event.name)
+    const binding = hidden ? undefined : this.#tools.bindings.get(event.name)
     // A delegated call will eventually need to be spoken about, so its acknowledgement slot is
     // reserved *before* admission -- admitting work the agent could never mention is worse than
     // refusing it.
@@ -3676,6 +3671,8 @@ export class RealtimeService {
       acceptance = this.#supersededAcceptance(event)
     } else if (overCapacity) {
       acceptance = this.#overCapacityAcceptance(event)
+    } else if (hidden) {
+      acceptance = this.#refusalAcceptance(event, 'unknown_tool', '{"code":"unknown_tool","state":"refused"}')
     } else {
       try {
         acceptance = await this.#interceptHost(event, originRef)
@@ -3886,11 +3883,11 @@ export class RealtimeService {
   /**
    * The host tools (spec 08). `dispatch` on the coding executor opens the intake, which decides
    * project / session / questions itself; `cancel` is answered synchronously from the executor's
-   * run slots; a `confirm` that reached here has no pending confirmation to answer.
+   * run slots; a `confirm` that reached here names no pending confirmation (spec 08 `unknown_confirmation`).
    */
   async #interceptHost(event: ToolCallReady, originRef: string | null): Promise<ToolAcceptance | null> {
     if (event.name === CONFIRM_TOOL) {
-      return this.#refusalAcceptance(event, 'no_pending_confirmation', NO_PENDING_CONFIRMATION_TOOL_RESULT)
+      return this.#refusalAcceptance(event, 'unknown_confirmation', UNKNOWN_CONFIRMATION_TOOL_RESULT)
     }
     if (event.name !== DISPATCH_TOOL && event.name !== CANCEL_TOOL) return null
     const executor = this.#agentExecutorName(event.arguments.executor)
@@ -3902,12 +3899,20 @@ export class RealtimeService {
     if (executor === null || !instructionValid) {
       return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
     }
+    if (event.name === CANCEL_TOOL && (this.#agentExecutor === undefined || executor !== this.#coding?.channel)) {
+      return this.#refusalAcceptance(event, 'unsupported_tool', '{"code":"unsupported_tool"}')
+    }
+    // A valid `dispatch` on a non-coordinated agent never gets here: `#directDispatch` rewrote it.
+    if (event.name === DISPATCH_TOOL && (this.#intake === undefined || !this.#intakeCoordinates(executor))) return null
+    // Both act on the user's behalf, so both need the current user turn as origin: a spontaneous
+    // `cancel` would stop work nobody asked to stop.
+    const user = this.#intakeUser
+    if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref) {
+      return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
+    }
     if (event.name === CANCEL_TOOL) {
-      if (this.#agentExecutor === undefined || executor !== this.#coding?.channel) {
-        return this.#refusalAcceptance(event, 'unsupported_tool', '{"code":"unsupported_tool"}')
-      }
       const models = this.#intakeModels
-      const result = await this.#agentExecutor.cancel(instruction ?? undefined, {
+      const result = await this.#agentExecutor!.cancel(instruction ?? undefined, {
         resolveCancelTarget: models === undefined
           ? () => Promise.resolve(null)
           : (target, running) => models.resolveCancelTarget(target, running),
@@ -3915,20 +3920,15 @@ export class RealtimeService {
       const acceptance = this.#refusalAcceptance(event, result.code, JSON.stringify({...result, message: renderCancelResult(result)}))
       return {...acceptance, accepted: true, inline_fulfilled: true}
     }
-    // A valid `dispatch` on a non-coordinated agent never gets here: `#directDispatch` rewrote it.
-    if (this.#intake === undefined || !this.#intakeCoordinates(executor)) return null
-    const user = this.#intakeUser
-    if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref) {
-      return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
-    }
-    const code = this.#intake.open(
+    const intake = this.#intake!
+    const code = intake.open(
       {work_order: instruction!, project: null, session: 'latest'},
       user.text,
       user.origin_ref,
       String(event.session_epoch),
     )
     const result = this.#refusalAcceptance(event, code, JSON.stringify({
-      code, state: this.#intake.view?.state, message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
+      code, state: intake.view?.state, message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
     }))
     return {...result, accepted: true, inline_fulfilled: true}
   }
@@ -4014,9 +4014,9 @@ export class RealtimeService {
       || lifecycleId === undefined
       || sessionEpoch < 1
     ) return
-    if (this.#executorApproval?.pending === true) {
-      this.#executorApproval.invalidate('confirmation_overlap')
-    }
+    // Spec 08: a colliding executor approval waits behind the project confirmation. Its voice authority
+    // is withdrawn (never declined) and re-armed by `#publishProjectView` once this one settles.
+    if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
     const current = this.#projectConfirmationIsolation.authority
     if (current?.authorityId === lifecycleId && current.sessionEpoch === sessionEpoch) return
     const remaining = controller.view.pending_expires_in_seconds
@@ -4173,15 +4173,17 @@ export class RealtimeService {
       && view.kind !== null
       && view.operation_summary !== null
     ) {
-      if (this.#projectConfirmation?.pending === true || this.#projectConfirmation?.committing === true) {
-        this.#executorApproval?.invalidate('confirmation_overlap')
-        return
-      }
       if (this.session.sessionEpoch < 1 || view.expires_at === null) return
       this.#executorApprovalObservedIdentity = {
         approvalId: view.pending_approval_id,
         sessionEpoch: this.session.sessionEpoch,
         expiresAt: view.expires_at,
+      }
+      if (this.#projectConfirmation?.pending === true || this.#projectConfirmation?.committing === true) {
+        // Spec 08: the approval keeps its queue place and TTL but is not voice-armed while a project
+        // confirmation holds the floor; `#publishProjectView` re-runs this once that one settles.
+        if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
+        return
       }
       if (
         this.#executorApprovalAuthority?.approvalId === view.pending_approval_id
@@ -6028,6 +6030,11 @@ export class RealtimeService {
       )
     } catch {
       // A renderer that cannot accept the view must not prevent the state change that produced it.
+    }
+    // Spec 08: an executor approval that waited behind this confirmation is voice-armed once it is over.
+    const approval = this.#executorApproval?.view
+    if (approval?.pending_approval === true && !controller.pending && !controller.committing) {
+      this.#syncExecutorApproval(approval)
     }
   }
 

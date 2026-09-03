@@ -69,6 +69,8 @@ export interface CompiledTools {
   readonly bindings: ReadonlyMap<string, ToolBinding>
   /** Executor name -> declared roles, so callers can gate tools by role without the manifests. */
   readonly executor_roles: ReadonlyMap<string, readonly ExecutorRole[]>
+  /** Agent-op wire names (spec 08): bound for the host's `dispatch` rewrite, never offered to or callable by the provider. */
+  readonly hidden: ReadonlySet<string>
 }
 
 export class ToolSchemaError extends Error {
@@ -135,6 +137,7 @@ export function compileToolSchema(
   }
 
   const seen = new Set<string>()
+  const hidden = new Set<string>()
   const agents: AgentSummary[] = []
   for (const manifest of manifests) {
     if (seen.has(manifest.name)) {
@@ -154,7 +157,8 @@ export function compileToolSchema(
       if (bindings.has(compiled.wireName)) {
         throw new ToolSchemaError(`工具 wire name 重复：${compiled.wireName}`)
       }
-      if (!agent) schemas.push(compiled.schema)
+      if (agent) hidden.add(compiled.wireName)
+      else schemas.push(compiled.schema)
       bindings.set(compiled.wireName, compiled.binding)
     }
   }
@@ -170,6 +174,7 @@ export function compileToolSchema(
     schemas,
     bindings,
     executor_roles: new Map(manifests.map(manifest => [manifest.name, manifest.roles])),
+    hidden,
   }
 }
 

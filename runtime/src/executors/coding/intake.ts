@@ -63,10 +63,13 @@ export interface IntakeOptions {
   readonly running: () => readonly RunningWork[]
   readonly activeProject: () => string | null
   readonly resolveTarget: (decision: CoordinatorDecision) => Promise<IntakeTarget>
+  /** Commit a resolved `switch`; called only after the intake re-checked the revision is still current. */
+  readonly activateProject: (target: IntakeTarget) => Promise<void>
   readonly prepare: (session: Readonly<IntakeSession>) => ProjectProposal
   readonly dispatch: (session: Readonly<IntakeSession>) => IntakeAdmission
   readonly steer: (session: Readonly<IntakeSession>, project: string | null, instruction: string) => IntakeAdmission
-  readonly cancel: (instruction: string) => Promise<CancelResult>
+  /** `stillWanted` is re-checked by the adapter after its model call, before any work is aborted. */
+  readonly cancel: (instruction: string, stillWanted: () => boolean) => Promise<CancelResult>
   readonly invalidateProposal: () => void
   readonly fact: (session: Readonly<IntakeSession>, text: string) => void
   readonly record: (session: Readonly<IntakeSession>, kind: string, data: Readonly<Record<string, JsonValue>>) => void
@@ -85,11 +88,17 @@ export function isPurePlanDecision(text: string): boolean {
   return /^(确认|可以|做吧|好|好的|同意|不同意|不行|取消|不用了|算了|yes|ok|okay|confirm|no|cancel)[。！!,.，\s]*$/iu.test(text.trim())
 }
 
-/** Whitespace- and case-insensitive containment, the same normalisation both sides. */
-function evidenceOccurs(evidence: string, utterances: readonly string[]): boolean {
+/**
+ * The quoted span must occur in an utterance *and* overlap the selected name (one contains the other), so
+ * a filler like "改" cannot vouch for a project. Every utterance counts: binding to the latest turn alone
+ * would loop on multi-turn clarifications. Whitespace- and case-insensitive, the same normalisation both sides.
+ */
+function evidenceOccurs(evidence: string, project: string, utterances: readonly string[]): boolean {
   const normalize = (value: string): string => collapsePythonWhitespace(stripLikePython(value)).toLowerCase()
   const span = normalize(evidence)
-  return span !== '' && utterances.some(text => normalize(text).includes(span))
+  const name = normalize(project)
+  return span !== '' && (span.includes(name) || name.includes(span))
+    && utterances.some(text => normalize(text).includes(span))
 }
 
 /** Spoken rendering of a resolution error / cancel result: code first, then what the model needs to offer. */
@@ -210,11 +219,15 @@ export class IntakeController {
     }
   }
 
-  #current(id: string, revision: number): IntakeSession | null {
+  #live(id: string, revision: number): IntakeSession | null {
     const current = this.#session
-    if (current?.intake_id === id && current.revision === revision && current.state !== 'closed') return current
-    this.#options.diagnostic('intake_stale_result')
-    return null
+    return current?.intake_id === id && current.revision === revision && current.state !== 'closed' ? current : null
+  }
+
+  #current(id: string, revision: number): IntakeSession | null {
+    const current = this.#live(id, revision)
+    if (current === null) this.#options.diagnostic('intake_stale_result')
+    return current
   }
 
   #input(current: IntakeSession): Readonly<Record<string, unknown>> {
@@ -269,8 +282,14 @@ export class IntakeController {
       const active = this.#options.activeProject()
       const project = result.project ?? (kind === 'create' ? null : active)
       // Wrong-project protection: a non-active selection must be quoted from the utterance, never inferred.
+      // The one host-authored source is our own `是在 X 里做吗？` once the user has just affirmed it (an alias
+      // like 博客→blog never contains the roster name, and a bare 对 cannot; without this the question loops).
+      const latest = current.turns.at(-1)
+      const affirmedQuestion = latest?.question !== null && latest?.question !== undefined
+        && /^(是|对|嗯|好|可以|是的|对的|没错|yes|ok|okay)[。！!,.，\s]*$/iu.test(latest.answer.trim()) ? [latest.question] : []
       if (kind !== 'create' && kind !== 'unclear' && project !== null && project !== active
-        && !evidenceOccurs(result.project_evidence ?? '', [current.opening, ...current.turns.map(turn => turn.answer)])) {
+        && !evidenceOccurs(result.project_evidence ?? '', project,
+          [current.opening, ...current.turns.map(turn => turn.answer), ...affirmedQuestion])) {
         this.#options.diagnostic('intake_project_evidence_missing')
         kind = 'unclear'
         question = `是在 ${project} 里做吗？`
@@ -282,7 +301,7 @@ export class IntakeController {
       }
       const userText = current.turns.at(-1)?.answer ?? current.opening
       if (kind === 'cancel') {
-        const outcome = await this.#options.cancel(userText)
+        const outcome = await this.#options.cancel(userText, () => this.#live(snapshot.intake_id, snapshot.revision) !== null)
         current = this.#current(snapshot.intake_id, snapshot.revision)
         if (current === null) return
         this.#options.record(current, 'intake.cancel', {code: outcome.code})
@@ -315,6 +334,10 @@ export class IntakeController {
       current.target = target
       current.workspace = target.workspace
       if (kind === 'switch') {
+        // Resolution had no side effects; the switch itself is committed only now, past the staleness re-check.
+        await this.#options.activateProject(target)
+        current = this.#current(snapshot.intake_id, snapshot.revision)
+        if (current === null) return
         this.#route(current, `code=switched：已切换到项目“${target.workspace_display_name}”，没有开始任务。`)
         return
       }

@@ -648,6 +648,8 @@ function pipelineService(options: {
   readonly ensureResponseFailure?: boolean
   readonly failReconnect?: boolean
   readonly agentExecutor?: ConstructorParameters<typeof RealtimeService>[0]['agentExecutor']
+  /** Fold the ops into the spec 08 host tools; a raw `codex__*` from the provider is then refused. */
+  readonly agent?: boolean
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
@@ -665,8 +667,9 @@ function pipelineService(options: {
     name: 'codex',
     display_name: 'Codex',
     roles: ['coding'],
-    // An agent executor (spec 08): the model reaches `run` only through the host `dispatch` tool.
-    agent: {summary: 'Codex 编程'},
+    // A plain delegate by default so the acknowledgement / continuation tests drive `codex__run` directly;
+    // the agent shape (spec 08) reaches `run` only through the host `dispatch` tool.
+    ...(options.agent === true ? {agent: {summary: 'Codex 编程'}} : {}),
     policy: {
       channel: 'codex',
       priority: 50,
@@ -1914,7 +1917,7 @@ test('codex status idle and running handoffs each trigger their same-turn contin
 /** Spec 08 host tools on the pipeline fixture: `dispatch` / `cancel` / `confirm` are the only coding tools the model sees. */
 async function dispatchTurn(
   service: RealtimeService,
-  name: 'dispatch' | 'cancel' | 'confirm',
+  name: 'dispatch' | 'cancel' | 'confirm' | `codex__${string}`,
   arguments_: Readonly<Record<string, JsonValue>>,
   responseId = 'origin',
 ): Promise<ToolAcceptance> {
@@ -1939,7 +1942,7 @@ async function dispatchTurn(
 }
 
 test('dispatch on an agent executor the intake does not coordinate is that executor run', async () => {
-  const {service} = pipelineService()
+  const {service} = pipelineService({agent: true})
   await service.connect()
   assert.equal(service.providerSchemasForTest.some(schema => (
     JSON.stringify(schema).includes('codex__run')
@@ -1956,13 +1959,39 @@ test('dispatch on an agent executor the intake does not coordinate is that execu
   await service.close()
 })
 
+test('a raw agent op from the provider is refused as unknown_tool while dispatch still runs it', async () => {
+  for (const [name, arguments_] of [
+    ['codex__run', {work_order: 'build timer', origin_ref: 'conversation:1'}],
+    ['codex__cancel', {work_id: 'w-1', origin_ref: 'conversation:1'}],
+    ['codex__status', {origin_ref: 'conversation:1'}],
+  ] as const) {
+    const {service, actions} = pipelineService({agent: true, agentExecutor: {
+      cancel: () => { throw new Error('a hidden codex__cancel must never reach the executor') },
+    }})
+    await service.connect()
+    const acceptance = await dispatchTurn(service, name, arguments_)
+    assert.equal(acceptance.accepted, false, name)
+    assert.equal(acceptance.code, 'unknown_tool', name)
+    assert.equal(acceptance.delegate_id, null, name)
+    assert.deepEqual(JSON.parse(acceptance.host_item.content), {code: 'unknown_tool', state: 'refused'}, name)
+    assert.equal(actions.filter(action => action.startsWith('create_response:delegation_acknowledgement')).length, 0, name)
+    await service.close()
+  }
+  const {service} = pipelineService({agent: true})
+  await service.connect()
+  const rewritten = await dispatchTurn(service, 'dispatch', {executor: 'codex', instruction: 'build timer', origin_ref: 'conversation:1'})
+  assert.equal(rewritten.accepted, true)
+  assert.equal(rewritten.op, 'run')
+  await service.close()
+})
+
 test('dispatch and cancel refuse an unknown executor or an empty instruction', async () => {
   for (const [index, arguments_] of [
     {executor: 'search', instruction: 'build timer', origin_ref: 'conversation:1'},
     {executor: 'codex', instruction: '   ', origin_ref: 'conversation:1'},
     {executor: 'codex', instruction: 'x'.repeat(4001), origin_ref: 'conversation:1'},
   ].entries()) {
-    const {service} = pipelineService()
+    const {service} = pipelineService({agent: true})
     await service.connect()
     const acceptance = await dispatchTurn(service, 'dispatch', arguments_, `bad-${index}`)
     assert.equal(acceptance.accepted, false, String(index))
@@ -1970,7 +1999,7 @@ test('dispatch and cancel refuse an unknown executor or an empty instruction', a
     assert.equal((JSON.parse(acceptance.host_item.content) as {code: string}).code, 'invalid_params')
     await service.close()
   }
-  const {service} = pipelineService()
+  const {service} = pipelineService({agent: true})
   await service.connect()
   const unsupported = await dispatchTurn(service, 'cancel', {executor: 'codex'}, 'cancel-unsupported')
   assert.equal(unsupported.accepted, false)
@@ -1981,7 +2010,7 @@ test('dispatch and cancel refuse an unknown executor or an empty instruction', a
 test('cancel is answered synchronously from the executor run slots', async () => {
   const calls: (string | undefined)[] = []
   const work = {work_id: 'w-1', project: 'blog', title: '暗色模式'}
-  const {service, injectedContents, actions} = pipelineService({agentExecutor: {
+  const {service, injectedContents, actions} = pipelineService({agent: true, agentExecutor: {
     cancel: instruction => { calls.push(instruction); return Promise.resolve({code: 'cancelled', work}) },
   }})
   await service.connect()
@@ -2000,13 +2029,47 @@ test('cancel is answered synchronously from the executor run slots', async () =>
   await service.close()
 })
 
-test('confirm with nothing pending is refused as no_pending_confirmation', async () => {
-  const {service} = pipelineService()
+test('cancel without a user origin is refused before the executor is asked', async () => {
+  const calls: (string | undefined)[] = []
+  const {service} = pipelineService({agent: true, agentExecutor: {
+    cancel: instruction => { calls.push(instruction); return Promise.resolve({code: 'not_running'}) },
+  }})
+  await service.connect()
+  // A response the user's turn did not ask for (their turn was already answered by r1): nothing
+  // justifies its cancel, so the same origin gate as dispatch refuses it before the executor is asked.
+  await speak(service, 'u1', '先看看')
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
+  await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: 'r1', status: 'completed', reason: ''})
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r2'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-spontaneous', item_id: 'tool-spontaneous',
+    name: 'cancel', arguments: {executor: 'codex', instruction: '停掉'}, response_id: 'r2',
+  })
+  const refused = service.toolCallAcceptances().at(-1)!.acceptance
+  assert.equal(refused.accepted, false)
+  assert.equal(refused.code, 'missing_origin_ref')
+  assert.equal(calls.length, 0, 'the executor never saw the spontaneous cancel')
+  await service.close()
+
+  // Same tool, justified by a user turn: reaches the executor.
+  const justified = pipelineService({agent: true, agentExecutor: {
+    cancel: instruction => { calls.push(instruction); return Promise.resolve({code: 'not_running'}) },
+  }})
+  await justified.service.connect()
+  const accepted = await dispatchTurn(justified.service, 'cancel', {executor: 'codex', instruction: '停掉'})
+  assert.equal(accepted.accepted, true)
+  assert.equal(accepted.code, 'not_running')
+  assert.deepEqual(calls, ['停掉'])
+  await justified.service.close()
+})
+
+test('confirm with an id nothing is waiting on is refused as unknown_confirmation', async () => {
+  const {service} = pipelineService({agent: true})
   await service.connect()
   const acceptance = await dispatchTurn(service, 'confirm', {id: 'nothing', accepted: true})
   assert.equal(acceptance.accepted, false)
-  assert.equal(acceptance.code, 'no_pending_confirmation')
-  assert.match(acceptance.host_item.content, /"code":"no_pending_confirmation"/u)
+  assert.equal(acceptance.code, 'unknown_confirmation')
+  assert.match(acceptance.host_item.content, /"code":"unknown_confirmation"/u)
   await service.close()
 })
 
@@ -5883,10 +5946,13 @@ test('Codex final-only wrong approval identity stays refused while renderer clic
   })
 
   assert.equal(executorApproval.pending, true, 'neither wrong function identity nor ASR text authorizes')
+  // Spec 08: an id that names neither confirmation is no approval decision at all, so inside the
+  // approval carrier response it is refused as any other tool would be; the approval FSM is not consulted.
   assert.equal(
-    injectedContents.filter(content => content.includes('"code":"approval_not_authorized"')).length,
+    injectedContents.filter(content => content.includes('"code":"approval_carrier_tool_refused"')).length,
     1,
   )
+  assert.equal(injectedContents.some(content => content.includes('approval_not_authorized')), false)
   assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
@@ -7076,16 +7142,19 @@ async function reserveConfirmationTurn(
   })
 }
 
-test('a later project confirmation invalidates Codex without sharing isolation occupancy', async () => {
-  const {service, controller, executorApproval, actions} = confirmationService({
+test('a later project confirmation parks the Codex approval queue instead of draining it', async () => {
+  // Spec 08 §concurrency: an approval from work A while the user confirms project B waits, undeclined.
+  const {service, controller, executorApproval, actions, clock} = confirmationService({
     withExecutorApproval: true,
   })
   assert.ok(executorApproval !== null)
   await service.connect()
 
-  const waiting = offerCodexCommand(executorApproval)
+  const head = offerCodexCommand(executorApproval)
+  const queued = offerCodexCommand(executorApproval)
   const approvalId = executorApproval.view.pending_approval_id
   assert.ok(approvalId !== undefined)
+  assert.equal(executorApproval.view.queued, 1)
   await service.flushHostItems()
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: 'codex-question-before-project',
@@ -7097,31 +7166,44 @@ test('a later project confirmation invalidates Codex without sharing isolation o
     speech_id: 'independent-project-answer',
     provider_item_id: 'independent-project-item',
   })
+  await new Promise<void>(resolve => { setImmediate(resolve) })
 
-  try {
-    assert.equal(executorApproval.pending, false, 'project authority wins the overlap fail-closed')
-    assert.deepEqual(await waiting, {decision: 'decline'})
-    await new Promise<void>(resolve => { setImmediate(resolve) })
-    assert.equal(
-      actions.filter(action => action === 'cancel:codex-question-before-project').length,
-      1,
-      'the exact Codex question response is fenced once',
-    )
-    assert.equal(
-      actions.filter(action => (
-        action === `retire:provider:approval:${approvalId}:requested`
-      )).length,
-      1,
-      'the Codex provider fact is retired once',
-    )
-    assert.deepEqual(service.confirmationItemsForTest, ['1:independent-project-item'])
-    assert.equal(service.projectConfirmationBlockingForTest, true)
-    assert.equal(controller.lifecycleId, proposal.proposal_id)
-    assert.equal(service.executorApprovalDecision(approvalId, true), false)
-  } finally {
-    if (executorApproval.pending) service.executorApprovalDecision(approvalId, false)
-    await waiting
-  }
+  // Neither approval is declined; the head only loses its voice authority while the proposal holds the floor.
+  assert.equal(executorApproval.pending, true, 'the head approval keeps waiting')
+  assert.equal(executorApproval.view.pending_approval_id, approvalId)
+  assert.equal(executorApproval.view.queued, 1, 'the queued approval keeps its place')
+  const injectedFacts = () => actions.filter(action => action === `inject:approval:${approvalId}:requested`).length
+  assert.equal(injectedFacts(), 1)
+  assert.equal(
+    actions.filter(action => action === `retire:provider:approval:${approvalId}:requested`).length,
+    1,
+    'the Codex provider fact is withdrawn once',
+  )
+  assert.equal(actions.filter(action => action === 'cancel:codex-question-before-project').length, 1)
+  assert.deepEqual(service.confirmationItemsForTest, ['1:independent-project-item'])
+  assert.equal(service.projectConfirmationBlockingForTest, true)
+  assert.equal(controller.lifecycleId, proposal.proposal_id)
+
+  // The proposal settles (renderer cancel): the head is re-armed and its spoken fact re-appears.
+  clock.advanceTo(clock.now() + 5)
+  await service.projectConfirmationDecision(proposal.proposal_id, false)
+  assert.equal(controller.pending, false)
+  await service.flushHostItems()
+  assert.equal(executorApproval.pending, true)
+  assert.equal(executorApproval.view.pending_approval_id, approvalId, 'the same head, never declined')
+  assert.equal(injectedFacts(), 2, 're-armed after the proposal settled')
+
+  // The renderer pill (controller view) answers it; the queued approval is promoted and armed in turn.
+  assert.equal(service.executorApprovalDecision(approvalId, true), true)
+  const resolution = await head
+  assert.deepEqual(resolution, {decision: 'accept'})
+  assert.equal(executorApproval.consume(resolution), 'accept')
+  const secondId = executorApproval.view.pending_approval_id
+  assert.ok(secondId !== undefined && secondId !== approvalId)
+  await service.flushHostItems()
+  assert.equal(actions.filter(action => action === `inject:approval:${secondId}:requested`).length, 1)
+  assert.equal(service.executorApprovalDecision(secondId, false), true)
+  assert.deepEqual(await queued, {decision: 'decline'})
 })
 
 async function speak(service: RealtimeService, itemId: string, text: string): Promise<void> {
@@ -9652,7 +9734,7 @@ function intakePorts(
   return {
     settings: {clarification_depth: 'balanced', plan_readback: 'silent'},
     roster: () => [], running: () => [], activeProject: () => 'alpha',
-    resolveTarget: unexpected,
+    resolveTarget: unexpected, activateProject: unexpected,
     models: {assess: unexpected, plan: unexpected, resolveCancelTarget: unexpected},
     dispatch: unexpected, steer: unexpected, cancel: unexpected,
     record: () => undefined,

@@ -722,7 +722,8 @@ export function validateEffectiveCodexConfig(
     if (config.cwd !== undefined && (
       typeof config.cwd !== 'string' || resolve(config.cwd) !== resolve(workspace)
     )) throw new TypeError('cwd')
-    const permissions = requireObject(config.permissions)
+    // Live 0.152.0 reports an unset `permissions` table as `null`, not `{}` (observed 2026-09-04).
+    const permissions = requireObject(yolo && config.permissions === null ? {} : config.permissions)
     if (yolo) {
       if (Object.keys(permissions).length !== 0 || config.sandbox_mode !== 'danger-full-access') {
         throw new TypeError('permission profiles')

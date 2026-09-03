@@ -184,6 +184,17 @@ test('Codex approval renderer schema is strict, bounded, and keeps detail local'
     expires_in_seconds: 60,
   })
   assert.equal(valid?.operation, '执行命令：npm test')
+
+  // Spec 08 §desktop: the pill names the asking work's project and session title when the wire carries it.
+  const frame = {...valid, local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'}}
+  delete frame.operation
+  const work = {work_id: 'work-1', project: 'blog', title: '暗色模式'}
+  assert.equal(parseCodexApprovalMessage({...frame, work})?.operation, 'blog / 暗色模式：执行命令：npm test')
+  for (const bad of [
+    null, [], {...work, extra: 1}, {work_id: 'work-1', project: 'blog'},
+    {...work, project: ''}, {...work, title: 't'.repeat(121)}, {...work, work_id: 1},
+  ]) assert.equal(parseCodexApprovalMessage({...frame, work: bad}), null, JSON.stringify(bad))
+
   for (const malformed of [
     {...valid, type: 'executor.approval', extra: true},
     {...valid, type: 'codex.approval'},
