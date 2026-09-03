@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {resolve} from 'node:path'
 import {test} from 'node:test'
-import * as jsonlModule from '../src/codex-jsonl.js'
+import * as jsonlModule from '../src/executors/codex/jsonl.js'
 import {
   CodexJsonlParser,
   CodexJsonlProtocolError,
   MAX_LINE_BYTES,
   MAX_STDOUT_BYTES,
-} from '../src/codex-jsonl.js'
+} from '../src/executors/codex/jsonl.js'
 
 const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/codex')
 const encoder = new TextEncoder()

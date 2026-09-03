@@ -1,20 +1,20 @@
-import type {CodexAppServerTransport} from '../codex-app-server-transport.js'
+import type {CodexAppServerTransport} from './app-server-transport.js'
 import {
   CODEX_BASE_MANIFEST,
   validateCodexRequest,
   type CodexStatusSnapshot,
-} from '../codex-contract.js'
+} from './contract.js'
 import type {
   ExecutorAdapter,
   ExecutorDispatchContext,
   ExecutorHandoff,
-} from '../causal-runtime.js'
-import type {JsonValue} from '../events.js'
+} from '../../causal-runtime.js'
+import type {JsonValue} from '../../events.js'
 import {
   CodexAdapterCore,
   failureHandoff,
   type CodexAdapterScheduler,
-} from './codex-common.js'
+} from './common.js'
 
 export const CODEX_MANIFEST = CODEX_BASE_MANIFEST
 

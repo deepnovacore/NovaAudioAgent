@@ -28,17 +28,17 @@ import type {
   TransportDeadline,
   TransportObserver,
   TransportOutcome,
-} from '../src/codex-app-server-transport.js'
-import {CodexTransportError} from '../src/codex-app-server-transport.js'
-import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
+} from '../src/executors/codex/app-server-transport.js'
+import {CodexTransportError} from '../src/executors/codex/app-server-transport.js'
+import {CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
 import {
   CodexProjectStore,
   hostManagedProjectRootForTest,
   hostProjectRootForTest,
   ProjectStateError,
   type PublicProjectView,
-} from '../src/codex-project-store.js'
-import {hostWorkspaceForTest} from '../src/codex-process-owner.js'
+} from '../src/project-store.js'
+import {hostWorkspaceForTest} from '../src/executors/codex/process-owner.js'
 import {
   CausalRuntime,
   type ExecutorDispatchContext,
@@ -49,7 +49,7 @@ import {
   ProjectCodexAdapter,
   type ProjectTransportBinding,
   type ProjectTransportFactory,
-} from '../src/executors/codex-project-live.js'
+} from '../src/executors/codex/adapter-project.js'
 import type {JsonValue} from '../src/events.js'
 import {MonotonicIdFactory} from '../src/ids.js'
 import {bindHostExecutorCapability} from '../src/host-executor-capability.js'

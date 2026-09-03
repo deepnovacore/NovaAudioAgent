@@ -1,7 +1,7 @@
 import {homedir} from 'node:os'
 import {basename, dirname, isAbsolute, join} from 'node:path'
 
-import {hostProjectRootFromConfig} from '../codex-project-store.js'
+import {hostProjectRootFromConfig} from '../project-store.js'
 import type {Settings} from '../config.js'
 import {
   WorkspaceGraphService,

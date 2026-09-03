@@ -10,43 +10,43 @@ import {
   type TransportDeadline,
   type TransportObserver,
   type TransportOutcome,
-} from './codex-app-server-transport.js'
+} from './app-server-transport.js'
 import type {
   CodexCredentialProfile,
   ResolvedCodexHostConfig,
-} from './codex-host-config.js'
-import {codexCredentialApiKey} from './codex-host-config.js'
-import type {CredentialSnapshotter} from './codex-credential-snapshot.js'
-import type {PublicProjectView} from './codex-project-store.js'
+} from './host-config.js'
+import {codexCredentialApiKey} from './host-config.js'
+import type {CredentialSnapshotter} from './credential-snapshot.js'
+import type {PublicProjectView} from '../../project-store.js'
 import {
   CodexProjectStore,
   MAX_PROJECT_WORKSPACE_NAME,
   ProjectStateError,
-} from './codex-project-store.js'
-import type {NativeFileLockAuthority} from './native-file-lock.js'
-import type {ProjectRootFileAuthority} from './project-root-file.js'
+} from '../../project-store.js'
+import type {NativeFileLockAuthority} from '../../native-file-lock.js'
+import type {ProjectRootFileAuthority} from '../../project-root-file.js'
 import {
   hostWorkspacePath,
   type CodexProcessOwnerFactory,
   type HostBinary,
   type HostCodexHome,
   type HostWorkspace,
-} from './codex-process-owner.js'
-import type {ExecutorAdapter} from './causal-runtime.js'
-import type {Clock} from './clock.js'
-import {CodexHostConfigurationError} from './codex-host-config.js'
-import {ProjectCodexAdapter} from './executors/codex-project-live.js'
-import {CodexAdapter} from './executors/codex.js'
-import {ProjectConfirmationController} from './realtime/project-confirmation.js'
+} from './process-owner.js'
+import type {ExecutorAdapter} from '../../causal-runtime.js'
+import type {Clock} from '../../clock.js'
+import {CodexHostConfigurationError} from './host-config.js'
+import {ProjectCodexAdapter} from './adapter-project.js'
+import {CodexAdapter} from './adapter.js'
+import {ProjectConfirmationController} from '../../realtime/project-confirmation.js'
 import {
   CodexApprovalController,
   type CodexApprovalView,
-} from './realtime/codex-approval.js'
+} from './approval.js'
 import {basename} from 'node:path'
 import {
   resolveCodexLaunchProfile,
   type CodexLaunchProfile,
-} from './codex-launch-profile.js'
+} from './launch-profile.js'
 
 export type CodexAssemblyMode = 'ordinary' | 'live' | 'project'
 export type CodexApprovalPolicy = 'never' | 'on-request'

@@ -5,12 +5,12 @@ import type {
   ManagedMaintenanceJournal,
   ManagedReplacementInput,
   ProjectMaintenanceSnapshot,
-} from './codex-project-store.js'
+} from './project-store.js'
 import {
   CodexProjectStore,
   hostManagedProjectRootFromConfig,
   hostProjectRootFromConfig,
-} from './codex-project-store.js'
+} from './project-store.js'
 import type {ProjectNativeHost} from './project-native-resource.js'
 
 export type ManagedWorkspaceScope = 'current_managed' | 'all_managed'

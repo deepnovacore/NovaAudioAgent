@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 
-import {admitCodexCliVersion, admitCodexVersion} from '../src/codex-version.js'
+import {admitCodexCliVersion, admitCodexVersion} from '../src/executors/codex/version.js'
 
 test('Codex version admission accepts stable and product SemVer forms', () => {
   assert.equal(admitCodexCliVersion('codex-cli 0.151.0')?.version, '0.151.0')

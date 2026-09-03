@@ -2,10 +2,10 @@ export * from './causal-runtime.js'
 export * from './assembly.js'
 export * from './calls.js'
 export * from './clock.js'
-export * from './codex-app-server-schema.js'
-export * from './codex-app-server-transport.js'
-export * from './codex-contract.js'
-export * from './codex-version.js'
+export * from './executors/codex/app-server-schema.js'
+export * from './executors/codex/app-server-transport.js'
+export * from './executors/codex/contract.js'
+export * from './executors/codex/version.js'
 export {
   CODEX_CREDENTIAL_MARKER,
   CODEX_SAVED_LOGIN_FILES,
@@ -15,13 +15,13 @@ export {
   MAX_CREDENTIAL_MARKER_BYTES,
   credentialSnapshotEnvironment,
   type CredentialSnapshot,
-} from './codex-credential-snapshot.js'
-export * from './codex-jsonl.js'
-export * from './codex-protocol.js'
-export * from './codex-turn-projection.js'
-export * from './executors/codex.js'
-export * from './executors/codex-live.js'
-export * from './executors/codex-project-live.js'
+} from './executors/codex/credential-snapshot.js'
+export * from './executors/codex/jsonl.js'
+export * from './executors/codex/protocol.js'
+export * from './executors/codex/turn-projection.js'
+export * from './executors/codex/adapter.js'
+export * from './executors/codex/adapter-live.js'
+export * from './executors/codex/adapter-project.js'
 export {
   WINDOWS_GUARDIAN_FRAME_LIMIT,
   WINDOWS_GUARDIAN_READY_TIMEOUT_MS,
@@ -29,7 +29,7 @@ export {
   WindowsGuardianControlParser,
   windowsGuardianForceFrame,
   type WindowsGuardianFrame,
-} from './codex-windows-guardian.js'
+} from './executors/codex/windows-guardian.js'
 export * from './cli.js'
 export * from './config.js'
 export * from './context-view.js'

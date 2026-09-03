@@ -3,12 +3,12 @@ import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
 import {isAbsolute} from 'node:path'
 import type {Readable, Writable} from 'node:stream'
 
-import {isWellFormed} from './python-text.js'
+import {isWellFormed} from '../../python-text.js'
 import {
   codexAppServerArgv,
   resolveCodexLaunchProfile,
   type CodexLaunchProfile,
-} from './codex-launch-profile.js'
+} from './launch-profile.js'
 
 const hostBinaryBrand: unique symbol = Symbol('HostBinary')
 const hostWorkspaceBrand: unique symbol = Symbol('HostWorkspace')

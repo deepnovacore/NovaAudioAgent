@@ -22,8 +22,8 @@ import {
   CodexHostConfigurationError,
   resolveCodexHostConfig,
   type CodexHostCatalog,
-} from '../src/codex-host-config.js'
-import {hostBinaryPath, hostWorkspacePath} from '../src/codex-process-owner.js'
+} from '../src/executors/codex/host-config.js'
+import {hostBinaryPath, hostWorkspacePath} from '../src/executors/codex/process-owner.js'
 import {loadSettings} from '../src/config.js'
 
 function hostFixture(t: TestContext): {

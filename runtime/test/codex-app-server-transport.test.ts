@@ -10,11 +10,11 @@ import * as runtime from '../src/index.js'
 import {
   OwnedCodexAppServerTransport,
   type TransportObserver,
-} from '../src/codex-app-server-transport.js'
-import {MAX_STDOUT} from '../src/codex-protocol.js'
-import {resolveCodexLaunchProfile, type CodexLaunchProfile} from '../src/codex-launch-profile.js'
+} from '../src/executors/codex/app-server-transport.js'
+import {MAX_STDOUT} from '../src/executors/codex/protocol.js'
+import {resolveCodexLaunchProfile, type CodexLaunchProfile} from '../src/executors/codex/launch-profile.js'
 import {RealClock} from '../src/clock.js'
-import {CodexApprovalController} from '../src/realtime/codex-approval.js'
+import {CodexApprovalController} from '../src/executors/codex/approval.js'
 import {
   hostBinaryForTest,
   hostCodexHomeForTest,
@@ -22,7 +22,7 @@ import {
   unconfirmedCodexProcessOwnerError,
   type CodexProcessOwnerFactory,
   type OwnedCodexProcess,
-} from '../src/codex-process-owner.js'
+} from '../src/executors/codex/process-owner.js'
 import {FakeAppServerOwnerFactory} from './fixtures/codex/fake-app-server-owner.js'
 import {supportedSchemaBundle} from './fixtures/codex/supported-schema-bundle.js'
 

@@ -3,9 +3,9 @@
 import {randomUUID} from 'node:crypto'
 
 import {loadSettings} from './config.js'
-import {createCodexAssemblyResource} from './codex-factory.js'
-import {resolveCodexHostConfig} from './codex-host-config.js'
-import {createProductionCodexHost} from './codex-production-host.js'
+import {createCodexAssemblyResource} from './executors/codex/factory.js'
+import {resolveCodexHostConfig} from './executors/codex/host-config.js'
+import {createProductionCodexHost} from './executors/codex/production-host.js'
 import {
   buildDesktopRealtimeComposition,
   runDesktopEntryWithStopSources,
@@ -20,7 +20,7 @@ import {
   type BuildProductionRealtimeAssemblyOptions,
 } from './production-realtime-assembly.js'
 import {createRealtimeTelemetry} from './realtime/telemetry.js'
-import type {CodexApprovalView} from './realtime/codex-approval.js'
+import type {CodexApprovalView} from './executors/codex/approval.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource}
 

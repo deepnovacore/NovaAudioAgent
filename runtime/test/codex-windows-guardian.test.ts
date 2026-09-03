@@ -13,7 +13,7 @@ import {
   hostBinaryForTest,
   hostCodexHomeForTest,
   hostWorkspaceForTest,
-} from '../src/codex-process-owner.js'
+} from '../src/executors/codex/process-owner.js'
 import {
   CodexWindowsGuardianError,
   WINDOWS_GUARDIAN_FRAME_LIMIT,
@@ -21,7 +21,7 @@ import {
   loadWindowsGuardianFactoryFromResources,
   windowsGuardianForceFrame,
   windowsGuardianHelperForTest,
-} from '../src/codex-windows-guardian.js'
+} from '../src/executors/codex/windows-guardian.js'
 
 const encoder = new TextEncoder()
 

@@ -15,7 +15,7 @@ import {
   sanitizeCodexPreflightReport,
   sanitizePublicPreflightCode,
   validateCodexRequest,
-} from '../src/codex-contract.js'
+} from '../src/executors/codex/contract.js'
 import {compileToolSchema} from '../src/tool-schema.js'
 import * as runtimeIndex from '../src/index.js'
 

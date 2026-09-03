@@ -21,7 +21,7 @@ import {
   hostCodexHomeForTest,
   hostWorkspaceForTest,
   hostWorkspaceFromConfig,
-} from '../src/codex-process-owner.js'
+} from '../src/executors/codex/process-owner.js'
 import {
   FAKE_APP_SERVER_PATH,
   FakeAppServerOwnerFactory,

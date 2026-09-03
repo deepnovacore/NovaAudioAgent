@@ -15,9 +15,9 @@ import {
   runBoundedCodexCommand,
   type BoundedCodexCommand,
   type BoundedCodexCommandResult,
-} from '../src/codex-production-host.js'
-import {hostBinaryForTest, hostCodexHomeForTest, hostWorkspaceForTest} from '../src/codex-process-owner.js'
-import {validateCodexSchemaBundle} from '../src/codex-app-server-schema.js'
+} from '../src/executors/codex/production-host.js'
+import {hostBinaryForTest, hostCodexHomeForTest, hostWorkspaceForTest} from '../src/executors/codex/process-owner.js'
+import {validateCodexSchemaBundle} from '../src/executors/codex/app-server-schema.js'
 import {supportedSchemaBundle} from './fixtures/codex/supported-schema-bundle.js'
 import {loadSettings} from '../src/config.js'
 

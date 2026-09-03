@@ -1,12 +1,12 @@
 import {createHash} from 'node:crypto'
-import type {ExecutorProgress} from './causal-runtime.js'
-import type {JsonValue} from './events.js'
-import {snapshotJsonRecord} from './codex-safe-json.js'
-import {validProgressSummary} from './events.js'
-import {hasOtherCategory as hasPinnedOtherCategory} from './unicode-tables.js'
-import {normalizeNfcPinned} from './unicode-normalize.js'
-import {isPythonSpace, isWellFormed, stripLikePython} from './python-text.js'
-import {executorManifestSchema, type ExecutorManifest, type OpSpec} from './ports.js'
+import type {ExecutorProgress} from '../../causal-runtime.js'
+import type {JsonValue} from '../../events.js'
+import {snapshotJsonRecord} from './safe-json.js'
+import {validProgressSummary} from '../../events.js'
+import {hasOtherCategory as hasPinnedOtherCategory} from '../../unicode-tables.js'
+import {normalizeNfcPinned} from '../../unicode-normalize.js'
+import {isPythonSpace, isWellFormed, stripLikePython} from '../../python-text.js'
+import {executorManifestSchema, type ExecutorManifest, type OpSpec} from '../../ports.js'
 
 export const INTERNAL_CODEX_RUN_DEADLINE = 540
 export const MAX_CODEX_EVENTS = 16_384

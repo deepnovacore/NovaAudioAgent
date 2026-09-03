@@ -8,7 +8,7 @@ import type {
   CodexProcessOwnerFactory,
   CodexProcessSpawnControl,
   OwnedCodexProcess,
-} from '../../../src/codex-process-owner.js'
+} from '../../../src/executors/codex/process-owner.js'
 
 export const FAKE_APP_SERVER_PATH = fileURLToPath(new URL(
   '../../../../test/fixtures/codex/fake-app-server.mjs',

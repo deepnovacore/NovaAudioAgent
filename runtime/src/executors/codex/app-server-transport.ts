@@ -3,19 +3,19 @@ import {Readable, Writable} from 'node:stream'
 import {
   validateCodexSchemaBundle,
   validateEffectiveCodexConfig,
-} from './codex-app-server-schema.js'
-import {sanitizeCodexPreflightReport} from './codex-contract.js'
-import {admitCodexVersion} from './codex-version.js'
+} from './app-server-schema.js'
+import {sanitizeCodexPreflightReport} from './contract.js'
+import {admitCodexVersion} from './version.js'
 import type {
   CredentialSnapshot,
   CredentialSnapshotter,
-} from './codex-credential-snapshot.js'
+} from './credential-snapshot.js'
 import {
   AppServerRequestRejected,
   CodexProtocolError,
   JsonRpcConnection,
   MAX_STDOUT,
-} from './codex-protocol.js'
+} from './protocol.js'
 import {
   createApprovedCodexSpawnSpec,
   hostCodexHomeValue,
@@ -26,23 +26,23 @@ import {
   type HostCodexHome,
   type HostWorkspace,
   type OwnedCodexProcess,
-} from './codex-process-owner.js'
+} from './process-owner.js'
 import {
   resolveCodexLaunchProfile,
   type CodexLaunchProfile,
-} from './codex-launch-profile.js'
-import {snapshotJsonRecord} from './codex-safe-json.js'
-import {AppServerTurnProjection, type TurnCompletion} from './codex-turn-projection.js'
-import type {ExecutorProgress} from './causal-runtime.js'
-import type {Clock} from './clock.js'
-import {RealClock} from './clock.js'
-import {stripLikePython, isWellFormed} from './python-text.js'
-import {normalizeNfcPinned} from './unicode-normalize.js'
-import {isOtherCategory} from './unicode-tables.js'
+} from './launch-profile.js'
+import {snapshotJsonRecord} from './safe-json.js'
+import {AppServerTurnProjection, type TurnCompletion} from './turn-projection.js'
+import type {ExecutorProgress} from '../../causal-runtime.js'
+import type {Clock} from '../../clock.js'
+import {RealClock} from '../../clock.js'
+import {stripLikePython, isWellFormed} from '../../python-text.js'
+import {normalizeNfcPinned} from '../../unicode-normalize.js'
+import {isOtherCategory} from '../../unicode-tables.js'
 import {
   CodexApprovalController,
   routeCodexApprovalServerRequest,
-} from './realtime/codex-approval.js'
+} from './approval.js'
 
 export const CODEX_PREFLIGHT_LIMIT_MS = 20_000
 export const CODEX_INTERRUPT_GRACE_MS = 2_000

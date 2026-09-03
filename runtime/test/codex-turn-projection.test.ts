@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import type {ExecutorProgress} from '../src/causal-runtime.js'
 import {VirtualClock, type Clock} from '../src/clock.js'
-import {CodexProtocolError, MAX_FINAL_TEXT_INPUT, MAX_INTERNAL_ACTIVITY} from '../src/codex-protocol.js'
-import {AppServerTurnProjection} from '../src/codex-turn-projection.js'
-import {resolveCodexLaunchProfile} from '../src/codex-launch-profile.js'
+import {CodexProtocolError, MAX_FINAL_TEXT_INPUT, MAX_INTERNAL_ACTIVITY} from '../src/executors/codex/protocol.js'
+import {AppServerTurnProjection} from '../src/executors/codex/turn-projection.js'
+import {resolveCodexLaunchProfile} from '../src/executors/codex/launch-profile.js'
 
 function ephemeralThread(
   id = 'PRIVATE-THREAD',

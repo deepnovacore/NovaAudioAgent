@@ -9,8 +9,8 @@ import type {
   TransportDeadline,
   TransportObserver,
   TransportOutcome,
-} from '../src/codex-app-server-transport.js'
-import {CODEX_BASE_MANIFEST} from '../src/codex-contract.js'
+} from '../src/executors/codex/app-server-transport.js'
+import {CODEX_BASE_MANIFEST} from '../src/executors/codex/contract.js'
 import type {
   ExecutorAdapter,
   ExecutorDispatchContext,
@@ -18,8 +18,8 @@ import type {
 } from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
 import type {JsonValue} from '../src/events.js'
-import {CodexTransportError} from '../src/codex-app-server-transport.js'
-import {CodexAdapter, CODEX_MANIFEST} from '../src/executors/codex.js'
+import {CodexTransportError} from '../src/executors/codex/app-server-transport.js'
+import {CodexAdapter, CODEX_MANIFEST} from '../src/executors/codex/adapter.js'
 import {delegateSchema} from '../src/ports.js'
 import {compileToolSchema} from '../src/tool-schema.js'
 import * as runtimeIndex from '../src/index.js'

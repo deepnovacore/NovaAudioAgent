@@ -20,7 +20,7 @@ import { VirtualClock } from '../src/clock.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
-} from '../src/codex-contract.js'
+} from '../src/executors/codex/contract.js'
 import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
@@ -42,7 +42,7 @@ import {
   type ConfirmedProjectOperation,
   type ProjectConfirmationView,
 } from '../src/realtime/project-confirmation.js'
-import {CodexApprovalController, type CodexApprovalResolution} from '../src/realtime/codex-approval.js'
+import {CodexApprovalController, type CodexApprovalResolution} from '../src/executors/codex/approval.js'
 import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
 

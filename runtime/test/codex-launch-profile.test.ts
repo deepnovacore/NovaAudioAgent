@@ -4,7 +4,7 @@ import {test} from 'node:test'
 import {
   codexAppServerArgv,
   resolveCodexLaunchProfile,
-} from '../src/codex-launch-profile.js'
+} from '../src/executors/codex/launch-profile.js'
 
 test('launch profiles resolve ask across every platform without deriving policy from it', () => {
   for (const platform of ['darwin', 'win32', 'linux'] as const) {

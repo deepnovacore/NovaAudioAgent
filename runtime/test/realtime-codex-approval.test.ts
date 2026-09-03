@@ -7,7 +7,7 @@ import {
   CodexApprovalController,
   type CodexApprovalResolution,
   type CodexApprovalView,
-} from '../src/realtime/codex-approval.js'
+} from '../src/executors/codex/approval.js'
 
 function controller(
   clock = new VirtualClock(10),

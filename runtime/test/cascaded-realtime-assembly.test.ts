@@ -6,7 +6,7 @@ import {test} from 'node:test'
 import {AssemblyError} from '../src/assembly.js'
 import type {ExecutorAdapter, ExecutorDispatchContext} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
-import type {CodexAssemblyResource} from '../src/codex-factory.js'
+import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
 import {
   ConfigurationError,
   loadSettings,

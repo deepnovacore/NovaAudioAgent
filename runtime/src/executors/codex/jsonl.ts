@@ -1,4 +1,4 @@
-import {CodexProtocolError, MAX_INTERNAL_ACTIVITY} from './codex-protocol.js'
+import {CodexProtocolError, MAX_INTERNAL_ACTIVITY} from './protocol.js'
 
 export const MAX_LINE_BYTES = 64 * 1024
 export const MAX_STDOUT_BYTES = 1024 * 1024

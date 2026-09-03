@@ -14,26 +14,26 @@ import {
   buildRealtimeAssembly,
 } from '../src/realtime-assembly.js'
 import { VirtualClock } from '../src/clock.js'
-import {CodexApprovalController} from '../src/realtime/codex-approval.js'
-import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
-import type {CodexAssemblyResource} from '../src/codex-factory.js'
+import {CodexApprovalController} from '../src/executors/codex/approval.js'
+import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
+import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
 import {
   ProjectStateError,
   type CodexProjectStore,
   type PublicProjectContext,
   type WorkspaceRecord,
-} from '../src/codex-project-store.js'
+} from '../src/project-store.js'
 import { settingsSchema } from '../src/config.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
 import {
   ProjectCodexAdapter,
   type ProjectTransportBinding,
   type ProjectTransportFactory,
-} from '../src/executors/codex-project-live.js'
+} from '../src/executors/codex/adapter-project.js'
 import type {
   CommittedWorkspaceEvent,
   TerminalWorkOrderEvent,
-} from '../src/executors/codex-project-live.js'
+} from '../src/executors/codex/adapter-project.js'
 import type {
   RealtimeWorkspaceGraph,
 } from '../src/realtime-assembly.js'

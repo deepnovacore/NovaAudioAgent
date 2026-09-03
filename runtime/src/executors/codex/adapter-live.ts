@@ -2,20 +2,20 @@ import type {
   CodexAppServerTransport,
   SafePreflightReport,
   SteerTransportResult,
-} from '../codex-app-server-transport.js'
+} from './app-server-transport.js'
 import {
   CODEX_LIVE_MANIFEST,
   sanitizeCodexPreflightReport,
   validateCodexRequest,
   type CodexStatusSnapshot,
-} from '../codex-contract.js'
-import {snapshotJsonRecord} from '../codex-safe-json.js'
+} from './contract.js'
+import {snapshotJsonRecord} from './safe-json.js'
 import type {
   ExecutorAdapter,
   ExecutorDispatchContext,
   ExecutorHandoff,
-} from '../causal-runtime.js'
-import type {JsonValue} from '../events.js'
+} from '../../causal-runtime.js'
+import type {JsonValue} from '../../events.js'
 import {
   AdapterDeadlineError,
   CodexAdapterClosedError,
@@ -28,7 +28,7 @@ import {
   lifecycleClock,
   readWrittenBoundary,
   type CodexAdapterScheduler,
-} from './codex-common.js'
+} from './common.js'
 
 const PREWARM_DEADLINE_SECONDS = 20
 const STEER_DEADLINE_SECONDS = 30

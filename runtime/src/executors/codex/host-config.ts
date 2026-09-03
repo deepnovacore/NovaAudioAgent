@@ -12,16 +12,16 @@ import {basename, dirname, isAbsolute, join, resolve} from 'node:path'
 import {
   hostBinaryFromConfig,
   hostWorkspaceFromConfig,
-} from './codex-process-owner.js'
-import type {HostBinary, HostWorkspace} from './codex-process-owner.js'
+} from './process-owner.js'
+import type {HostBinary, HostWorkspace} from './process-owner.js'
 import {
   hostManagedProjectRootFromConfig,
   hostProjectRootFromConfig,
   type HostManagedProjectRoot,
   type HostProjectRoot,
-} from './codex-project-store.js'
-import type {Settings} from './config.js'
-import {isWellFormed, stripLikePython} from './python-text.js'
+} from '../../project-store.js'
+import type {Settings} from '../../config.js'
+import {isWellFormed, stripLikePython} from '../../python-text.js'
 
 const resolvedCodexHostConfigBrand: unique symbol = Symbol('ResolvedCodexHostConfig')
 const codexCredentialProfileBrand: unique symbol = Symbol('CodexCredentialProfile')

@@ -25,7 +25,7 @@
 
 import {createHash, randomUUID} from 'node:crypto'
 import {canonicalJson} from '../canonical-json.js'
-import {validateCodexRequest} from '../codex-contract.js'
+import {validateCodexRequest} from '../executors/codex/contract.js'
 import {IntakeController, isIntakeAction, type IntakeOptions, type IntakeSession} from './intake.js'
 import type { Clock } from '../clock.js'
 import { validProgressSummary, type EventRecord, type JsonValue } from '../events.js'
@@ -41,7 +41,7 @@ import type {
   ProjectConfirmationController,
   ProjectConfirmationView,
 } from './project-confirmation.js'
-import type {CodexApprovalController, CodexApprovalView} from './codex-approval.js'
+import type {CodexApprovalController, CodexApprovalView} from '../executors/codex/approval.js'
 import {ConfirmationTurnIsolation} from './confirmation-turn-isolation.js'
 import type {
   HostContextItem,

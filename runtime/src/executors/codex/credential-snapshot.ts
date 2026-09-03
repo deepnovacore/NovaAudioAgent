@@ -15,8 +15,8 @@ import {
   hostCodexHomeValue,
   refreshEphemeralCodexHomeIdentity,
   type HostCodexHome,
-} from './codex-process-owner.js'
-import {isWellFormed} from './python-text.js'
+} from './process-owner.js'
+import {isWellFormed} from '../../python-text.js'
 
 export const MAX_CREDENTIAL_BYTES = 1024 * 1024
 export const MAX_CREDENTIAL_MARKER_BYTES = 4096
@@ -297,7 +297,7 @@ export async function prepareCodexCredentialSnapshotForTest(
   const destinationHome = requireString(input.destinationHome)
   const environment = requireEnvironmentInput(input.environment)
   const apiKey = input.apiKey === null ? null : requireString(input.apiKey)
-  const {hostCodexHomeForTest} = await import('./codex-process-owner.js')
+  const {hostCodexHomeForTest} = await import('./process-owner.js')
   const home = hostCodexHomeForTest(destinationHome, {ephemeral: true})
   const snapshotter = new CredentialSnapshotter({sourceHome, environment})
   const snapshot = await snapshotter.prepare({codexHome: home, apiKey})

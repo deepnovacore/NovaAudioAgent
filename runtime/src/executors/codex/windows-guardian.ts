@@ -5,7 +5,7 @@ import {closeSync, fstatSync, openSync, readSync, realpathSync, statSync} from '
 import {isAbsolute, resolve} from 'node:path'
 import type {Readable, Writable} from 'node:stream'
 
-import {snapshotJsonRecord} from './codex-safe-json.js'
+import {snapshotJsonRecord} from './safe-json.js'
 import {
   CodexProcessOwnerError,
   approvedCodexSpawnDetails,
@@ -13,7 +13,7 @@ import {
   type CodexProcessOwnerFactory,
   type CodexProcessSpawnControl,
   type OwnedCodexProcess,
-} from './codex-process-owner.js'
+} from './process-owner.js'
 
 export const WINDOWS_GUARDIAN_FRAME_LIMIT = 4096
 export const WINDOWS_GUARDIAN_READY_TIMEOUT_MS = 5000

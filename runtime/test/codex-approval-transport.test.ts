@@ -15,7 +15,7 @@ import {VirtualClock} from '../src/clock.js'
 import {
   CodexApprovalController,
   routeCodexApprovalServerRequest,
-} from '../src/realtime/codex-approval.js'
+} from '../src/executors/codex/approval.js'
 
 function fixture(t: TestContext) {
   const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'nova-codex-approval-route-')))

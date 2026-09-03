@@ -10,11 +10,11 @@ import type {
   TransportDeadline,
   TransportObserver,
   TransportOutcome,
-} from '../src/codex-app-server-transport.js'
-import {CODEX_LIVE_MANIFEST} from '../src/codex-contract.js'
+} from '../src/executors/codex/app-server-transport.js'
+import {CODEX_LIVE_MANIFEST} from '../src/executors/codex/contract.js'
 import type {ExecutorDispatchContext, ExecutorProgress} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
-import {CodexLiveAdapter} from '../src/executors/codex-live.js'
+import {CodexLiveAdapter} from '../src/executors/codex/adapter-live.js'
 import type {JsonValue} from '../src/events.js'
 import {delegateSchema} from '../src/ports.js'
 import {compileToolSchema} from '../src/tool-schema.js'

@@ -11,7 +11,7 @@ import {
   type VolcengineTtsConfig,
 } from './cascaded-realtime-config.js'
 import {RealClock, type Clock} from './clock.js'
-import type {CodexAssemblyResource} from './codex-factory.js'
+import type {CodexAssemblyResource} from './executors/codex/factory.js'
 import {
   resolveSupportModelConnection,
   type CascadedAsrProviderName,

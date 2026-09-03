@@ -41,7 +41,7 @@ import {
 import type { PlaybackFrame } from './playback.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
-import type {CodexApprovalView} from './realtime/codex-approval.js'
+import type {CodexApprovalView} from './executors/codex/approval.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 import {executorProgressSchema, executorResultSchema, type ExecutorProgress, type ExecutorResult, type ProgressMode} from './desktop-progress.js'

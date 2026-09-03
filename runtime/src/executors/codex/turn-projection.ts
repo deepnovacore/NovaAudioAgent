@@ -1,17 +1,17 @@
 import {resolve} from 'node:path'
-import type {ExecutorProgress} from './causal-runtime.js'
-import type {Clock} from './clock.js'
-import {snapshotJsonRecord} from './codex-safe-json.js'
-import type {CodexLaunchProfile} from './codex-launch-profile.js'
-import {PROGRESS_SUMMARY_LIMIT, validProgressSummary} from './events.js'
-import {isPythonSpace} from './python-text.js'
+import type {ExecutorProgress} from '../../causal-runtime.js'
+import type {Clock} from '../../clock.js'
+import {snapshotJsonRecord} from './safe-json.js'
+import type {CodexLaunchProfile} from './launch-profile.js'
+import {PROGRESS_SUMMARY_LIMIT, validProgressSummary} from '../../events.js'
+import {isPythonSpace} from '../../python-text.js'
 import {
   CodexProtocolError,
   MAX_FINAL_TEXT_INPUT,
   MAX_INTERNAL_ACTIVITY,
   SUMMARY_PROSE_LIMIT,
   WORKING_INTERVAL,
-} from './codex-protocol.js'
+} from './protocol.js'
 
 export interface TurnCompletion {
   readonly status: 'completed' | 'failed'

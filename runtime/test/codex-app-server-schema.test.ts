@@ -7,10 +7,10 @@ import {
   APP_SERVER_METHOD_SCHEMAS,
   validateCodexSchemaBundle,
   validateEffectiveCodexConfig,
-} from '../src/codex-app-server-schema.js'
-import {CodexProtocolError} from '../src/codex-protocol.js'
+} from '../src/executors/codex/app-server-schema.js'
+import {CodexProtocolError} from '../src/executors/codex/protocol.js'
 import {approvalSchemaBundle} from './fixtures/codex/approval-schema-bundle.js'
-import {resolveCodexLaunchProfile} from '../src/codex-launch-profile.js'
+import {resolveCodexLaunchProfile} from '../src/executors/codex/launch-profile.js'
 
 type Bundle = Record<string, unknown>
 

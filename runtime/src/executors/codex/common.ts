@@ -5,8 +5,8 @@ import type {
   CodexTransportCode,
   TransportDeadline,
   TransportOutcome,
-} from '../codex-app-server-transport.js'
-import {CodexTransportError} from '../codex-app-server-transport.js'
+} from './app-server-transport.js'
+import {CodexTransportError} from './app-server-transport.js'
 import {
   INTERNAL_CODEX_RUN_DEADLINE,
   MAX_CODEX_EVIDENCE_COUNTER,
@@ -16,16 +16,16 @@ import {
   sanitizeCodexEvidence,
   sanitizeCodexPreflightReport,
   type CodexStatusSnapshot,
-} from '../codex-contract.js'
-import {snapshotJsonRecord} from '../codex-safe-json.js'
+} from './contract.js'
+import {snapshotJsonRecord} from './safe-json.js'
 import type {
   ExecutorDispatchContext,
   ExecutorHandoff,
   ExecutorProgress,
-} from '../causal-runtime.js'
-import type {Clock} from '../clock.js'
-import {RealClock} from '../clock.js'
-import {jsonValueSchema, validProgressSummary, type JsonValue} from '../events.js'
+} from '../../causal-runtime.js'
+import type {Clock} from '../../clock.js'
+import {RealClock} from '../../clock.js'
+import {jsonValueSchema, validProgressSummary, type JsonValue} from '../../events.js'
 
 const TRANSPORT_CODES: ReadonlySet<string> = new Set<CodexTransportCode>([
   'completed',

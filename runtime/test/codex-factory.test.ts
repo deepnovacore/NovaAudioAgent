@@ -23,22 +23,22 @@ import type {
   SafePreflightReport,
   SteerTransportResult,
   TransportOutcome,
-} from '../src/codex-app-server-transport.js'
+} from '../src/executors/codex/app-server-transport.js'
 import {
   createCodexAssemblyResource,
   OwnedCodexBackendTransportFactory,
   type CodexBackendTransportFactory,
   type CodexTransportBinding,
-} from '../src/codex-factory.js'
-import {CredentialSnapshotter} from '../src/codex-credential-snapshot.js'
-import {hostCodexHomeForTest} from '../src/codex-process-owner.js'
-import {resolveCodexHostConfig, type CodexHostCatalog} from '../src/codex-host-config.js'
-import {CodexHostConfigurationError} from '../src/codex-host-config.js'
+} from '../src/executors/codex/factory.js'
+import {CredentialSnapshotter} from '../src/executors/codex/credential-snapshot.js'
+import {hostCodexHomeForTest} from '../src/executors/codex/process-owner.js'
+import {resolveCodexHostConfig, type CodexHostCatalog} from '../src/executors/codex/host-config.js'
+import {CodexHostConfigurationError} from '../src/executors/codex/host-config.js'
 import {VirtualClock} from '../src/clock.js'
 import {loadSettings} from '../src/config.js'
-import type {ProjectCodexAdapter} from '../src/executors/codex-project-live.js'
+import type {ProjectCodexAdapter} from '../src/executors/codex/adapter-project.js'
 import type {NativeFileLockAuthority, NativeFileLockResult} from '../src/native-file-lock.js'
-import type {PublicProjectView} from '../src/codex-project-store.js'
+import type {PublicProjectView} from '../src/project-store.js'
 import type {
   ProjectFileIdentity,
   ProjectRootFileAuthority,

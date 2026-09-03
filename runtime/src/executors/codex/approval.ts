@@ -2,9 +2,9 @@ import {lstatSync, realpathSync} from 'node:fs'
 import {isAbsolute, relative, resolve, sep} from 'node:path'
 import {z} from 'zod'
 
-import type {Clock} from '../clock.js'
-import {snapshotJsonRecord} from '../codex-safe-json.js'
-import {codePointLengthLikePython, isWellFormed, stripLikePython} from '../python-text.js'
+import type {Clock} from '../../clock.js'
+import {snapshotJsonRecord} from './safe-json.js'
+import {codePointLengthLikePython, isWellFormed, stripLikePython} from '../../python-text.js'
 
 export const CODEX_APPROVAL_TTL_SECONDS = 60
 const CODEX_APPROVAL_ID_LIMIT = 128

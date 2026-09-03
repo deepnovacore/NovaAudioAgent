@@ -7,13 +7,13 @@ import type {
   TransportDeadline,
   TransportObserver,
   TransportOutcome,
-} from '../codex-app-server-transport.js'
-import {CodexTransportError} from '../codex-app-server-transport.js'
+} from './app-server-transport.js'
+import {CodexTransportError} from './app-server-transport.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
   validateCodexRequest,
-} from '../codex-contract.js'
+} from './contract.js'
 import {
   ProjectStateError,
   type CodexProjectStore,
@@ -23,33 +23,33 @@ import {
   type SessionResumeRollback,
   type SessionStartRollback,
   type WorkspaceRecord,
-} from '../codex-project-store.js'
-import type {HostCodexHome, HostWorkspace} from '../codex-process-owner.js'
+} from '../../project-store.js'
+import type {HostCodexHome, HostWorkspace} from './process-owner.js'
 import type {
   ExecutorAdapter,
   ExecutorDispatchContext,
   ExecutorHandoff,
-} from '../causal-runtime.js'
-import type {JsonValue} from '../events.js'
-import {consumeHostExecutorCapability} from '../host-executor-capability.js'
-import {USER_PRIORITY} from '../memory.js'
-import type {DelegateRequest} from '../ports.js'
-import type {CodexApprovalController} from '../realtime/codex-approval.js'
-import type {IntakeTarget} from '../realtime/intake.js'
+} from '../../causal-runtime.js'
+import type {JsonValue} from '../../events.js'
+import {consumeHostExecutorCapability} from '../../host-executor-capability.js'
+import {USER_PRIORITY} from '../../memory.js'
+import type {DelegateRequest} from '../../ports.js'
+import type {CodexApprovalController} from './approval.js'
+import type {IntakeTarget} from '../../realtime/intake.js'
 import type {
   ConfirmedProjectOperation,
   ProjectConfirmationController,
-} from '../realtime/project-confirmation.js'
-import type {WakeReason} from '../slots.js'
-import {compareCodePoints} from '../canonical-json.js'
-import {CodexLiveAdapter} from './codex-live.js'
+} from '../../realtime/project-confirmation.js'
+import type {WakeReason} from '../../slots.js'
+import {compareCodePoints} from '../../canonical-json.js'
+import {CodexLiveAdapter} from './adapter-live.js'
 import {
   createCodexAdapterSharedState,
   failureHandoff,
   failureStage,
   type CodexAdapterSharedState,
   type ValidatedCodexDisposition,
-} from './codex-common.js'
+} from './common.js'
 
 const MAX_PUBLIC_LISTING = 20
 

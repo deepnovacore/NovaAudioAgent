@@ -4,17 +4,17 @@ import {tmpdir} from 'node:os'
 import {join, resolve} from 'node:path'
 import { test } from 'node:test'
 import {AssemblyError, buildAssembly} from '../src/assembly.js'
-import type {CodexAssemblyResource} from '../src/codex-factory.js'
+import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
-} from '../src/codex-contract.js'
+} from '../src/executors/codex/contract.js'
 import type {
   CodexAppServerTransport,
   SafePreflightReport,
   SteerTransportResult,
   TransportOutcome,
-} from '../src/codex-app-server-transport.js'
+} from '../src/executors/codex/app-server-transport.js'
 import { VirtualClock } from '../src/clock.js'
 import { ConfigurationError, loadSettings, type Settings } from '../src/config.js'
 import {buildDesktopRealtimeComposition} from '../src/desktop-service.js'
@@ -43,9 +43,9 @@ import {
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 import type { CompiledTools } from '../src/tool-schema.js'
-import {CodexLiveAdapter} from '../src/executors/codex-live.js'
+import {CodexLiveAdapter} from '../src/executors/codex/adapter-live.js'
 import {ProjectConfirmationController} from '../src/realtime/project-confirmation.js'
-import {CodexApprovalController} from '../src/realtime/codex-approval.js'
+import {CodexApprovalController} from '../src/executors/codex/approval.js'
 
 async function settleNamed<T>(
   name: string,

@@ -17,7 +17,7 @@
 
 import { createHmac, randomBytes } from 'node:crypto'
 import { canonicalJson } from '../canonical-json.js'
-import {validateCodexRequest} from '../codex-contract.js'
+import {validateCodexRequest} from '../executors/codex/contract.js'
 import type { JsonValue } from '../events.js'
 import { USER_PRIORITY } from '../memory.js'
 import type { DelegateRequest, UpdateSpec } from '../ports.js'

@@ -2,7 +2,7 @@ import {intakeModels} from './realtime/intake-model.js'
 /** Production Qwen composition above the provider-neutral realtime owner. */
 
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
-import type {CodexAssemblyResource} from './codex-factory.js'
+import type {CodexAssemblyResource} from './executors/codex/factory.js'
 import { RealClock } from './clock.js'
 import {
   DASHSCOPE_COMPATIBLE_BASE_URL,

@@ -9,11 +9,11 @@ import type {
   SteerTransportResult,
   TransportObserver,
   TransportOutcome,
-} from '../src/codex-app-server-transport.js'
+} from '../src/executors/codex/app-server-transport.js'
 import {RealClock} from '../src/clock.js'
 import {settingsSchema} from '../src/config.js'
-import {CodexAdapter} from '../src/executors/codex.js'
-import {ProjectCodexAdapter} from '../src/executors/codex-project-live.js'
+import {CodexAdapter} from '../src/executors/codex/adapter.js'
+import {ProjectCodexAdapter} from '../src/executors/codex/adapter-project.js'
 import type {EventRecord} from '../src/events.js'
 import type {SearchTransport} from '../src/executors/search.js'
 import type {

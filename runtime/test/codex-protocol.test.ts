@@ -7,7 +7,7 @@ import {
   MAX_JSONL_LINE,
   MAX_REQUEST,
   MAX_STDOUT,
-} from '../src/codex-protocol.js'
+} from '../src/executors/codex/protocol.js'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()

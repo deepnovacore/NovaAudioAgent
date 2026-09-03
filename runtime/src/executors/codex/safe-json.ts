@@ -1,4 +1,4 @@
-import {isWellFormed} from './python-text.js'
+import {isWellFormed} from '../../python-text.js'
 
 export function snapshotJsonValue(value: unknown): unknown {
   return snapshot(value, new Set<object>())

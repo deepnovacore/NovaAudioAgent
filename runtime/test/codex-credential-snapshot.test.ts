@@ -12,8 +12,8 @@ import {
   prepareCodexCredentialSnapshotForTest,
   removeEphemeralHomeWithRaceHookForTest,
   splitCredentialAtomicTargetForTest,
-} from '../src/codex-credential-snapshot.js'
-import {hostCodexHomeForTest} from '../src/codex-process-owner.js'
+} from '../src/executors/codex/credential-snapshot.js'
+import {hostCodexHomeForTest} from '../src/executors/codex/process-owner.js'
 
 test('saved login is copied privately and the child environment is an exact allowlist', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-credential-'))

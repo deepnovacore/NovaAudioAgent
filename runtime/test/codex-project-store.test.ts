@@ -39,12 +39,12 @@ import {
   hostProjectRootForTest,
   normalizeProjectSessionTitle,
   normalizeProjectWorkspaceName,
-} from '../src/codex-project-store.js'
+} from '../src/project-store.js'
 import {
   hostCodexHomeValue,
   hostWorkspaceForTest,
   hostWorkspacePath,
-} from '../src/codex-process-owner.js'
+} from '../src/executors/codex/process-owner.js'
 import {ManagedWorkspaceMaintenanceService} from '../src/managed-workspace-maintenance.js'
 import {
   unsupportedNativeFileLocks,
@@ -814,7 +814,7 @@ test('project names use Python NFKC, whitespace collapse, and full casefold', ()
 
 test('managed workspace slug classification never consults ambient ICU Unicode categories', async () => {
   const source = await readFile(
-    join(import.meta.dirname, '../../src/codex-project-store.ts'),
+    join(import.meta.dirname, '../../src/project-store.ts'),
     'utf8',
   )
   assert.equal(source.includes('/[\\p{L}\\p{N}]/u'), false)
@@ -822,7 +822,7 @@ test('managed workspace slug classification never consults ambient ICU Unicode c
 
 test('durability and native locking source retain the audited no-fallback primitives', async () => {
   const storeSource = await readFile(
-    join(import.meta.dirname, '../../src/codex-project-store.ts'),
+    join(import.meta.dirname, '../../src/project-store.ts'),
     'utf8',
   )
   const nativeSource = await readFile(

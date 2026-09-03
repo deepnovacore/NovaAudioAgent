@@ -1,4 +1,4 @@
-import {snapshotJsonValue} from './codex-safe-json.js'
+import {snapshotJsonValue} from './safe-json.js'
 
 export const MAX_JSONL_LINE = 256 * 1024
 export const MAX_STDOUT = 2 * 1024 * 1024

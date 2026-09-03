@@ -24,37 +24,37 @@ import {
   type CodexAppServerLaunchConfig,
   type CodexHostPreflightRunner,
   type CodexLiveSchemaProbe,
-} from './codex-app-server-transport.js'
+} from './app-server-transport.js'
 import {
   APP_SERVER_APPROVAL_SCHEMA_FILES,
   APP_SERVER_INBOUND_SCHEMAS,
   APP_SERVER_METHOD_SCHEMAS,
-} from './codex-app-server-schema.js'
-import {hostBinaryPath, hostWorkspacePath} from './codex-process-owner.js'
+} from './app-server-schema.js'
+import {hostBinaryPath, hostWorkspacePath} from './process-owner.js'
 import {
   createPlatformCodexProcessOwnerFactory,
   hostEphemeralCodexHomeFromConfig,
-} from './codex-process-owner.js'
-import {loadWindowsGuardianFactoryFromResources} from './codex-windows-guardian.js'
+} from './process-owner.js'
+import {loadWindowsGuardianFactoryFromResources} from './windows-guardian.js'
 import {
   OwnedCodexBackendTransportFactory,
   unavailableCodexBackendTransportFactory,
   type CodexBackendTransportFactory,
-} from './codex-factory.js'
+} from './factory.js'
 import {
   CredentialSnapshotter,
   environmentValue,
   type CodexCredentialDiagnosticCode,
-} from './codex-credential-snapshot.js'
-import {expandUserPath, type CodexHostCatalog} from './codex-host-config.js'
-import type {Settings} from './config.js'
+} from './credential-snapshot.js'
+import {expandUserPath, type CodexHostCatalog} from './host-config.js'
+import type {Settings} from '../../config.js'
 import {
   loadProjectNativeHostFromResources,
   protectDefaultProjectDirectories,
   type ProjectNativeHost,
-} from './project-native-resource.js'
-import {stripLikePython} from './python-text.js'
-import {admitCodexCliVersion} from './codex-version.js'
+} from '../../project-native-resource.js'
+import {stripLikePython} from '../../python-text.js'
+import {admitCodexCliVersion} from './version.js'
 
 const PROBE_ID = 'codex_sandbox_probe'
 const PROBE_PATH = 'native/codex-sandbox-probe'

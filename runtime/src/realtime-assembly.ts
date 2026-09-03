@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly } from './assembly.js'
-import type {CodexAssemblyResource} from './codex-factory.js'
+import type {CodexAssemblyResource} from './executors/codex/factory.js'
 import { canonicalJson } from './canonical-json.js'
-import type {PublicProjectContext} from './codex-project-store.js'
+import type {PublicProjectContext} from './project-store.js'
 import type { JsonValue } from './events.js'
 import type {
   CommittedWorkspaceEvent,
   ProjectCodexAdapter,
   TerminalWorkOrderEvent,
-} from './executors/codex-project-live.js'
+} from './executors/codex/adapter-project.js'
 import {
   PlaybackRegistry,
   type PlaybackCompletion,

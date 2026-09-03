@@ -22,7 +22,7 @@ import {
   CODEX_APPROVAL_TTL_SECONDS,
   type CodexApprovalLocalDetail,
   type CodexApprovalView,
-} from './realtime/codex-approval.js'
+} from './executors/codex/approval.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1_024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1_024

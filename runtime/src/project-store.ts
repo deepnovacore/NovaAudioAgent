@@ -19,7 +19,7 @@ import {
   hostWorkspacePath,
   type HostCodexHome,
   type HostWorkspace,
-} from './codex-process-owner.js'
+} from './executors/codex/process-owner.js'
 import type {NativeFileLockAuthority, NativeFileLockResult} from './native-file-lock.js'
 import {isPythonSpace, isWellFormed, stripLikePython} from './python-text.js'
 import {casefoldLikePython} from './unicode-casefold.js'
@@ -1289,7 +1289,7 @@ export class CodexProjectStore {
         )
       }
       this.#pinWorkspaceIdentity(workspaceId, binding.identity)
-      const {hostWorkspaceFromConfig} = await import('./codex-process-owner.js')
+      const {hostWorkspaceFromConfig} = await import('./executors/codex/process-owner.js')
       return [hostWorkspaceFromConfig(binding.canonical, [binding.canonical]), false]
     })
   }
@@ -1342,7 +1342,7 @@ export class CodexProjectStore {
         previousActiveSessionId,
         resumedSessionId: sessionId,
       })
-      const {hostWorkspaceFromConfig} = await import('./codex-process-owner.js')
+      const {hostWorkspaceFromConfig} = await import('./executors/codex/process-owner.js')
       return [Object.freeze({
         workspace: hostWorkspaceFromConfig(binding.canonical, [binding.canonical]),
         rollback,

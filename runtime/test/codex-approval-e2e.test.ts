@@ -5,8 +5,8 @@ import {test, type TestContext} from 'node:test'
 import {WebSocket, type RawData} from 'ws'
 
 import {VirtualClock, type Clock} from '../src/clock.js'
-import {CODEX_PROJECT_APPROVAL_MANIFEST} from '../src/codex-contract.js'
-import {OwnedCodexAppServerTransport} from '../src/codex-app-server-transport.js'
+import {CODEX_PROJECT_APPROVAL_MANIFEST} from '../src/executors/codex/contract.js'
+import {OwnedCodexAppServerTransport} from '../src/executors/codex/app-server-transport.js'
 import {DesktopRealtime} from '../src/desktop-realtime.js'
 import {
   NodeDesktopServer,
@@ -18,10 +18,10 @@ import {
   hostBinaryForTest,
   hostCodexHomeForTest,
   hostWorkspaceForTest,
-} from '../src/codex-process-owner.js'
+} from '../src/executors/codex/process-owner.js'
 import {PlaybackRegistry} from '../src/playback.js'
 import {RealtimeRuntimeBridge} from '../src/realtime/bridge.js'
-import {CodexApprovalController} from '../src/realtime/codex-approval.js'
+import {CodexApprovalController} from '../src/executors/codex/approval.js'
 import type {HostContextItem, HostResponseIntent} from '../src/realtime/protocol.js'
 import {RealtimeService, type ServiceProvider} from '../src/realtime/service.js'
 import {RealtimeSession, type SessionProvider} from '../src/realtime/session.js'

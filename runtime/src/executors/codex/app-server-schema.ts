@@ -1,7 +1,7 @@
 import {resolve} from 'node:path'
-import {CodexProtocolError} from './codex-protocol.js'
-import {snapshotJsonRecord} from './codex-safe-json.js'
-import type {CodexLaunchProfile} from './codex-launch-profile.js'
+import {CodexProtocolError} from './protocol.js'
+import {snapshotJsonRecord} from './safe-json.js'
+import type {CodexLaunchProfile} from './launch-profile.js'
 
 export interface MethodSchemaSpec {
   readonly file: string

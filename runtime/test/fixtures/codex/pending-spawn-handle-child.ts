@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/require-await -- executable fixture implements async host contracts */
 /* eslint-disable @typescript-eslint/no-empty-function -- pending promise and no-op cleanup are the fixture behavior */
-import {OwnedCodexAppServerTransport} from '../../../src/codex-app-server-transport.js'
+import {OwnedCodexAppServerTransport} from '../../../src/executors/codex/app-server-transport.js'
 import {
   hostBinaryForTest,
   hostCodexHomeForTest,
   hostWorkspaceForTest,
-} from '../../../src/codex-process-owner.js'
+} from '../../../src/executors/codex/process-owner.js'
 import {supportedSchemaBundle} from './supported-schema-bundle.js'
 
 const workspace = process.cwd()

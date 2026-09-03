@@ -4,12 +4,12 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
 
-import {resolveCodexLaunchProfile} from '../src/codex-launch-profile.js'
+import {resolveCodexLaunchProfile} from '../src/executors/codex/launch-profile.js'
 import {
   ProjectStateError,
   hostManagedProjectRootForTest,
   hostProjectRootForTest,
-} from '../src/codex-project-store.js'
+} from '../src/project-store.js'
 
 test('every foreground project broker selects ask and every missing broker selects headless ask', () => {
   assert.equal(resolveCodexLaunchProfile({
