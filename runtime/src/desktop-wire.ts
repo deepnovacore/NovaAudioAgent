@@ -42,16 +42,21 @@ export class DesktopProtocolError extends Error {
 export interface PublicProjectView {
   readonly workspace_display_name: string | null
   readonly session_title: string | null
+  /**
+   * Known projects with running works, most recently used first (spec 08); UI only. Optional on the
+   * input because a bare confirmation controller view has no store behind it; the wire always carries it.
+   */
+  readonly roster?: readonly {
+    readonly name: string
+    readonly last_used_at: number
+    readonly running: readonly {readonly work_id: string; readonly title: string}[]
+  }[]
   readonly pending_confirmation: boolean
   readonly pending_confirmation_busy: boolean
   /** Opaque proposal binding exposed only while the confirmation banner is actionable. */
   readonly pending_confirmation_id?: string
-  readonly pending_action?:
-    | 'create_workspace'
-    | 'reuse_workspace'
-    | 'select_workspace'
-    | 'resume_session'
-    | null
+  /** Only an irreversible create surfaces the pill; switching never does. */
+  readonly pending_action?: 'create_workspace' | null
   readonly pending_workspace_display_name?: string | null
   readonly pending_session_title?: string | null
   readonly pending_expires_in_seconds?: number | null
@@ -261,13 +266,21 @@ export function projectStateMessage(view: PublicProjectView): string {
       || codePointLengthLikePython(pendingConfirmationId) > 128
     )
   ) throw new DesktopProtocolError('desktop project view is invalid')
-  if (
-    pendingAction !== null
-    && pendingAction !== 'create_workspace'
-    && pendingAction !== 'reuse_workspace'
-    && pendingAction !== 'select_workspace'
-    && pendingAction !== 'resume_session'
-  ) {
+  if (pendingAction !== null && pendingAction !== 'create_workspace') {
+    throw new DesktopProtocolError('desktop project view is invalid')
+  }
+  const roster: NonNullable<PublicProjectView['roster']> = view.roster ?? []
+  const validName = (value: unknown): boolean =>
+    typeof value === 'string' && value !== '' && codePointLengthLikePython(value) <= 120
+  const validWork = (work: {readonly work_id: string; readonly title: string}): boolean =>
+    typeof work.work_id === 'string' && work.work_id !== '' && validName(work.title)
+  // `Array.isArray` alone would narrow the typed arrays to `any[]`; this guard keeps the element types.
+  const isList = (value: unknown): value is readonly unknown[] => Array.isArray(value)
+  if (!isList(roster) || roster.length > 10 || !roster.every(entry =>
+    validName(entry.name)
+    && Number.isFinite(entry.last_used_at) && entry.last_used_at >= 0
+    && isList(entry.running) && entry.running.every(validWork),
+  )) {
     throw new DesktopProtocolError('desktop project view is invalid')
   }
   if (
@@ -288,20 +301,23 @@ export function projectStateMessage(view: PublicProjectView): string {
   if (!view.pending_confirmation && (hasPendingMetadata || pendingConfirmationId !== undefined)) {
     throw new DesktopProtocolError('desktop project view is invalid')
   }
+  // A voice-only proposal (plan readback) has metadata but no pill action; only a create carries one.
   if (
     view.pending_confirmation
     && hasPendingMetadata
-    && (pendingAction === null || pendingWorkspace === null || pendingExpires === null)
+    && (pendingWorkspace === null || pendingExpires === null)
   ) {
-    throw new DesktopProtocolError('desktop project view is invalid')
-  }
-  if (pendingAction === 'resume_session' && pendingSession === null) {
     throw new DesktopProtocolError('desktop project view is invalid')
   }
   return unicodeJson({
     type: 'project.state',
     workspace_display_name: view.workspace_display_name,
     session_title: view.session_title,
+    roster: roster.map(entry => ({
+      name: entry.name,
+      last_used_at: entry.last_used_at,
+      running: entry.running.map(work => ({work_id: work.work_id, title: work.title})),
+    })),
     pending_confirmation: view.pending_confirmation,
     pending_confirmation_busy: view.pending_confirmation_busy,
     ...(pendingConfirmationId === undefined

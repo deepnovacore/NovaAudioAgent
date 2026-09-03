@@ -10,7 +10,7 @@ import type {
   TransportObserver,
   TransportOutcome,
 } from '../src/executors/codex/app-server-transport.js'
-import {CODEX_BASE_MANIFEST} from '../src/executors/codex/contract.js'
+import {CODEX_AGENT_SUMMARY, CODEX_BASE_MANIFEST} from '../src/executors/codex/contract.js'
 import type {
   ExecutorAdapter,
   ExecutorDispatchContext,
@@ -190,41 +190,31 @@ test('ordinary adapter projects a valid app-server run into bounded public evide
   })
 })
 
-test('ordinary manifest compiles the exact public tool order and schema', () => {
-  // This fails if the adapter advertises a project/live op or the compiler receives a look-alike manifest.
+test('ordinary manifest is an agent executor: bindings stay, the model sees only the host tools', () => {
+  // This fails if the adapter advertises a project/live op, loses its `agent` summary, or the compiler
+  // still emits `codex__*` schemas for an agent executor (spec 08 folds those into `dispatch`).
   const adapter: ExecutorAdapter = new CodexAdapter(new ScriptedTransport())
   assert.equal(adapter.manifest, CODEX_MANIFEST)
   assert.equal(CODEX_MANIFEST, CODEX_BASE_MANIFEST)
   assert.deepEqual(CODEX_MANIFEST.ops.map(op => op.name), ['run', 'status'])
+  assert.deepEqual(CODEX_MANIFEST.agent, {summary: CODEX_AGENT_SUMMARY})
   const compiled = compileToolSchema([adapter.manifest])
-  assert.deepEqual([...compiled.bindings.keys()].slice(-2), ['codex__run', 'codex__status'])
-  assert.deepEqual(compiled.schemas.slice(-2), [
-    {type: 'function', function: {
-      name: 'codex__run',
-      description: '在配置好的工作区中执行一个有界、非交互的 Codex 工作单',
-      parameters: {
-        type: 'object',
-        properties: {
-          work_order: {type: 'string', minLength: 1, maxLength: 4000},
-          origin_ref: {type: 'string', description: '当前 ContextView 中、这次动作所回答内容的 ref'},
-        },
-        required: ['work_order', 'origin_ref'],
-        additionalProperties: false,
-      },
-    }},
-    {type: 'function', function: {
-      name: 'codex__status',
-      description: '读取当前或最近一次 Codex 运行的进程状态',
-      parameters: {
-        type: 'object',
-        properties: {
-          origin_ref: {type: 'string', description: '当前 ContextView 中、这次动作所回答内容的 ref'},
-        },
-        additionalProperties: false,
-        required: ['origin_ref'],
-      },
-    }},
-  ])
+  assert.deepEqual(
+    [...compiled.bindings.keys()].slice(-5),
+    ['codex__run', 'codex__status', 'dispatch', 'cancel', 'confirm'],
+  )
+  assert.equal(compiled.bindings.get('codex__run')?.kind, 'delegate')
+  assert.equal(compiled.bindings.get('dispatch')?.kind, 'host')
+  const names = compiled.schemas.map(schema => (schema.function as {name: string}).name)
+  assert.ok(!names.some(name => name.startsWith('codex__')), names.join(','))
+  assert.deepEqual(names.slice(-3), ['dispatch', 'cancel', 'confirm'])
+  const dispatch = compiled.schemas.at(-3)!.function as {
+    description: string
+    parameters: {properties: {executor: {enum: string[]}}; required: string[]}
+  }
+  assert.deepEqual(dispatch.parameters.properties.executor.enum, ['codex'])
+  assert.deepEqual(dispatch.parameters.required, ['executor', 'instruction', 'origin_ref'])
+  assert.ok(dispatch.description.includes(`codex: ${CODEX_AGENT_SUMMARY}`))
 })
 
 test('ordinary validation is exact, Python-compatible, and transport-free on rejection', async () => {

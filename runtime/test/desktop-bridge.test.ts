@@ -489,7 +489,7 @@ test('the project view is deduplicated by value, not by identity', () => {
     session_title: null,
     pending_confirmation: true,
     pending_confirmation_busy: false,
-    pending_action: 'select_workspace',
+    pending_action: 'create_workspace',
     pending_workspace_display_name: 'beta',
     pending_session_title: null,
     pending_expires_in_seconds: 75,
@@ -498,6 +498,11 @@ test('the project view is deduplicated by value, not by identity', () => {
     String(bridge.takeNextFrame()).includes('"pending_workspace_display_name":"beta"'),
     'a changed pending target is resent',
   )
+  const base = {workspace_display_name: '研究项目', session_title: null, pending_confirmation: false, pending_confirmation_busy: false}
+  bridge.onProjectView({...base, roster: [{name: 'blog', last_used_at: 1, running: [{work_id: 'w1', title: '暗色模式'}]}]})
+  assert.ok(String(bridge.takeNextFrame()).includes('"roster":[{"name":"blog"'), 'a roster change is a new frame')
+  bridge.onProjectView({...base, roster: [{name: 'blog', last_used_at: 1, running: [{work_id: 'w1', title: '暗色模式'}]}]})
+  assert.equal(bridge.takeNextFrame(), null, 'an identical roster is not')
 })
 
 test('microphone PCM reaches the service, and a misaligned frame does not', async () => {
@@ -582,6 +587,8 @@ test('a Codex approval frame and click use an independent strict bridge path', a
     },
     operation_summary: 'Codex 请求修改工作区文件。',
     expires_at: clock.now() + 60,
+    work: null,
+    queued: 0,
   })
   assert.match(String(bridge.takeNextFrame()), /"type":"executor\.approval".*"src\/a\.ts"/u)
   await bridge.receive(
@@ -607,6 +614,8 @@ test('independent latest slots deliver both overlapping confirmation views befor
     local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
     operation_summary: 'Codex 请求执行一条工作区命令。',
     expires_at: clock.now() + 60,
+    work: null,
+    queued: 0,
   })
   bridge.onProjectView({
     workspace_display_name: '研究项目',
@@ -614,7 +623,7 @@ test('independent latest slots deliver both overlapping confirmation views befor
     pending_confirmation: true,
     pending_confirmation_busy: false,
     pending_confirmation_id: 'proposal-1',
-    pending_action: 'select_workspace',
+    pending_action: 'create_workspace',
     pending_workspace_display_name: 'beta',
     pending_session_title: null,
     pending_expires_in_seconds: 75,
@@ -628,6 +637,8 @@ test('independent latest slots deliver both overlapping confirmation views befor
     local_detail: null,
     operation_summary: null,
     expires_at: null,
+    work: null,
+    queued: 0,
   })
   assert.match(String(bridge.takeNextFrame()), /"type":"executor\.approval".*"pending_approval":false/u)
 })

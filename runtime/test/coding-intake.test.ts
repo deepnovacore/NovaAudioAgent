@@ -3,10 +3,11 @@ import {resolve} from 'node:path'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {VirtualClock} from '../src/clock.js'
-import {IntakeController, isIntakeAction, type IntakeOptions} from '../src/realtime/intake.js'
-import {intakeModels, type IntakeModels, type IntakeSlots} from '../src/realtime/intake-model.js'
+import {IntakeController, type IntakeOptions} from '../src/executors/coding/intake.js'
+import {intakeModels, type IntakeModels, type IntakeSlots} from '../src/executors/coding/intake-model.js'
 import {ProjectConfirmationController} from '../src/project-confirmation.js'
-import {renderWorkOrder, workOrderSchema} from '../src/realtime/work-order.js'
+import {renderWorkOrder, workOrderSchema} from '../src/executors/coding/work-order.js'
+import {ProjectResolutionError, type CoordinatorDecision, type IntakeTarget} from '../src/coding-executor.js'
 
 const stated = (note: string) => ({state: 'stated' as const, note})
 const missing = {state: 'missing' as const, note: ''}
@@ -14,33 +15,54 @@ const slots: IntakeSlots = {goal: stated('Fix empty password'), scope: stated('L
 const order = workOrderSchema.parse({objective: slots.goal.note, scope_in: ['Login only'], acceptance: ['Show validation error']})
 const assessment = (input: Readonly<Record<string, unknown>>, changes = {}) => ({
   intake_id: input.intake_id, revision: input.revision, slots, readiness: 1,
+  kind: 'work', project: null, project_evidence: null, session: 'latest',
   intent_to_proceed: true, candidate_question: null, discovery: [], early_exit: false, abandon: false,
   ...changes,
 })
 const plan = (input: Readonly<Record<string, unknown>>) => ({intake_id: input.intake_id, revision: input.revision, work_order: order})
-const request = {action: 'start_session', session: 'Named task', work_order: 'draft'}
-const target = {workspace: '/canonical/project', action: 'reuse' as const, workspace_display_name: 'Project', workspace_id: 'w1', session_title: 'Named task', session_id: null}
+/** What the service hands `open` for a `dispatch` (spec 08): the coordinator decides project and session itself. */
+const request = {work_order: 'draft', project: null, session: 'latest'}
+const target: IntakeTarget = {workspace: '/canonical/project', action: 'reuse', workspace_display_name: 'Project', workspace_id: 'w1', session_title: 'Named task', session_id: null}
+const running = [{work_id: 'w-blog', project: 'blog', title: '暗色模式'}]
 
-function harness(options: Partial<IntakeOptions> = {}) {
+type HarnessOptions = Partial<Omit<IntakeOptions, 'models'>> & {readonly models?: Partial<IntakeModels>}
+
+function harness(options: HarnessOptions = {}) {
   let sequence = 0
   let planned = 0
   const facts: string[] = [], records: string[] = [], diagnostics: string[] = []
   const dispatched: unknown[] = []
+  const decisions: CoordinatorDecision[] = []
+  const steered: string[] = [], cancelled: string[] = []
+  const {models, resolveTarget = () => Promise.resolve(target), ...rest} = options
   const confirmation = new ProjectConfirmationController({clock: new VirtualClock(), idFactory: () => `proposal-${++sequence}`})
   const intake = new IntakeController({
     idFactory: () => `intake-${++sequence}`,
     settings: {clarification_depth: 'balanced', plan_readback: 'summary'},
-    models: {assess: input => Promise.resolve(assessment(input)), plan: input => { planned++; return Promise.resolve(plan(input)) }},
-    resolveTarget: () => Promise.resolve(target),
-    prepare: current => confirmation.prepare({...target, intake_id: current.intake_id, plan_revision: current.plan_revision!, origin_ref: current.origin_ref, work_order: current.work_order}),
+    models: {
+      assess: input => Promise.resolve(assessment(input)),
+      plan: input => { planned++; return Promise.resolve(plan(input)) },
+      resolveCancelTarget: () => Promise.resolve(null),
+      ...models,
+    },
+    roster: () => [
+      {name: 'Project', last_used_at: 1, last_session_title: 'Named task', running: []},
+      {name: 'blog', last_used_at: 0, last_session_title: '暗色模式', running},
+    ],
+    running: () => running,
+    activeProject: () => 'Project',
+    resolveTarget: decision => { decisions.push(decision); return resolveTarget(decision) },
+    prepare: current => confirmation.prepare({...current.target!, intake_id: current.intake_id, plan_revision: current.plan_revision!, origin_ref: current.origin_ref, work_order: current.work_order}),
     dispatch: current => { dispatched.push(current); return {accepted: true, delegate_id: 'd1'} },
+    steer: (_current, _project, instruction) => { steered.push(instruction); return {accepted: true, delegate_id: 'd-steer'} },
+    cancel: instruction => { cancelled.push(instruction); return Promise.resolve({code: 'cancelled', work: running[0]!}) },
     invalidateProposal: () => { confirmation.invalidate('amended') },
     fact: (_current, text) => { facts.push(text) },
     record: (_current, kind) => { records.push(kind) },
     diagnostic: code => { diagnostics.push(code) },
-    ...options,
+    ...rest,
   })
-  return {intake, confirmation, facts, records, diagnostics, dispatched, planned: () => planned}
+  return {intake, confirmation, facts, records, diagnostics, dispatched, decisions, steered, cancelled, planned: () => planned}
 }
 
 test('intake zero-question fast path compiles once, preserves target/session and closes only on acceptance', async () => {
@@ -50,7 +72,8 @@ test('intake zero-question fast path compiles once, preserves target/session and
   assert.equal(h.intake.view?.outcome, 'dispatched')
   assert.equal(h.intake.view?.questions_asked, 0)
   assert.equal(h.intake.view?.workspace, '/canonical/project')
-  assert.equal(h.intake.view?.codex_session, 'Named task')
+  assert.equal(h.intake.view?.target?.session_title, 'Named task')
+  assert.equal(h.intake.view?.title, 'Fix empty password')
   assert.deepEqual(h.records, ['intake.assess', 'plan.compile', 'intake.dispatch'])
   assert.equal(h.dispatched.length, 1)
   assert.equal(h.planned(), 1)
@@ -240,9 +263,112 @@ test('intake admission refusal leaves explicit recovery, never dispatched', asyn
   await h.intake.settled()
 })
 
-test('only coding project actions enter intake', () => {
-  for (const action of ['list_workspaces', 'list_sessions', 'select_workspace', 'create_workspace']) assert.equal(isIntakeAction({action}), false)
-  for (const action of ['start_session', 'resume_session', 'create_workspace']) assert.equal(isIntakeAction({action, work_order: 'task'}), true)
+test('coordinator: work on the active project resolves without evidence; a non-active pick must be quoted from the utterance', async () => {
+  const active = harness()
+  active.intake.open(request, '修一下登录', 'u1', 'e')
+  await active.intake.settled()
+  assert.deepEqual(active.decisions, [{kind: 'work', project: 'Project', session: 'latest'}])
+  assert.equal(active.intake.view?.outcome, 'dispatched')
+
+  const quoted = harness({models: {assess: input => Promise.resolve(assessment(input, {project: 'blog', project_evidence: '博客', session: 'new'}))}})
+  quoted.intake.open(request, '改一下博客的暗色模式', 'u1', 'e')
+  await quoted.intake.settled()
+  assert.deepEqual(quoted.decisions, [{kind: 'work', project: 'blog', session: 'new'}])
+  assert.equal(quoted.intake.view?.kind, 'work')
+  assert.equal(quoted.intake.view?.outcome, 'dispatched')
+
+  for (const evidence of [null, '博客']) {
+    const unverified = harness({models: {assess: input => Promise.resolve(assessment(input, {project: 'blog', project_evidence: evidence}))}})
+    unverified.intake.open(request, '改一下暗色模式', 'u1', 'e')
+    await unverified.intake.settled()
+    assert.deepEqual(unverified.decisions, [], `evidence ${String(evidence)} never reaches the adapter`)
+    assert.equal(unverified.intake.view?.kind, 'unclear')
+    assert.equal(unverified.intake.view?.state, 'clarifying')
+    assert.ok(unverified.diagnostics.includes('intake_project_evidence_missing'))
+    assert.ok(unverified.facts.some(text => text.includes('是在 blog 里做吗')))
+    assert.equal(unverified.dispatched.length, 0)
+  }
+})
+
+test('coordinator: unclear asks the model question; a resolution error routes with its stable code', async () => {
+  const unclear = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'unclear', candidate_question: {owner: 'user', text: '是哪个项目？'}}))}})
+  unclear.intake.open(request, '把那个项目的测试修好', 'u1', 'e')
+  await unclear.intake.settled()
+  assert.equal(unclear.intake.view?.state, 'clarifying')
+  assert.ok(unclear.facts.some(text => text.includes('是哪个项目？')))
+
+  const unknown = harness({
+    models: {assess: input => Promise.resolve(assessment(input, {project: 'blgo', project_evidence: 'blgo'}))},
+    resolveTarget: () => Promise.reject(new ProjectResolutionError('unknown_project', {project: 'blgo', suggestions: ['blog'], hint: 'create'})),
+  })
+  unknown.intake.open(request, '在 blgo 里修测试', 'u1', 'e')
+  await unknown.intake.settled()
+  assert.equal(unknown.intake.view?.outcome, 'routed')
+  assert.ok(unknown.records.includes('intake.resolution_error'))
+  assert.match(unknown.facts.at(-1)!, /^code=unknown_project：没有叫“blgo”的项目，相近的有：blog。/)
+  assert.equal(unknown.dispatched.length, 0)
+})
+
+test('coordinator: create always confirms — with a goal it plans first, bare create proposes with a null work order', async () => {
+  const created: IntakeTarget = {...target, action: 'create', workspace_display_name: 'shop', workspace_id: null, session_title: null}
+  const withGoal = harness({
+    models: {assess: input => Promise.resolve(assessment(input, {kind: 'create', project: 'shop', project_evidence: 'shop'}))},
+    resolveTarget: () => Promise.resolve(created),
+  })
+  withGoal.intake.open(request, '新建一个 shop 项目，先做登录', 'u1', 'e')
+  await withGoal.intake.settled()
+  assert.deepEqual(withGoal.decisions, [{kind: 'create', project: 'shop', session: 'latest'}])
+  assert.equal(withGoal.planned(), 1)
+  assert.equal(withGoal.intake.view?.state, 'readback')
+  assert.equal(withGoal.confirmation.view.pending_action, 'create_workspace')
+  assert.match(withGoal.intake.view?.work_order ?? '', /^WorkOrder v2/)
+  assert.match(withGoal.facts.at(-1)!, /计划（项目 shop）.*id=proposal-\d+；仅通过 confirm\(id, accepted\) 回答/)
+  assert.equal(withGoal.dispatched.length, 0)
+
+  const bare = harness({
+    models: {assess: input => Promise.resolve(assessment(input, {kind: 'create', project: 'shop', project_evidence: 'shop', slots: {goal: missing, scope: missing, acceptance: missing, constraints: missing}}))},
+    resolveTarget: () => Promise.resolve(created),
+  })
+  bare.intake.open(request, '新建一个 shop 项目', 'u1', 'e')
+  await bare.intake.settled()
+  assert.equal(bare.planned(), 0)
+  assert.equal(bare.intake.view?.state, 'readback')
+  assert.equal(bare.intake.view?.work_order, null)
+  assert.equal(bare.confirmation.pending, true)
+  assert.match(bare.facts.at(-1)!, /新建项目“shop”，不派任务/)
+
+  const unnamed = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'create', project: null}))}})
+  unnamed.intake.open(request, '开个新项目', 'u1', 'e')
+  await unnamed.intake.settled()
+  assert.deepEqual(unnamed.decisions, [])
+  assert.ok(unnamed.facts.some(text => text.includes('新项目叫什么名字？')))
+})
+
+test('coordinator: switch, steer and cancel route straight to the adapter without a plan cycle', async () => {
+  const switched = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'switch', project: 'blog', project_evidence: '博客'}))}})
+  switched.intake.open(request, '切到博客', 'u1', 'e')
+  await switched.intake.settled()
+  assert.deepEqual(switched.decisions, [{kind: 'switch', project: 'blog', session: 'latest'}])
+  assert.equal(switched.intake.view?.outcome, 'routed')
+  assert.match(switched.facts.at(-1)!, /^code=switched：已切换到项目“Project”，没有开始任务。$/)
+  assert.equal(switched.planned(), 0)
+
+  const steered = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'steer', project: 'blog', project_evidence: '博客'}))}})
+  steered.intake.open(request, '博客那个顺便把字体也调大', 'u1', 'e')
+  await steered.intake.settled()
+  assert.deepEqual(steered.steered, ['博客那个顺便把字体也调大'])
+  assert.deepEqual(steered.decisions, [])
+  assert.equal(steered.intake.view?.outcome, 'routed')
+  assert.match(steered.facts.at(-1)!, /^code=steered：/)
+
+  const cancelled = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'cancel', project: 'blog', project_evidence: '博客'}))}})
+  cancelled.intake.open(request, '停掉博客那个', 'u1', 'e')
+  await cancelled.intake.settled()
+  assert.deepEqual(cancelled.cancelled, ['停掉博客那个'])
+  assert.equal(cancelled.intake.view?.outcome, 'routed')
+  assert.ok(cancelled.records.includes('intake.cancel'))
+  assert.equal(cancelled.facts.at(-1), 'code=cancelled：已请求停止“blog/暗色模式”，稍后有终态事实。')
+  assert.equal(cancelled.dispatched.length, 0)
 })
 
 test('WorkOrder deterministic golden, optional truncation order, unicode and required-size refusal', () => {

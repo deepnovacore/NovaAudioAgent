@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto'
-import type {ExecutorAdmission, ExecutorProgress} from '../../causal-runtime.js'
+import type {ExecutorProgress} from '../../causal-runtime.js'
 import type {JsonValue} from '../../events.js'
 import {snapshotJsonRecord} from './safe-json.js'
 import {validProgressSummary} from '../../events.js'
@@ -71,140 +71,69 @@ const STEER: OpSpec = {
   host_confirmation: false,
 }
 
-const PROJECT_FIELDS: Readonly<Record<string, Readonly<Record<string, JsonValue>>>> = {
-  workspace: {
-    type: 'string', minLength: 1, maxLength: 80,
-    description: 'create/select 必填；list_sessions/resume 可选；start_session 必须省略',
-  },
-  session: {
-    type: 'string',
-    minLength: 1,
-    maxLength: 120,
-    description: [
-      '用户显式命名新 Session 时必须传入；未命名的新 Session 可省略；',
-      'resume_session 指定历史 Session 时传入',
-    ].join(''),
-  },
-  work_order: {
-    type: 'string', minLength: 1, maxLength: 4000,
-    description: 'start_session 和 resume_session 必填；create_workspace 可选',
-  },
+const PROJECT: Readonly<Record<string, JsonValue>> = {
+  type: ['string', 'null'], minLength: 1, maxLength: 80,
+  description: '目标项目的 roster 名称；null 表示当前活动项目',
 }
 
-function projectVariant(
-  action: string,
-  fields: readonly string[],
-  required: readonly string[] = [],
-): Readonly<Record<string, JsonValue>> {
-  return {
-    type: 'object',
-    properties: {
-      action: {type: 'string', enum: [action]},
-      ...Object.fromEntries(fields.map(name => [name, PROJECT_FIELDS[name]])),
-    },
-    required: ['action', ...required],
-    additionalProperties: false,
-  }
-}
-
-const PROJECT: OpSpec = {
-  name: 'project',
-  description: [
-    '管理 Workspace 和 Session。严格按 action 选择字段：start_session 只能在当前 ',
-    'Workspace 运行且不得传 workspace；start_session 和 resume_session 都必须传完整 ',
-    'work_order。用户显式命名新 Session 时必须传 session。',
-  ].join(''),
+/** Project-mode `run`: the coordinator's decision rides with the work order (spec 08). */
+const RUN_PROJECT: OpSpec = {
+  ...RUN,
+  description: '在 coordinator 选定的项目/会话中执行一个有界、非交互的 Codex 工作单',
   params: {
     type: 'object',
     properties: {
-      action: {
-        type: 'string',
-        enum: [
-          'list_workspaces', 'create_workspace', 'select_workspace',
-          'list_sessions', 'start_session', 'resume_session',
-        ],
-      },
-      ...PROJECT_FIELDS,
+      work_order: {type: 'string', minLength: 1, maxLength: 4000},
+      project: PROJECT,
+      session: {type: 'string', enum: ['latest', 'new'], description: 'latest 续用活动会话；new 开新线程'},
+      title: {type: 'string', minLength: 1, maxLength: 120, description: '宿主为新会话派生的标题'},
     },
-    required: ['action'],
+    required: ['work_order'],
     additionalProperties: false,
-    oneOf: [
-      projectVariant('list_workspaces', []),
-      projectVariant('create_workspace', ['workspace'], ['workspace']),
-      projectVariant(
-        'create_workspace', ['workspace', 'session', 'work_order'], ['workspace', 'work_order'],
-      ),
-      projectVariant('select_workspace', ['workspace'], ['workspace']),
-      projectVariant('list_sessions', ['workspace']),
-      projectVariant('start_session', ['session', 'work_order'], ['work_order']),
-      projectVariant('resume_session', ['workspace', 'session', 'work_order'], ['work_order']),
-    ],
+  },
+}
+
+const STEER_PROJECT: OpSpec = {
+  ...STEER,
+  params: {
+    type: 'object',
+    properties: {
+      instruction: {type: 'string', minLength: 1, maxLength: 2000},
+      project: PROJECT,
+    },
+    required: ['instruction'],
+    additionalProperties: false,
+  },
+}
+
+const CANCEL: OpSpec = {
+  name: 'cancel',
+  description: '停止一个正在执行的 Codex work；会话与历史保留。',
+  params: {
+    type: 'object',
+    properties: {work_id: {type: 'string', minLength: 1, maxLength: 128}},
+    required: ['work_id'],
+    additionalProperties: false,
   },
   readonly: false,
   confirm: false,
-  deadline_budget: 600,
+  deadline_budget: 30,
   verifies: [],
-  sensitive_params: ['work_order'],
-  sync_result: false,
+  sensitive_params: [],
+  sync_result: true,
   host_confirmation: false,
 }
 
-const CONFIRM_PROJECT_ACTION: OpSpec = {
-  name: 'confirm_project_action',
-  description: [
-    '当前有待确认项目操作时，用户明确同意或明确拒绝都必须调用；同意传 ',
-    'confirmed=true，拒绝、取消或暂缓传 confirmed=false，不得只口头回应',
-  ].join(''),
-  params: {
-    type: 'object',
-    properties: {
-      proposal_id: {type: 'string', minLength: 1, maxLength: 128},
-      confirmed: {type: 'boolean'},
-    },
-    required: ['proposal_id', 'confirmed'],
-    additionalProperties: false,
-  },
-  readonly: false,
-  confirm: false,
-  deadline_budget: 10,
-  verifies: [],
-  sensitive_params: [],
-  sync_result: true,
-  host_confirmation: true,
-}
+/** One description line in the host `dispatch` tool; the voice model never sees the ops above. */
+export const CODEX_AGENT_SUMMARY = '在已配置的项目工作区里执行编码任务（改代码、修 bug、写测试、重构）'
 
-const CONFIRM_CODEX_APPROVAL: OpSpec = {
-  name: 'confirm_codex_approval',
-  description: [
-    '当前待处理 Codex 权限请求时，只有用户本轮明确同意或明确拒绝才调用；',
-    '同意传 approved=true，拒绝传 approved=false；',
-    '明确决定时只调用一次本工具，同一 response 不得输出普通音频或文本，也不得调用其他工具；',
-    '表达含糊、询问信息或尚未决定时不得调用，也不得输出普通音频或文本，等待宿主澄清',
-  ].join(''),
-  params: {
-    type: 'object',
-    properties: {
-      approval_id: {type: 'string', minLength: 1, maxLength: 128},
-      approved: {type: 'boolean'},
-    },
-    required: ['approval_id', 'approved'],
-    additionalProperties: false,
-  },
-  readonly: false,
-  confirm: false,
-  deadline_budget: 10,
-  verifies: [],
-  sensitive_params: [],
-  sync_result: true,
-  host_confirmation: true,
-}
-
-function manifest(ops: readonly OpSpec[]): ExecutorManifest {
+function manifest(ops: readonly OpSpec[], approvals = false): ExecutorManifest {
   return deepFreeze(executorManifestSchema.parse({
     name: 'codex',
     display_name: 'Codex',
     roles: ['coding'],
-    approvals: ops.includes(CONFIRM_CODEX_APPROVAL),
+    approvals,
+    agent: {summary: CODEX_AGENT_SUMMARY},
     ops,
     policy: CODEX_POLICY,
   }))
@@ -212,37 +141,8 @@ function manifest(ops: readonly OpSpec[]): ExecutorManifest {
 
 export const CODEX_BASE_MANIFEST = manifest([RUN, STATUS])
 export const CODEX_LIVE_MANIFEST = manifest([RUN, STEER, STATUS])
-export const CODEX_PROJECT_MANIFEST = manifest([
-  PROJECT, CONFIRM_PROJECT_ACTION, STEER, STATUS,
-])
-export const CODEX_PROJECT_APPROVAL_MANIFEST = manifest([
-  PROJECT, CONFIRM_PROJECT_ACTION, CONFIRM_CODEX_APPROVAL, STEER, STATUS,
-])
-
-/** Project actions that hold the protocol open for their Handoff; only `start_session` is delegated work. */
-const SYNCHRONOUS_PROJECT_ACTIONS: ReadonlySet<string> = new Set([
-  'list_workspaces',
-  'create_workspace',
-  'select_workspace',
-  'list_sessions',
-  'resume_session',
-])
-
-/** Host admission for the multiplexed `project` op; `null` for every other op. */
-export function admitCodexProjectRequest(
-  op: string,
-  request: Readonly<Record<string, JsonValue>>,
-): ExecutorAdmission | null {
-  if (op !== 'project') return null
-  const validated = validateCodexRequest('project', 'project', request)
-  if (!validated.ok) return {ok: false}
-  const action = validated.value.action
-  return {
-    ok: true,
-    request: validated.value as Readonly<Record<string, JsonValue>>,
-    sync_result: typeof action === 'string' && SYNCHRONOUS_PROJECT_ACTIONS.has(action),
-  }
-}
+export const CODEX_PROJECT_MANIFEST = manifest([RUN_PROJECT, STEER_PROJECT, STATUS, CANCEL])
+export const CODEX_PROJECT_APPROVAL_MANIFEST = manifest([RUN_PROJECT, STEER_PROJECT, STATUS, CANCEL], true)
 
 export type CodexVariant = 'base' | 'live' | 'project'
 export type CodexRequestValidation =
@@ -270,9 +170,7 @@ function validateCodexRequestChecked(
     ? new Set(['run', 'status'])
     : variant === 'live'
       ? new Set(['run', 'steer', 'status'])
-      : new Set([
-          'project', 'confirm_project_action', 'confirm_codex_approval', 'steer', 'status',
-        ])
+      : new Set(['run', 'steer', 'status', 'cancel'])
   if (!operations.has(op)) return failure('unknown_op', op)
   const requestSnapshot = snapshotJsonRecord(request)
   if (op === 'status') {
@@ -280,84 +178,52 @@ function validateCodexRequestChecked(
       ? success({})
       : failure('invalid_params', op)
   }
-  if (op === 'steer') {
-    const instruction = exactBoundedString(requestSnapshot, 'instruction', 2000)
-    return instruction === null
-      ? failure('invalid_params', op)
-      : success({instruction})
+  if (op === 'cancel') {
+    const workId = exactBoundedString(requestSnapshot, 'work_id', 128)
+    return workId === null ? failure('invalid_params', op) : success({work_id: workId})
   }
-  if (op === 'run') {
-    const workOrder = exactBoundedString(requestSnapshot, 'work_order', 4000)
-    return workOrder === null
-      ? failure('invalid_params', op)
-      : success({work_order: workOrder})
+  if (variant !== 'project') {
+    const name = op === 'steer' ? 'instruction' : 'work_order'
+    const value = exactBoundedString(requestSnapshot, name, op === 'steer' ? 2000 : 4000)
+    return value === null ? failure('invalid_params', op) : success({[name]: value})
   }
-  if (op === 'confirm_project_action') return validateProjectConfirmation(requestSnapshot)
-  if (op === 'confirm_codex_approval') return validateCodexApproval(requestSnapshot)
-  return validateProjectOperation(requestSnapshot)
+  return op === 'steer' ? validateProjectSteer(requestSnapshot) : validateProjectRun(requestSnapshot)
 }
 
-function validateProjectConfirmation(request: Record<string, unknown>): CodexRequestValidation {
-  const proposalId = normalizedString(request.proposal_id, 128)
-  if (proposalId === null || Object.keys(request).length !== 2 || typeof request.confirmed !== 'boolean') {
-    return failure('invalid_params', 'confirm_project_action')
-  }
-  return success({proposal_id: proposalId, confirmed: request.confirmed})
+/** `project` is a nullable roster name, defaulting to the active project; unknown keys fail closed. */
+function projectField(request: Record<string, unknown>, result: Record<string, unknown>): boolean {
+  if (!Object.hasOwn(request, 'project') || request.project === null) { result.project = null; return true }
+  const project = normalizedString(request.project, 80)
+  if (project === null) return false
+  result.project = project
+  return true
 }
 
-function validateCodexApproval(request: Record<string, unknown>): CodexRequestValidation {
-  const approvalId = normalizedString(request.approval_id, 128)
-  if (approvalId === null || Object.keys(request).length !== 2 || typeof request.approved !== 'boolean') {
-    return failure('invalid_params', 'confirm_codex_approval')
+function validateProjectRun(request: Record<string, unknown>): CodexRequestValidation {
+  const allowed = new Set(['work_order', 'project', 'session', 'title'])
+  if (Object.keys(request).some(key => !allowed.has(key))) return failure('invalid_params', 'run')
+  const workOrder = normalizedString(request.work_order, 4000)
+  if (workOrder === null) return failure('invalid_params', 'run')
+  const result: Record<string, unknown> = {work_order: workOrder}
+  if (!projectField(request, result)) return failure('invalid_params', 'run')
+  const session = Object.hasOwn(request, 'session') ? request.session : 'latest'
+  if (session !== 'latest' && session !== 'new') return failure('invalid_params', 'run')
+  result.session = session
+  if (Object.hasOwn(request, 'title')) {
+    const title = normalizedString(request.title, 120)
+    if (title === null) return failure('invalid_params', 'run')
+    result.title = title
   }
-  return success({approval_id: approvalId, approved: request.approved})
+  return success(result)
 }
 
-function validateProjectOperation(request: Record<string, unknown>): CodexRequestValidation {
-  const action = request.action
-  if (
-    action !== 'list_workspaces'
-    && action !== 'create_workspace'
-    && action !== 'select_workspace'
-    && action !== 'list_sessions'
-    && action !== 'start_session'
-    && action !== 'resume_session'
-  ) return failure('invalid_params', 'project')
-  const required: Readonly<Record<typeof action, readonly string[]>> = {
-    list_workspaces: ['action'],
-    create_workspace: ['action', 'workspace'],
-    select_workspace: ['action', 'workspace'],
-    list_sessions: ['action'],
-    start_session: ['action', 'work_order'],
-    resume_session: ['action', 'work_order'],
-  }
-  const allowed = new Set(required[action])
-  if (action === 'create_workspace') {
-    allowed.add('session')
-    allowed.add('work_order')
-  } else if (action === 'list_sessions') allowed.add('workspace')
-  else if (action === 'start_session') allowed.add('session')
-  else if (action === 'resume_session') {
-    allowed.add('workspace')
-    allowed.add('session')
-  }
-  const keys = Object.keys(request)
-  if (required[action].some(key => !Object.hasOwn(request, key)) || keys.some(key => !allowed.has(key))) {
-    return failure('invalid_params', 'project')
-  }
-  if (action === 'create_workspace'
-    && Object.hasOwn(request, 'session') && !Object.hasOwn(request, 'work_order')) {
-    return failure('invalid_params', 'project')
-  }
-  const result: Record<string, unknown> = {action}
-  for (const [name, limit] of [
-    ['workspace', 80], ['session', 120], ['work_order', 4000],
-  ] as const) {
-    if (!Object.hasOwn(request, name)) continue
-    const value = normalizedStringOriginalBound(request[name], limit)
-    if (value === null) return failure('invalid_params', 'project')
-    result[name] = value
-  }
+function validateProjectSteer(request: Record<string, unknown>): CodexRequestValidation {
+  const allowed = new Set(['instruction', 'project'])
+  if (Object.keys(request).some(key => !allowed.has(key))) return failure('invalid_params', 'steer')
+  const instruction = normalizedString(request.instruction, 2000)
+  if (instruction === null) return failure('invalid_params', 'steer')
+  const result: Record<string, unknown> = {instruction}
+  if (!projectField(request, result)) return failure('invalid_params', 'steer')
   return success(result)
 }
 
@@ -375,12 +241,6 @@ function normalizedString(value: unknown, limit: number): string | null {
   const normalized = stripLikePython(value)
   const size = codePointLength(normalized)
   return size >= 1 && size <= limit ? normalized : null
-}
-
-function normalizedStringOriginalBound(value: unknown, limit: number): string | null {
-  if (typeof value !== 'string' || codePointLength(value) > limit) return null
-  const normalized = stripLikePython(value)
-  return normalized === '' ? null : normalized
 }
 
 function success(value: Record<string, unknown>): CodexRequestValidation {

@@ -24,16 +24,53 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
   `display_name` / `approvals` on the manifest, `ApprovalBroker` port, role-based
   routing, `executor.*` / `project.*` wire, fixture executor,
   `check:executor-boundary`. Behaviour identical to M1.
-- [ ] 08 project/session/work — **in progress / redesigned 2026-09-03**
-  (coordinator sink; spec rewritten, nothing implemented): voice tools
-  `dispatch(executor, instruction)` / `cancel(executor, instruction?)` /
-  `confirm(id, accepted)`; intake + coordinator move to
-  `runtime/src/executors/coding/`; session is `latest | new`; roster is
-  coordinator input and desktop UI only, not ContextView; per-project run slots
-  with cap 3; adapter-level cancel producing a `cancelled` handoff through the
-  normal `postExecutorResult` path (no `CausalRuntime` change, no
-  `cancelDelegate` API); host-derived titles through `thread/name/set` /
-  `thread/name/updated`.
+- [ ] 08 project/session/work — **implemented 2026-09-04, live acceptance pending**
+  (coordinator sink). Deterministic coverage is in; nothing below has been
+  exercised against DashScope + a real Codex yet.
+  - [x] Voice tools `dispatch(executor, instruction)` / `cancel(executor,
+    instruction?)` / `confirm(id, accepted)` are single global `host` bindings
+    (`work-tools.ts`, `tool-schema.ts`); executors with manifest `agent.summary`
+    fold into the `dispatch.executor` enum and lose their `${name}__${op}`
+    schemas (bindings stay for host routing). `confirm` selects the FSM by id
+    (approval `pending_approval_id` vs project `pending_confirmation_id`).
+  - [x] Intake + coordinator live in `runtime/src/executors/coding/`
+    (`intake.ts`, `intake-model.ts`, `work-order.ts`); `assess` returns
+    `kind / project / project_evidence / session`, gets roster ≤10 + active
+    project + running works; non-active project needs `project_evidence`
+    verified against the raw utterance, otherwise `unclear`; non-roster names
+    are never mapped (`unclear` or explicit `create`); `create` with a goal
+    runs clarify → plan → proposal `{action:'create', work_order}`; create-only
+    proposes `work_order: null`; `switch` / `steer` / `cancel` route straight
+    to the adapter and close the intake as `routed`.
+  - [x] `AgentExecutor` port on `coding-executor.ts` (`roster`, `running`,
+    `cancel`, `resolveIntakeTarget(decision)`); deterministic resolver in the
+    Codex project adapter (exact roster-name match; `unknown_project` + ≤3
+    suggestions, `ambiguous_project`, `busy_project`, `capacity`).
+  - [x] Per-workspace run slots, `MAX_CONCURRENT_WORK = 3`, adapter-level
+    cancel → `{outcome:'cancelled', reason:'user_cancelled', work_id}` through
+    the normal handoff path; one `turn/interrupt` per cancelled run.
+  - [x] Host-derived titles (`deriveSessionTitle`: first sentence, ≤20 code
+    points) sent as `threadName`; `thread/name/updated` mirrored into
+    `store.setSessionTitle`; `任务 N` defaults deleted, `beginSessionForRun`
+    requires a title.
+  - [x] Approval FIFO in the Codex approval controller: one voice-visible
+    approval at a time, queued items start their TTL when they become head,
+    invalidation is scoped per work; `ApprovalView` carries `work` (project +
+    session title) and `queued`.
+  - [x] Internal Codex contract collapsed to `run / steer / status / cancel`;
+    the six `project` actions and two `confirm_*` ops are gone from the
+    model-facing manifest.
+  - [x] Desktop `project.state` gains `roster[{name, last_used_at,
+    running[{work_id, title}]}]`; `pending_action` is only `create_workspace`
+    and the renderer pill shows only for create. The renderer validates and
+    forwards `roster` but does not draw it yet.
+  - [ ] Live acceptance (below). Not yet exercised: real `thread/name/set`
+    round-trip, parallel Codex children per workspace, approval queueing
+    against a real app-server, and DashScope calling `dispatch` / `cancel` /
+    `confirm` from the rewritten instructions.
+  - Known residue: `realtime/evidence.ts` still carries speech-match branches
+    for `reuse_workspace` / `select_workspace` / `resume_session`, now
+    unreachable (the host emits only `create_workspace`).
 - [ ] Live acceptance for 08 recorded below with DashScope + Codex 0.152.0
   evidence (transcript, tool calls, `thread/list`).
 
@@ -43,6 +80,20 @@ Implementation and independent reviews used Terra and Luna for launch profiles,
 settings, approval handling and progress presentation. Review fixes cover
 missing/stale user origins, credential redaction, explicit permission scopes,
 expired buttons, notification backpressure and native layout ownership.
+
+## Validation (2026-09-04, 08 deterministic)
+
+| Check | Evidence |
+|---|---|
+| `npm run check` | Typecheck, lint, env contract, Node parity audit (187 files / 275 reviewed occurrences), executor boundary (15 allowlisted) passed |
+| `npm run test:runtime` | 2066 tests, 2064 passed, 2 platform skips, 0 failures |
+| `npm run test:desktop` | 810 tests, 807 passed, 3 platform skips, 0 failures |
+| `npm run test:cli` | 18 passed |
+
+The desktop build re-runs `npm run build` for the runtime workspace, which
+cleans `runtime/dist`; running `test:runtime` and `test:desktop` concurrently
+makes the runtime run lose its test modules mid-flight and look hung. Run them
+serially, as `npm test` does.
 
 ## Validation (2026-09-03)
 

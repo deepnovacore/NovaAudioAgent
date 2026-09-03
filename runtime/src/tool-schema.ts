@@ -15,6 +15,7 @@ import type { JsonValue } from './events.js'
 import type { StructuredTarget } from './memory.js'
 import type {ExecutorManifest, ExecutorRole, OpSpec} from './ports.js'
 import {stripLikePython} from './python-text.js'
+import {CONFIRM_TOOL_SPEC, cancelToolSpec, dispatchToolSpec, type AgentSummary, type HostToolSpec} from './work-tools.js'
 
 const WIRE_PART = /^[A-Za-z0-9_-]+$/u
 const MAX_WIRE_NAME = 64
@@ -52,7 +53,8 @@ const UPDATE_PROPERTIES: Readonly<Record<StructuredTarget, Readonly<Record<strin
 }
 
 export const toolBindingSchema = z.object({
-  kind: z.enum(['delegate', 'update', 'query']),
+  /** `host`: resolved by the service from the call's own `executor` / `id` argument; `executor` and `op` stay null. */
+  kind: z.enum(['delegate', 'update', 'query', 'host']),
   logical_name: z.string().min(1),
   executor: z.string().min(1).nullable().default(null),
   op: z.string().min(1).nullable().default(null),
@@ -133,6 +135,7 @@ export function compileToolSchema(
   }
 
   const seen = new Set<string>()
+  const agents: AgentSummary[] = []
   for (const manifest of manifests) {
     if (seen.has(manifest.name)) {
       throw new ToolSchemaError(`manifest 名称重复：${manifest.name}`)
@@ -142,13 +145,24 @@ export function compileToolSchema(
     if (!manifest.ops.some(op => op.readonly)) {
       throw new ToolSchemaError(`manifest '${manifest.name}' 至少需要一个 readonly op`)
     }
+    // Agent executors (spec 08) are host-routed: the model never sees `${name}__${op}` schemas, but the
+    // bindings stay so the service can rewrite `dispatch(executor, …)` into the executor's own `run`.
+    const agent = manifest.agent !== undefined
+    if (agent) agents.push({name: manifest.name, summary: manifest.agent!.summary})
     for (const op of manifest.ops) {
       const compiled = compileOp(manifest, op)
       if (bindings.has(compiled.wireName)) {
         throw new ToolSchemaError(`工具 wire name 重复：${compiled.wireName}`)
       }
-      schemas.push(compiled.schema)
+      if (!agent) schemas.push(compiled.schema)
       bindings.set(compiled.wireName, compiled.binding)
+    }
+  }
+  if (agents.length > 0) {
+    for (const spec of [dispatchToolSpec(agents), cancelToolSpec(agents), CONFIRM_TOOL_SPEC]) {
+      if (bindings.has(spec.name)) throw new ToolSchemaError(`工具 wire name 重复：${spec.name}`)
+      schemas.push(compileHostTool(spec))
+      bindings.set(spec.name, toolBindingSchema.parse({kind: 'host', logical_name: `host.${spec.name}`}))
     }
   }
 
@@ -187,6 +201,12 @@ function compileOp(manifest: ExecutorManifest, op: OpSpec): {
       sync_result: op.sync_result,
     }),
   }
+}
+
+function compileHostTool(spec: HostToolSpec): Readonly<Record<string, JsonValue>> {
+  const parameters: Record<string, JsonValue> = structuredClone(spec.params)
+  prepareObjectSchema(parameters, `host.${spec.name}`, spec.inject_origin_ref)
+  return functionSchema(spec.name, spec.description, parameters)
 }
 
 function prepareObjectSchema(

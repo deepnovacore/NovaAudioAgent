@@ -295,53 +295,40 @@ test('Qwen clarification fixture covers adaptive first-turn and merged multi-tur
     .every(turn => (turn.required_work_order_terms?.length ?? 0) >= 2))
 })
 
-test('Qwen project instructions route the six actions and structured confirmation semantically', () => {
-  assert.match(FRONTEND_INSTRUCTIONS, /codex__confirm_project_action/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /list_workspaces.*list_sessions/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /候选上下文.*select_workspace/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /目标 workspace.*list_sessions/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /Session 候选上下文.*resume_session/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /独立.*create_workspace/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /当前.*start_session/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /workspace_reused.*next_action.*start_session/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /只有 code=confirmation_required.*待确认 proposal/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /历史任务或命名 Session.*list_sessions.*不要 list_workspaces/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /目标项目身份未知.*list_workspaces/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /同意、拒绝、取消或暂缓.*必须调用.*不得只做口头回应/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /拒绝、取消或暂缓用 confirmed=false/u)
-  assert.match(
-    FRONTEND_INSTRUCTIONS,
-    /用户显式指定新 Session 名称时.*必须把名称原样放入 session 字段.*用户未指定名称时才省略 session/su,
-  )
-  assert.match(FRONTEND_INSTRUCTIONS, /先根据用户目标与当前上下文判断关系.*路由优先级/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /待确认 proposal 的决定.*身份未知的 workspace/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /可独立交付的完整产品或仓库.*create_workspace/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /workspace 名称必须从本轮用户表达动态提取/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /不得依赖固定产品名称/u)
-  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /俄罗斯方块/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /不要改写成问句复述/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /用户回答宿主问题后等待宿主规划，不重复创建任务/u)
+test('Qwen instructions route every coding request through the three host tools (spec 08)', () => {
+  assert.match(FRONTEND_INSTRUCTIONS, /编程、项目和会话相关的请求一律只用三个宿主工具：dispatch、cancel、confirm/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /任何编程请求（新任务、追加要求、切换项目、新建项目）都调用 dispatch/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /instruction 原样传用户这一轮的完整要求，不预先拆分、不改写成问句，也不猜测项目名或 Session/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /由宿主决定项目、Session 和是否需要追问。工具不返回项目清单，也不要向用户列举项目/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /用户明确要求停止或取消正在执行的任务时调用 cancel；instruction 只在用户点名了要停哪个任务时传/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /code=intake_opened \/ intake_in_progress 表示正在整理需求，尚未派单/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /unknown_project \/ ambiguous_project \/ busy_project \/ capacity 表示任务尚未执行，按事实转述可选项/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /同意、拒绝、取消或暂缓都必须调用 confirm.*不得只做口头回应/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /id 从该宿主事实原样复制，accepted 用 JSON boolean 表示决定/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /同意 accepted=true，拒绝、取消或暂缓 accepted=false；语义不明确时不要调用并自然追问/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /<active_project_context> 是 authoritative host state，只描述当前工作区和 Session/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /用户回答宿主问题后等待宿主规划，不重复 dispatch/u)
   assert.match(FRONTEND_INSTRUCTIONS, /已提交、正在启动.*host 生命周期事实.*已开始处理/su)
   assert.match(FRONTEND_INSTRUCTIONS, /没有工具事件或 host 事实.*不得声称已经提交/su)
-  assert.match(
-    FRONTEND_INSTRUCTIONS,
-    /只转述.*最后一条.*尚未转述.*不得.*重复更早的任务事实/su,
-  )
+  assert.match(FRONTEND_INSTRUCTIONS, /只转述.*最后一条.*尚未转述.*不得.*重复更早的任务事实/su)
   assert.match(FRONTEND_INSTRUCTIONS, /最后一条是结果.*不能改说.*提交.*启动/su)
-  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /codex__run/u)
+  // The model never sees executor op names or the pre-08 project-action vocabulary.
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /codex__/u)
+  assert.doesNotMatch(
+    FRONTEND_INSTRUCTIONS,
+    /create_workspace|select_workspace|list_workspaces|list_sessions|resume_session|start_session|confirm_project_action|confirm_codex_approval|proposal_id|approval_id|work_order/u,
+  )
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /俄罗斯方块/u)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /确认语音由 host 判定/u)
 })
 
 test('default Qwen instructions preserve the original surface without Codex approval', () => {
-  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /codex__confirm_codex_approval|approval_id/u)
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /权限请求（含 id|唯一的授权动作/u)
   assert.match(
     CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
-    /codex__confirm_codex_approval.*approved=true.*approved=false.*approval_id/su,
+    /权限请求（含 id、批准类型和中性摘要）.*只有本轮用户明确同意时才调用 confirm，accepted=true.*明确拒绝时才调用 confirm，accepted=false.*id 必须从该 host 事实原样复制/su,
   )
-  assert.match(
-    CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
-    /当前 Codex 权限请求.*只调用一次.*codex__confirm_codex_approval/su,
-  )
+  assert.match(CODEX_APPROVAL_FRONTEND_INSTRUCTIONS, /对当前权限请求，明确同意或拒绝时只调用一次 confirm/u)
   assert.match(
     CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
     /唯一的授权动作.*同一 response.*不得.*普通音频.*文本.*其他工具/su,
@@ -355,10 +342,7 @@ test('default Qwen instructions preserve the original surface without Codex appr
     CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
     /表达含糊、询问信息或尚未决定时不得调用，并自然追问/u,
   )
-  assert.match(
-    CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
-    /Codex 权限请求.*不能用于待确认项目操作.*项目 proposal.*codex__confirm_project_action/su,
-  )
+  assert.doesNotMatch(CODEX_APPROVAL_FRONTEND_INSTRUCTIONS, /codex__|approval_id|proposal_id/u)
 })
 
 test('Qwen provider emits approval instructions only for an approval-enabled session', async () => {
@@ -383,19 +367,16 @@ test('Qwen provider emits approval instructions only for an approval-enabled ses
     assert.ok(update !== undefined)
     const instructions = (update.session as Record<string, JsonValue>).instructions
     assert.equal(typeof instructions, 'string')
-    assert.equal(
-      (instructions as string).includes('codex__confirm_codex_approval'),
-      executorApproval,
-    )
-    assert.equal((instructions as string).includes('approval_id'), executorApproval)
+    assert.equal((instructions as string).includes('权限请求（含 id'), executorApproval)
+    assert.equal((instructions as string).includes('唯一的授权动作'), executorApproval)
   }
 })
 
 test('Qwen hands coding intake to the host and does not invent additional questions', () => {
-  assert.match(FRONTEND_INSTRUCTIONS, /新的 Codex 编程任务.*codex__project.*work_order 草稿.*宿主 intake/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /任何编程请求.*都调用 dispatch.*由宿主决定项目、Session 和是否需要追问/su)
   assert.match(FRONTEND_INSTRUCTIONS, /intake_opened.*intake_in_progress.*尚未派单/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /只问给定的那一个问题.*不调用另一项编码任务/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /仓库技术栈、入口、测试命令交给 Codex 探索/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /只问给定的那一个问题，不再次 dispatch/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /仓库技术栈、入口、测试命令交给执行器探索/u)
   assert.match(FRONTEND_INSTRUCTIONS, /ready.*planning.*readback.*committing.*不自行追问/su)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /不得重复追问，也不得拆成多个 Codex 任务/u)
 })
@@ -439,14 +420,13 @@ test('the emitted session.update matches the pinned outbound payload', async () 
   for (const required of [
     'Nova Audio Agent 任务',
     'Nova Audio Agent 宿主激活事实：',
-    'codex__project',
-    'codex__confirm_project_action',
-    'codex__confirm_codex_approval',
+    'dispatch',
+    'cancel',
+    'confirm',
     'guard__start',
     'watch__start',
     'memory__recall',
-    'codex__status',
-    'work_order',
+    'instruction',
   ]) {
     assert.ok((instructions as string).includes(required),
       `session instructions must still govern ${required}`)

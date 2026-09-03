@@ -34,6 +34,18 @@ export type ApprovalLocalDetail =
     readonly scope: string
   }
 
+/** The running work an approval belongs to, so a person can tell which of several works is asking. */
+export interface ApprovalWork {
+  readonly work_id: string
+  readonly project: string
+  readonly title: string
+}
+
+/**
+ * The head of the approval FIFO (spec 08): exactly one approval is voice-visible at a time; later
+ * approvals from other running works are queued, keep their executor request open, and get a full TTL
+ * once they become head.
+ */
 export interface ApprovalView {
   readonly pending_approval: boolean
   readonly pending_approval_busy: boolean
@@ -43,6 +55,10 @@ export interface ApprovalView {
   readonly operation_summary: string | null
   readonly expires_at: number | null
   readonly allowed_decisions?: readonly ApprovalDecision[]
+  /** `null` for offers without work identity (ordinary/live transports). */
+  readonly work: ApprovalWork | null
+  /** Approvals waiting behind the head; never rendered, only counted. */
+  readonly queued: number
 }
 
 /** The half of an executor's approval broker that the host is allowed to touch. */

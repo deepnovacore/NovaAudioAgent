@@ -21,6 +21,7 @@ import {
   ProjectStateError,
   type ProjectStore,
   type PublicProjectContext,
+  type PublicProjectView,
   type WorkspaceRecord,
 } from '../src/project-store.js'
 import { settingsSchema } from '../src/config.js'
@@ -723,6 +724,7 @@ test('intake without a coding executor fails assembly instead of silently droppi
         models: {
           assess: () => Promise.reject(new Error('not used')),
           plan: () => Promise.reject(new Error('not used')),
+          resolveCancelTarget: () => Promise.reject(new Error('not used')),
         },
         settings: {clarification_depth: 'balanced', plan_readback: 'summary'},
       },
@@ -934,6 +936,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
       view: Object.freeze({
         workspace_display_name: alpha.display_name,
         session_title: null,
+        roster: [],
         pending_confirmation: false,
         pending_confirmation_busy: false,
       }),
@@ -941,6 +944,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
     snapshot: () => Promise.resolve(Object.freeze({
       active_workspace_id: alpha.workspace_id,
       workspaces: Object.freeze([alpha]),
+      sessions: Object.freeze([]),
     })),
     close: () => Promise.resolve(),
   } as unknown as ProjectStore
@@ -953,6 +957,26 @@ test('project proposal reaches provider and desktop before confirmation', async 
     },
   }
   const adapter = new ProjectCodexAdapter({store, confirmation, transportFactory})
+  // Spec 08: the voice model only calls `dispatch`; the coordinator (faked here) decides `create`.
+  const slots = {
+    goal: {state: 'stated', note: '实现并验证俄罗斯方块小游戏'}, scope: {state: 'inferred', note: '单页小游戏'},
+    acceptance: {state: 'inferred', note: '可以玩'}, constraints: {state: 'missing', note: ''},
+  }
+  const intake = {
+    models: {
+      assess: (input: Readonly<Record<string, unknown>>) => Promise.resolve({
+        intake_id: input.intake_id, revision: input.revision, slots, readiness: 0.75,
+        kind: 'create', project: 'tetris-game', project_evidence: 'tetris-game', session: 'latest',
+        intent_to_proceed: true, candidate_question: null, discovery: [], early_exit: false, abandon: false,
+      }),
+      plan: (input: Readonly<Record<string, unknown>>) => Promise.resolve({
+        intake_id: input.intake_id, revision: input.revision,
+        work_order: {objective: slots.goal.note, scope_in: ['单页小游戏'], acceptance: ['可以玩']},
+      }),
+      resolveCancelTarget: () => Promise.resolve(null),
+    },
+    settings: {clarification_depth: 'balanced', plan_readback: 'summary'},
+  } as const
   class ConfirmationProvider extends WorkspaceContextProvider {
     readonly hostItems: HostContextItem[] = []
     readonly responseIntents: HostResponseIntent[] = []
@@ -987,6 +1011,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
     core,
     provider,
     projectAdapter: adapter,
+    intake,
     onProjectView: view => { views.push(view) },
   })
 
@@ -1010,30 +1035,27 @@ test('project proposal reaches provider and desktop before confirmation', async 
     await realtime.service.handleEvent({
       kind: 'tool_call_ready', session_epoch: 1,
       call_id: 'call-project', item_id: 'function-project', response_id: 'response-project',
-      name: 'codex__project',
-      arguments: {
-        action: 'create_workspace',
-        workspace: 'tetris-game',
-        work_order: '实现并验证俄罗斯方块小游戏',
-      },
+      name: 'dispatch',
+      arguments: {executor: 'codex', instruction: '新建 tetris-game 并实现俄罗斯方块', origin_ref: 'conversation:1'},
     })
     await realtime.service.handleEvent({
       kind: 'response_terminal', session_epoch: 1, response_id: 'response-project',
       status: 'completed', reason: 'done',
     })
 
-    await waitNamed('immediate pending project view', () => (
-      views.some(view => view.pending_action === 'create_workspace')
-    ))
-    await waitNamed('correlated confirmation tool result', () => (
+    await waitNamed('correlated dispatch tool result', () => (
       provider.hostItems.some(item => item.call_id === 'call-project')
       && provider.responseIntents.some(intent => intent.kind === 'tool_result')
+    ))
+    await waitNamed('immediate pending project view', () => (
+      views.some(view => view.pending_action === 'create_workspace')
     ))
 
     const pending = views.findLast(view => view.pending_action === 'create_workspace')
     assert.deepEqual(pending, {
       workspace_display_name: 'alpha',
       session_title: null,
+      roster: [],
       pending_confirmation: true,
       pending_confirmation_busy: false,
       pending_confirmation_id: 'assembly-proposal',
@@ -1042,28 +1064,17 @@ test('project proposal reaches provider and desktop before confirmation', async 
       pending_session_title: null,
       pending_expires_in_seconds: 360,
     })
-    assert.equal(pending?.pending_confirmation_id, 'assembly-proposal')
 
     const item = provider.hostItems.find(candidate => candidate.call_id === 'call-project')
     assert.ok(item !== undefined)
-    const result = JSON.parse(item.content) as {
-      readonly state?: string
-      readonly content?: {
-        readonly code?: string
-        readonly action?: string
-        readonly workspace?: string
-        readonly confirmation_prompt?: string
-        readonly proposal_id?: string
-      }
-      readonly response_instruction?: string
-    }
-    assert.equal(result.state, 'ok')
-    assert.equal(result.content?.code, 'confirmation_required')
-    assert.equal(result.content?.action, 'create_workspace')
-    assert.equal(result.content?.workspace, 'tetris-game')
-    assert.match(result.content?.confirmation_prompt ?? '', /请确认或取消/u)
-    assert.match(result.response_instruction ?? '', /只.*confirmation_prompt.*一次.*不得补充/su)
-    assert.equal(result.content?.proposal_id, 'assembly-proposal')
+    assert.equal((JSON.parse(item.content) as {readonly code?: string}).code, 'intake_opened')
+    // The proposal reaches the model as a host fact naming the id; only `confirm` can answer it. Queued
+    // counts: the fake provider never answers the tool-result response, so the floor stays busy.
+    const factText = 'id=assembly-proposal；仅通过 confirm(id, accepted) 回答'
+    await waitNamed('confirmation fact', () => [
+      ...provider.hostItems.filter(candidate => candidate.call_id === null).map(candidate => candidate.content),
+      ...realtime.service.queuedHostItems().map(queued => queued.intent.item.content),
+    ].some(content => content.includes(factText)))
     assert.equal(
       provider.responseIntents.some(intent => intent.kind === 'delegation_acknowledgement'),
       false,
@@ -1091,7 +1102,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
   } = {operation: null, capability: null, context: null, origin: null, admission: null}
   let closeCalls = 0
   const viewObservers = new Set<(
-    view: ProjectConfirmationView,
+    view: PublicProjectView,
   ) => void | Promise<void>>()
   let activeWorkspace = 'alpha'
   let activeSession = 'Task'
@@ -1126,8 +1137,8 @@ test('project adapter wiring carries one confirmed identity through the real rea
       captured.origin = operation.origin_ref
       const admission = runtimeDispatch({
         executor: 'codex',
-        op: 'project',
-        request: {action: 'execute_confirmed'},
+        op: 'run',
+        request: {work_order: operation.work_order ?? ''},
         origin_ref: operation.origin_ref,
       }, {
         kind: 'realtime_tool',
@@ -1155,6 +1166,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
     publicProjectView: pending => Object.freeze({
       workspace_display_name: activeWorkspace,
       session_title: activeSession,
+      roster: [],
       pending_confirmation: pending,
       pending_confirmation_busy: false,
     }),
@@ -1242,8 +1254,8 @@ test('project adapter wiring carries one confirmed identity through the real rea
       call_id: 'call-confirm',
       item_id: 'function-confirm',
       response_id: 'response-confirm',
-      name: 'codex__confirm_project_action',
-      arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+      name: 'confirm',
+      arguments: {id: proposal.proposal_id, accepted: true},
     })
     assert.equal(confirmation.pending, false)
     assert.equal(captured.operation?.proposal_id, proposal.proposal_id)
@@ -1257,11 +1269,12 @@ test('project adapter wiring carries one confirmed identity through the real rea
     assert.deepEqual(views.at(-1), {
       workspace_display_name: 'alpha',
       session_title: 'Task',
+      roster: [],
       pending_confirmation: false,
       pending_confirmation_busy: false,
     })
     assert.deepEqual(Object.keys(views.at(-1) ?? {}).sort(), [
-      'pending_confirmation', 'pending_confirmation_busy', 'session_title',
+      'pending_confirmation', 'pending_confirmation_busy', 'roster', 'session_title',
       'workspace_display_name',
     ])
     activeWorkspace = 'beta'
@@ -1270,6 +1283,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
     assert.deepEqual(views.at(-1), {
       workspace_display_name: 'beta',
       session_title: 'New task',
+      roster: [],
       pending_confirmation: false,
       pending_confirmation_busy: false,
     })
@@ -1286,14 +1300,15 @@ test('active project views replace one provider context without publishing histo
     idFactory: () => 'active-context-confirmation',
   })
   const provider = new WorkspaceContextProvider()
-  const viewObservers = new Set<(view: ProjectConfirmationView) => void>()
+  const viewObservers = new Set<(view: PublicProjectView) => void>()
   const contextObservers = new Set<(
     context: PublicProjectContext,
   ) => void | Promise<void>>()
   const workspaceObservers = new Set<(event: CommittedWorkspaceEvent) => void | Promise<void>>()
-  let view: ProjectConfirmationView = Object.freeze({
+  let view: PublicProjectView = Object.freeze({
     workspace_display_name: 'alpha',
     session_title: null,
+    roster: [],
     pending_confirmation: false,
     pending_confirmation_busy: false,
   })
@@ -1322,7 +1337,7 @@ test('active project views replace one provider context without publishing histo
       return Promise.resolve()
     },
     activeCommittedWorkspace: () => Promise.resolve(alpha),
-    observeProjectView: (observer: (next: ProjectConfirmationView) => void) => {
+    observeProjectView: (observer: (next: PublicProjectView) => void) => {
       viewObservers.add(observer)
       return () => { viewObservers.delete(observer) }
     },
@@ -1401,7 +1416,7 @@ test('active project views replace one provider context without publishing histo
       'a new host id must not pair with the prior display view')
     contextWorkspaceId = 'host-beta'
     view = Object.freeze({
-      workspace_display_name: 'beta', session_title: null, pending_confirmation: false,
+      workspace_display_name: 'beta', session_title: null, roster: [], pending_confirmation: false,
       pending_confirmation_busy: false,
     })
     for (const observer of viewObservers) observer(view)
@@ -1585,7 +1600,7 @@ test('delayed atomic view never pairs an immediate new graph with the prior work
     let atomicContext: PublicProjectContext = Object.freeze({
       workspace_id: alpha.workspace_id,
       view: Object.freeze({
-        workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+        workspace_display_name: 'alpha', session_title: null, roster: [], pending_confirmation: false,
         pending_confirmation_busy: false,
       }),
     })
@@ -1696,7 +1711,7 @@ test('delayed atomic view never pairs an immediate new graph with the prior work
       atomicContext = Object.freeze({
         workspace_id: beta.workspace_id,
         view: Object.freeze({
-          workspace_display_name: 'beta', session_title: null, pending_confirmation: false,
+          workspace_display_name: 'beta', session_title: null, roster: [], pending_confirmation: false,
           pending_confirmation_busy: false,
         }),
       })

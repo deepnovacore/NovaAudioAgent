@@ -277,7 +277,7 @@ test('Qwen factory owns enabled graph storage while unsafe graph config stays vo
       readonly session?: {readonly instructions?: string}
     }
     assert.equal(update.session?.instructions, workspaceGraphFrontendInstructions)
-    assert.doesNotMatch(update.session?.instructions ?? '', /codex__confirm_codex_approval/u)
+    assert.doesNotMatch(update.session?.instructions ?? '', /权限请求（含 id/u)
     await enabled.stop()
 
     const diagnostics: string[] = []
@@ -395,12 +395,14 @@ test('Qwen composition exposes approval only for the exact controller-bearing re
   await settleNamed('Qwen composition start', realtime.start())
   assert.equal(connector.calls.length, 1)
   assert.equal(starts, 1)
-  assert.equal(realtime.tools.bindings.has('codex__confirm_codex_approval'), true)
+  // Spec 08: approval answers ride the universal host `confirm`; no executor-specific approval op exists.
+  assert.equal(realtime.tools.bindings.get('confirm')?.kind, 'host')
+  assert.equal([...realtime.tools.bindings.keys()].some(name => name.includes('approval')), false)
   const update = JSON.parse(connector.sockets[0]?.sent[0] ?? '{}') as {
     readonly session?: {readonly instructions?: string}
   }
-  assert.match(update.session?.instructions ?? '', /codex__confirm_codex_approval/u)
-  assert.match(update.session?.instructions ?? '', /approval_id/u)
+  assert.match(update.session?.instructions ?? '', /权限请求（含 id.*只调用一次 confirm/su)
+  assert.doesNotMatch(update.session?.instructions ?? '', /codex__|approval_id/u)
 
   await realtime.stop()
   assert.equal(closes, 1)
@@ -420,13 +422,13 @@ test('Qwen composition exposes approval only for the exact controller-bearing re
     codexResource: neverResource,
   })
   await settleNamed('Qwen never-approval composition start', neverRealtime.start())
-  assert.equal(neverRealtime.tools.bindings.has('codex__confirm_codex_approval'), false)
+  assert.equal(neverRealtime.tools.bindings.get('confirm')?.kind, 'host')
   const neverUpdate = JSON.parse(neverConnector.sockets[0]?.sent[0] ?? '{}') as {
     readonly session?: {readonly instructions?: string}
   }
   assert.doesNotMatch(
     neverUpdate.session?.instructions ?? '',
-    /codex__confirm_codex_approval|approval_id/u,
+    /权限请求（含 id|codex__|approval_id/u,
   )
   await neverRealtime.stop()
 })

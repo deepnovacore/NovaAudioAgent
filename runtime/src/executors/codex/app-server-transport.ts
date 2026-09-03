@@ -40,8 +40,9 @@ import {stripLikePython, isWellFormed} from '../../python-text.js'
 import {normalizeNfcPinned} from '../../unicode-normalize.js'
 import {isOtherCategory} from '../../unicode-tables.js'
 import {
-  CodexApprovalController,
+  isCodexApprovalPort,
   routeCodexApprovalServerRequest,
+  type CodexApprovalPort,
 } from './approval.js'
 
 export const CODEX_PREFLIGHT_LIMIT_MS = 20_000
@@ -89,7 +90,7 @@ export interface CodexAppServerLaunchConfig {
   readonly persistent: boolean
   readonly workingInterval?: number
   readonly approvalPolicy?: 'never' | 'on-request'
-  readonly approvalController?: CodexApprovalController
+  readonly approvalController?: CodexApprovalPort
   readonly launchProfile?: CodexLaunchProfile
 }
 
@@ -1505,7 +1506,7 @@ function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCode
   if (
     (approvalPolicy !== 'never' && approvalPolicy !== 'on-request')
     || (config.approvalPolicy !== undefined && config.approvalPolicy !== approvalPolicy)
-    || (approvalPolicy === 'on-request' && !(config.approvalController instanceof CodexApprovalController))
+    || (approvalPolicy === 'on-request' && !isCodexApprovalPort(config.approvalController))
     || (approvalPolicy === 'never' && config.approvalController !== undefined)
   ) throw new CodexTransportError('workspace_invalid')
   if (launchProfile.thread.approvalPolicy !== approvalPolicy

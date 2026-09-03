@@ -1562,7 +1562,7 @@ test('ready and unavailable finalization opt into the same bounded descriptor-lo
       'alpha',
       hostWorkspaceForTest(await realpath(workspacePath)),
     )
-    const starting = await store.beginSession(workspace.workspace_id, null)
+    const starting = await store.beginSession(workspace.workspace_id, '任务')
     nativeLocks.busyAttempts = 2
     const ready = await store.markSessionReady(
       starting.session_id,
@@ -1605,7 +1605,7 @@ test('an aborted bounded lock wait settles and is joined before store close retu
       'alpha',
       hostWorkspaceForTest(await realpath(workspacePath)),
     )
-    const starting = await store.beginSession(workspace.workspace_id, null)
+    const starting = await store.beginSession(workspace.workspace_id, '任务')
     nativeLocks.busyAttempts = Number.MAX_SAFE_INTEGER
     const abort = new AbortController()
     const rollback = (store.rollbackSessionStart as unknown as (
@@ -1654,7 +1654,7 @@ test('a bounded lock wait exhausts one fixed deadline and returns stable state_b
       'alpha',
       hostWorkspaceForTest(await realpath(workspacePath)),
     )
-    const starting = await store.beginSession(workspace.workspace_id, null)
+    const starting = await store.beginSession(workspace.workspace_id, '任务')
     nativeLocks.busyAttempts = Number.MAX_SAFE_INTEGER
     const callsBeforeWait = nativeLocks.acquireCalls
     await assert.rejects(
@@ -3656,7 +3656,7 @@ test('ID allocation never overwrites either namespace and has a fixed collision 
     assert.deepEqual((await store.listWorkspaces()).map(item => item.workspace_id), [first.workspace_id])
     assert.deepEqual(await readdir(managedRoot), [basename(first.canonical_path)])
     await assert.rejects(
-      store.beginSession(first.workspace_id, null),
+      store.beginSession(first.workspace_id, '任务'),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'id_factory_invalid',
     )
     assert.equal(calls - callsAfterFirst, 64)
@@ -3953,6 +3953,7 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     assert.deepEqual(await first.publicView(true), {
       workspace_display_name: 'Alpha',
       session_title: '登录修复',
+      roster: [{name: 'Alpha', last_used_at: 100, running: []}],
       pending_confirmation: true,
       pending_confirmation_busy: false,
     })
@@ -4182,8 +4183,8 @@ test('session retention prunes unavailable before inactive ready and never prune
     now: () => 1000,
   })
   try {
-    const provisional = await store.beginSession(workspaceId, null)
-    assert.equal(provisional.display_title, '任务 1')
+    const provisional = await store.beginSession(workspaceId, '新任务')
+    assert.equal(provisional.display_title, '新任务')
     const retained = await store.listSessions(workspaceId)
     assert.equal(retained.length, 200)
     assert.equal(retained.some(session => session.session_id === 'session-0000'), false)
@@ -4195,8 +4196,8 @@ test('session retention prunes unavailable before inactive ready and never prune
   }
 })
 
-test('default Session numbering increments Python integers beyond Number safe range', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-session-bigint-'))
+test('setSessionTitle clips to 120 code points, keeps per-workspace uniqueness, and rejects unknown or empty', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-session-title-'))
   const stateRoot = join(root, 'state')
   const managedRoot = join(root, 'managed')
   const workspacePath = join(root, 'workspace')
@@ -4216,9 +4217,18 @@ test('default Session numbering increments Python integers beyond Number safe ra
       'alpha',
       hostWorkspaceForTest(await realpath(workspacePath)),
     )
-    await store.beginSession(workspace.workspace_id, '任务 9007199254740993')
-    const generated = await store.beginSession(workspace.workspace_id, null)
-    assert.equal(generated.display_title, '任务 9007199254740994')
+    const first = await store.beginSession(workspace.workspace_id, '博客')
+    const second = await store.beginSession(workspace.workspace_id, '草稿')
+    assert.equal(await store.setSessionTitle(second.session_id, '博客'), true)
+    const renamed = await store.resolveSession(workspace.workspace_id, null)
+    assert.equal(renamed.session_id, second.session_id)
+    assert.notEqual(renamed.display_title, '博客', 'a Codex-owned name must not collide with a sibling')
+    assert.equal(renamed.display_title.startsWith('博客'), true)
+    assert.equal(await store.setSessionTitle(first.session_id, '甲'.repeat(150)), true)
+    const clipped = (await store.listSessions(workspace.workspace_id)).find(s => s.session_id === first.session_id)
+    assert.equal([...clipped!.display_title].length, 120)
+    assert.equal(await store.setSessionTitle(first.session_id, '   '), false)
+    assert.equal(await store.setSessionTitle('session-missing', '博客'), false)
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})

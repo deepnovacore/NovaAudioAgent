@@ -198,6 +198,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     type: 'project.state',
     workspace_display_name: 'alpha',
     session_title: null,
+    roster: [],
     pending_confirmation: true,
     pending_confirmation_busy: false,
     pending_confirmation_id: 'proposal-public-1',
@@ -212,11 +213,51 @@ test('Codex project view carries a bounded public confirmation description', () 
     pending_confirmation: false,
     pending_confirmation_busy: false,
     pending_confirmation_id: 'proposal-stale',
-    pending_action: 'select_workspace',
+    pending_action: 'create_workspace',
     pending_workspace_display_name: 'beta',
     pending_session_title: null,
     pending_expires_in_seconds: 90,
   }), DesktopProtocolError)
+})
+
+test('project view carries the spec 08 roster for the UI and only a create as pill action', () => {
+  const roster = [
+    {name: 'blog', last_used_at: 1_700_000_000, running: [{work_id: 'w1', title: '暗色模式'}]},
+    {name: 'pricing', last_used_at: 1_600_000_000, running: []},
+  ]
+  const parsed = JSON.parse(projectStateMessage({
+    workspace_display_name: 'blog',
+    session_title: '暗色模式',
+    roster,
+    pending_confirmation: false,
+    pending_confirmation_busy: false,
+  })) as Readonly<Record<string, unknown>>
+  assert.deepEqual(parsed.roster, roster)
+
+  // A voice-only proposal (plan readback / switch) is pending with metadata but no pill action.
+  const voiceOnly = JSON.parse(projectStateMessage({
+    workspace_display_name: 'blog',
+    session_title: null,
+    pending_confirmation: true,
+    pending_confirmation_busy: false,
+    pending_confirmation_id: 'proposal-1',
+    pending_action: null,
+    pending_workspace_display_name: 'blog',
+    pending_session_title: '暗色模式',
+    pending_expires_in_seconds: 30,
+  })) as Readonly<Record<string, unknown>>
+  assert.equal(voiceOnly.pending_action, null)
+  assert.equal(voiceOnly.pending_confirmation, true)
+
+  const base = {workspace_display_name: 'blog', session_title: null, pending_confirmation: false, pending_confirmation_busy: false}
+  for (const invalid of [
+    {...base, pending_action: 'select_workspace' as unknown as 'create_workspace'},
+    {...base, roster: [{name: '', last_used_at: 1, running: []}]},
+    {...base, roster: [{name: 'blog', last_used_at: -1, running: []}]},
+    {...base, roster: [{name: 'blog', last_used_at: 1, running: [{work_id: '', title: 't'}]}]},
+    {...base, roster: [{name: 'blog', last_used_at: 1, running: [{work_id: 'w', title: 'x'.repeat(121)}]}]},
+    {...base, roster: Array.from({length: 11}, (_, index) => ({name: `p${index}`, last_used_at: 1, running: []}))},
+  ]) assert.throws(() => projectStateMessage(invalid), DesktopProtocolError)
 })
 
 test('Codex project view rejects an invalid banner decision binding', () => {
@@ -261,21 +302,6 @@ test('Codex project view accepts the full confirmation ttl', () => {
   }), DesktopProtocolError)
 })
 
-test('Codex project view carries workspace reuse confirmation', () => {
-  const parsed = JSON.parse(projectStateMessage({
-    workspace_display_name: 'alpha',
-    session_title: null,
-    pending_confirmation: true,
-    pending_confirmation_busy: false,
-    pending_action: 'reuse_workspace',
-    pending_workspace_display_name: 'timer-app',
-    pending_session_title: 'Initial',
-    pending_expires_in_seconds: 360,
-  })) as Readonly<Record<string, unknown>>
-
-  assert.equal(parsed.pending_action, 'reuse_workspace')
-})
-
 test('Codex approval wire carries only bounded local display detail and relative expiry', () => {
   const parsed: unknown = JSON.parse(executorApprovalMessage({
     pending_approval: true,
@@ -285,6 +311,8 @@ test('Codex approval wire carries only bounded local display detail and relative
     local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
     operation_summary: 'Codex 请求执行一条工作区命令。',
     expires_at: 70,
+    work: null,
+    queued: 0,
   }, 10, CODEX))
   assert.deepEqual(parsed, {
     type: 'executor.approval',
@@ -306,6 +334,8 @@ test('Codex approval wire carries only bounded local display detail and relative
     local_detail: {kind: 'command_execution', command: 'x'.repeat(4097), cwd: 'C:\\workspace'},
     operation_summary: 'summary',
     expires_at: 70,
+    work: null,
+    queued: 0,
   }, 10, CODEX), DesktopProtocolError)
 })
 

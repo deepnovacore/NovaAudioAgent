@@ -14,16 +14,5 @@
     "pattern": "'codex'",
     "count": 13,
     "reason": "Executor-owned environment rows: user-facing NOVA_AUDIO_AGENT_CODEX_* names and their owner tag are explicitly allowed residue in spec 07."
-  },
-  {
-    "path": "runtime/src/realtime/intake.ts",
-    "pattern": "codex__confirm_project_action",
-    "reason": "Model-visible tool name; the whole model-facing surface is renamed once in spec 08."
-  },
-  {
-    "path": "runtime/src/realtime/qwen.ts",
-    "pattern": "codex__",
-    "count": 11,
-    "reason": "Prompt text naming model-visible tools; rewritten once in spec 08."
   }
 ]

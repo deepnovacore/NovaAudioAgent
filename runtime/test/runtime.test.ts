@@ -1759,8 +1759,8 @@ test('confirmed external dispatch narrowly admits one aged proposal origin capab
   assert.ok(outcome.operation)
   const request = {
     executor: 'codex',
-    op: 'project',
-    request: {action: 'execute_confirmed'},
+    op: 'run',
+    request: {work_order: '实现俄罗斯方块'},
     origin_ref: refs[0]!,
   } as const
 
@@ -1851,8 +1851,8 @@ test('a confirmation issued before its ttl stays admissible while the commit is 
   )
   const admission = runtime.dispatchConfirmedExternal({
     executor: 'codex',
-    op: 'project',
-    request: {action: 'execute_confirmed'},
+    op: 'run',
+    request: {work_order: '实现俄罗斯方块'},
     origin_ref: originRef,
   }, externalReason, confirmed.operation)
   assert.equal(admission.accepted, true)

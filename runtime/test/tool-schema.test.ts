@@ -195,3 +195,44 @@ test('wire names, reserved params, and readonly requirements are enforced', () =
     ops: [{...readonlyOp, name: 'peekpeek'}],
   })]), ToolSchemaError)
 })
+
+test('agent executors fold into the three host tools while keeping their delegate bindings', () => {
+  const policy = handoffPolicySchema.parse({
+    channel: 'codex', priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8,
+  })
+  const statusOp = {name: 'status', description: 'status', params: {type: 'object', properties: {}}, readonly: true}
+  const agent = executorManifestSchema.parse({
+    name: 'codex', display_name: 'Codex', policy, agent: {summary: '写代码、改项目'},
+    ops: [
+      {name: 'run', description: 'run', params: {type: 'object', properties: {work_order: {type: 'string'}}}},
+      statusOp,
+    ],
+  })
+  const plain = executorManifestSchema.parse({
+    name: 'sim', display_name: 'Sim', policy: handoffPolicySchema.parse({...policy, channel: 'sim'}),
+    ops: [{...statusOp, name: 'peek'}],
+  })
+
+  const compiled = compileToolSchema([agent, plain])
+  const names = (schemas: readonly JsonValue[]): string[] =>
+    schemas.map(schema => String(record(record(schema).function).name)).filter(name => !name.startsWith('update_'))
+  assert.deepEqual(names(compiled.schemas), ['sim__peek', 'dispatch', 'cancel', 'confirm'], 'no codex__* schema reaches the model')
+  for (const name of ['codex__run', 'codex__status']) {
+    assert.equal(compiled.bindings.get(name)?.kind, 'delegate', `${name} binding survives for dispatch rewriting`)
+  }
+  for (const name of ['dispatch', 'cancel', 'confirm']) {
+    assert.deepEqual(compiled.bindings.get(name), {
+      kind: 'host', logical_name: `host.${name}`, executor: null, op: null, target: null, sync_result: false,
+    })
+  }
+  const dispatch = record(record(compiled.schemas.find(schema => record(record(schema).function).name === 'dispatch')).function)
+  const executor = record(record(record(dispatch.parameters).properties).executor)
+  assert.deepEqual(executor.enum, ['codex'])
+  assert.match(String(dispatch.description), /codex: 写代码、改项目/u)
+  assert.ok(Object.hasOwn(record(record(dispatch.parameters).properties), 'origin_ref'), 'dispatch carries the injected origin_ref')
+
+  // Without an agent manifest the host tools do not exist.
+  const bare = compileToolSchema([plain])
+  assert.deepEqual(names(bare.schemas), ['sim__peek'])
+  assert.equal(bare.bindings.has('dispatch'), false)
+})

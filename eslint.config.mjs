@@ -29,7 +29,8 @@ export default tseslint.config(
   },
   {
     // Spec 07 R1: core never imports a concrete executor package. Composition roots and the
-    // registry are the only exceptions.
+    // registry are the only exceptions; `executors/coding/` is the role-level intake coordinator
+    // (spec 08), shared by every coding executor and not a concrete package.
     files: ['runtime/src/**/*.ts'],
     ignores: [
       'runtime/src/executors/**',
@@ -40,7 +41,7 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          group: ['**/executors/*/**', '**/executors/*/index.js'],
+          group: ['**/executors/*/**', '**/executors/*/index.js', '!**/executors/coding/**'],
           message: 'core must not import an executor package; route through ports or the executors/index.js registry',
         }],
       }],

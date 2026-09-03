@@ -1058,6 +1058,8 @@ function sameProjectView(
       === (right.pending_workspace_display_name ?? null)
     && (left.pending_session_title ?? null) === (right.pending_session_title ?? null)
     && (left.pending_expires_in_seconds ?? null) === (right.pending_expires_in_seconds ?? null)
+    // Store-ordered and plain data, so the serialisation is a stable identity (spec 08 roster).
+    && JSON.stringify(left.roster ?? []) === JSON.stringify(right.roster ?? [])
 }
 
 function sameApprovalView(

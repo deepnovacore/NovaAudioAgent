@@ -2538,6 +2538,12 @@
                                 "elapsed": {
                                   "type": "number",
                                   "minimum": 0
+                                },
+                                "project": {
+                                  "type": "string"
+                                },
+                                "title": {
+                                  "type": "string"
                                 }
                               },
                               "required": [

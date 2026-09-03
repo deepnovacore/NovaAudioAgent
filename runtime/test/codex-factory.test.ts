@@ -46,8 +46,6 @@ import type {
   ProjectRootFileLookupResult,
   ProjectRootFileResult,
 } from '../src/project-root-file.js'
-import {compileToolSchema} from '../src/tool-schema.js'
-
 const PREFLIGHT: SafePreflightReport = Object.freeze({
   version: '0.145.0',
   root_matches: true,
@@ -460,12 +458,12 @@ test('realtime mode always opens one project store and exposes only project tool
 
   assert.equal(resource.mode, 'project')
   assert.deepEqual(resource.adapter.manifest.ops.map(operation => operation.name), [
-    'project', 'confirm_project_action', 'steer', 'status',
+    'run', 'steer', 'status', 'cancel',
   ])
-  assert.equal(compileToolSchema([resource.adapter.manifest]).bindings.has('codex__run'), false)
   assert.deepEqual(resource.projectView, {
     workspace_display_name: 'workspace',
     session_title: null,
+    roster: [{name: 'workspace', last_used_at: 123, running: []}],
     pending_confirmation: false,
     pending_confirmation_busy: false,
   })
@@ -549,9 +547,9 @@ test('factory exposes a brokered controller for every foreground project transpo
       assert.equal(resource.approvalPolicy, evidence.policy)
       assert.equal(resource.approvalController === null, evidence.policy === 'never')
       assert.equal(
-        resource.adapter.manifest.ops.some(operation => operation.name === 'confirm_codex_approval'),
+        resource.adapter.manifest.approvals,
         resource.approvalController !== null,
-        'only a resource with real approval authority exposes the provider tool',
+        'only a resource with real approval authority advertises approvals to the host confirm tool',
       )
       assert.equal(transportFactory.calls[0]?.launchProfile.id, 'ask_headless', 'startup live is headless ask')
       assert.equal(transportFactory.calls[0]?.approvalController, null)

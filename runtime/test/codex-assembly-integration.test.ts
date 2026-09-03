@@ -24,6 +24,7 @@ import type {
   StreamRequest,
 } from '../src/model-gateway.js'
 import {buildRealtimeAssembly} from '../src/realtime-assembly.js'
+import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL} from '../src/work-tools.js'
 import type {
   HostContextItem,
   JsonObject,
@@ -160,9 +161,9 @@ class IdleProvider implements RealtimeProvider {
   close(): Promise<void> { return Promise.resolve() }
 }
 
-test('connected realtime provider exposes only the project Codex public surface', async () => {
-  // This fails if ordinary run leaks into realtime, a project action disappears, or structured
-  // confirmation stops requiring one exact ID plus a JSON boolean.
+test('connected realtime provider reaches the project Codex agent only through host work tools', async () => {
+  // This fails if a `codex__*` schema leaks to the model (spec 08: agent executors are host-routed)
+  // or the host work tools stop being declared for an agent executor.
   const adapter = new ProjectCodexAdapter({} as never)
   const core = buildAssembly({
     settings: settingsSchema.parse({executors: ['codex']}),
@@ -175,40 +176,14 @@ test('connected realtime provider exposes only the project Codex public surface'
   const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
   await realtime.start()
   try {
-    const codexTools = provider.connectedTools[0]?.filter(schema => {
+    const names = (provider.connectedTools[0] ?? []).map(schema => {
       const declaration = schema.function
-      return typeof declaration === 'object'
-        && declaration !== null
-        && !Array.isArray(declaration)
-        && typeof declaration.name === 'string'
-        && declaration.name.startsWith('codex__')
-    }) ?? []
-    const declarations = codexTools.map(schema => schema.function as Record<string, unknown>)
-    assert.deepEqual(declarations.map(declaration => declaration.name), [
-      'codex__project',
-      'codex__confirm_project_action',
-      'codex__steer',
-      'codex__status',
-    ])
-    assert.equal(declarations.some(declaration => declaration.name === 'codex__run'), false)
-
-    const project = declarations[0]?.parameters as Record<string, unknown>
-    const projectProperties = project.properties as Record<string, Record<string, unknown>>
-    assert.deepEqual(projectProperties.action?.enum, [
-      'list_workspaces', 'create_workspace', 'select_workspace',
-      'list_sessions', 'start_session', 'resume_session',
-    ])
-
-    const confirmation = declarations[1]?.parameters as Record<string, unknown>
-    assert.deepEqual(confirmation, {
-      type: 'object',
-      properties: {
-        proposal_id: {type: 'string', minLength: 1, maxLength: 128},
-        confirmed: {type: 'boolean'},
-      },
-      required: ['proposal_id', 'confirmed'],
-      additionalProperties: false,
+      return typeof declaration === 'object' && declaration !== null && !Array.isArray(declaration)
+        ? declaration.name
+        : undefined
     })
+    assert.equal(names.some(name => typeof name === 'string' && name.startsWith('codex__')), false)
+    for (const tool of [DISPATCH_TOOL, CANCEL_TOOL, CONFIRM_TOOL]) assert.ok(names.includes(tool), tool)
   } finally {
     await realtime.stop()
   }

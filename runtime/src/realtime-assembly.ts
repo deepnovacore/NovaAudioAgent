@@ -41,8 +41,12 @@ import type {GraphContext} from './workspace-graph/context.js'
 import type {Suggestion} from './suggestions.js'
 import type {WakeReason} from './slots.js'
 import {USER_PRIORITY} from './memory.js'
-import {intakeModels, type IntakeModels} from './realtime/intake-model.js'
-import type {IntakeSettings, IntakeSession} from './realtime/intake.js'
+import type {CoordinatorDecision} from './coding-executor.js'
+
+/** Intake-issued delegate requests carry the user's own priority (the voice model awaited them). */
+const USER_AWAITED_TOOL = {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null} as const
+import {intakeModels, type IntakeModels} from './executors/coding/intake-model.js'
+import type {IntakeSettings, IntakeSession} from './executors/coding/intake.js'
 import type {ModelGateway} from './model-gateway.js'
 
 /** Production compositions derive intake from settings only when an executor carries `coding`; an explicit `intake` without one still fails assembly. */
@@ -838,11 +842,24 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     bridge,
     ...(options.intake === undefined || projectAdapter === undefined ? {} : {intake: {
       ...options.intake,
-      resolveTarget: (request: Readonly<Record<string, JsonValue>>) => projectAdapter.resolveIntakeTarget(request),
+      roster: () => projectAdapter.roster(),
+      running: () => projectAdapter.running(),
+      activeProject: () => projectAdapter.publicProjectView(false).workspace_display_name,
+      resolveTarget: (decision: CoordinatorDecision) => projectAdapter.resolveIntakeTarget(decision),
+      cancel: (instruction: string) => projectAdapter.cancel(instruction, {
+        resolveCancelTarget: (text, running) => options.intake!.models.resolveCancelTarget(text, running),
+      }),
+      // Spec 08: the coordinator's decision rides with the work order; the adapter re-resolves at run time.
       dispatch: (intake: IntakeSession) => core.runtime.dispatchExternal({
-        executor: projectAdapter.manifest.name, op: 'project', origin_ref: intake.origin_ref,
-        request: {...intake.request, work_order: intake.work_order!},
-      }, {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null}),
+        executor: projectAdapter.manifest.name, op: 'run', origin_ref: intake.origin_ref,
+        request: {
+          work_order: intake.work_order!, project: intake.target?.workspace_display_name ?? null,
+          session: intake.decision?.session ?? 'latest', ...(intake.title === null ? {} : {title: intake.title}),
+        },
+      }, USER_AWAITED_TOOL),
+      steer: (intake: IntakeSession, project: string | null, instruction: string) => core.runtime.dispatchExternal({
+        executor: projectAdapter.manifest.name, op: 'steer', origin_ref: intake.origin_ref, request: {instruction, project},
+      }, USER_AWAITED_TOOL),
       record: (intake: IntakeSession, kind: string, data: Readonly<Record<string, JsonValue>>) => {
         core.runtime.memory.append(projectAdapter.manifest.name, {
           ts: core.runtime.clock.now(), trust: 'trusted_system', priority: USER_PRIORITY - 1,
@@ -881,7 +898,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       : {commitProjectOperation}),
     ...(projectAdapter === undefined
       ? {}
-      : {projectViewProvider: (pending: boolean) => projectAdapter.publicProjectView(pending)}),
+      : {projectViewProvider: (pending: boolean) => projectAdapter.publicProjectView(pending), agentExecutor: projectAdapter}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.projectExpiryStepTimeoutMs === undefined
       ? {}

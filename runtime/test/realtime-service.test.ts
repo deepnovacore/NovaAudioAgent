@@ -20,14 +20,13 @@ import { VirtualClock } from '../src/clock.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
-  admitCodexProjectRequest,
 } from '../src/executors/codex/contract.js'
 import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
 import type {Suggestion} from '../src/suggestions.js'
 import type {WakeReason} from '../src/slots.js'
-import { RealtimeRuntimeBridge } from '../src/realtime/bridge.js'
+import { RealtimeRuntimeBridge, type ToolAcceptance } from '../src/realtime/bridge.js'
 import type { HostContextItem, HostResponseIntent } from '../src/realtime/protocol.js'
 import { ItemDeliveryUncertainError } from '../src/realtime/protocol.js'
 import { RealtimeService, type ServiceProvider } from '../src/realtime/service.js'
@@ -648,6 +647,7 @@ function pipelineService(options: {
   readonly withExecutorApproval?: boolean
   readonly ensureResponseFailure?: boolean
   readonly failReconnect?: boolean
+  readonly agentExecutor?: ConstructorParameters<typeof RealtimeService>[0]['agentExecutor']
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
@@ -665,6 +665,8 @@ function pipelineService(options: {
     name: 'codex',
     display_name: 'Codex',
     roles: ['coding'],
+    // An agent executor (spec 08): the model reaches `run` only through the host `dispatch` tool.
+    agent: {summary: 'Codex 编程'},
     policy: {
       channel: 'codex',
       priority: 50,
@@ -674,7 +676,7 @@ function pipelineService(options: {
     },
     ops: [
       {
-        name: 'start',
+        name: 'run',
         description: 'begin work',
         params: {
           type: 'object',
@@ -696,7 +698,7 @@ function pipelineService(options: {
   })
   const clock = new VirtualClock()
   const memory = new Memory({policies: [manifest.policy]})
-  const executors = new Map([[manifest.name, {manifest, admitRequest: admitCodexProjectRequest}]])
+  const executors = new Map([[manifest.name, {manifest}]])
   const actions: string[] = []
   const injectedContents: string[] = []
   const injectedItems: HostContextItem[] = []
@@ -779,7 +781,7 @@ function pipelineService(options: {
   const pipelineDelegate = {
     delegate_id: 'd-1',
     executor: 'codex',
-    op: options.projectTool ? 'project' : 'start',
+    op: 'run',
     origin_ref: 'conversation:1',
     routing_class: 'user_awaited',
   }
@@ -827,6 +829,7 @@ function pipelineService(options: {
       idFactory: nextId,
     }),
     ...(options.intake === undefined ? {} : {intake: options.intake}),
+    ...(options.agentExecutor === undefined ? {} : {agentExecutor: options.agentExecutor}),
     ...(executorApproval === null ? {} : {executorApproval}),
     idFactory: nextId,
     // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
@@ -879,7 +882,7 @@ test('a tool call is admitted against the user turn that justifies it', async ()
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-item-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -937,7 +940,7 @@ test('a tool call arriving before its transcript waits, then runs', async () => 
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-item-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -983,7 +986,7 @@ test('a failed transcript releases the calls waiting on it rather than stranding
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-item-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -1031,7 +1034,7 @@ test('a runtime rejection is recorded as a refusal the provider can see', async 
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-item-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -1908,77 +1911,103 @@ test('codex status idle and running handoffs each trigger their same-turn contin
   }
 })
 
-test('a project confirmation returns one constrained same-turn question to the model', async () => {
-  const {service, actions, injectedContents} = pipelineService({projectTool: true})
-  await service.connect()
+/** Spec 08 host tools on the pipeline fixture: `dispatch` / `cancel` / `confirm` are the only coding tools the model sees. */
+async function dispatchTurn(
+  service: RealtimeService,
+  name: 'dispatch' | 'cancel' | 'confirm',
+  arguments_: Readonly<Record<string, JsonValue>>,
+  responseId = 'origin',
+): Promise<ToolAcceptance> {
   await service.handleEvent({
-    kind: 'user_speech_started', session_epoch: 1,
-    speech_id: 'speech-project', provider_item_id: 'user-project',
+    kind: 'user_speech_started', session_epoch: 1, speech_id: `speech-${responseId}`, provider_item_id: `user-${responseId}`,
   })
   await service.handleEvent({
-    kind: 'user_speech_ended', session_epoch: 1,
-    speech_id: 'speech-project', provider_item_id: 'user-project',
+    kind: 'user_speech_ended', session_epoch: 1, speech_id: `speech-${responseId}`, provider_item_id: `user-${responseId}`,
   })
   await service.handleEvent({
-    kind: 'user_transcript_final', session_epoch: 1,
-    item_id: 'user-project', text: '帮我写一个俄罗斯方块小游戏',
+    kind: 'user_transcript_final', session_epoch: 1, item_id: `user-${responseId}`, text: 'build timer',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: `call-${responseId}`, item_id: `tool-${responseId}`,
+    name, arguments: arguments_, response_id: responseId,
   })
   await service.handleEvent({
-    kind: 'response_started', session_epoch: 1, response_id: 'origin-project',
+    kind: 'response_terminal', session_epoch: 1, response_id: responseId, status: 'completed', reason: '',
   })
-  await service.handleEvent({
-    kind: 'tool_call_ready', session_epoch: 1,
-    call_id: 'call-project', item_id: 'tool-project', name: 'codex__project',
-    arguments: {
-      action: 'create_workspace',
-      workspace: 'tetris-game',
-      work_order: '实现并验证俄罗斯方块小游戏',
-    },
-    response_id: 'origin-project',
-  })
-  await service.handleEvent({
-    kind: 'response_terminal', session_epoch: 1, response_id: 'origin-project',
-    status: 'completed', reason: '',
-  })
-  assert.equal(
-    actions.filter(action => action === 'create_response:tool_result').length,
-    0,
-    'the model must not answer before the confirmation proposal exists',
-  )
+  return service.toolCallAcceptances().find(snapshot => snapshot.call_id === `call-${responseId}`)!.acceptance
+}
 
-  service.projectRuntimeEvent({
-    kind: 'handoff', seq: 1, ts: 1,
-    payload: {
-      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
-      outcome: 'ok', trust: 'trusted_system',
-      content: {
-        code: 'confirmation_required',
-        action: 'create_workspace',
-        proposal_id: 'proposal-1',
-        workspace: 'tetris-game',
-        session: null,
-        confirmation_prompt: '是否创建工作区“tetris-game”并开始任务？请确认或取消。',
-      },
-      refs: [],
-    },
+test('dispatch on an agent executor the intake does not coordinate is that executor run', async () => {
+  const {service} = pipelineService()
+  await service.connect()
+  assert.equal(service.providerSchemasForTest.some(schema => (
+    JSON.stringify(schema).includes('codex__run')
+  )), false, 'the model never sees the executor op')
+  const acceptance = await dispatchTurn(service, 'dispatch', {
+    executor: 'codex', instruction: 'build timer', origin_ref: 'conversation:1',
+  })
+  assert.equal(acceptance.accepted, true)
+  assert.equal(acceptance.executor, 'codex')
+  assert.equal(acceptance.op, 'run')
+  assert.equal(acceptance.delegate_id, 'd-1')
+  assert.equal(acceptance.response_intent.kind, 'delegation_acknowledgement')
+  assert.equal(acceptance.host_item.call_id, 'call-origin', 'the rewritten call keeps the provider call id')
+  await service.close()
+})
+
+test('dispatch and cancel refuse an unknown executor or an empty instruction', async () => {
+  for (const [index, arguments_] of [
+    {executor: 'search', instruction: 'build timer', origin_ref: 'conversation:1'},
+    {executor: 'codex', instruction: '   ', origin_ref: 'conversation:1'},
+    {executor: 'codex', instruction: 'x'.repeat(4001), origin_ref: 'conversation:1'},
+  ].entries()) {
+    const {service} = pipelineService()
+    await service.connect()
+    const acceptance = await dispatchTurn(service, 'dispatch', arguments_, `bad-${index}`)
+    assert.equal(acceptance.accepted, false, String(index))
+    assert.equal(acceptance.code, 'invalid_params', String(index))
+    assert.equal((JSON.parse(acceptance.host_item.content) as {code: string}).code, 'invalid_params')
+    await service.close()
+  }
+  const {service} = pipelineService()
+  await service.connect()
+  const unsupported = await dispatchTurn(service, 'cancel', {executor: 'codex'}, 'cancel-unsupported')
+  assert.equal(unsupported.accepted, false)
+  assert.equal(unsupported.code, 'unsupported_tool', 'no AgentExecutor port → cancel cannot be answered')
+  await service.close()
+})
+
+test('cancel is answered synchronously from the executor run slots', async () => {
+  const calls: (string | undefined)[] = []
+  const work = {work_id: 'w-1', project: 'blog', title: '暗色模式'}
+  const {service, injectedContents, actions} = pipelineService({agentExecutor: {
+    cancel: instruction => { calls.push(instruction); return Promise.resolve({code: 'cancelled', work}) },
+  }})
+  await service.connect()
+  const acceptance = await dispatchTurn(service, 'cancel', {executor: 'codex', instruction: '停掉博客那个'})
+  assert.deepEqual(calls, ['停掉博客那个'])
+  assert.equal(acceptance.accepted, true)
+  assert.equal(acceptance.code, 'cancelled')
+  assert.equal(acceptance.inline_fulfilled, true)
+  assert.equal(acceptance.response_intent.kind, 'tool_result')
+  assert.deepEqual(JSON.parse(acceptance.host_item.content), {
+    code: 'cancelled', work, message: 'code=cancelled：已请求停止“blog/暗色模式”，稍后有终态事实。',
   })
   await service.driveContinuations()
+  assert.equal(injectedContents.at(-1), acceptance.host_item.content)
+  assert.equal(actions.filter(action => action === 'create_response:delegation_acknowledgement').length, 0)
+  await service.close()
+})
 
-  assert.equal(
-    actions.filter(action => action === 'create_response:tool_result').length,
-    1,
-    'the proposal must trigger exactly one same-turn continuation',
-  )
-  const result = JSON.parse(injectedContents.at(-1) ?? '{}') as {
-    readonly state?: string
-    readonly content?: {readonly code?: string; readonly confirmation_prompt?: string}
-    readonly response_instruction?: string
-  }
-  assert.equal(result.state, 'ok')
-  assert.equal(result.content?.code, 'confirmation_required')
-  assert.match(result.content?.confirmation_prompt ?? '', /请确认或取消/u)
-  assert.match(result.response_instruction ?? '', /只.*confirmation_prompt.*一次.*不得补充/su)
-  assert.doesNotMatch(result.response_instruction ?? '', /proposal-1/u)
+test('confirm with nothing pending is refused as no_pending_confirmation', async () => {
+  const {service} = pipelineService()
+  await service.connect()
+  const acceptance = await dispatchTurn(service, 'confirm', {id: 'nothing', accepted: true})
+  assert.equal(acceptance.accepted, false)
+  assert.equal(acceptance.code, 'no_pending_confirmation')
+  assert.match(acceptance.host_item.content, /"code":"no_pending_confirmation"/u)
+  await service.close()
 })
 
 test('an observation is matched to the exact run it belongs to', () => {
@@ -2435,7 +2464,7 @@ test('a thread-ready started fact is silent when the delegate already owns an ac
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-item-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -2528,7 +2557,7 @@ test('an immediate Codex startup failure waits behind a playing acknowledgement 
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
-    name: 'codex__start', arguments: {work_order: 'build the game'}, response_id: 'r-1',
+    name: 'codex__run', arguments: {work_order: 'build the game'}, response_id: 'r-1',
   })
   await service.handleEvent({
     kind: 'response_terminal', session_epoch: 1, response_id: 'r-1',
@@ -2593,7 +2622,7 @@ test('a terminal Codex handoff cancels its playing standalone acknowledgement be
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
-    name: 'codex__start', arguments: {work_order: 'create test.py'}, response_id: 'origin',
+    name: 'codex__run', arguments: {work_order: 'create test.py'}, response_id: 'origin',
   })
   await service.handleEvent({
     kind: 'response_terminal', session_epoch: 1, response_id: 'origin',
@@ -2672,7 +2701,7 @@ test('failed handoff fences an undelivered semantic acknowledgement', async () =
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
-    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+    name: 'codex__run', arguments: {work_order: 'build timer'}, response_id: 'origin',
   })
   assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'pending')
 
@@ -2708,7 +2737,7 @@ test('successful handoff fences an undelivered semantic acknowledgement before t
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
-    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+    name: 'codex__run', arguments: {work_order: 'build timer'}, response_id: 'origin',
   })
   assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'pending')
 
@@ -2732,7 +2761,7 @@ test('a settled delegate cannot deliver progress that was queued while it was ru
   service.projectRuntimeEvent({
     kind: 'progress', seq: 1, ts: 1,
     payload: {
-      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      channel: 'codex', delegate_id: 'd-1', op: 'run', phase: 'working',
       internal_activity: 1, elapsed: 1, summary: 'implementing timer',
     },
   })
@@ -2761,7 +2790,7 @@ test('a terminal delegate retires progress already visible in provider history',
   service.projectRuntimeEvent({
     kind: 'progress', seq: 1, ts: 1,
     payload: {
-      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      channel: 'codex', delegate_id: 'd-1', op: 'run', phase: 'working',
       internal_activity: 1, elapsed: 1, summary: 'implementing timer',
     },
   })
@@ -2789,7 +2818,7 @@ test('provider retirement failure is diagnostic-only and leaves the final result
   service.projectRuntimeEvent({
     kind: 'progress', seq: 1, ts: 1,
     payload: {
-      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      channel: 'codex', delegate_id: 'd-1', op: 'run', phase: 'working',
       internal_activity: 1, elapsed: 1, summary: 'implementing timer',
     },
   })
@@ -2817,7 +2846,7 @@ test('ordinary progress expires while final facts remain durable', async () => {
   service.projectRuntimeEvent({
     kind: 'progress', seq: 1, ts: 1,
     payload: {
-      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      channel: 'codex', delegate_id: 'd-1', op: 'run', phase: 'working',
       internal_activity: 1, elapsed: 1, summary: 'implementing timer',
     },
   })
@@ -2842,7 +2871,7 @@ test('delegate settlement during provider injection prevents stale response crea
   service.projectRuntimeEvent({
     kind: 'progress', seq: 1, ts: 1,
     payload: {
-      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      channel: 'codex', delegate_id: 'd-1', op: 'run', phase: 'working',
       internal_activity: 1, elapsed: 1, summary: 'implementing timer',
     },
   })
@@ -2884,7 +2913,7 @@ test('progress expiring during provider injection prevents stale response creati
   service.projectRuntimeEvent({
     kind: 'progress', seq: 1, ts: 1,
     payload: {
-      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      channel: 'codex', delegate_id: 'd-1', op: 'run', phase: 'working',
       internal_activity: 1, elapsed: 1, summary: 'implementing timer',
     },
   })
@@ -2921,7 +2950,7 @@ test('unknown handoff fences acknowledgement but remains open to a late verdict'
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
-    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+    name: 'codex__run', arguments: {work_order: 'build timer'}, response_id: 'origin',
   })
 
   service.projectRuntimeEvent({
@@ -2966,7 +2995,7 @@ test('failed handoff suppresses a bound unspoken acknowledgement', async () => {
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
-    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+    name: 'codex__run', arguments: {work_order: 'build timer'}, response_id: 'origin',
   })
   await service.handleEvent({
     kind: 'response_terminal', session_epoch: 1, response_id: 'origin',
@@ -3011,7 +3040,7 @@ test('failed handoff suppresses a requested acknowledgement when its response st
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
-    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+    name: 'codex__run', arguments: {work_order: 'build timer'}, response_id: 'origin',
   })
   await service.reconnectForTest()
   assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'requested')
@@ -3153,7 +3182,7 @@ test('a continuation batch speaks before a later one, whatever finished first', 
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'first task'},
     response_id: 'r-1',
   })
@@ -3191,7 +3220,7 @@ test('only one continuation turn is in flight at a time', async () => {
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'first task'},
     response_id: 'r-1',
   })
@@ -3231,7 +3260,7 @@ test('a user speaking blocks a continuation request', async () => {
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'first task'},
     response_id: 'r-1',
   })
@@ -3269,7 +3298,7 @@ test('a terminal for a different response does not close the bound batch', async
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'first task'},
     response_id: 'r-1',
   })
@@ -3345,7 +3374,7 @@ test('a reconnect settles the tool calls of the dead epoch instead of leaving th
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -3468,7 +3497,7 @@ test('a batch already spoken before the reconnect keeps its terminal phase', asy
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -3589,7 +3618,7 @@ test('an acknowledgement bound to an unfinished continuation is reopened by the 
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -3636,7 +3665,7 @@ test('an acknowledgement bound to an unfinished fallback is reopened by the reco
   })
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1,
-    call_id: 'call-1', item_id: 'tool-1', name: 'codex__start',
+    call_id: 'call-1', item_id: 'tool-1', name: 'codex__run',
     arguments: {work_order: 'compile the runtime'}, response_id: 'r-1',
   })
 
@@ -3669,7 +3698,7 @@ test('a zero-audio fallback completion reopens response authority without reinje
   })
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1,
-    call_id: 'call-1', item_id: 'tool-1', name: 'codex__start',
+    call_id: 'call-1', item_id: 'tool-1', name: 'codex__run',
     arguments: {work_order: 'compile the runtime'}, response_id: 'r-1',
   })
 
@@ -3716,7 +3745,7 @@ test('an acknowledgement heard from its continuation is not reopened by a reconn
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -3781,7 +3810,7 @@ async function openCompletedAcknowledgementPlayback(
   })
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1,
-    call_id: 'call-1', item_id: 'tool-1', name: 'codex__start',
+    call_id: 'call-1', item_id: 'tool-1', name: 'codex__run',
     arguments: {work_order: 'compile the runtime'}, response_id: 'r-1',
   })
   await service.handleEvent({
@@ -4170,7 +4199,7 @@ test('a completed continuation that renderer never played is reopened by a recon
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
@@ -4660,8 +4689,8 @@ async function emitExecutorApprovalFunction(
     call_id: input.callId ?? `call-${input.responseId ?? 'none'}`,
     item_id: `function-${input.responseId ?? 'none'}`,
     response_id: input.responseId,
-    name: 'codex__confirm_codex_approval',
-    arguments: {approval_id: input.approvalId, approved: input.approved},
+    name: 'confirm',
+    arguments: {id: input.approvalId, accepted: input.approved},
   })
 }
 
@@ -4691,13 +4720,33 @@ test('a Codex approval prompt is a neutral host fact with no local command detai
     item.intent.item.event_id === `approval:${approvalId}:requested`
   ))?.intent.item.content
   assert.notEqual(prompt, undefined)
-  assert.deepEqual(JSON.parse(prompt!), {
-    approval_id: approvalId,
-    kind: 'command_execution',
-    operation_summary: 'Codex 请求执行一条工作区命令。',
-  })
-  assert.doesNotMatch(prompt!, /Remove-Item|raw-command|raw-cwd|private/u)
+  // Spec 08: a prose host fact naming the id, the neutral summary and the one tool that answers it.
+  assert.equal(
+    prompt,
+    `权限请求 id=${approvalId}：Codex 请求批准 command_execution：Codex 请求执行一条工作区命令。`
+      + '只有用户本轮明确同意或拒绝后才调用 confirm(id, accepted)；不要朗读 id。',
+  )
+  assert.doesNotMatch(prompt, /Remove-Item|raw-command|raw-cwd|private|codex__/u)
 
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
+  assert.deepEqual(await waiting, {decision: 'decline'})
+})
+
+test('an approval prompt names the project and session title of the work it belongs to', async () => {
+  const {service, executorApproval} = pipelineService({projectTool: true, withExecutorApproval: true})
+  assert.ok(executorApproval !== null)
+  await service.connect()
+  const waiting = executorApproval.offer({
+    kind: 'command_execution',
+    local_detail: {kind: 'command_execution', command: 'npm test', cwd: '/blog'},
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+  }, new AbortController().signal, {work_id: 'w-1', project: 'blog', title: '暗色模式'})
+  const approvalId = executorApproval.view.pending_approval_id!
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  const prompt = service.queuedHostItems().find(item => (
+    item.intent.item.event_id === `approval:${approvalId}:requested`
+  ))?.intent.item.content
+  assert.match(prompt ?? '', /^权限请求 id=.*：项目 blog · 会话 暗色模式 请求批准 command_execution：/u)
   assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
@@ -6996,8 +7045,8 @@ async function confirmationTurn(
     call_id: input.callId ?? 'confirm-1',
     item_id: 'function-1',
     response_id: responseId,
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: input.proposalId, confirmed: input.confirmed},
+    name: 'confirm',
+    arguments: {id: input.proposalId, accepted: input.confirmed},
   })
 }
 
@@ -7200,8 +7249,8 @@ test('a settled voice confirmation still owns its host reply after the carrier s
     call_id: 'spoken-confirmation-call',
     item_id: 'spoken-confirmation-function',
     response_id: 'spoken-carrier',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
 
   assert.equal(actions.filter(action => action === 'commit').length, 1)
@@ -7349,8 +7398,8 @@ test('confirmation cancellation never targets a newer response after tool output
     call_id: 'racing-confirmation-call',
     item_id: 'racing-confirmation-function',
     response_id: 'old-confirmation-carrier',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   await reached
   await service.handleEvent({
@@ -7393,8 +7442,8 @@ test('a terminal carrier is fenced without arming a reconnect watchdog for queue
     call_id: 'terminal-carrier-call',
     item_id: 'terminal-carrier-function',
     response_id: 'terminal-carrier',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   await reached
   await service.handleEvent({
@@ -7518,8 +7567,8 @@ test('a second utterance captured during the reserved confirmation cannot produc
     call_id: 'confirm-1',
     item_id: 'function-1',
     response_id: 'response-1',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   await service.handleEvent({
     kind: 'response_terminal',
@@ -7592,8 +7641,8 @@ test('a confirmation call replay commits and produces provider output once', asy
     call_id: 'confirm-1',
     item_id: 'function-1',
     response_id: 'response-1',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   } as const
   await service.handleEvent(replay)
   assert.equal(actions.filter(action => action === 'commit').length, 1)
@@ -7623,8 +7672,8 @@ test('a confirmation function from another response or epoch fails closed', asyn
     call_id: 'confirm-stale-epoch',
     item_id: 'function-stale-epoch',
     response_id: 'response-1',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   assert.equal(actions.includes('commit'), false)
   await service.handleEvent({
@@ -7633,8 +7682,8 @@ test('a confirmation function from another response or epoch fails closed', asyn
     call_id: 'confirm-other',
     item_id: 'function-other',
     response_id: 'response-other',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   assert.equal(actions.includes('commit'), false)
   assert.equal(controller.pending, true)
@@ -7668,8 +7717,8 @@ test('a stale response start cannot bind the current reserved confirmation item'
     call_id: 'confirm-polluted',
     item_id: 'function-polluted',
     response_id: 'response-stale',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
 
   assert.equal(actions.includes('commit'), false)
@@ -7684,8 +7733,8 @@ test('malformed confirmation arguments preserve the proposal and reservation', a
   }[] = (() => {
     let reads = 0
     const accessor = (proposalId: string): Record<string, unknown> => {
-      const value: Record<string, unknown> = {confirmed: true}
-      Object.defineProperty(value, 'proposal_id', {
+      const value: Record<string, unknown> = {accepted: true}
+      Object.defineProperty(value, 'id', {
         enumerable: true,
         get: () => {
           reads += 1
@@ -7695,12 +7744,12 @@ test('malformed confirmation arguments preserve the proposal and reservation', a
       return value
     }
     return [
-      {name: 'extra field', build: proposalId => ({proposal_id: proposalId, confirmed: true, extra: 1})},
-      {name: 'missing field', build: proposalId => ({proposal_id: proposalId})},
-      {name: 'empty id', build: () => ({proposal_id: '', confirmed: true})},
-      {name: 'overlong id', build: () => ({proposal_id: 'p'.repeat(129), confirmed: true})},
+      {name: 'extra field', build: proposalId => ({id: proposalId, accepted: true, extra: 1})},
+      {name: 'missing field', build: proposalId => ({id: proposalId})},
+      {name: 'empty id', build: () => ({id: '', accepted: true})},
+      {name: 'overlong id', build: () => ({id: 'p'.repeat(129), accepted: true})},
       {name: 'boxed boolean', build: proposalId => ({
-        proposal_id: proposalId, confirmed: new Boolean(true),
+        id: proposalId, accepted: new Boolean(true),
       })},
       {name: 'accessor object', build: accessor, accessorReads: () => reads},
     ]
@@ -7721,7 +7770,7 @@ test('malformed confirmation arguments preserve the proposal and reservation', a
       call_id: `confirm-invalid-${index}`,
       item_id: `function-invalid-${index}`,
       response_id: responseId,
-      name: 'codex__confirm_project_action',
+      name: 'confirm',
       arguments: invalid.build(proposal.proposal_id) as Readonly<Record<string, JsonValue>>,
     } as const
     await service.handleEvent(invalidEvent)
@@ -7741,8 +7790,8 @@ test('malformed confirmation arguments preserve the proposal and reservation', a
       call_id: `confirm-valid-${index}`,
       item_id: `function-valid-${index}`,
       response_id: responseId,
-      name: 'codex__confirm_project_action',
-      arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+      name: 'confirm',
+      arguments: {id: proposal.proposal_id, accepted: true},
     })
     assert.equal(actions.filter(action => action === 'commit').length, 1, invalid.name)
   }
@@ -7935,7 +7984,7 @@ test('a banner decision fences an active confirmation response until its termina
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1,
     call_id: 'late-active-tool', item_id: 'late-active-function',
-    response_id: 'ui-active-response', name: 'codex__start',
+    response_id: 'ui-active-response', name: 'codex__run',
     arguments: {work_order: 'must not run'},
   })
   assert.match(
@@ -7979,7 +8028,7 @@ test('a banner decision revokes a requested retry whose response id has not arri
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1,
     call_id: 'late-retry-tool', item_id: 'late-retry-function',
-    response_id: 'ui-retry-late', name: 'codex__start',
+    response_id: 'ui-retry-late', name: 'codex__run',
     arguments: {work_order: 'must not run'},
   })
   assert.equal(
@@ -8047,8 +8096,8 @@ test('a confirmation terminal before transcript final retries the same user turn
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'confirm-retry',
     item_id: 'function-retry', response_id: 'response-retry',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   assert.equal(actions.filter(action => action === 'commit').length, 1)
   assert.ok(telemetry.some(record => record.kind === 'project_confirmation.decision_retry_requested'))
@@ -8081,8 +8130,8 @@ test('a tool-first terminal confirmation delivers its host acknowledgement witho
     response_id: 'tool-terminal-first-response',
     call_id: 'tool-terminal-first-confirm',
     item_id: 'tool-terminal-first-function',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   assert.equal(actions.includes('commit'), false, 'the call waits for its user origin')
 
@@ -8135,8 +8184,8 @@ test('a settled tool-first confirmation cannot consume the next proposal retry',
     kind: 'tool_call_ready', session_epoch: 1,
     response_id: 'first-tool-terminal-response',
     call_id: 'first-tool-terminal-confirm', item_id: 'first-tool-terminal-function',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: firstProposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: firstProposal.proposal_id, accepted: true},
   })
   await service.handleEvent({
     kind: 'response_terminal', session_epoch: 1,
@@ -8241,8 +8290,8 @@ test('a deduplicated confirmation output does not settle the user response debt'
     kind: 'tool_call_ready', session_epoch: 1,
     response_id: 'response-deduplicated-output',
     call_id: 'confirm-deduplicated-output', item_id: 'function-deduplicated-output',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   await service.handleEvent({
     kind: 'response_terminal', session_epoch: 1, response_id: 'response-deduplicated-output',
@@ -8426,8 +8475,8 @@ test('the confirmation function may arrive before its user transcript', async ()
     response_id: 'tool-first-response',
     call_id: 'tool-first-confirm',
     item_id: 'tool-first-function',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   assert.equal(actions.includes('commit'), false, 'the call waits for its user origin')
   await service.handleEvent({
@@ -8465,7 +8514,7 @@ test('a tool call in a blocked turn is refused and answered', async () => {
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'do something'},
     response_id: 'r-1',
   })
@@ -8658,8 +8707,8 @@ test('a confirmation answer response stays alive long enough to emit its decisio
     call_id: 'confirm-answer',
     item_id: 'function-answer',
     response_id: 'response-answer',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
 
   assert.equal(actions.includes('cancel:response-answer'), true)
@@ -8701,8 +8750,8 @@ test('a confirmation response created before speech end remains tool-only and ca
     call_id: 'confirm-overlap',
     item_id: 'function-overlap',
     response_id: 'response-overlap',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
 
   assert.equal(actions.includes('cancel:response-overlap'), true)
@@ -8773,8 +8822,8 @@ test('an unbound confirmation call fails visibly and releases the proposal for a
     call_id: 'confirm-unbound',
     item_id: 'function-unbound',
     response_id: 'response-without-start',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
 
   assert.equal(actions.includes('commit'), false, 'an unbound call never authorizes a commit')
@@ -8876,8 +8925,8 @@ test('a fenced stale question cannot consume the reserved confirmation answer', 
     call_id: 'confirm-answer',
     item_id: 'function-answer',
     response_id: 'response-answer',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
 
   assert.equal(actions.filter(action => action === 'commit').length, 1)
@@ -8933,7 +8982,7 @@ test('a confirmation blocks tool calls across the whole epoch, not just one resp
     session_epoch: 1,
     call_id: 'call-2',
     item_id: 'tool-2',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'do something'},
     response_id: 'r-9',
   })
@@ -8964,7 +9013,7 @@ test('one refused call gets exactly one terminal output', async () => {
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'do something'},
     response_id: 'r-1',
   } as const
@@ -9189,8 +9238,8 @@ test('a settled confirmation stops blocking, so later turns work again', async (
     call_id: 'confirm-1',
     item_id: 'function-1',
     response_id: 'r-1',
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    name: 'confirm',
+    arguments: {id: proposal.proposal_id, accepted: true},
   })
   assert.equal(controller.pending, false, 'the proposal is settled')
   assert.deepEqual(service.confirmationItemsForTest, [], 'no item reserved')
@@ -9287,8 +9336,8 @@ test('a response recorded while blocking keeps blocking its own epoch after the 
   })
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'confirm-1', item_id: 'function-1',
-    name: 'codex__confirm_project_action', arguments: {
-      proposal_id: proposal.proposal_id, confirmed: true,
+    name: 'confirm', arguments: {
+      id: proposal.proposal_id, accepted: true,
     }, response_id: 'r-1',
   })
   assert.equal(service.projectConfirmationBlockingForTest, false, 'the block has lifted')
@@ -9300,7 +9349,7 @@ test('a response recorded while blocking keeps blocking its own epoch after the 
     session_epoch: 1,
     call_id: 'call-late',
     item_id: 'tool-late',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'sneak in'},
     response_id: 'r-1',
   })
@@ -9334,8 +9383,8 @@ test('after the block lifts, a call in any response of that epoch is still refus
   })
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'confirm-1', item_id: 'function-1',
-    name: 'codex__confirm_project_action', arguments: {
-      proposal_id: proposal.proposal_id, confirmed: true,
+    name: 'confirm', arguments: {
+      id: proposal.proposal_id, accepted: true,
     }, response_id: 'r-1',
   })
   assert.equal(service.projectConfirmationBlockingForTest, false, 'the block has lifted')
@@ -9347,7 +9396,7 @@ test('after the block lifts, a call in any response of that epoch is still refus
     session_epoch: 1,
     call_id: 'call-other',
     item_id: 'tool-other',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'different response'},
     response_id: 'r-77',
   })
@@ -9376,7 +9425,7 @@ test('a tool call arriving while blocked taints its own response for later calls
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'first'},
     response_id: 'r-5',
   })
@@ -9442,8 +9491,8 @@ test('a cancelled commit propagates instead of being reported as a failed operat
   await assert.rejects(
     () => service.handleEvent({
       kind: 'tool_call_ready', session_epoch: 1, call_id: 'confirm-1', item_id: 'function-1',
-      name: 'codex__confirm_project_action', arguments: {
-        proposal_id: proposal.proposal_id, confirmed: true,
+      name: 'confirm', arguments: {
+        id: proposal.proposal_id, accepted: true,
       }, response_id: 'r-1',
     }),
     /operation aborted/u,
@@ -9504,7 +9553,7 @@ test('an abandoned confirmation cleanup cannot block a later expiry batch', asyn
   await service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1,
     call_id: 'stuck-call', item_id: 'stuck-tool', response_id: 'stuck-r',
-    name: 'codex__start', arguments: {work_order: 'deferred'},
+    name: 'codex__run', arguments: {work_order: 'deferred'},
   })
 
   propose(controller)
@@ -9564,7 +9613,7 @@ test('a shutdown mid-cleanup stops the expiry before it reconnects', async () =>
     session_epoch: 1,
     call_id: 'call-1',
     item_id: 'tool-1',
-    name: 'codex__start',
+    name: 'codex__run',
     arguments: {work_order: 'deferred'},
     response_id: 'r-1',
   })
@@ -9595,16 +9644,25 @@ test('a shutdown mid-cleanup stops the expiry before it reconnects', async () =>
 })
 
 
+/** The coordinator ports the service must be given; a test names only what it expects to be reached. */
+function intakePorts(
+  overrides: Partial<NonNullable<ConstructorParameters<typeof RealtimeService>[0]['intake']>> = {},
+): NonNullable<ConstructorParameters<typeof RealtimeService>[0]['intake']> {
+  const unexpected = () => { throw new Error('unbound draft must not reach intake') }
+  return {
+    settings: {clarification_depth: 'balanced', plan_readback: 'silent'},
+    roster: () => [], running: () => [], activeProject: () => 'alpha',
+    resolveTarget: unexpected,
+    models: {assess: unexpected, plan: unexpected, resolveCancelTarget: unexpected},
+    dispatch: unexpected, steer: unexpected, cancel: unexpected,
+    record: () => undefined,
+    ...overrides,
+  }
+}
+
 for (const source of ['failed_transcript', 'unbound_response', 'mismatched_origin'] as const) {
   test(`intake refuses ${source} even with a cached successful user transcript`, async () => {
-    const unexpected = () => { throw new Error('unbound draft must not reach intake') }
-    const {service} = pipelineService({projectTool: true, intake: {
-      settings: {clarification_depth: 'balanced', plan_readback: 'silent'},
-      resolveTarget: unexpected,
-      models: {assess: unexpected, plan: unexpected},
-      dispatch: unexpected,
-      record: unexpected,
-    }})
+    const {service} = pipelineService({projectTool: true, intake: intakePorts()})
     await service.connect()
     await speak(service, 'u1', 'Improve login')
     await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
@@ -9621,8 +9679,8 @@ for (const source of ['failed_transcript', 'unbound_response', 'mismatched_origi
       await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r2'})
     }
     await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1,
-      response_id: source === 'mismatched_origin' ? 'r1' : 'r2', item_id: 't1', call_id: 'c1', name: 'codex__project',
-      arguments: {action: 'start_session', work_order: 'Improve login', origin_ref: 'conversation:1'}})
+      response_id: source === 'mismatched_origin' ? 'r1' : 'r2', item_id: 't1', call_id: 'c1', name: 'dispatch',
+      arguments: {executor: 'codex', instruction: 'Improve login', origin_ref: 'conversation:1'}})
     if (source === 'failed_transcript') {
       assert.equal(service.toolCallAcceptances().length, 0)
       await service.handleEvent({kind: 'user_transcript_failed', session_epoch: 1, item_id: 'u2'})
@@ -9635,36 +9693,31 @@ for (const source of ['failed_transcript', 'unbound_response', 'mismatched_origi
   })
 }
 
-test('intake service management bypasses host planning and committed workspace changes cancel intake', async () => {
+test('dispatch on the coordinated coding executor opens the intake; a committed workspace change cancels it', async () => {
   const dispatched: unknown[] = []
-  const intake: NonNullable<ConstructorParameters<typeof RealtimeService>[0]['intake']> = {
-    settings: {clarification_depth: 'balanced', plan_readback: 'silent'},
+  const intake = intakePorts({
     resolveTarget: () => Promise.resolve(({workspace: '/canonical', action: 'reuse', workspace_display_name: 'alpha', workspace_id: 'w1', session_title: null, session_id: null})),
     models: {
       assess: input => Promise.resolve(({intake_id: input.intake_id, revision: input.revision,
+        kind: 'work', project: null, project_evidence: null, session: 'latest',
         slots: {goal: {state: 'stated', note: 'Improve login'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
         readiness: .25, intent_to_proceed: true, candidate_question: {owner: 'user', text: 'Which observable behavior?'}, discovery: [], early_exit: false, abandon: false})),
       plan: () => { return Promise.reject(new Error('not ready')) },
+      resolveCancelTarget: () => Promise.resolve(null),
     },
     dispatch: current => { dispatched.push(current); return {accepted: true, delegate_id: 'd1'} },
-    record: () => undefined,
-  }
-  for (const action of ['list_workspaces', 'list_sessions', 'select_workspace', 'create_workspace']) {
-    const {service} = pipelineService({projectTool: true, intake})
-    await service.connect()
-    await speak(service, 'u1', 'Manage workspaces')
-    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
-    await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 't1', call_id: 'c1', name: 'codex__project', arguments: {action, ...(['select_workspace', 'create_workspace'].includes(action) ? {workspace: 'alpha'} : {})}})
-    assert.equal(service.intakeSession, null)
-    assert.ok(!service.toolCallAcceptances().at(-1)!.acceptance.code.startsWith('intake_'))
-    await service.close()
-  }
+  })
   const {service} = pipelineService({projectTool: true, intake})
   await service.connect()
   service.onProjectWorkspaceChanged('w1')
   await speak(service, 'u1', 'Improve login')
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
-  await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 't1', call_id: 'c1', name: 'codex__project', arguments: {action: 'start_session', work_order: 'Improve login'}})
+  await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 't1', call_id: 'c1', name: 'dispatch', arguments: {executor: 'codex', instruction: 'Improve login', origin_ref: 'conversation:1'}})
+  const acceptance = service.toolCallAcceptances().at(-1)!.acceptance
+  assert.equal(acceptance.accepted, true)
+  assert.equal(acceptance.code, 'intake_opened')
+  assert.equal(acceptance.inline_fulfilled, true)
+  assert.match(acceptance.host_item.content, /"code":"intake_opened".*尚未派单/u)
   await service.settleIntakeForTest()
   assert.equal(service.intakeSession?.questions_asked, 1)
   service.onProjectWorkspaceChanged('w2')

@@ -398,6 +398,8 @@ const delegateRecordSchema = z.object({
   progress_summary: z.string().nullable(),
   internal_activity: z.number().int().nonnegative(),
   elapsed: z.number().finite().nonnegative(),
+  project: z.string().optional(),
+  title: z.string().optional(),
 }).strict()
 
 const responseStateSchema = z.object({

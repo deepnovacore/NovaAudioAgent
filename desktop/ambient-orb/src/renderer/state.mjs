@@ -169,18 +169,9 @@ function confirmationOperation(input) {
     return input.pendingOperation
   }
   const workspace = typeof input.pendingWorkspace === 'string' ? input.pendingWorkspace : ''
-  const session = typeof input.pendingSession === 'string' ? input.pendingSession : ''
+  // Only an irreversible create surfaces a pill (spec 08); switching and plan readback confirm by voice.
   if (input.pendingAction === 'create_workspace' && workspace) {
     return `创建工作区 “${workspace}”`
-  }
-  if (input.pendingAction === 'reuse_workspace' && workspace) {
-    return `使用现有工作区 “${workspace}”并开始任务`
-  }
-  if (input.pendingAction === 'select_workspace' && workspace) {
-    return `切换到工作区 “${workspace}”`
-  }
-  if (input.pendingAction === 'resume_session' && workspace && session) {
-    return `恢复 “${workspace} / ${session}”`
   }
   return '项目操作等待确认'
 }

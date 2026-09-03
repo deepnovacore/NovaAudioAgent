@@ -367,7 +367,7 @@ test('a workspace creation with work starts with the approved concise confirmati
   )
 })
 
-test('workspace reuse has its own exact confirmation and public action', () => {
+test('workspace reuse has its own exact confirmation and no public pill action', () => {
   const controller = createController()
   const proposal = controller.prepare({
     action: 'reuse',
@@ -383,7 +383,8 @@ test('workspace reuse has its own exact confirmation and public action', () => {
     proposal.confirmation_prompt,
     '是否使用现有工作区“timer-app”并开始任务？请确认或取消。',
   )
-  assert.equal(controller.view.pending_action, 'reuse_workspace')
+  // Spec 08: only workspace creation surfaces a desktop pill; every other action is voice-only.
+  assert.equal(controller.view.pending_action, null)
 })
 
 test('duplicate and replayed decisions fail closed', () => {
@@ -474,7 +475,7 @@ test('public view and prompt expose labels but no private bindings', () => {
     pending_confirmation_id: proposal.proposal_id,
     workspace_display_name: '天气看板',
     session_title: '登录修复',
-    pending_action: 'resume_session',
+    pending_action: null,
     pending_workspace_display_name: '天气看板',
     pending_session_title: '登录修复',
     pending_expires_in_seconds: 360,

@@ -54,6 +54,8 @@ test('one exact opaque decision is consumed once while observers see the busy ed
     },
     operation_summary: 'Codex 请求执行一条工作区命令。',
     expires_at: 10 + CODEX_APPROVAL_TTL_SECONDS,
+    work: null,
+    queued: 0,
   })
   assert.equal(approval.acceptDecision({approvalId: 'stale', decision: 'accept'}), false)
   assert.equal(approval.acceptDecision({approvalId: 'nova-approval-1', decision: 'accept'}), true)
@@ -71,6 +73,8 @@ test('one exact opaque decision is consumed once while observers see the busy ed
     local_detail: null,
     operation_summary: null,
     expires_at: null,
+    work: null,
+    queued: 0,
   })
   assert.equal(views.some(view => view.pending_approval_busy), true)
 })
@@ -79,12 +83,18 @@ test('concurrency, invalidation, signal loss, and expiry all settle fail-closed'
   const clock = new VirtualClock(5)
   const approval = controller(clock)
 
+  // Spec 08: a concurrent offer queues behind the head; only one is visible at a time.
   const first = offerCommand(approval)
-  assert.equal(await offerCommand(approval), null, 'only one approval may be pending')
+  const second = offerCommand(approval)
+  assert.equal(approval.view.queued, 1, 'the second offer waits in the queue')
   assert.equal(approval.invalidate('turn_completed'), true)
   const invalidated = await first
   assert.notEqual(invalidated, null)
   assert.equal(approval.consume(invalidated!), 'decline')
+  assert.equal(approval.view.pending_approval, true, 'dropping the head promotes the queued offer')
+  assert.equal(approval.view.queued, 0)
+  assert.equal(approval.invalidate('turn_completed'), true)
+  assert.equal(approval.consume((await second)!), 'decline')
   assert.equal(approval.invalidate('already_clear'), false)
 
   const transport = new AbortController()

@@ -139,9 +139,13 @@ test('live manifest compiles exact run, steer, status order and sensitivity', ()
   assert.equal(adapter.manifest, CODEX_LIVE_MANIFEST)
   assert.deepEqual(adapter.manifest.ops.map(op => op.name), ['run', 'steer', 'status'])
   assert.deepEqual(adapter.manifest.ops[1]?.sensitive_params, ['instruction'])
-  assert.deepEqual([...compileToolSchema([adapter.manifest]).bindings.keys()].slice(-3), [
-    'codex__run', 'codex__steer', 'codex__status',
-  ])
+  const compiled = compileToolSchema([adapter.manifest])
+  assert.deepEqual(
+    [...compiled.bindings.keys()].filter(key => key.startsWith('codex__')),
+    ['codex__run', 'codex__steer', 'codex__status'],
+  )
+  assert.equal(compiled.schemas.some(schema => JSON.stringify(schema).includes('codex__')), false,
+    'agent executors are host-routed (spec 08): the model sees no codex__* schema')
   assert.deepEqual(adapter.status, {
     state: 'idle', run_sequence: 0, started_at: null, finished_at: null, elapsed: null,
     process_running: false, process_exited: false, terminal: null, exit_code: null,

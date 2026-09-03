@@ -25,7 +25,14 @@
 
 import {createHash, randomUUID} from 'node:crypto'
 import {canonicalJson} from '../canonical-json.js'
-import {IntakeController, isIntakeAction, type IntakeOptions, type IntakeSession} from './intake.js'
+import {
+  IntakeController,
+  renderCancelResult,
+  type IntakeOptions,
+  type IntakeSession,
+} from '../executors/coding/intake.js'
+import type {AgentExecutor} from '../coding-executor.js'
+import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
 import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { Clock } from '../clock.js'
 import type {ExecutorRole} from '../ports.js'
@@ -102,10 +109,8 @@ import { SPEECH_FINAL_LIMIT, prepareForSpeech } from './speech-prep.js'
 import type { RealtimeTelemetry } from './telemetry.js'
 import {UserOriginBindingLedger} from './user-origin-binding.js'
 
-/** Host-confirmation op names on the coding executor's manifest; the wire name is `<executor>__<op>`. */
-const PROJECT_CONFIRMATION_OP = 'confirm_project_action'
-const APPROVAL_OP = 'confirm_codex_approval'
 const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
+const NO_PENDING_CONFIRMATION_TOOL_RESULT = JSON.stringify({code: 'no_pending_confirmation'})
 const CODEX_APPROVAL_CLARIFICATION = '请明确说同意或拒绝。'
 
 type ProviderReconnectReason =
@@ -172,54 +177,17 @@ interface ExecutorApprovalPendingResponseQuarantine {
   terminal: boolean
 }
 
-function projectConfirmationDecisionArguments(
-  value: unknown,
-): {readonly proposalId: string; readonly confirmed: boolean} | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
-  if (Object.getPrototypeOf(value) !== Object.prototype) return null
-  const keys = Reflect.ownKeys(value)
-  if (
-    keys.length !== 2
-    || !keys.includes('proposal_id')
-    || !keys.includes('confirmed')
-  ) return null
-  const descriptors = Object.getOwnPropertyDescriptors(value)
-  const proposal = descriptors.proposal_id
-  const confirmed = descriptors.confirmed
-  if (
-    proposal === undefined
-    || confirmed === undefined
-    || !('value' in proposal)
-    || !('value' in confirmed)
-    || typeof proposal.value !== 'string'
-    || proposal.value === ''
-    || codePointLengthLikePython(proposal.value) > 128
-    || typeof confirmed.value !== 'boolean'
-  ) return null
-  return {proposalId: proposal.value, confirmed: confirmed.value}
-}
-
-function executorApprovalDecisionArguments(
-  value: unknown,
-): {readonly approvalId: string; readonly approved: boolean} | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
-  if (Object.getPrototypeOf(value) !== Object.prototype) return null
-  const keys = Reflect.ownKeys(value)
-  if (keys.length !== 2 || !keys.includes('approval_id') || !keys.includes('approved')) return null
-  const descriptors = Object.getOwnPropertyDescriptors(value)
-  const approval = descriptors.approval_id
-  const approved = descriptors.approved
-  if (
-    approval === undefined
-    || approved === undefined
-    || !('value' in approval)
-    || !('value' in approved)
-    || typeof approval.value !== 'string'
-    || approval.value === ''
-    || codePointLengthLikePython(approval.value) > 128
-    || typeof approved.value !== 'boolean'
-  ) return null
-  return {approvalId: approval.value, approved: approved.value}
+/**
+ * The host fact for a pending executor approval (spec 08): names the work when the executor knows it,
+ * carries the id the model must copy into `confirm`, and never a wire tool name.
+ */
+function approvalFactText(view: ExecutorApprovalView, id: string, executorDisplayName: string): string {
+  const who = view.work === null ? executorDisplayName : `项目 ${view.work.project} · 会话 ${view.work.title}`
+  const queued = view.queued > 0 ? `（还有 ${view.queued} 个等待）` : ''
+  const summary = (view.operation_summary ?? '').replace(/。$/u, '')
+  const text = `权限请求 id=${id}：${who} 请求批准 ${view.kind ?? ''}：${summary}${queued}。`
+    + '只有用户本轮明确同意或拒绝后才调用 confirm(id, accepted)；不要朗读 id。'
+  return [...text].slice(0, MAX_HOST_FACT_CHARS).join('')
 }
 
 function suggestionSpeechView(content: Readonly<Record<string, JsonValue>>): string {
@@ -261,6 +229,8 @@ export interface ExecutorManifestLike {
   readonly display_name?: string | undefined
   readonly roles: readonly ExecutorRole[]
   readonly ops: readonly {readonly name: string; readonly sync_result?: boolean}[]
+  /** Present on an agent executor (spec 08): reached through `dispatch` / `cancel`, never `${name}__${op}`. */
+  readonly agent?: {readonly summary: string} | undefined
   readonly policy: {
     readonly priority: number
     readonly suggest?: boolean
@@ -318,7 +288,12 @@ export interface ServiceProvider {
 }
 
 export interface RealtimeServiceOptions {
-  readonly intake?: Pick<IntakeOptions, 'models' | 'settings' | 'resolveTarget' | 'dispatch' | 'record'>
+  readonly intake?: Pick<
+    IntakeOptions,
+    'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'dispatch' | 'steer' | 'cancel' | 'record'
+  >
+  /** The coding executor's `cancel` port (spec 08); absent → `cancel` refuses `unsupported_tool`. */
+  readonly agentExecutor?: Pick<AgentExecutor, 'cancel'>
   readonly provider: ServiceProvider
   readonly runtime: ServiceRuntime
   readonly tools: CompiledTools
@@ -393,8 +368,8 @@ export class RealtimeService {
   readonly #executorApproval: ExecutorApprovalController | undefined
   /** The coding-role executor's channel and label, resolved once from the registered manifests. */
   readonly #coding: CodingChannel | null
-  readonly #projectConfirmationTool: string | null
-  readonly #approvalTool: string | null
+  readonly #agentExecutor: Pick<AgentExecutor, 'cancel'> | undefined
+  readonly #intakeModels: IntakeOptions['models'] | undefined
   readonly #commitProjectOperation:
     | ((operation: ConfirmedProjectOperation) => Promise<{
       readonly accepted: boolean
@@ -596,7 +571,14 @@ export class RealtimeService {
       dispatch: intake => {
         const result = options.intake!.dispatch(intake)
         if (result.accepted && result.delegate_id !== null && result.delegate_id !== undefined) {
-          this.session.registerDelegate(result.delegate_id, {summary: intake.slots.goal.note.slice(0, 240), state: 'running', channel: this.#coding?.channel ?? 'coding'})
+          const title = intake.title ?? intake.target?.session_title
+          this.session.registerDelegate(result.delegate_id, {
+            summary: intake.slots.goal.note.slice(0, 240),
+            state: 'running',
+            channel: this.#coding?.channel ?? 'coding',
+            ...(intake.target === null ? {} : {project: intake.target.workspace_display_name}),
+            ...(title === undefined || title === null ? {} : {title}),
+          })
           this.#telemetry?.record('executor.dispatch', {delegate_id: result.delegate_id})
           this.#publishExecutorState()
         }
@@ -634,8 +616,8 @@ export class RealtimeService {
         break
       }
     }
-    this.#projectConfirmationTool = this.#coding === null ? null : `${this.#coding.channel}__${PROJECT_CONFIRMATION_OP}`
-    this.#approvalTool = this.#coding === null ? null : `${this.#coding.channel}__${APPROVAL_OP}`
+    this.#agentExecutor = options.agentExecutor
+    this.#intakeModels = options.intake?.models
     this.#commitProjectOperation = options.commitProjectOperation
     this.#onProjectView = options.onProjectView
     this.#projectViewProvider = options.projectViewProvider
@@ -2200,7 +2182,7 @@ export class RealtimeService {
     const responseInstruction = content.code === 'confirmation_required'
       ? [
         '只简短转述 confirmation_prompt 一次，不得补充解释、背景或其他问句；',
-        '不得声称已提交、已创建、已切换或已开始任务，也不要朗读 proposal_id。',
+        '不得声称已提交、已创建、已切换或已开始任务，也不要朗读 id。',
       ].join('')
       : null
     const encoded = JSON.stringify({
@@ -2638,13 +2620,12 @@ export class RealtimeService {
     // A tool call in a turn that is meant to be waiting for a confirmation is refused before the
     // session sees it: letting it through would have the model acting inside the very turn whose answer
     // it is supposed to be waiting for.
-    const isConfirmationDecision = event.kind === 'tool_call_ready'
-      && event.name === this.#projectConfirmationTool
+    const confirmTarget = event.kind === 'tool_call_ready' ? this.#confirmTarget(event) : null
+    const isConfirmationDecision = confirmTarget === 'project'
     const blockedConfirmationTool = event.kind === 'tool_call_ready'
       && this.#blocksProjectConfirmationTool(event)
       && !isConfirmationDecision
-    const isExecutorApprovalDecision = event.kind === 'tool_call_ready'
-      && event.name === this.#approvalTool
+    const isExecutorApprovalDecision = confirmTarget === 'approval'
     const blockedExecutorApprovalTool = event.kind === 'tool_call_ready'
       && this.#blocksExecutorApprovalTool(event)
       && !isExecutorApprovalDecision
@@ -3167,11 +3148,41 @@ export class RealtimeService {
    * arrive, and no amount of waiting will fix it -- reconnecting is the way back to a session whose
    * state can be reasoned about.
    */
+  /**
+   * Which confirmation FSM a `confirm(id, accepted)` call answers (spec 08: one tool for both).
+   *
+   * An id the approval FSM knows -- live, still holding voice authority, or its expiry tombstone --
+   * wins, so a late answer keeps that FSM's own classification; then the project proposal's id; then
+   * whichever FSM is pending renders its own invalid-id result. `'none'` is a `confirm` with nothing
+   * pending anywhere, refused in `#interceptHost`; `null` is any other tool. The id is read through
+   * `confirmArguments` so a provider-supplied accessor is never evaluated here.
+   */
+  #confirmTarget(event: ToolCallReady): 'approval' | 'project' | 'none' | null {
+    if (event.name !== CONFIRM_TOOL) return null
+    const id = confirmArguments(event.arguments)?.id ?? null
+    const approval = this.#executorApproval?.view
+    const project = this.#projectConfirmation
+    if (id !== null && (
+      approval?.pending_approval_id === id
+      || this.#executorApprovalAuthority?.approvalId === id
+      || this.#executorApprovalExpiredIdentity?.approvalId === id
+    )) return 'approval'
+    if (id !== null && project?.lifecycleId === id) return 'project'
+    if (project?.pending === true) return 'project'
+    if (approval?.pending_approval === true) return 'approval'
+    if (
+      event.response_id !== null
+      && this.#isExecutorApprovalResponseQuarantined(event.session_epoch, event.response_id)
+    ) return 'approval'
+    return 'none'
+  }
+
   async #routeToolCall(event: ToolCallReady): Promise<void> {
     const activeResponseId = this.session.activeProviderResponseId
     const observedResponseId = event.response_id ?? activeResponseId
 
-    if (event.name === this.#approvalTool) {
+    const confirmTarget = this.#confirmTarget(event)
+    if (confirmTarget === 'approval') {
       await this.#routeExecutorApprovalCall(event, observedResponseId)
       return
     }
@@ -3210,7 +3221,7 @@ export class RealtimeService {
       return
     }
 
-    if (event.name === this.#projectConfirmationTool) {
+    if (confirmTarget === 'project') {
       await this.#handleProjectConfirmationDecision(event, {
         observedProviderResponseId: observedResponseId,
         originItemId: null,
@@ -3313,7 +3324,7 @@ export class RealtimeService {
       })
       if (deferred === 'deferred') return
     }
-    const decision = executorApprovalDecisionArguments(event.arguments)
+    const decision = confirmArguments(event.arguments)
     if (
       authority !== null
       && responseId !== null
@@ -3322,7 +3333,7 @@ export class RealtimeService {
       && providerRevision === authority.createdUserRevision
       && this.#executorApproval?.pending === true
       && this.#clock.now() < authority.expiresAt
-      && decision?.approvalId === authority.authorityId
+      && decision?.id === authority.authorityId
     ) {
       const deferred = this.#executorApprovalIsolation.deferProvisionalCall({
         sessionEpoch: event.session_epoch,
@@ -3512,11 +3523,12 @@ export class RealtimeService {
   }
 
   async #handleBoundToolCall(event: ToolCallReady, origin: BoundToolOrigin): Promise<void> {
-    if (event.name === this.#projectConfirmationTool) {
+    const confirmTarget = this.#confirmTarget(event)
+    if (confirmTarget === 'project') {
       await this.#handleProjectConfirmationDecision(event, origin)
       return
     }
-    if (event.name === this.#approvalTool) {
+    if (confirmTarget === 'approval') {
       await this.#handleExecutorApprovalDecision(event, origin)
       return
     }
@@ -3555,12 +3567,13 @@ export class RealtimeService {
    * and a bridge refusal means the proposal itself was not admissible.
    */
   async #handleToolCall(
-    event: ToolCallReady,
+    call: ToolCallReady,
     options: {
       readonly observedProviderResponseId?: string | null
       readonly originRef?: string | null
     } = {},
   ): Promise<void> {
+    const event = this.#directDispatch(call) ?? call
     const key = callKey(event.session_epoch, event.call_id)
     const existing = this.#toolCallState(key)
     if (existing !== undefined) {
@@ -3665,7 +3678,7 @@ export class RealtimeService {
       acceptance = this.#overCapacityAcceptance(event)
     } else {
       try {
-        acceptance = this.#interceptIntake(event, originRef)
+        acceptance = await this.#interceptHost(event, originRef)
           ?? (originRef === null
             ? this.#bridge.acceptToolCall(event)
             : this.#bridge.acceptToolCall(event, {originRef}))
@@ -3841,18 +3854,79 @@ export class RealtimeService {
     }
   }
 
-  #interceptIntake(event: ToolCallReady, originRef: string | null): ToolAcceptance | null {
-    if (this.#intake === undefined || this.#coding === null || event.name !== `${this.#coding.channel}__project`) return null
-    const request = {...event.arguments}
-    delete request.origin_ref
-    if (!isIntakeAction(request)) return null
-    const validated = this.#runtime.executors.get(this.#coding.channel)?.admitRequest?.('project', request) ?? null
-    if (!validated?.ok) return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
+  /** The `executor` argument names a registered agent executor (manifest has `agent`), or nothing. */
+  #agentExecutorName(value: JsonValue | undefined): string | null {
+    return typeof value === 'string' && this.#runtime.executors.get(value)?.manifest.agent !== undefined ? value : null
+  }
+
+  /** Whether `dispatch`/`cancel` on this executor goes through the coding intake coordinator. */
+  #intakeCoordinates(executor: string): boolean {
+    return this.#intake !== undefined && this.#coding !== null && executor === this.#coding.channel
+  }
+
+  /**
+   * `dispatch` on an agent executor the intake does not coordinate is that executor's own `run`,
+   * admitted like any delegate call (the `${executor}__run` binding is compiled for every agent).
+   */
+  #directDispatch(event: ToolCallReady): ToolCallReady | null {
+    if (event.name !== DISPATCH_TOOL) return null
+    const executor = this.#agentExecutorName(event.arguments.executor)
+    if (executor === null || this.#intakeCoordinates(executor)) return null
+    const {instruction, origin_ref} = event.arguments
+    return {
+      ...event,
+      name: `${executor}__run`,
+      arguments: {
+        ...(instruction === undefined ? {} : {work_order: instruction}),
+        ...(origin_ref === undefined ? {} : {origin_ref}),
+      },
+    }
+  }
+
+  /**
+   * The host tools (spec 08). `dispatch` on the coding executor opens the intake, which decides
+   * project / session / questions itself; `cancel` is answered synchronously from the executor's
+   * run slots; a `confirm` that reached here has no pending confirmation to answer.
+   */
+  async #interceptHost(event: ToolCallReady, originRef: string | null): Promise<ToolAcceptance | null> {
+    if (event.name === CONFIRM_TOOL) {
+      return this.#refusalAcceptance(event, 'no_pending_confirmation', NO_PENDING_CONFIRMATION_TOOL_RESULT)
+    }
+    if (event.name !== DISPATCH_TOOL && event.name !== CANCEL_TOOL) return null
+    const executor = this.#agentExecutorName(event.arguments.executor)
+    const raw = event.arguments.instruction
+    const instruction = typeof raw === 'string' ? stripLikePython(raw) : null
+    const instructionValid = event.name === CANCEL_TOOL && raw === undefined
+      ? true
+      : instruction !== null && instruction !== '' && codePointLengthLikePython(instruction) <= 4000
+    if (executor === null || !instructionValid) {
+      return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
+    }
+    if (event.name === CANCEL_TOOL) {
+      if (this.#agentExecutor === undefined || executor !== this.#coding?.channel) {
+        return this.#refusalAcceptance(event, 'unsupported_tool', '{"code":"unsupported_tool"}')
+      }
+      const models = this.#intakeModels
+      const result = await this.#agentExecutor.cancel(instruction ?? undefined, {
+        resolveCancelTarget: models === undefined
+          ? () => Promise.resolve(null)
+          : (target, running) => models.resolveCancelTarget(target, running),
+      })
+      const acceptance = this.#refusalAcceptance(event, result.code, JSON.stringify({...result, message: renderCancelResult(result)}))
+      return {...acceptance, accepted: true, inline_fulfilled: true}
+    }
+    // A valid `dispatch` on a non-coordinated agent never gets here: `#directDispatch` rewrote it.
+    if (this.#intake === undefined || !this.#intakeCoordinates(executor)) return null
     const user = this.#intakeUser
     if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref) {
       return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
     }
-    const code = this.#intake.open(validated.request, user.text, user.origin_ref, String(event.session_epoch))
+    const code = this.#intake.open(
+      {work_order: instruction!, project: null, session: 'latest'},
+      user.text,
+      user.origin_ref,
+      String(event.session_epoch),
+    )
     const result = this.#refusalAcceptance(event, code, JSON.stringify({
       code, state: this.#intake.view?.state, message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
     }))
@@ -4120,11 +4194,7 @@ export class RealtimeService {
         kind: 'final',
         host_item_id: this.#idFactory(),
         event_id: `approval:${view.pending_approval_id}:requested`,
-        content: JSON.stringify({
-          approval_id: view.pending_approval_id,
-          kind: view.kind,
-          operation_summary: view.operation_summary,
-        }),
+        content: approvalFactText(view, view.pending_approval_id, this.#coding?.display_name ?? '执行器'),
       }).item
       const authority: ExecutorApprovalAuthorityState = {
         approvalId: view.pending_approval_id,
@@ -4790,7 +4860,7 @@ export class RealtimeService {
     const controller = this.#executorApproval
     const authority = this.#executorApprovalIsolation.authority
     const reservation = this.#executorApprovalIsolation.reservation
-    const decision = executorApprovalDecisionArguments(event.arguments)
+    const decision = confirmArguments(event.arguments)
     const voiceState = this.#executorApprovalAuthority
     let code = decision === null
       ? 'approval_invalid'
@@ -4802,12 +4872,12 @@ export class RealtimeService {
     if (decision === null) telemetryReason = 'malformed_arguments'
     else if (controller?.pending !== true) {
       telemetryReason = expired?.sessionEpoch === event.session_epoch
-          && expired.approvalId === decision.approvalId
+          && expired.approvalId === decision.id
         ? 'expired'
         : 'not_pending'
     }
     else if (voiceState === null) telemetryReason = 'authority_missing'
-    else if (decision.approvalId !== voiceState.approvalId) telemetryReason = 'replaced'
+    else if (decision.id !== voiceState.approvalId) telemetryReason = 'replaced'
     else if (voiceState.sessionEpoch !== event.session_epoch) telemetryReason = 'epoch_mismatch'
     else if (this.#clock.now() >= voiceState.expiresAt) telemetryReason = 'expired'
     else if (!voiceState.contextReady) telemetryReason = 'context_not_ready'
@@ -4840,7 +4910,7 @@ export class RealtimeService {
         })
         ? reservation.userRevision
         : providerRevision
-      const authorized = authority.authorityId === decision.approvalId
+      const authorized = authority.authorityId === decision.id
         && authority.sessionEpoch === event.session_epoch
         && this.#clock.now() < authority.expiresAt
         && reservation !== null
@@ -4866,13 +4936,13 @@ export class RealtimeService {
             ? 'revision_mismatch'
             : 'response_mismatch'
       } else if (controller.acceptDecision({
-        approvalId: decision.approvalId,
-        decision: decision.approved ? 'accept' : 'decline',
+        approvalId: decision.id,
+        decision: decision.accepted ? 'accept' : 'decline',
       })) {
         this.session.settleUserResponse(responseId)
-        code = decision.approved ? 'approval_accepted' : 'approval_declined'
-        state = decision.approved ? 'accepted' : 'refused'
-        telemetryOutcome = decision.approved ? 'accepted' : 'refused'
+        code = decision.accepted ? 'approval_accepted' : 'approval_declined'
+        state = decision.accepted ? 'accepted' : 'refused'
+        telemetryOutcome = decision.accepted ? 'accepted' : 'refused'
         telemetryReason = undefined
       } else {
         telemetryReason = 'not_pending'
@@ -5243,7 +5313,7 @@ export class RealtimeService {
       ) {
         let text: string | null = null
         let expiryOwnsFact = false
-        const decision = projectConfirmationDecisionArguments(event.arguments)
+        const decision = confirmArguments(event.arguments)
         if (decision === null) {
           code = 'confirmation_invalid'
           text = '确认请求无效，操作尚未执行。'
@@ -5251,10 +5321,10 @@ export class RealtimeService {
           const outcome = controller.acceptDecision({
             epoch: event.session_epoch,
             itemId,
-            proposalId: decision.proposalId,
-            confirmed: decision.confirmed,
+            proposalId: decision.id,
+            confirmed: decision.accepted,
           })
-          if (outcome.kind === 'cancelled') this.#intake?.decline(decision.proposalId)
+          if (outcome.kind === 'cancelled') this.#intake?.decline(decision.id)
           code = outcome.kind === 'ignored' ? 'confirmation_not_pending' : outcome.kind
           state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
           text = outcome.response_text

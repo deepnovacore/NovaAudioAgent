@@ -9,6 +9,7 @@ import {
   type ApprovalKind,
   type ApprovalLocalDetail,
   type ApprovalView,
+  type ApprovalWork,
   type FileChangeDisplay,
 } from '../../approval-port.js'
 import {snapshotJsonRecord} from './safe-json.js'
@@ -73,7 +74,9 @@ export interface CodexApprovalResolution {
 interface PendingApproval {
   readonly id: string
   readonly offer: CodexApprovalOffer
-  readonly expiresAt: number
+  readonly work: ApprovalWork | null
+  /** Armed when the entry becomes head (spec 08): queue position has no deadline of its own. */
+  expiresAt: number
   readonly signal: AbortSignal
   readonly resolve: (resolution: CodexApprovalResolution) => void
   readonly expiryAbort: AbortController
@@ -87,8 +90,18 @@ export interface CodexApprovalControllerOptions {
   readonly idFactory: () => string
 }
 
+/** What a transport needs from the approval FIFO; `forWork` binds it to one running work. */
+export type CodexApprovalPort = Pick<CodexApprovalController, 'offer' | 'consume' | 'invalidate'>
+
+export function isCodexApprovalPort(value: unknown): value is CodexApprovalPort {
+  return typeof value === 'object' && value !== null
+    && typeof (value as CodexApprovalPort).offer === 'function'
+    && typeof (value as CodexApprovalPort).consume === 'function'
+    && typeof (value as CodexApprovalPort).invalidate === 'function'
+}
+
 export interface CodexApprovalServerRequestRouteOptions {
-  readonly controller: CodexApprovalController
+  readonly controller: CodexApprovalPort
   readonly workspace: string
   readonly activePair: readonly [string, string] | null
   readonly fileChangeItem: (
@@ -105,12 +118,16 @@ export interface CodexApprovalServerResponse {
     | {readonly permissions: PermissionProfile; readonly scope: 'turn' | 'session'}
 }
 
-/** Owns one short-lived, request-bound Codex permission decision. */
+/**
+ * Owns the Codex permission FIFO (spec 08): exactly one approval is voice-visible (the head); later
+ * offers queue with their server request still open and get a full TTL once they become head.
+ */
 export class CodexApprovalController {
   readonly #clock: Clock
   readonly #idFactory: () => string
   readonly #observers: ((view: CodexApprovalView) => void)[] = []
   #current: PendingApproval | null = null
+  readonly #queue: PendingApproval[] = []
 
   constructor(options: CodexApprovalControllerOptions) {
     this.#clock = options.clock
@@ -129,6 +146,17 @@ export class CodexApprovalController {
       operation_summary: current.offer.operation_summary,
       expires_at: current.expiresAt,
       ...(current.offer.allowed_decisions === undefined ? {} : {allowed_decisions: current.offer.allowed_decisions}),
+      work: current.work,
+      queued: this.#queue.length,
+    }
+  }
+
+  /** The same surface bound to one running work: its offers carry `work`, its invalidations touch only its own entries. */
+  forWork(work: ApprovalWork): CodexApprovalPort {
+    return {
+      offer: (input, signal) => this.offer(input, signal, work),
+      consume: resolution => this.consume(resolution),
+      invalidate: reason => this.invalidateWork(work.work_id, reason),
     }
   }
 
@@ -144,20 +172,22 @@ export class CodexApprovalController {
     }
   }
 
-  /** Offer only host-sanitized display facts. A second concurrent offer is declined by the caller. */
+  /** Offer only host-sanitized display facts. A concurrent offer queues behind the head. */
   async offer(
     input: CodexApprovalOffer,
     signal: AbortSignal,
+    work: ApprovalWork | null = null,
   ): Promise<CodexApprovalResolution | null> {
-    if (!(signal instanceof AbortSignal) || signal.aborted || this.#current !== null) return null
+    if (!(signal instanceof AbortSignal) || signal.aborted) return null
     const offer = validateAndSnapshotOffer(input)
     const id = validateApprovalId(this.#idFactory())
     let resolve!: (resolution: CodexApprovalResolution) => void
     const decision = new Promise<CodexApprovalResolution>(done => { resolve = done })
-    const current: PendingApproval = {
+    const entry: PendingApproval = {
       id,
       offer,
-      expiresAt: this.#clock.now() + CODEX_APPROVAL_TTL_SECONDS,
+      work,
+      expiresAt: 0,
       signal,
       resolve,
       expiryAbort: new AbortController(),
@@ -165,11 +195,11 @@ export class CodexApprovalController {
       state: 'pending',
       resolution: null,
     }
-    current.onSignalAbort = () => { this.#invalidateCurrent(current) }
-    signal.addEventListener('abort', current.onSignalAbort, {once: true})
-    this.#current = current
+    entry.onSignalAbort = () => { this.#drop(entry) }
+    signal.addEventListener('abort', entry.onSignalAbort, {once: true})
+    if (this.#current === null) this.#promote(entry)
+    else this.#queue.push(entry)
     this.#publish()
-    void this.#expireAtDeadline(current)
     return await decision
   }
 
@@ -186,7 +216,7 @@ export class CodexApprovalController {
       || !(current.offer.allowed_decisions ?? ['accept', 'decline']).includes(input.decision)
     ) return false
     if (this.#clock.now() >= current.expiresAt || current.signal.aborted) {
-      this.#invalidateCurrent(current)
+      this.#drop(current)
       return false
     }
     const resolution = Object.freeze({decision: input.decision})
@@ -207,17 +237,30 @@ export class CodexApprovalController {
       || current.signal.aborted
     ) return 'decline'
     const decision = resolution.decision
-    this.#clearCurrent(current)
+    this.#detach(current)
+    this.#current = null
+    this.#promoteNext()
     this.#publish()
     return decision
   }
 
+  /** Drop the head (expiry, epoch change, carrier loss); the next queued entry becomes visible. */
   invalidate(reason: string): boolean {
     void reason
     const current = this.#current
     if (current === null) return false
-    this.#invalidateCurrent(current)
+    this.#drop(current)
     return true
+  }
+
+  /** Drop every entry of one work (its turn ended or its transport closed) without touching other works. */
+  invalidateWork(workId: string, reason: string): boolean {
+    void reason
+    const owned = [this.#current, ...this.#queue].filter(
+      (entry): entry is PendingApproval => entry?.work?.work_id === workId,
+    )
+    for (const entry of owned) this.#drop(entry)
+    return owned.length > 0
   }
 
   async #expireAtDeadline(current: PendingApproval): Promise<void> {
@@ -230,24 +273,40 @@ export class CodexApprovalController {
       return
     }
     if (this.#current !== current || this.#clock.now() < current.expiresAt) return
-    this.#invalidateCurrent(current)
+    this.#drop(current)
   }
 
-  #invalidateCurrent(current: PendingApproval): void {
-    if (this.#current !== current) return
-    const decline = Object.freeze({decision: 'decline' as const})
-    this.#clearCurrent(current)
-    if (current.state === 'pending') current.resolve(decline)
+  #promote(entry: PendingApproval): void {
+    entry.expiresAt = this.#clock.now() + CODEX_APPROVAL_TTL_SECONDS
+    this.#current = entry
+    void this.#expireAtDeadline(entry)
+  }
+
+  #promoteNext(): void {
+    const next = this.#queue.shift()
+    if (next !== undefined) this.#promote(next)
+  }
+
+  /** Remove one entry wherever it sits, declining it if still undecided; a dropped head promotes the next. */
+  #drop(entry: PendingApproval): void {
+    if (this.#current === entry) {
+      this.#current = null
+      this.#promoteNext()
+    } else {
+      const index = this.#queue.indexOf(entry)
+      if (index === -1) return
+      this.#queue.splice(index, 1)
+    }
+    this.#detach(entry)
+    if (entry.state === 'pending') entry.resolve(Object.freeze({decision: 'decline' as const}))
     this.#publish()
   }
 
-  #clearCurrent(current: PendingApproval): void {
-    if (this.#current !== current) return
-    this.#current = null
-    current.expiryAbort.abort()
-    if (current.onSignalAbort !== null) {
-      current.signal.removeEventListener('abort', current.onSignalAbort)
-      current.onSignalAbort = null
+  #detach(entry: PendingApproval): void {
+    entry.expiryAbort.abort()
+    if (entry.onSignalAbort !== null) {
+      entry.signal.removeEventListener('abort', entry.onSignalAbort)
+      entry.onSignalAbort = null
     }
   }
 
@@ -581,6 +640,8 @@ function emptyView(): CodexApprovalView {
     local_detail: null,
     operation_summary: null,
     expires_at: null,
+    work: null,
+    queued: 0,
   }
 }
 

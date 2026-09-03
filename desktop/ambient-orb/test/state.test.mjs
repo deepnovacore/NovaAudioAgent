@@ -100,21 +100,27 @@ test('Codex approval can provide a local bounded operation without changing proj
   assert.match(state.confirmationStatus, /12 秒后自动取消/u)
 })
 
-test('describes workspace reuse as reuse rather than creation', () => {
-  const waiting = deriveOrbState({
+test('describes only a workspace create; a voice-only proposal keeps the generic label', () => {
+  const creating = deriveOrbState({
     ...base,
     pendingConfirmation: true,
-    pendingAction: 'reuse_workspace',
+    pendingAction: 'create_workspace',
+    pendingWorkspace: 'timer-app',
+    pendingSession: null,
+    pendingExpiresInSeconds: 360,
+  })
+  assert.equal(creating.codexLabel, '创建工作区 “timer-app”\n尚未执行 · 360 秒后自动取消')
+
+  const voiceOnly = deriveOrbState({
+    ...base,
+    pendingConfirmation: true,
+    pendingAction: null,
     pendingWorkspace: 'timer-app',
     pendingSession: 'Initial',
     pendingExpiresInSeconds: 360,
   })
-
-  assert.equal(
-    waiting.codexLabel,
-    '使用现有工作区 “timer-app”并开始任务\n尚未执行 · 360 秒后自动取消',
-  )
-  assert.doesNotMatch(waiting.codexLabel, /创建/u)
+  assert.equal(voiceOnly.codexLabel, '项目操作等待确认\n尚未执行 · 360 秒后自动取消')
+  assert.doesNotMatch(voiceOnly.codexLabel, /创建/u)
 })
 
 test('explains incomplete configuration on the visible status line', () => {
@@ -256,13 +262,13 @@ test('projects only public workspace session and confirmation into the Codex lab
     workspace: 'alpha',
     session: 'Task 1',
     pendingConfirmation: true,
-    pendingAction: 'resume_session',
+    pendingAction: 'create_workspace',
     pendingWorkspace: 'beta',
-    pendingSession: 'Task 2',
+    pendingSession: null,
     pendingExpiresInSeconds: 40,
   })
 
-  assert.equal(state.codexLabel, '恢复 “beta / Task 2”\n尚未执行 · 40 秒后自动取消')
+  assert.equal(state.codexLabel, '创建工作区 “beta”\n尚未执行 · 40 秒后自动取消')
 })
 
 test('adds a Windows-specific hint to the permission-denied label', () => {

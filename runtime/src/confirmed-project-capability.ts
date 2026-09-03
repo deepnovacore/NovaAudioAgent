@@ -41,10 +41,10 @@ export function beginConfirmedProjectAdmission(
     state?.phase !== 'ready'
     || codingExecutor === null
     || request.executor !== codingExecutor
-    || request.op !== 'project'
+    || request.op !== 'run'
     || request.origin_ref !== state.origin_ref
     || Object.keys(request.request).length !== 1
-    || request.request.action !== 'execute_confirmed'
+    || typeof request.request.work_order !== 'string'
   ) return false
   state.phase = 'admitting'
   return true

@@ -1045,7 +1045,7 @@ async function assertDesktopControlOutputs(
     {type: 'playback.alert', utterance_id: `${label}-alert`, generation_epoch: 3},
     {
       type: 'project.state', workspace_display_name: '项目甲',
-      session_title: '会话乙', pending_confirmation: true, pending_confirmation_busy: false,
+      session_title: '会话乙', roster: [], pending_confirmation: true, pending_confirmation_busy: false,
       pending_action: null,
       pending_workspace_display_name: null,
       pending_session_title: null,
@@ -1678,7 +1678,7 @@ test('captured composition callbacks preserve clear alert Codex project clock an
     '{"type":"playback.clear","utterance_id":"utterance-clear","generation_epoch":2}',
     '{"type":"playback.alert","utterance_id":"utterance-alert","generation_epoch":3}',
     '{"type":"clock.ping","ping_id":"ping-0"}',
-      '{"type":"project.state","workspace_display_name":"项目甲","session_title":"会话乙","pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
+      '{"type":"project.state","workspace_display_name":"项目甲","session_title":"会话乙","roster":[],"pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
   ])
   assert.deepEqual(telemetryRecords.map(record => record.kind), [
     'playback.clear_sent',

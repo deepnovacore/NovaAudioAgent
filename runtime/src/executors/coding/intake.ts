@@ -1,9 +1,18 @@
-import type {JsonValue} from '../events.js'
-import {assessSchema, planSchema, type IntakeModels, type IntakeSlots} from './intake-model.js'
-import type {ConfirmedProjectOperation, ProjectProposal} from '../project-confirmation.js'
+import type {JsonValue} from '../../events.js'
+import {assessSchema, planSchema, type IntakeKind, type IntakeModels, type IntakeSlots} from './intake-model.js'
+import type {ConfirmedProjectOperation, ProjectProposal} from '../../project-confirmation.js'
 import {renderWorkOrder, type WorkOrder} from './work-order.js'
+import {
+  ProjectResolutionError,
+  type CancelResult,
+  type CoordinatorDecision,
+  type IntakeTarget,
+  type RosterEntry,
+  type RunningWork,
+} from '../../coding-executor.js'
+import {collapsePythonWhitespace, stripLikePython} from '../../python-text.js'
+import {deriveSessionTitle} from '../../work-tools.js'
 
-import type {IntakeTarget} from '../coding-executor.js'
 export type {IntakeTarget}
 export interface IntakeSettings {
   readonly clarification_depth: 'minimal' | 'balanced' | 'thorough'
@@ -22,10 +31,10 @@ export interface IntakeSession {
   proposal_id: string | null
   workspace: string | null
   session_id: string
-  codex_session: string | null
   origin_ref: string
   state: 'open' | 'clarifying' | 'ready_to_plan' | 'planning' | 'readback' | 'committing' | 'closed'
-  outcome: 'dispatched' | 'admission_refused' | 'cancelled' | 'abandoned' | null
+  /** `routed`: switch / steer / cancel / resolution error went straight to the adapter, no plan cycle. */
+  outcome: 'dispatched' | 'admission_refused' | 'cancelled' | 'abandoned' | 'routed' | null
   delegate_id: string | null
   request: Readonly<Record<string, JsonValue>>
   opening: string
@@ -38,17 +47,26 @@ export interface IntakeSession {
   pending_question: string | null
   missing_goal_grace: number | null
   malformed: number
+  kind: IntakeKind | null
+  decision: CoordinatorDecision | null
   target: IntakeTarget | null
   work_order: string | null
+  /** Host-derived session title for a new thread (spec 08 Titles); set with the work order. */
+  title: string | null
 }
 
 export interface IntakeOptions {
   readonly models: IntakeModels
   readonly settings: IntakeSettings
   readonly idFactory: () => string
-  readonly resolveTarget: (request: Readonly<Record<string, JsonValue>>) => Promise<IntakeTarget>
+  readonly roster: () => readonly RosterEntry[]
+  readonly running: () => readonly RunningWork[]
+  readonly activeProject: () => string | null
+  readonly resolveTarget: (decision: CoordinatorDecision) => Promise<IntakeTarget>
   readonly prepare: (session: Readonly<IntakeSession>) => ProjectProposal
   readonly dispatch: (session: Readonly<IntakeSession>) => IntakeAdmission
+  readonly steer: (session: Readonly<IntakeSession>, project: string | null, instruction: string) => IntakeAdmission
+  readonly cancel: (instruction: string) => Promise<CancelResult>
   readonly invalidateProposal: () => void
   readonly fact: (session: Readonly<IntakeSession>, text: string) => void
   readonly record: (session: Readonly<IntakeSession>, kind: string, data: Readonly<Record<string, JsonValue>>) => void
@@ -60,16 +78,47 @@ const emptySlots = (): IntakeSlots => ({
   acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''},
 })
 const limit = (value: string, count: number): string => [...value].slice(0, count).join('')
-
-export function isIntakeAction(request: Readonly<Record<string, JsonValue>>): boolean {
-  return typeof request.work_order === 'string'
-    && typeof request.action === 'string'
-    && ['create_workspace', 'start_session', 'resume_session'].includes(request.action)
-}
+const MAX_ROSTER = 10
 
 /** This recognizes non-content turns only. It never grants execution authority. */
 export function isPurePlanDecision(text: string): boolean {
   return /^(确认|可以|做吧|好|好的|同意|不同意|不行|取消|不用了|算了|yes|ok|okay|confirm|no|cancel)[。！!,.，\s]*$/iu.test(text.trim())
+}
+
+/** Whitespace- and case-insensitive containment, the same normalisation both sides. */
+function evidenceOccurs(evidence: string, utterances: readonly string[]): boolean {
+  const normalize = (value: string): string => collapsePythonWhitespace(stripLikePython(value)).toLowerCase()
+  const span = normalize(evidence)
+  return span !== '' && utterances.some(text => normalize(text).includes(span))
+}
+
+/** Spoken rendering of a resolution error / cancel result: code first, then what the model needs to offer. */
+export function renderResolutionError(error: ProjectResolutionError): string {
+  const detail = error.detail
+  const text = (value: JsonValue | undefined): string => typeof value === 'string' ? value : ''
+  // A list of names, or of `{project, title}` records, whichever the adapter had at hand.
+  const list = (value: JsonValue | undefined): string => Array.isArray(value)
+    ? value.map(item => typeof item === 'object' && item !== null && !Array.isArray(item)
+      ? `${text(item.project)}/${text(item.title)}`
+      : text(item)).join('、')
+    : ''
+  if (error.code === 'unknown_project') {
+    const suggestions = list(detail.suggestions)
+    return `code=unknown_project：没有叫“${text(detail.project)}”的项目${suggestions === '' ? '' : `，相近的有：${suggestions}`}。可以请用户确认项目名，或明确要求新建。任务尚未执行。`
+  }
+  if (error.code === 'ambiguous_project') {
+    return `code=ambiguous_project：“${text(detail.project)}”匹配多个项目：${list(detail.candidates)}。请用户说明是哪一个。任务尚未执行。`
+  }
+  if (error.code === 'busy_project') {
+    return `code=busy_project：项目“${text(detail.project)}”正在执行“${text(detail.title)}”。可以追加要求（steer），或先取消再重新开始（cancel）。新任务尚未执行。`
+  }
+  return `code=capacity：同时运行的任务已达上限，正在跑：${list(detail.running)}。可以先取消一个。新任务尚未执行。`
+}
+
+export function renderCancelResult(result: CancelResult): string {
+  if (result.code === 'cancelled') return `code=cancelled：已请求停止“${result.work.project}/${result.work.title}”，稍后有终态事实。`
+  if (result.code === 'not_running') return 'code=not_running：当前没有正在执行的任务。'
+  return `code=ambiguous_work：有多个任务在跑：${result.running.map(work => `${work.project}/${work.title}`).join('、')}。请用户说明要停哪一个。`
 }
 
 /** Two service-owned single-flight slots; latest revision replaces pending work, never active work. */
@@ -99,11 +148,11 @@ export class IntakeController {
     }
     this.#session = {
       intake_id: this.#options.idFactory(), revision: 1, plan_revision: null, proposal_id: null,
-      workspace: null, session_id: sessionId, codex_session: typeof request.session === 'string' ? request.session : null,
+      workspace: null, session_id: sessionId,
       origin_ref: originRef, state: 'open', outcome: null, delegate_id: null,
       request: structuredClone(request), opening: limit(text, 4000), turns: [], slots: emptySlots(), discovery: [],
       questions_asked: 0, intent_to_proceed: false, stop_asking: false, pending_question: null,
-      missing_goal_grace: null, malformed: 0, target: null, work_order: null,
+      missing_goal_grace: null, malformed: 0, kind: null, decision: null, target: null, work_order: null, title: null,
     }
     this.#assessPending = true
     this.#pump()
@@ -124,6 +173,7 @@ export class IntakeController {
     current.origin_ref = originRef
     current.plan_revision = null
     current.work_order = null
+    current.title = null
     if (current.proposal_id !== null) this.#options.invalidateProposal()
     current.proposal_id = null
     current.pending_question = null
@@ -170,9 +220,12 @@ export class IntakeController {
   #input(current: IntakeSession): Readonly<Record<string, unknown>> {
     return {
       intake_id: current.intake_id, revision: current.revision, opening: current.opening,
+      instruction: current.request.work_order ?? current.request.instruction ?? null,
       turns: structuredClone(current.turns), slots: structuredClone(current.slots),
       discovery: [...current.discovery], intent_to_proceed: current.intent_to_proceed,
       questions_asked: current.questions_asked, question_budget: this.#budget(),
+      roster: this.#options.roster().slice(0, MAX_ROSTER), active_project: this.#options.activeProject(),
+      running: this.#options.running(),
     }
   }
 
@@ -195,15 +248,8 @@ export class IntakeController {
     const abort = new AbortController()
     this.#abort.add(abort)
     try {
-      if (snapshot.target === null) {
-        const target = await this.#options.resolveTarget(snapshot.request)
-        const current = this.#current(snapshot.intake_id, snapshot.revision)
-        if (current === null) return
-        current.target = target
-        current.workspace = target.workspace
-      }
       const raw = await this.#options.models.assess(this.#input(snapshot), AbortSignal.any([abort.signal, AbortSignal.timeout(30_000)]))
-      const current = this.#current(snapshot.intake_id, snapshot.revision)
+      let current = this.#current(snapshot.intake_id, snapshot.revision)
       if (current === null) return
       const parsed = assessSchema.safeParse(raw)
       if (!parsed.success) { this.#malformed(current); return }
@@ -218,15 +264,74 @@ export class IntakeController {
       current.intent_to_proceed = result.intent_to_proceed || result.early_exit
       current.discovery = [...new Set([...current.discovery, ...result.discovery,
         ...(result.candidate_question?.owner === 'repo' ? [result.candidate_question.text] : [])])].slice(0, 12)
+      let kind: IntakeKind = result.kind
+      let question = result.candidate_question?.owner === 'user' ? result.candidate_question.text : null
+      const active = this.#options.activeProject()
+      const project = result.project ?? (kind === 'create' ? null : active)
+      // Wrong-project protection: a non-active selection must be quoted from the utterance, never inferred.
+      if (kind !== 'create' && kind !== 'unclear' && project !== null && project !== active
+        && !evidenceOccurs(result.project_evidence ?? '', [current.opening, ...current.turns.map(turn => turn.answer)])) {
+        this.#options.diagnostic('intake_project_evidence_missing')
+        kind = 'unclear'
+        question = `是在 ${project} 里做吗？`
+      }
+      current.kind = kind
+      if (kind === 'unclear' || (kind === 'create' && project === null)) {
+        this.#ask(current, kind === 'create' ? '新项目叫什么名字？' : question ?? '请说明要在哪个项目里做什么。')
+        return
+      }
+      const userText = current.turns.at(-1)?.answer ?? current.opening
+      if (kind === 'cancel') {
+        const outcome = await this.#options.cancel(userText)
+        current = this.#current(snapshot.intake_id, snapshot.revision)
+        if (current === null) return
+        this.#options.record(current, 'intake.cancel', {code: outcome.code})
+        this.#route(current, renderCancelResult(outcome))
+        return
+      }
+      if (kind === 'steer') {
+        const admission = this.#options.steer(current, project, userText)
+        this.#options.record(current, 'intake.steer', {accepted: admission.accepted, delegate_id: admission.delegate_id ?? null})
+        this.#route(current, admission.accepted
+          ? 'code=steered：已把追加要求交给正在执行的任务，等待宿主进度。'
+          : `code=steer_failed：追加要求未送达：${admission.problem ?? admission.code ?? 'runtime_rejected'}。`)
+        return
+      }
+      const decision: CoordinatorDecision = {kind: kind === 'switch' ? 'switch' : kind === 'create' ? 'create' : 'work', project, session: result.session}
+      let target: IntakeTarget
+      try {
+        target = await this.#options.resolveTarget(decision)
+      } catch (error) {
+        current = this.#current(snapshot.intake_id, snapshot.revision)
+        if (current === null) return
+        if (!(error instanceof ProjectResolutionError)) throw error
+        this.#options.record(current, 'intake.resolution_error', {code: error.code, ...error.detail})
+        this.#route(current, renderResolutionError(error))
+        return
+      }
+      current = this.#current(snapshot.intake_id, snapshot.revision)
+      if (current === null) return
+      current.decision = decision
+      current.target = target
+      current.workspace = target.workspace
+      if (kind === 'switch') {
+        this.#route(current, `code=switched：已切换到项目“${target.workspace_display_name}”，没有开始任务。`)
+        return
+      }
       // The host computes readiness; a model cannot open the gate by inflating its score.
       const readiness = Object.values(result.slots).filter(value => value.state !== 'missing').length / 4
       current.stop_asking ||= result.early_exit || current.questions_asked >= this.#budget()
         || readiness >= (this.#options.settings.clarification_depth === 'thorough' ? 1 : .75)
-      if (!current.stop_asking && result.candidate_question?.owner === 'user') {
-        current.questions_asked += 1
-        current.pending_question = result.candidate_question.text
-        current.state = 'clarifying'
-        this.#options.fact(current, `只问下面这一个问题，不调用编码工具：${current.pending_question}`)
+      if (kind === 'create' && current.slots.goal.state === 'missing' && question === null) {
+        // Create-only: no plan cycle, still confirmed (creating a workspace is irreversible).
+        current.plan_revision = current.revision
+        current.work_order = null
+        current.title = null
+        this.#propose(current, `新建项目“${target.workspace_display_name}”，不派任务`)
+        return
+      }
+      if (!current.stop_asking && question !== null) {
+        this.#ask(current, question)
         return
       }
       // No user-owned blocker: repository discovery never holds up planning.
@@ -276,24 +381,46 @@ export class IntakeController {
         assumptions: [...new Set([...Object.values(slots).filter(slot => slot.state === 'inferred').map(slot => slot.note), ...result.work_order.assumptions])].slice(0, 12),
       }
       current.work_order = renderWorkOrder(order)
+      current.title = deriveSessionTitle(order.objective)
       current.plan_revision = current.revision
       current.state = 'readback'
       this.#options.record(current, 'plan.compile', {work_order: current.work_order})
       // A spoken amendment may still be awaiting ASR. Never execute the old plan in that gap.
       if (this.#userInputPending) return
-      if (this.#options.settings.plan_readback === 'confirm' || current.request.action !== 'start_session') {
-        const proposal = this.#options.prepare(current)
-        current.proposal_id = proposal.proposal_id
-        this.#options.fact(current, `${proposal.confirmation_prompt} 计划：${limit(order.objective, 200)}。proposal_id=${proposal.proposal_id}；仅通过 codex__confirm_project_action 确认；修改需求会使此计划失效。`)
+      const project = current.target?.workspace_display_name ?? ''
+      // The readback line always names the project, so even a verified cross-project pick is audible.
+      if (this.#options.settings.plan_readback === 'confirm' || current.target?.action === 'create') {
+        this.#propose(current, `计划（项目 ${project}）：${limit(order.objective, 200)}`)
         return
       }
-      if (this.#options.settings.plan_readback === 'summary') this.#options.fact(current, `计划：${limit(order.objective, 240)}。只读回这一句，不再追问；等待宿主派单结果。`)
+      if (this.#options.settings.plan_readback === 'summary') this.#options.fact(current, `计划（项目 ${project}）：${limit(order.objective, 240)}。只读回这一句，不再追问；等待宿主派单结果。`)
       current.state = 'committing'
       this.#settle(this.#options.dispatch(current))
     } catch {
       const current = this.#current(snapshot.intake_id, snapshot.revision)
       if (current !== null) this.#malformed(current)
     } finally { this.#abort.delete(abort) }
+  }
+
+  #ask(current: IntakeSession, question: string): void {
+    if (current.questions_asked >= this.#budget()) { this.#close('abandoned'); return }
+    current.questions_asked += 1
+    current.pending_question = question
+    current.state = 'clarifying'
+    this.#options.fact(current, `只问下面这一个问题，不调用编码工具：${question}`)
+  }
+
+  #propose(current: IntakeSession, summary: string): void {
+    const proposal = this.#options.prepare(current)
+    current.proposal_id = proposal.proposal_id
+    current.state = 'readback'
+    this.#options.fact(current, `${proposal.confirmation_prompt} ${summary}。id=${proposal.proposal_id}；仅通过 confirm(id, accepted) 回答；修改需求会使此提议失效。`)
+  }
+
+  /** Closed without a plan cycle: the fact carries the adapter's structured code. */
+  #route(current: IntakeSession, text: string): void {
+    this.#close('routed')
+    this.#options.fact(current, text)
   }
 
   #settle(result: IntakeAdmission): void {

@@ -2346,7 +2346,11 @@ test('the real fake app-server carries correlated file and bounded command appro
         'pending_approval',
         'pending_approval_busy',
         'pending_approval_id',
+        'queued',
+        'work',
       ])
+      assert.equal(controller.view.queued, 0)
+      assert.equal(controller.view.work, null, 'an unscoped controller offers no work identity')
       if (scenario === 'command-approval') {
         assert.deepEqual(controller.view.allowed_decisions, ['accept', 'acceptForSession', 'decline'])
       }

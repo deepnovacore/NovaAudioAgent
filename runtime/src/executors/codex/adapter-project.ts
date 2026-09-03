@@ -12,11 +12,11 @@ import {CodexTransportError} from './app-server-transport.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
-  admitCodexProjectRequest,
   validateCodexRequest,
 } from './contract.js'
 import {
   ProjectStateError,
+  type ProjectSnapshot,
   type ProjectStore,
   type ProjectSessionRecord,
   type PublicProjectContext,
@@ -27,27 +27,33 @@ import {
 } from '../../project-store.js'
 import type {HostCodexHome, HostWorkspace} from './process-owner.js'
 import type {
-  ExecutorAdmission,
   ExecutorDispatchContext,
   ExecutorHandoff,
 } from '../../causal-runtime.js'
 import type {JsonValue} from '../../events.js'
 import {consumeHostExecutorCapability} from '../../host-executor-capability.js'
 import {USER_PRIORITY} from '../../memory.js'
+import type {ApprovalWork} from '../../approval-port.js'
 import type {CodexApprovalController} from './approval.js'
-import type {
-  CommittedWorkspaceEvent,
-  IntakeTarget,
-  ProjectCommitResult,
-  ProjectExecutorAdapter,
-  ProjectRuntimeDispatch,
-  TerminalWorkOrderEvent,
+import {
+  ProjectResolutionError,
+  type CancelContext,
+  type CancelResult,
+  type CommittedWorkspaceEvent,
+  type CoordinatorDecision,
+  type IntakeTarget,
+  type ProjectCommitResult,
+  type ProjectExecutorAdapter,
+  type ProjectRuntimeDispatch,
+  type RosterEntry,
+  type RunningWork,
+  type TerminalWorkOrderEvent,
 } from '../../coding-executor.js'
 import type {
   ConfirmedProjectOperation,
   ProjectConfirmationController,
 } from '../../project-confirmation.js'
-import {compareCodePoints} from '../../canonical-json.js'
+import {MAX_CONCURRENT_WORK, deriveSessionTitle} from '../../work-tools.js'
 import {CodexLiveAdapter} from './adapter-live.js'
 import {
   createCodexAdapterSharedState,
@@ -57,12 +63,31 @@ import {
   type ValidatedCodexDisposition,
 } from './common.js'
 
-const MAX_PUBLIC_LISTING = 20
+/** Coordinator input is bounded (spec 08): ≤10 roster rows, most recently used first. */
+const MAX_ROSTER = 10
 
 export interface ProjectTransportBinding {
   readonly workspace: HostWorkspace
   readonly codexHome: HostCodexHome
   readonly resumeThreadId: string | null
+  /** The work this child serves; the factory scopes the shared approval FIFO to it. */
+  readonly work: ApprovalWork
+}
+
+/** One running work per workspace (spec 08 Concurrency); `work` is mutable only for its title. */
+interface RunSlot {
+  work: RunningWork
+  readonly controller: AbortController
+  live: CodexLiveAdapter | null
+  task: Promise<ExecutorHandoff> | null
+  cancelled: boolean
+}
+
+interface ProjectRunInput {
+  readonly work_order: string
+  readonly project: string | null
+  readonly session: 'latest' | 'new'
+  readonly title?: string
 }
 
 export interface ProjectTransportFactory {
@@ -100,23 +125,25 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   readonly #projectContextObservers = new Set<ProjectContextObserver>()
   readonly #committedWorkspaceObservers = new Set<CommittedWorkspaceObserver>()
   readonly #terminalWorkOrderObservers = new Set<TerminalWorkOrderObserver>()
+  // ponytail: one status snapshot shared by every run's live adapter, so `status` reports the last
+  // run that touched it; per-slot status is the upgrade path once the host asks for it.
   readonly #liveState: CodexAdapterSharedState = createCodexAdapterSharedState()
+  readonly #status = new CodexLiveAdapter(NULL_TRANSPORT, undefined, {sharedState: this.#liveState})
   readonly #confirmedBindings = new WeakMap<object, ConfirmedDelegateBinding>()
   readonly #retainedTransportCleanups = new Set<CodexAppServerTransport>()
-  #current = new CodexLiveAdapter(NULL_TRANSPORT, undefined, {sharedState: this.#liveState})
+  readonly #slots = new Map<string, RunSlot>()
+  #snapshot: ProjectSnapshot | null = null
   #publicView: PublicProjectView = Object.freeze({
     workspace_display_name: null,
     session_title: null,
+    roster: [],
     pending_confirmation: false,
     pending_confirmation_busy: false,
   })
   #publicWorkspaceId: string | null = null
   #refreshSequence = 0
   #initializePromise: Promise<void> | null = null
-  #runActive = false
   #projectCommitActive = false
-  #runController: AbortController | null = null
-  #runTask: Promise<ExecutorHandoff> | null = null
   #closed = false
   #closePromise: Promise<void> | null = null
 
@@ -135,16 +162,6 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     return this.#confirmation
   }
 
-  /**
-   * `project` multiplexes short project-boundary actions and long-running task execution. The
-   * former can produce a confirmation proposal, so acknowledging them as delegated work would let
-   * the model speak before it has seen the question: every action except `start_session` holds the
-   * protocol open for its correlated Handoff.
-   */
-  admitRequest(op: string, request: Readonly<Record<string, JsonValue>>): ExecutorAdmission | null {
-    return admitCodexProjectRequest(op, request)
-  }
-
   initialize(): Promise<void> {
     if (this.#initializePromise !== null) return this.#initializePromise
     const work = this.#refreshProjectViewTolerant()
@@ -160,39 +177,121 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     ) ?? null
   }
 
-  /** Resolve only: no directory, session, proposal, or dispatch is created by intake. */
-  async resolveIntakeTarget(request: Readonly<Record<string, JsonValue>>): Promise<IntakeTarget> {
-    const admitted = validateCodexRequest('project', 'project', request)
-    if (!admitted.ok) throw new TypeError('invalid_intake_action')
-    const input = admitted.value
-    const action = input.action
-    if (action !== 'start_session' && action !== 'create_workspace' && action !== 'resume_session') {
-      throw new TypeError('invalid_intake_action')
-    }
-    let workspace: WorkspaceRecord
-    try {
-      workspace = await this.#store.resolveWorkspace(typeof input.workspace === 'string' ? input.workspace : null)
-    } catch (error) {
-      if (action !== 'create_workspace' || !(error instanceof ProjectStateError) || error.code !== 'workspace_not_found') throw error
-      const name = await this.#store.validateManagedCreate(String(input.workspace))
+  /**
+   * Deterministic coordinator sink (spec 08): exact roster-name match, `switch` activates, `work`
+   * refuses busy/capacity. Resolve only — no directory, session, proposal, or dispatch is created.
+   */
+  async resolveIntakeTarget(decision: CoordinatorDecision): Promise<IntakeTarget> {
+    if (decision.kind === 'create') {
+      const name = await this.#store.validateManagedCreate(decision.project ?? '')
       return {
         workspace: name, action: 'create', workspace_display_name: name, workspace_id: null,
-        session_title: typeof input.session === 'string' ? input.session : null, session_id: null,
+        session_title: null, session_id: null,
+      }
+    }
+    const workspace = await this.#resolveProject(decision.project)
+    if (decision.kind === 'work') {
+      const slot = this.#slots.get(workspace.workspace_id)
+      if (slot !== undefined) {
+        throw new ProjectResolutionError('busy_project', {
+          project: workspace.display_name, work_id: slot.work.work_id, title: slot.work.title,
+          options: ['steer', 'cancel'],
+        })
+      }
+      if (this.#slots.size >= MAX_CONCURRENT_WORK) {
+        throw new ProjectResolutionError('capacity', {running: this.running().map(work => ({...work}))})
       }
     }
     await this.#store.revalidateWorkspace(workspace.workspace_id)
-    const session = action === 'resume_session'
-      ? await this.#store.resolveSession(workspace.workspace_id, typeof input.session === 'string' ? input.session : null)
-      : null
-    if (session !== null && (session.state !== 'ready' || session.codex_thread_id === null)) {
-      throw new ProjectStateError('session_unavailable')
+    if (decision.kind === 'switch') {
+      await this.#store.selectWorkspaceExact(workspace.display_name, workspace.workspace_id)
+      await this.#refreshProjectContextBarrier()
     }
+    const session = decision.session === 'latest' ? await this.#latestReadySession(workspace) : null
     return {
       workspace: workspace.canonical_path, action: session === null ? 'reuse' : 'resume',
       workspace_display_name: workspace.display_name, workspace_id: workspace.workspace_id,
-      session_title: session?.display_title ?? (typeof input.session === 'string' ? input.session : null),
-      session_id: session?.session_id ?? null,
+      session_title: session?.display_title ?? null, session_id: session?.session_id ?? null,
     }
+  }
+
+  roster(): readonly RosterEntry[] {
+    const snapshot = this.#snapshot
+    return this.#publicView.roster.slice(0, MAX_ROSTER).map(entry => {
+      const workspace = snapshot?.workspaces.find(record => record.display_name === entry.name)
+      const session = snapshot?.sessions.find(record => record.session_id === workspace?.active_session_id)
+      return {
+        name: entry.name,
+        last_used_at: entry.last_used_at,
+        last_session_title: session?.display_title ?? null,
+        running: this.#runningIn(entry.name),
+      }
+    })
+  }
+
+  running(): readonly RunningWork[] {
+    return [...this.#slots.values()].map(slot => slot.work)
+  }
+
+  /** 0 → not_running; 1 → cancel it (no model call); >1 → one `resolveCancelTarget` call, else ambiguous. */
+  async cancel(instruction: string | undefined, context: CancelContext): Promise<CancelResult> {
+    const running = this.running()
+    if (running.length === 0) return {code: 'not_running'}
+    let target = running.length === 1 ? running[0] : undefined
+    if (target === undefined && instruction !== undefined && instruction !== '') {
+      const id = await context.resolveCancelTarget(instruction, running)
+      target = running.find(work => work.work_id === id)
+    }
+    if (target === undefined || !this.#cancelWork(target.work_id)) return {code: 'ambiguous_work', running}
+    return {code: 'cancelled', work: target}
+  }
+
+  #cancelWork(workId: string): boolean {
+    for (const slot of this.#slots.values()) {
+      if (slot.work.work_id !== workId) continue
+      slot.cancelled = true
+      slot.controller.abort()
+      return true
+    }
+    return false
+  }
+
+  #runningIn(project: string): readonly Pick<RunningWork, 'work_id' | 'title'>[] {
+    return [...this.#slots.values()]
+      .filter(slot => slot.work.project === project)
+      .map(slot => ({work_id: slot.work.work_id, title: slot.work.title}))
+  }
+
+  async #resolveProject(project: string | null): Promise<WorkspaceRecord> {
+    try {
+      return await this.#store.resolveWorkspace(project)
+    } catch (error) {
+      if (
+        !(error instanceof ProjectStateError)
+        || (error.code !== 'workspace_not_found' && error.code !== 'workspace_name_invalid')
+      ) throw error
+      const names = this.#publicView.roster.map(entry => entry.name)
+      const needle = (project ?? '').toLowerCase()
+      const related = needle === ''
+        ? []
+        : names.filter(name => name.toLowerCase().includes(needle) || needle.includes(name.toLowerCase()))
+      throw new ProjectResolutionError('unknown_project', {
+        project, suggestions: (related.length > 0 ? related : names).slice(0, 3), hint: 'create',
+      })
+    }
+  }
+
+  /** The workspace's active session when it can be resumed (ready with a thread), else `null`. */
+  async #latestReadySession(workspace: WorkspaceRecord): Promise<ProjectSessionRecord | null> {
+    if (workspace.active_session_id === null) return null
+    let session: ProjectSessionRecord
+    try {
+      session = await this.#store.resolveSession(workspace.workspace_id, null)
+    } catch (error) {
+      if (error instanceof ProjectStateError && error.code === 'session_not_found') return null
+      throw error
+    }
+    return session.state === 'ready' && session.codex_thread_id !== null ? session : null
   }
 
   observeProjectView(observer: ProjectViewObserver): () => void {
@@ -223,9 +322,9 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     const privateValue = consumeHostExecutorCapability(context)
     if (privateValue !== undefined) {
       if (
-        op !== 'project'
-        || request.action !== 'execute_confirmed'
+        op !== 'run'
         || Object.keys(request).length !== 1
+        || typeof request.work_order !== 'string'
       ) return failureHandoff('invalid_operation', op)
       const binding = this.#confirmedBindings.get(privateValue)
       if (
@@ -234,64 +333,99 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
         || binding.originRef !== context.delegate.origin_ref
       ) return failureHandoff('confirmation_binding_mismatch', op)
       this.#confirmedBindings.delete(privateValue)
-      return await this.#dispatchRun(binding.operation, null, binding.workOrder, context)
+      if (this.#closed) return failureHandoff('closed', 'run')
+      try {
+        return await this.#runConfirmed(binding.operation, binding.workOrder, context)
+      } catch (error) {
+        if (error instanceof ProjectStateError) return projectProblemHandoff(error.code)
+        throw error
+      }
     }
     const admitted = validateCodexRequest('project', op, request)
     if (!admitted.ok) return failureHandoff(admitted.error, admitted.op)
-    if (op === 'project') {
-      if (admitted.value.action === 'start_session') {
-        return await this.#dispatchRun(
-          null,
-          typeof admitted.value.session === 'string' ? admitted.value.session : null,
-          String(admitted.value.work_order),
-          context,
-        )
+    if (op === 'status') return await this.#status.dispatch(op, request, context)
+    if (op === 'cancel') {
+      const workId = String(admitted.value.work_id)
+      return {
+        outcome: 'ok', trust: 'trusted_system',
+        content: {op: 'cancel', code: this.#cancelWork(workId) ? 'cancelled' : 'not_running', work_id: workId},
       }
-      const result = await this.#dispatchProject(admitted.value, context)
-      try {
-        await this.#refreshProjectViewTolerant()
-      } catch (error) {
-        emitProjectRefreshDiagnostic(error)
-        return await this.#lookupFailure(projectErrorCode(error))
-      }
-      return result
     }
-    if (op === 'status' || op === 'steer') {
-      if (op === 'steer' && !this.#runActive) return projectNoActiveTurn()
-      return await this.#current.dispatch(op, request, context)
+    if (op !== 'run' && op !== 'steer') return failureHandoff('invalid_operation', op)
+    if (this.#closed) return failureHandoff('closed', op)
+    let workspace: WorkspaceRecord
+    try {
+      workspace = await this.#store.resolveWorkspace(admitted.value.project as string | null)
+    } catch (error) {
+      return projectProblemHandoff(projectErrorCode(error), op)
     }
-    return failureHandoff('invalid_operation', op)
+    if (op === 'steer') {
+      const live = this.#slots.get(workspace.workspace_id)?.live
+      if (live === undefined || live === null) return projectNoActiveTurn()
+      return await live.dispatch(op, {instruction: String(admitted.value.instruction)}, context)
+    }
+    return await this.#dispatchRun(workspace, admitted.value as unknown as ProjectRunInput, context)
   }
 
+  /** Public `run` (spec 08): `latest` resumes the active ready session, otherwise a new titled thread. */
   async #dispatchRun(
-    confirmed: ConfirmedProjectOperation | null,
-    sessionTitle: string | null,
-    workOrder: string,
+    workspace: WorkspaceRecord,
+    input: ProjectRunInput,
     context: ExecutorDispatchContext,
   ): Promise<ExecutorHandoff> {
-    if (this.#closed) return failureHandoff('closed', 'project')
-    if (this.#runActive) return failureHandoff('busy', 'project')
-    this.#runActive = true
+    let resumed: ProjectSessionRecord | null = null
+    try {
+      if (input.session === 'latest') resumed = await this.#latestReadySession(workspace)
+    } catch (error) {
+      return projectProblemHandoff(projectErrorCode(error))
+    }
+    const title = resumed?.display_title ?? input.title ?? deriveSessionTitle(input.work_order)
+    return await this.#runInSlot(workspace, title, context, (slot, runContext) =>
+      this.#runBound(slot, workspace, resumed, title, input.work_order, runContext, false))
+  }
+
+  /**
+   * Own one run slot for the workspace: a second run on a live slot is `busy_project`, the global cap
+   * is `capacity`. The slot's controller is the one `cancel` aborts; the runtime signal chains into it.
+   */
+  async #runInSlot(
+    workspace: WorkspaceRecord,
+    title: string,
+    context: ExecutorDispatchContext,
+    run: (slot: RunSlot, runContext: ExecutorDispatchContext) => Promise<ExecutorHandoff>,
+  ): Promise<ExecutorHandoff> {
+    if (this.#closed) return failureHandoff('closed', 'run')
+    const existing = this.#slots.get(workspace.workspace_id)
+    if (existing !== undefined) {
+      return refusedRunHandoff('busy_project', {
+        project: workspace.display_name, work_id: existing.work.work_id, title: existing.work.title,
+      })
+    }
+    if (this.#slots.size >= MAX_CONCURRENT_WORK) {
+      return refusedRunHandoff('capacity', {running: this.running().map(work => ({...work}))})
+    }
     const controller = new AbortController()
     const onAbort = (): void => { controller.abort() }
     if (context.signal.aborted) controller.abort()
     else context.signal.addEventListener('abort', onAbort, {once: true})
-    this.#runController = controller
-    const runContext: ExecutorDispatchContext = {...context, signal: controller.signal}
-    const work = confirmed !== null
-      ? this.#runConfirmed(confirmed, workOrder, runContext)
-      : this.#runDefault(sessionTitle, workOrder, runContext)
-    this.#runTask = work
+    const slot: RunSlot = {
+      work: {work_id: context.delegate.delegate_id, project: workspace.display_name, title},
+      controller,
+      live: null,
+      task: null,
+      cancelled: false,
+    }
+    this.#slots.set(workspace.workspace_id, slot)
+    const task = run(slot, {...context, signal: controller.signal})
+    slot.task = task
     try {
-      return await work
+      return await task
     } catch (error) {
       if (error instanceof ProjectStateError) return projectProblemHandoff(error.code)
       throw error
     } finally {
       context.signal.removeEventListener('abort', onAbort)
-      if (this.#runController === controller) this.#runController = null
-      if (this.#runTask === work) this.#runTask = null
-      this.#runActive = false
+      if (this.#slots.get(workspace.workspace_id) === slot) this.#slots.delete(workspace.workspace_id)
     }
   }
 
@@ -357,13 +491,13 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
         await this.#notifyCommittedWorkspace(committedWorkspace)
         return commitResult(true, 'committed')
       }
-      const normalized = validateCodexRequest('project', 'project', {
-        action: 'start_session', work_order: workOrder,
-      })
-      if (!normalized.ok || normalized.value.work_order !== workOrder || this.#runActive) {
-        if (this.#runActive) this.#confirmation.rollbackConfirmed(operation)
+      const normalized = validateCodexRequest('project', 'run', {work_order: workOrder})
+      const busy = this.#slots.size >= MAX_CONCURRENT_WORK
+        || (operation.workspace_id !== null && this.#slots.has(operation.workspace_id))
+      if (!normalized.ok || normalized.value.work_order !== workOrder || busy) {
+        if (busy) this.#confirmation.rollbackConfirmed(operation)
         else this.#confirmation.rejectConfirmed(operation)
-        return commitResult(false, this.#runActive ? 'busy' : 'invalid_operation')
+        return commitResult(false, busy ? 'busy' : 'invalid_operation')
       }
       try {
         await this.#revalidateProposal(operation)
@@ -374,8 +508,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       const admission = runtimeDispatch(
         {
           executor: 'codex',
-          op: 'project',
-          request: {action: 'execute_confirmed'},
+          op: 'run',
+          request: {work_order: workOrder},
           origin_ref: operation.origin_ref,
         },
         {
@@ -410,16 +544,20 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   }
 
   publicProjectView(pendingConfirmation: boolean): PublicProjectView {
+    const base = {
+      ...this.#publicView,
+      roster: this.#publicView.roster.map(entry => ({...entry, running: this.#runningIn(entry.name)})),
+    }
     if (!pendingConfirmation) {
       return Object.freeze({
-        ...this.#publicView,
+        ...base,
         pending_confirmation: false,
         pending_confirmation_busy: false,
       })
     }
     const confirmation = pendingConfirmation ? this.#confirmation.view : null
     return Object.freeze({
-      ...this.#publicView,
+      ...base,
       pending_confirmation: true,
       pending_confirmation_busy: confirmation?.pending_confirmation_busy ?? false,
       ...(confirmation?.pending_confirmation_id === undefined
@@ -457,18 +595,18 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   }
 
   async #close(): Promise<void> {
-    this.#runController?.abort()
-    const initial = this.#current
+    const slots = [...this.#slots.values()]
+    for (const slot of slots) slot.controller.abort()
     let closeFailure: Error | null = null
     try {
-      await initial.close()
+      await this.#status.close()
     } catch (error) {
       closeFailure = projectCloseError(error)
     }
-    await this.#runTask?.catch(() => undefined)
-    if (this.#current !== initial) {
+    for (const slot of slots) {
+      await slot.task?.catch(() => undefined)
       try {
-        await this.#current.close()
+        await slot.live?.close()
       } catch (error) {
         closeFailure ??= projectCloseError(error)
       }
@@ -481,137 +619,6 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     if (closeFailure !== null && this.#retainedTransportCleanups.size > 0) throw closeFailure
     await this.#store.close()
     if (closeFailure !== null) throw closeFailure
-  }
-
-  async #runDefault(
-    sessionTitle: string | null,
-    workOrder: string,
-    context: ExecutorDispatchContext,
-  ): Promise<ExecutorHandoff> {
-    const workspace = await this.#store.resolveWorkspace(null)
-    return await this.#runBound(workspace, null, sessionTitle, workOrder, context, false)
-  }
-
-  async #dispatchProject(
-    request: Readonly<Record<string, unknown>>,
-    context: ExecutorDispatchContext,
-  ): Promise<ExecutorHandoff> {
-    const action = request.action
-    try {
-      if (action === 'list_workspaces') {
-        const snapshot = await this.#store.snapshot()
-        return projectHandoff('listed', {
-          workspaces: recent(snapshot.workspaces).map(workspace => ({
-            workspace: workspace.display_name,
-            active: workspace.workspace_id === snapshot.active_workspace_id,
-          })),
-        })
-      }
-      if (action === 'list_sessions') {
-        const workspace = await this.#store.resolveWorkspace(
-          typeof request.workspace === 'string' ? request.workspace : null,
-        )
-        const sessions = await this.#store.listSessions(workspace)
-        return projectHandoff('sessions_listed', {
-          workspace: workspace.display_name,
-          sessions: recent(sessions).map(session => ({
-            session: session.display_title,
-            state: session.state,
-            active: session.session_id === workspace.active_session_id,
-          })),
-        })
-      }
-      if (
-        action !== 'create_workspace'
-        && action !== 'select_workspace'
-        && action !== 'resume_session'
-      ) {
-        return failureHandoff('invalid_params', 'project')
-      }
-      if (this.#projectCommitActive) return projectCommitBusyHandoff()
-      let workspace: WorkspaceRecord | null = null
-      let session: ProjectSessionRecord | null = null
-      let publicAction:
-        | 'create_workspace'
-        | 'reuse_workspace'
-        | 'select_workspace'
-        | 'resume_session' = action
-      if (action === 'create_workspace') {
-        if (typeof request.workspace !== 'string') return failureHandoff('invalid_params', 'project')
-        if (typeof request.work_order === 'string') {
-          try {
-            workspace = await this.#store.resolveWorkspace(request.workspace)
-          } catch (error) {
-            if (!(error instanceof ProjectStateError) || error.code !== 'workspace_not_found') {
-              throw error
-            }
-          }
-          if (workspace !== null) {
-            const active = await this.activeCommittedWorkspace()
-            if (active?.workspace_id === workspace.workspace_id) {
-              return projectHandoff('workspace_reused', {
-                workspace: workspace.display_name,
-                next_action: 'start_session',
-                message: `将复用现有工作区“${workspace.display_name}”，不会创建新工作区。`,
-              })
-            }
-            publicAction = 'reuse_workspace'
-          }
-        }
-        if (workspace === null) await this.#store.validateManagedCreate(request.workspace)
-      } else {
-        workspace = await this.#store.resolveWorkspace(
-          typeof request.workspace === 'string' ? request.workspace : null,
-        )
-        if (action === 'resume_session') {
-          session = await this.#store.resolveSession(
-            workspace.workspace_id,
-            typeof request.session === 'string' ? request.session : null,
-          )
-          if (session.state !== 'ready' || session.codex_thread_id === null) {
-            throw new ProjectStateError('session_unavailable')
-          }
-        }
-      }
-      const proposal = this.#confirmation.prepare({
-        action: publicAction === 'create_workspace'
-          ? 'create'
-          : publicAction === 'reuse_workspace'
-            ? 'reuse'
-            : action === 'select_workspace' ? 'select' : 'resume',
-        workspace_display_name: workspace?.display_name ?? String(request.workspace),
-        workspace_id: workspace?.workspace_id ?? null,
-        session_title: session?.display_title
-          ?? (typeof request.session === 'string' ? request.session : null),
-        session_id: session?.session_id ?? null,
-        work_order: typeof request.work_order === 'string' ? request.work_order : null,
-        origin_ref: context.delegate.origin_ref,
-      })
-      return projectHandoff('confirmation_required', {
-        proposal_id: proposal.proposal_id,
-        expires_at: proposal.expires_at,
-        action: publicAction,
-        workspace: proposal.workspace_display_name,
-        session: proposal.session_title,
-        confirmation_prompt: proposal.confirmation_prompt,
-      })
-    } catch (error) {
-      return await this.#lookupFailure(projectErrorCode(error))
-    }
-  }
-
-  async #lookupFailure(code: string): Promise<ExecutorHandoff> {
-    const content: Record<string, JsonValue> = {op: 'project', code}
-    const refused = PROJECT_REFUSAL_CODES.has(code)
-    if (refused) content.recoverable = true
-    if (code === 'workspace_not_found') {
-      try {
-        content.candidates = recent(await this.#store.listWorkspaces()).map(item => item.display_name)
-      } catch {
-        content.candidates = []
-      }
-    }
-    return {outcome: refused ? 'refused' : 'failed', trust: 'trusted_system', content}
   }
 
   async #revalidateProposal(operation: ConfirmedProjectOperation): Promise<void> {
@@ -654,12 +661,14 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     workOrder: string,
     context: ExecutorDispatchContext,
   ): Promise<ExecutorHandoff> {
+    const title = operation.session_title ?? deriveSessionTitle(workOrder)
     if (operation.action === 'create') {
       const previousWorkspace = await this.activeCommittedWorkspace()
       const workspace = await this.#store.createManaged(operation.workspace_display_name)
       let result: ExecutorHandoff
       try {
-        result = await this.#runBound(workspace, null, operation.session_title, workOrder, context, true)
+        result = await this.#runInSlot(workspace, title, context, (slot, runContext) =>
+          this.#runBound(slot, workspace, null, title, workOrder, runContext, true))
       } catch (error) {
         const rolledBack = await this.#store.rollbackManagedCreate(
           workspace.workspace_id, {wait: true},
@@ -693,9 +702,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       if (workspace.workspace_id !== operation.workspace_id) {
         return failureHandoff('workspace_boundary_changed', 'run')
       }
-      return await this.#runBound(
-        workspace, null, operation.session_title, workOrder, context, false,
-      )
+      return await this.#runInSlot(workspace, title, context, (slot, runContext) =>
+        this.#runBound(slot, workspace, null, title, workOrder, runContext, false))
     }
     if (operation.action !== 'resume' || operation.workspace_id === null || operation.session_id === null) {
       return failureHandoff('confirmation_binding_mismatch', 'run')
@@ -708,13 +716,19 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     if (session.session_id !== operation.session_id || session.state !== 'ready') {
       return projectProblemHandoff('session_unavailable')
     }
-    return await this.#runBound(workspace, session, null, workOrder, context, false)
+    return await this.#runInSlot(workspace, session.display_title, context, (slot, runContext) =>
+      this.#runBound(slot, workspace, session, session.display_title, workOrder, runContext, false))
   }
 
+  /**
+   * Run one work order against a workspace inside its slot. `title` names the new thread (and the
+   * provisional session) when `resumed` is null; a user cancel surfaces as a `cancelled` handoff.
+   */
   async #runBound(
+    slot: RunSlot,
     workspace: WorkspaceRecord,
     resumed: ProjectSessionRecord | null,
-    sessionTitle: string | null,
+    title: string,
     workOrder: string,
     context: ExecutorDispatchContext,
     deferWorkspaceObservation: boolean,
@@ -736,7 +750,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     let inner: CodexAppServerTransport
     try {
       if (session === null) {
-        const begun = await this.#store.beginSessionForRun(workspace.workspace_id, sessionTitle)
+        const begun = await this.#store.beginSessionForRun(workspace.workspace_id, title)
         session = begun.session
         startRollback = begun.rollback
       }
@@ -763,6 +777,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
         workspace: approvedWorkspace,
         codexHome,
         resumeThreadId: resumed?.codex_thread_id ?? null,
+        work: slot.work,
       }))
     } catch (error) {
       if (startRollback !== null) {
@@ -787,23 +802,38 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       }
       throw error
     }
-    const transport = new ThreadObservingTransport(inner, threadId => {
-      if (reportedThreadId !== null && reportedThreadId !== threadId) bindingMismatch = true
-      reportedThreadId ??= threadId
-      if (resumed?.codex_thread_id !== undefined && resumed.codex_thread_id !== null) {
-        if (threadId !== resumed.codex_thread_id) bindingMismatch = true
-      }
+    const sessionId = session.session_id
+    const transport = new ThreadObservingTransport(inner, {
+      threadName: resumed === null ? title : null,
+      onThreadReady: threadId => {
+        if (reportedThreadId !== null && reportedThreadId !== threadId) bindingMismatch = true
+        reportedThreadId ??= threadId
+        if (resumed?.codex_thread_id !== undefined && resumed.codex_thread_id !== null) {
+          if (threadId !== resumed.codex_thread_id) bindingMismatch = true
+        }
+      },
+      // Codex may rename the thread; mirror it into the running work and the session title
+      // (advisory: the store may still disambiguate against a sibling session).
+      onThreadNamed: name => {
+        slot.work = {...slot.work, title: name}
+        void this.#store.setSessionTitle(sessionId, name).catch(() => false)
+      },
     })
-    const previous = this.#current
     const active = new CodexLiveAdapter(transport, undefined, {
       sharedState: this.#liveState,
       onValidatedOutcome: value => { disposition.value = value },
     })
-    this.#current = active
-    await previous.close().catch(() => undefined)
+    slot.live = active
     try {
       result = await active.dispatch('run', {work_order: workOrder}, context)
+    } catch (error) {
+      if (!slot.cancelled || !(error instanceof Error && error.name === 'AbortError')) throw error
+      result = {
+        outcome: 'cancelled', trust: 'trusted_system',
+        content: {reason: 'user_cancelled', work_id: slot.work.work_id},
+      }
     } finally {
+      slot.live = null
       try {
         await active.close()
       } catch {
@@ -889,10 +919,11 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   async #loadProjectContext(): Promise<PublicProjectContext | null> {
     this.#refreshSequence += 1
     const sequence = this.#refreshSequence
-    const stored = await this.#store.publicContext(false)
+    const [stored, snapshot] = await Promise.all([this.#store.publicContext(false), this.#store.snapshot()])
     if (sequence !== this.#refreshSequence) return null
     this.#publicWorkspaceId = stored.workspace_id
     this.#publicView = stored.view
+    this.#snapshot = snapshot
     return Object.freeze({
       workspace_id: stored.workspace_id,
       view: this.publicProjectView(this.#confirmation.pending),
@@ -949,10 +980,17 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   }
 }
 
+interface ThreadObservation {
+  /** Host-derived title for a NEW thread; null when resuming (Codex already owns the name). */
+  readonly threadName: string | null
+  readonly onThreadReady: (threadId: string) => void
+  readonly onThreadNamed: (name: string) => void
+}
+
 class ThreadObservingTransport implements CodexAppServerTransport {
   constructor(
     readonly inner: CodexAppServerTransport,
-    readonly observeThread: (threadId: string) => void,
+    readonly observation: ThreadObservation,
   ) {}
 
   preflight(deadline: TransportDeadline): Promise<SafePreflightReport> {
@@ -968,11 +1006,16 @@ class ThreadObservingTransport implements CodexAppServerTransport {
     observer: TransportObserver,
     deadline: TransportDeadline,
   ): Promise<TransportOutcome> {
-    return this.inner.run(input, {
+    const {threadName, onThreadReady, onThreadNamed} = this.observation
+    return this.inner.run(threadName === null ? input : {...input, threadName}, {
       ...observer,
       onThreadReady: threadId => {
-        this.observeThread(threadId)
+        onThreadReady(threadId)
         observer.onThreadReady?.(threadId)
+      },
+      onThreadNamed: (threadId, name) => {
+        if (name !== null) onThreadNamed(name)
+        observer.onThreadNamed?.(threadId, name)
       },
     }, deadline)
   }
@@ -994,18 +1037,16 @@ const NULL_TRANSPORT: CodexAppServerTransport = Object.freeze({
   close: (): Promise<void> => Promise.resolve(),
 })
 
-function recent<T extends {readonly last_used_at: number; readonly created_at: number}>(
-  items: readonly T[],
-): readonly T[] {
-  return [...items].sort((left, right) =>
-    right.last_used_at - left.last_used_at
-    || left.created_at - right.created_at
-    || compareCodePoints(JSON.stringify(left), JSON.stringify(right)),
-  ).slice(0, MAX_PUBLIC_LISTING)
-}
-
-function projectHandoff(code: string, content: Readonly<Record<string, JsonValue>>): ExecutorHandoff {
-  return {outcome: 'ok', trust: 'trusted_system', content: {op: 'project', code, ...content}}
+/** Spec 08 run refusals (`busy_project`, `capacity`): recoverable, the host re-plans. */
+function refusedRunHandoff(
+  code: 'busy_project' | 'capacity',
+  content: Readonly<Record<string, JsonValue>>,
+): ExecutorHandoff {
+  return {
+    outcome: 'refused',
+    trust: 'trusted_system',
+    content: {op: 'run', code, ...content, recoverable: true},
+  }
 }
 
 const PROJECT_REFUSAL_CODES = new Set([
@@ -1018,23 +1059,15 @@ const PROJECT_REFUSAL_CODES = new Set([
   'session_limit',
 ])
 
-function projectProblemHandoff(code: string): ExecutorHandoff {
+function projectProblemHandoff(code: string, op: 'run' | 'steer' = 'run'): ExecutorHandoff {
   if (PROJECT_REFUSAL_CODES.has(code)) {
     return {
       outcome: 'refused',
       trust: 'trusted_system',
-      content: {op: 'project', code, recoverable: true},
+      content: {op, code, recoverable: true},
     }
   }
-  return failureHandoff(code, 'run')
-}
-
-function projectCommitBusyHandoff(): ExecutorHandoff {
-  return {
-    outcome: 'refused',
-    trust: 'trusted_system',
-    content: {op: 'project', code: 'state_busy', recoverable: true},
-  }
+  return failureHandoff(code, op)
 }
 
 function projectNoActiveTurn(): ExecutorHandoff {
@@ -1047,15 +1080,6 @@ function projectNoActiveTurn(): ExecutorHandoff {
 
 function projectErrorCode(error: unknown): string {
   return error instanceof ProjectStateError ? error.code : 'state_corrupt'
-}
-
-function emitProjectRefreshDiagnostic(error: unknown): void {
-  const code = error instanceof ProjectStateError
-    ? `codex_project_view_refresh_${error.code}`
-    : error instanceof TypeError
-      ? 'codex_project_view_refresh_type_error'
-      : 'codex_project_view_refresh_unexpected_error'
-  try { process.stderr.write(`[runtime-diagnostic] ${code}\n`) } catch { /* advisory */ }
 }
 
 function projectCloseError(error: unknown): Error {

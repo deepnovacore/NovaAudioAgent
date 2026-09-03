@@ -57,6 +57,9 @@ export interface DelegateRecord {
   readonly progress_summary: string | null
   readonly internal_activity: number
   readonly elapsed: number
+  /** Host-authored work identity (spec 08): the project and session title an agent-executor run belongs to. */
+  readonly project?: string
+  readonly title?: string
 }
 
 export interface RealtimeSnapshot {
@@ -73,6 +76,8 @@ export interface ActiveExecutorContextRecord {
     readonly state: DelegateState
     readonly elapsed_s: number
     readonly internal_activity: number
+    readonly project?: string
+    readonly title?: string
   }
   readonly progress_summary: {
     readonly executable: false
@@ -103,6 +108,8 @@ export function activeExecutorContextRecords(
         * ACTIVE_EXECUTOR_ELAPSED_BUCKET_S,
       internal_activity: Math.floor(record.internal_activity / ACTIVE_EXECUTOR_ACTIVITY_BUCKET)
         * ACTIVE_EXECUTOR_ACTIVITY_BUCKET,
+      ...(record.project === undefined ? {} : {project: record.project}),
+      ...(record.title === undefined ? {} : {title: record.title}),
     }),
     progress_summary: Object.freeze({
       executable: false as const,
@@ -517,6 +524,8 @@ export class RealtimeSessionState {
       readonly progress_summary?: string | null
       readonly internal_activity?: number
       readonly elapsed?: number
+      readonly project?: string
+      readonly title?: string
     },
   ): void {
     if (delegateId === '' || update.summary === '') {
@@ -526,6 +535,8 @@ export class RealtimeSessionState {
     const progress = 'progress_summary' in update
       ? boundedProgress(update.progress_summary ?? null)
       : previous?.progress_summary ?? null
+    const project = update.project ?? previous?.project
+    const title = update.title ?? previous?.title
     this.#delegates.set(delegateId, {
       summary: update.summary,
       state: delegateStateSchema.parse(update.state),
@@ -533,6 +544,8 @@ export class RealtimeSessionState {
       progress_summary: progress,
       internal_activity: update.internal_activity ?? previous?.internal_activity ?? 0,
       elapsed: update.elapsed ?? previous?.elapsed ?? 0,
+      ...(project === undefined ? {} : {project}),
+      ...(title === undefined ? {} : {title}),
     })
     this.advanceSnapshot()
   }

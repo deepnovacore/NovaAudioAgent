@@ -24,6 +24,66 @@ export interface IntakeTarget {
   readonly session_id: string | null
 }
 
+/** One running work as the coordinator, the desktop roster and `active_executor_context` name it. */
+export interface RunningWork {
+  /** The delegate id of the run. */
+  readonly work_id: string
+  readonly project: string
+  readonly title: string
+}
+
+/** Coordinator input (spec 08): one roster entry per known project, ordered by `last_used_at`. */
+export interface RosterEntry {
+  readonly name: string
+  readonly last_used_at: number
+  readonly last_session_title: string | null
+  readonly running: readonly Pick<RunningWork, 'work_id' | 'title'>[]
+}
+
+/** What `assess` decided about where an objective goes; `project` is a verbatim roster name (or the new name for `create`). */
+export interface CoordinatorDecision {
+  readonly kind: 'work' | 'switch' | 'create'
+  readonly project: string | null
+  readonly session: 'latest' | 'new'
+}
+
+export type ProjectResolutionCode = 'unknown_project' | 'ambiguous_project' | 'busy_project' | 'capacity'
+
+/** Structured, never guessed: the voice model hears the code and the detail, not a stack. */
+export class ProjectResolutionError extends Error {
+  constructor(readonly code: ProjectResolutionCode, readonly detail: Readonly<Record<string, JsonValue>> = {}) {
+    super(code)
+    this.name = 'ProjectResolutionError'
+  }
+}
+
+export type CancelResult =
+  | {readonly code: 'cancelled'; readonly work: RunningWork}
+  | {readonly code: 'not_running'}
+  | {readonly code: 'ambiguous_work'; readonly running: readonly RunningWork[]}
+
+export interface CancelContext {
+  /** Same `surrogate_model` as `intake.assess`; `null` when the model could not pick one of `running`. */
+  readonly resolveCancelTarget: (instruction: string, running: readonly RunningWork[]) => Promise<string | null>
+}
+
+/**
+ * An executor the voice model reaches only through `dispatch` / `cancel` / `confirm` (spec 08).
+ *
+ * `openDispatch` from the spec is the coordinator itself — `IntakeController.open` in
+ * `executors/coding/intake.ts`; the host owns that instance because facts and proposals are host
+ * surfaces, and routes a `dispatch` call into it. The adapter side of the port is below.
+ */
+export interface AgentExecutor {
+  /** ≤10 entries, most recently used first; `running` merged from the adapter's run slots. */
+  roster(): readonly RosterEntry[]
+  running(): readonly RunningWork[]
+  /** Async: >1 running works with an instruction needs one `resolveCancelTarget` call. */
+  cancel(instruction: string | undefined, context: CancelContext): Promise<CancelResult>
+  /** Deterministic: exact roster-name match only; `switch` activates the project; throws `ProjectResolutionError`. */
+  resolveIntakeTarget(decision: CoordinatorDecision): Promise<IntakeTarget>
+}
+
 export interface CommittedWorkspaceEvent {
   readonly workspace: WorkspaceRecord
 }
@@ -50,11 +110,10 @@ export interface ProjectCommitResult {
 }
 
 /** A coding executor that also owns project (workspace + session) bookkeeping. */
-export interface ProjectExecutorAdapter extends ExecutorAdapter {
+export interface ProjectExecutorAdapter extends ExecutorAdapter, AgentExecutor {
   readonly confirmationController: ProjectConfirmationController
   initialize(): Promise<void>
   activeCommittedWorkspace(): Promise<WorkspaceRecord | null>
-  resolveIntakeTarget(request: Readonly<Record<string, JsonValue>>): Promise<IntakeTarget>
   observeProjectView(observer: (view: PublicProjectView) => void | Promise<void>): () => void
   observeProjectContext(observer: (context: PublicProjectContext) => void | Promise<void>): () => void
   observeCommittedWorkspace(observer: (event: CommittedWorkspaceEvent) => void | Promise<void>): () => void

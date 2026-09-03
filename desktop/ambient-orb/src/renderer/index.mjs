@@ -820,11 +820,8 @@ async function handleControl(message) {
     const pendingWorkspace = message.pending_workspace_display_name
     const pendingSession = message.pending_session_title
     const pendingExpires = message.pending_expires_in_seconds
-    const validAction = pendingAction === null
-      || pendingAction === 'create_workspace'
-      || pendingAction === 'reuse_workspace'
-      || pendingAction === 'select_workspace'
-      || pendingAction === 'resume_session'
+    // Spec 08: only an irreversible create carries a pill action; the roster is accepted but not rendered here.
+    const validAction = pendingAction === null || pendingAction === 'create_workspace'
     const pendingMetadata = pendingAction !== null
       || pendingWorkspace !== null
       || pendingSession !== null
@@ -836,6 +833,7 @@ async function handleControl(message) {
       'pending_expires_in_seconds',
       'pending_session_title',
       'pending_workspace_display_name',
+      'roster',
       'session_title',
       'type',
       'workspace_display_name',
@@ -855,6 +853,7 @@ async function handleControl(message) {
       && validConfirmationId
       && (message.pending_confirmation || pendingConfirmationId === undefined)
       && validAction
+      && Array.isArray(message.roster)
       && (pendingWorkspace === null
         || (typeof pendingWorkspace === 'string' && [...pendingWorkspace].length <= 120))
       && (pendingSession === null
@@ -864,15 +863,14 @@ async function handleControl(message) {
           && pendingExpires >= 0
           && pendingExpires <= PROJECT_CONFIRMATION_TTL_SECONDS))
       && (message.pending_confirmation
-        ? (!pendingMetadata || (pendingAction !== null
-          && pendingWorkspace !== null
-          && pendingExpires !== null
-          && (pendingAction !== 'resume_session' || pendingSession !== null)))
+        ? (!pendingMetadata || (pendingWorkspace !== null && pendingExpires !== null))
         : !pendingMetadata)
     if (valid) {
       axes.workspace = workspace || ''
       axes.session = session || ''
-      latestProjectConfirmation = message.pending_confirmation
+      // A voice-only proposal (switch / plan readback) is pending without a pill.
+      const pillPending = message.pending_confirmation && pendingAction === 'create_workspace'
+      latestProjectConfirmation = pillPending
         ? {
             kind: 'project',
             id: pendingConfirmationId ?? null,
@@ -884,11 +882,11 @@ async function handleControl(message) {
           }
         : null
       confirmationDecision.sync({
-        pending: message.pending_confirmation,
-        proposalId: pendingConfirmationId ?? null,
+        pending: pillPending,
+        proposalId: pillPending ? pendingConfirmationId ?? null : null,
         busy: pendingBusy,
       })
-      confirmationPresentation.sync('project', message.pending_confirmation)
+      confirmationPresentation.sync('project', pillPending)
       applyConfirmationPresentation()
     }
   } else if (message.type === 'executor.approval') {

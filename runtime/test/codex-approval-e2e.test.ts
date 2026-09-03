@@ -26,6 +26,7 @@ import type {HostContextItem, HostResponseIntent} from '../src/realtime/protocol
 import {RealtimeService, type ServiceProvider} from '../src/realtime/service.js'
 import {RealtimeSession, type SessionProvider} from '../src/realtime/session.js'
 import {compileToolSchema} from '../src/tool-schema.js'
+import {CONFIRM_TOOL} from '../src/work-tools.js'
 import {
   FakeAppServerOwnerFactory,
   type FakeAppServerScenario,
@@ -318,8 +319,8 @@ async function sendApprovalTool(
     call_id: `call-${input.itemId}`,
     item_id: `function-${input.itemId}`,
     response_id: input.responseId,
-    name: 'codex__confirm_codex_approval',
-    arguments: {approval_id: input.approvalId, approved: input.approved},
+    name: CONFIRM_TOOL,
+    arguments: {id: input.approvalId, accepted: input.approved},
   })
   await service.handleEvent({
     kind: 'user_transcript_final',
@@ -346,11 +347,10 @@ test('Windows file approval crosses fake app-server, Codex function authority, a
   const prompt = e2e.service.queuedHostItems().find(item => (
     item.intent.item.event_id === `approval:${approvalId}:requested`
   ))?.intent.item.content
-  assert.deepEqual(JSON.parse(prompt ?? ''), {
-    approval_id: approvalId,
-    kind: 'file_change',
-    operation_summary: 'Codex 请求修改工作区文件。',
-  })
+  // The host renders the fact (spec 08); the executor only guarantees id, kind, and summary reach it.
+  for (const fragment of [`id=${approvalId}`, 'file_change', 'Codex 请求修改工作区文件。', 'confirm(id, accepted)']) {
+    assert.ok(prompt?.includes(fragment), `${fragment} in ${prompt}`)
+  }
 
   await reserveUserDecision(e2e.service, {
     itemId: 'voice-accept',
@@ -359,8 +359,8 @@ test('Windows file approval crosses fake app-server, Codex function authority, a
   await e2e.service.handleEvent({
     kind: 'tool_call_ready', session_epoch: 1,
     call_id: 'call-voice-accept', item_id: 'function-voice-accept',
-    response_id: 'response-voice-accept', name: 'codex__confirm_codex_approval',
-    arguments: {approval_id: approvalId, approved: true},
+    response_id: 'response-voice-accept', name: CONFIRM_TOOL,
+    arguments: {id: approvalId, accepted: true},
   })
   assert.equal(e2e.controller.pending, false, 'the function settles before any transcript')
   assert.equal(await within(e2e.factory.owner!.approvalDecision, 'voice wire decision'), 'accept')
@@ -498,8 +498,8 @@ test('a duplicate Codex function arriving after settlement cannot spend the requ
     call_id: 'call-late-tool',
     item_id: 'function-late-tool',
     response_id: 'response-late-tool',
-    name: 'codex__confirm_codex_approval',
-    arguments: {approval_id: approvalId, approved: true},
+    name: CONFIRM_TOOL,
+    arguments: {id: approvalId, accepted: true},
   })
   assert.equal(e2e.controller.pending, false)
   assert.equal(e2e.service.executorApprovalDecision(approvalId, false), false)

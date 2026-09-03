@@ -49,13 +49,11 @@ export const MAX_PROJECT_SESSIONS_PER_WORKSPACE = 200
 export const MAX_PROJECT_SESSIONS_TOTAL = 1000
 export const MAX_PROJECT_WORKSPACE_NAME = 80
 export const MAX_PROJECT_SESSION_TITLE = 120
+const MAX_PUBLIC_ROSTER = 20
 const MAX_PROJECT_THREAD_ID = 256
 const PROJECT_LOCK_WAIT_SECONDS = 2
 const PROJECT_LOCK_RETRY_SECONDS = 0.025
-const DEFAULT_SESSION_PREFIX = '任务 '
-const MAX_DEFAULT_SESSION_DIGITS = MAX_PROJECT_SESSION_TITLE - [...DEFAULT_SESSION_PREFIX].length
 const STORED_ID = /^[A-Za-z0-9_-]{8,80}$/u
-const DEFAULT_SESSION_TITLE = /^任务 ([1-9][0-9]*)$/u
 const MAX_ID_FACTORY_ATTEMPTS = 32
 const MAX_MAINTENANCE_JOURNAL_BYTES = 64 * 1024
 const MAINTENANCE_TOMBSTONE = /^\.nova-maintenance-([A-Za-z0-9_-]{8,80})-([0-9]{1,3})$/u
@@ -215,19 +213,23 @@ export interface ManagedReplacementInput {
   }[]
 }
 
+/** Desktop-only roster row (spec 08): the voice model never reads this. */
+export interface PublicRosterEntry {
+  readonly name: string
+  readonly last_used_at: number
+  readonly running: readonly {readonly work_id: string; readonly title: string}[]
+}
+
 export interface PublicProjectView {
   readonly workspace_display_name: string | null
   readonly session_title: string | null
+  /** Known projects, most recently used first, with their running works; UI only. */
+  readonly roster: readonly PublicRosterEntry[]
   readonly pending_confirmation: boolean
   readonly pending_confirmation_busy: boolean
   readonly pending_confirmation_id?: string
   /** Optional at the internal boundary so legacy store-only callers remain source compatible. */
-  readonly pending_action?:
-    | 'create_workspace'
-    | 'reuse_workspace'
-    | 'select_workspace'
-    | 'resume_session'
-    | null
+  readonly pending_action?: 'create_workspace' | null
   readonly pending_workspace_display_name?: string | null
   readonly pending_session_title?: string | null
   readonly pending_expires_in_seconds?: number | null
@@ -1396,20 +1398,20 @@ export class ProjectStore {
     })
   }
 
-  async beginSession(workspaceId: string, displayTitle: string | null): Promise<ProjectSessionRecord> {
+  async beginSession(workspaceId: string, displayTitle: string): Promise<ProjectSessionRecord> {
     return (await this.beginSessionForRun(workspaceId, displayTitle)).session
   }
 
-  async beginSessionForRun(workspaceId: string, displayTitle: string | null): Promise<BegunSession> {
-    const supplied = displayTitle === null ? null : normalizeProjectSessionTitle(displayTitle)
+  /** The host derives `displayTitle` from the work order (spec 08 Titles); there is no default title. */
+  async beginSessionForRun(workspaceId: string, displayTitle: string): Promise<BegunSession> {
+    const supplied = normalizeProjectSessionTitle(displayTitle)
     return await this.#transaction(state => {
       const workspace = state.workspaces.get(workspaceId)
       if (workspace === undefined) throw new ProjectStateError('workspace_not_found')
       const previousActiveWorkspaceId = state.activeWorkspaceId
       const previousActiveSessionId = workspace.active_session_id
       pruneForSessionInsert(state, workspaceId)
-      const base = supplied?.display ?? nextDefaultSessionTitle(state, workspaceId)
-      const title = uniqueSessionTitle(state, workspaceId, base)
+      const title = uniqueSessionTitle(state, workspaceId, supplied.display)
       const normalized = normalizeProjectSessionTitle(title)
       const stamp = this.#stamp()
       const sessionId = this.#newUniqueId(state)
@@ -1439,6 +1441,26 @@ export class ProjectStore {
         startedSessionId: sessionId,
       })
       return [Object.freeze({session, rollback}), true]
+    })
+  }
+
+  /** Mirror of Codex `thread/name/updated` (spec 08): Codex owns the name once one exists; clipped to the title limit. */
+  async setSessionTitle(sessionId: string, title: string): Promise<boolean> {
+    const clipped = stripLikePython([...title].slice(0, MAX_PROJECT_SESSION_TITLE).join(''))
+    if (clipped === '') return false
+    return await this.#transaction(state => {
+      const session = state.sessions.get(sessionId)
+      if (session === undefined) return [false, false]
+      const normalized = normalizeProjectSessionTitle(uniqueSessionTitle(
+        {...state, sessions: new Map([...state.sessions].filter(([id]) => id !== sessionId))},
+        session.workspace_id,
+        clipped,
+      ))
+      if (normalized.display === session.display_title) return [true, false]
+      state.sessions.set(sessionId, Object.freeze({
+        ...session, display_title: normalized.display, normalized_title: normalized.normalized,
+      }))
+      return [true, true]
     })
   }
 
@@ -1662,6 +1684,10 @@ export class ProjectStore {
       view: Object.freeze({
         workspace_display_name: workspace?.display_name ?? null,
         session_title: session?.display_title ?? null,
+        // Running works are adapter-owned; the project adapter merges them into this store roster.
+        roster: recentWorkspaces(state.workspaces).map(record => Object.freeze({
+          name: record.display_name, last_used_at: record.last_used_at, running: [],
+        })),
         pending_confirmation: pendingConfirmation,
         pending_confirmation_busy: false,
       }),
@@ -3109,6 +3135,15 @@ function compareCreated(
     || compareCodePoints(left.workspace_id ?? left.session_id ?? '', right.workspace_id ?? right.session_id ?? '')
 }
 
+/** Desktop roster order: most recently used first, capped like the other public listings. */
+function recentWorkspaces(workspaces: readonly WorkspaceRecord[]): readonly WorkspaceRecord[] {
+  return [...workspaces].sort((left, right) =>
+    right.last_used_at - left.last_used_at
+    || right.created_at - left.created_at
+    || compareCodePoints(right.workspace_id, left.workspace_id),
+  ).slice(0, MAX_PUBLIC_ROSTER)
+}
+
 function mostRecentlyUsed<T extends {
   readonly last_used_at: number
   readonly created_at: number
@@ -3146,22 +3181,6 @@ function uniqueWorkspaceName(state: MutableProjectState, base: string): string {
     )) return candidate
   }
   throw new ProjectStateError('workspace_limit')
-}
-
-function nextDefaultSessionTitle(state: MutableProjectState, workspaceId: string): string {
-  let largest = 0n
-  for (const session of state.sessions.values()) {
-    if (session.workspace_id !== workspaceId) continue
-    const match = DEFAULT_SESSION_TITLE.exec(session.display_title)
-    const digits = match?.[1]
-    if (digits !== undefined && digits.length <= MAX_DEFAULT_SESSION_DIGITS) {
-      const value = BigInt(digits)
-      if (value > largest) largest = value
-    }
-  }
-  const generated = `${DEFAULT_SESSION_PREFIX}${largest + 1n}`
-  normalizeProjectSessionTitle(generated)
-  return generated
 }
 
 function uniqueSessionTitle(state: MutableProjectState, workspaceId: string, base: string): string {

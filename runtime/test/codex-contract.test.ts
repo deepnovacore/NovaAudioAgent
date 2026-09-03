@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
 import {test} from 'node:test'
 import {
+  CODEX_AGENT_SUMMARY,
   CODEX_BASE_MANIFEST,
   CODEX_LIVE_MANIFEST,
   CODEX_PROJECT_APPROVAL_MANIFEST,
@@ -68,12 +69,8 @@ function replaceFinalText(value: Record<string, unknown>, text: string): void {
 test('base, live, and project manifests pin exact immutable public operations and policy', () => {
   assert.deepEqual(CODEX_BASE_MANIFEST.ops.map(op => op.name), ['run', 'status'])
   assert.deepEqual(CODEX_LIVE_MANIFEST.ops.map(op => op.name), ['run', 'steer', 'status'])
-  assert.deepEqual(CODEX_PROJECT_MANIFEST.ops.map(op => op.name), [
-    'project', 'confirm_project_action', 'steer', 'status',
-  ])
-  assert.deepEqual(CODEX_PROJECT_APPROVAL_MANIFEST.ops.map(op => op.name), [
-    'project', 'confirm_project_action', 'confirm_codex_approval', 'steer', 'status',
-  ])
+  assert.deepEqual(CODEX_PROJECT_MANIFEST.ops.map(op => op.name), ['run', 'steer', 'status', 'cancel'])
+  assert.deepEqual(CODEX_PROJECT_APPROVAL_MANIFEST.ops.map(op => op.name), ['run', 'steer', 'status', 'cancel'])
   for (const manifest of [
     CODEX_BASE_MANIFEST,
     CODEX_LIVE_MANIFEST,
@@ -92,6 +89,7 @@ test('base, live, and project manifests pin exact immutable public operations an
     })
     assert.equal(Object.isFrozen(manifest), true)
     assert.equal(Object.isFrozen(manifest.ops), true)
+    assert.equal(manifest.agent?.summary, CODEX_AGENT_SUMMARY, 'every variant is an agent executor (spec 08)')
   }
   assert.equal(INTERNAL_CODEX_RUN_DEADLINE, 540)
 })
@@ -109,167 +107,30 @@ test('the runtime package root adds adapters without exposing process authority'
   }
 })
 
-test('project mode exposes approval only through the approval-enabled manifest', () => {
-  const defaultCompiled = compileToolSchema([CODEX_PROJECT_MANIFEST])
-  assert.deepEqual(
-    [...defaultCompiled.bindings.keys()].filter(name => name.startsWith('codex__')),
-    ['codex__project', 'codex__confirm_project_action', 'codex__steer', 'codex__status'],
-  )
-  assert.equal(defaultCompiled.bindings.has('codex__confirm_codex_approval'), false)
-
-  const compiled = compileToolSchema([CODEX_PROJECT_APPROVAL_MANIFEST])
-  const codexBindings = [...compiled.bindings.keys()].filter(name => name.startsWith('codex__'))
-  assert.deepEqual(codexBindings, [
-    'codex__project', 'codex__confirm_project_action', 'codex__confirm_codex_approval',
-    'codex__steer', 'codex__status',
-  ])
-  assert.equal(compiled.bindings.has('codex__run'), false)
-  const projectSchema = compiled.schemas.find(schema => {
-    const declaration = schema.function
-    return typeof declaration === 'object'
-      && declaration !== null
-      && !Array.isArray(declaration)
-      && declaration.name === 'codex__project'
+test('project manifests carry approvals as a flag and pin run/steer/cancel parameter shapes', () => {
+  assert.equal(CODEX_PROJECT_MANIFEST.approvals, false)
+  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.approvals, true)
+  const [run, steer, status, cancel] = CODEX_PROJECT_APPROVAL_MANIFEST.ops
+  assert.deepEqual(record(record(run?.params).properties), {
+    work_order: {type: 'string', minLength: 1, maxLength: 4000},
+    project: {type: ['string', 'null'], minLength: 1, maxLength: 80, description: '目标项目的 roster 名称；null 表示当前活动项目'},
+    session: {type: 'string', enum: ['latest', 'new'], description: 'latest 续用活动会话；new 开新线程'},
+    title: {type: 'string', minLength: 1, maxLength: 120, description: '宿主为新会话派生的标题'},
   })
-  const projectDeclaration = record(projectSchema?.function)
-  assert.match(String(projectDeclaration.description), /start_session 只能在当前 Workspace/u)
-  assert.match(
-    String(projectDeclaration.description),
-    /start_session 和 resume_session 都必须传完整 work_order/u,
-  )
-  assert.match(
-    String(projectDeclaration.description),
-    /用户显式命名新 Session 时必须传 session/u,
-  )
-  const projectParameters = record(projectDeclaration.parameters)
-  const projectProperties = record(projectParameters.properties)
-  assert.equal(
-    record(projectProperties.workspace).description,
-    'create/select 必填；list_sessions/resume 可选；start_session 必须省略',
-  )
-  assert.equal(
-    record(projectProperties.work_order).description,
-    'start_session 和 resume_session 必填；create_workspace 可选',
-  )
-  assert.deepEqual(record(projectProperties.session), {
-    type: 'string',
-    minLength: 1,
-    maxLength: 120,
-    description: [
-      '用户显式命名新 Session 时必须传入；未命名的新 Session 可省略；',
-      'resume_session 指定历史 Session 时传入',
-    ].join(''),
-  })
-  const projectVariants = (projectParameters.oneOf as unknown[]).map(rawBranch => {
-    const branch = record(rawBranch)
-    const properties = record(branch.properties)
-    return [
-      (record(properties.action).enum as unknown[])[0],
-      Object.keys(properties).sort(),
-      [...branch.required as string[]].sort(),
-    ]
-  })
-  assert.deepEqual(projectVariants, [
-    ['list_workspaces', ['action', 'origin_ref'], ['action', 'origin_ref']],
-    [
-      'create_workspace', ['action', 'origin_ref', 'workspace'],
-      ['action', 'origin_ref', 'workspace'],
-    ],
-    [
-      'create_workspace', ['action', 'origin_ref', 'session', 'work_order', 'workspace'],
-      ['action', 'origin_ref', 'work_order', 'workspace'],
-    ],
-    [
-      'select_workspace', ['action', 'origin_ref', 'workspace'],
-      ['action', 'origin_ref', 'workspace'],
-    ],
-    ['list_sessions', ['action', 'origin_ref', 'workspace'], ['action', 'origin_ref']],
-    [
-      'start_session', ['action', 'origin_ref', 'session', 'work_order'],
-      ['action', 'origin_ref', 'work_order'],
-    ],
-    [
-      'resume_session', ['action', 'origin_ref', 'session', 'work_order', 'workspace'],
-      ['action', 'origin_ref', 'work_order'],
-    ],
-  ])
-  const confirmationSchema = compiled.schemas.find(schema => {
-    const declaration = schema.function
-    return typeof declaration === 'object'
-      && declaration !== null
-      && !Array.isArray(declaration)
-      && declaration.name === 'codex__confirm_project_action'
-  })
-  const confirmationDeclaration = confirmationSchema?.function
-  assert.ok(
-    typeof confirmationDeclaration === 'object'
-      && confirmationDeclaration !== null
-      && !Array.isArray(confirmationDeclaration),
-  )
-  assert.deepEqual(confirmationDeclaration.parameters, {
+  assert.deepEqual(record(run?.params).required, ['work_order'])
+  assert.deepEqual(Object.keys(record(record(steer?.params).properties)), ['instruction', 'project'])
+  assert.deepEqual(record(cancel?.params), {
     type: 'object',
-    properties: {
-      proposal_id: {type: 'string', minLength: 1, maxLength: 128},
-      confirmed: {type: 'boolean'},
-    },
-    required: ['proposal_id', 'confirmed'],
+    properties: {work_id: {type: 'string', minLength: 1, maxLength: 128}},
+    required: ['work_id'],
     additionalProperties: false,
   })
-  const confirmationDescription = confirmationDeclaration.description
-  assert.ok(typeof confirmationDescription === 'string')
-  assert.match(confirmationDescription, /明确同意或明确拒绝都必须调用/u)
-  assert.match(confirmationDescription, /confirmed=false/u)
-  assert.deepEqual(validateCodexRequest('project', 'confirm_project_action', {
-    proposal_id: 'proposal-1', confirmed: true,
-  }), {ok: true, value: {proposal_id: 'proposal-1', confirmed: true}})
-  assert.equal(validateCodexRequest('project', 'confirm_project_action', {
-    proposal_id: 'proposal-1', confirmed: 'true',
-  }).ok, false)
-  const approvalSchema = compiled.schemas.find(schema => {
-    const declaration = schema.function
-    return typeof declaration === 'object'
-      && declaration !== null
-      && !Array.isArray(declaration)
-      && declaration.name === 'codex__confirm_codex_approval'
-  })
-  const approvalDeclaration = record(approvalSchema?.function)
-  assert.deepEqual(approvalDeclaration.parameters, {
-    type: 'object',
-    properties: {
-      approval_id: {type: 'string', minLength: 1, maxLength: 128},
-      approved: {type: 'boolean'},
-    },
-    required: ['approval_id', 'approved'],
-    additionalProperties: false,
-  })
-  assert.match(String(approvalDeclaration.description), /当前待处理/u)
-  assert.match(String(approvalDeclaration.description), /明确同意或明确拒绝/u)
-  assert.match(
-    String(approvalDeclaration.description),
-    /表达含糊、询问信息或尚未决定.*不得调用.*不得输出普通音频或文本.*等待宿主澄清/su,
-  )
-  assert.match(
-    String(approvalDeclaration.description),
-    /明确决定.*只调用一次本工具.*同一 response.*不得输出普通音频或文本.*不得调用其他工具/su,
-  )
-  assert.deepEqual(validateCodexRequest('project', 'confirm_codex_approval', {
-    approval_id: 'approval-1', approved: false,
-  }), {ok: true, value: {approval_id: 'approval-1', approved: false}})
-  for (const invalid of [
-    {approval_id: '', approved: true},
-    {approval_id: 'x'.repeat(129), approved: true},
-    {approval_id: 'approval-1', approved: 'true'},
-    {approval_id: 'approval-1', approved: true, extra: false},
-  ]) {
-    assert.equal(validateCodexRequest('project', 'confirm_codex_approval', invalid).ok, false)
-  }
-  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[0]?.deadline_budget, 600)
-  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[1]?.deadline_budget, 10)
-  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[2]?.deadline_budget, 10)
-  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[3]?.deadline_budget, 30)
-  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[4]?.deadline_budget, 5)
-  assert.deepEqual(CODEX_PROJECT_APPROVAL_MANIFEST.ops[0]?.sensitive_params, ['work_order'])
-  assert.deepEqual(CODEX_PROJECT_APPROVAL_MANIFEST.ops[3]?.sensitive_params, ['instruction'])
+  assert.deepEqual([run, steer, status, cancel].map(op => op?.deadline_budget), [600, 30, 5, 30])
+  assert.deepEqual([run, steer, status, cancel].map(op => op?.sync_result), [false, false, true, true])
+  assert.deepEqual(run?.sensitive_params, ['work_order'])
+  assert.deepEqual(steer?.sensitive_params, ['instruction'])
+  assert.deepEqual(cancel?.sensitive_params, [])
+  assert.equal(compileToolSchema([CODEX_PROJECT_APPROVAL_MANIFEST]).bindings.has('codex__confirm_codex_approval'), false)
 })
 
 test('base and live request validators use primitive strings, Python strip, and code points', () => {
@@ -292,30 +153,45 @@ test('base and live request validators use primitive strings, Python strip, and 
   assert.equal(validateCodexRequest('base', 'status', {extra: true}).ok, false)
 })
 
-test('project request validator enforces action-specific exact keys and bounds', () => {
-  const accepted = [
-    {action: 'list_workspaces'},
-    {action: 'list_sessions'},
-    {action: 'list_sessions', workspace: 'alpha'},
-    {action: 'create_workspace', workspace: 'alpha'},
-    {action: 'create_workspace', workspace: 'alpha', work_order: 'build with default Session'},
-    {action: 'create_workspace', workspace: 'alpha', session: 'Initial', work_order: 'build it'},
-    {action: 'select_workspace', workspace: 'alpha'},
-    {action: 'start_session', session: 'Fix login', work_order: 'fix login'},
-    {action: 'resume_session', work_order: 'continue'},
-    {action: 'resume_session', workspace: 'alpha', session: 'Fix login', work_order: 'continue'},
-  ] as const
-  for (const request of accepted) {
-    assert.equal(validateCodexRequest('project', 'project', request).ok, true)
+test('project request validator normalizes run/steer/cancel, defaults, and fails closed on extras', () => {
+  assert.deepEqual(validateCodexRequest('project', 'run', {work_order: ' fix login '}), {
+    ok: true, value: {work_order: 'fix login', project: null, session: 'latest'},
+  })
+  assert.deepEqual(validateCodexRequest('project', 'run', {
+    work_order: 'x', project: ' Blog ', session: 'new', title: ' 修复登录 ',
+  }), {ok: true, value: {work_order: 'x', project: 'Blog', session: 'new', title: '修复登录'}})
+  assert.deepEqual(validateCodexRequest('project', 'run', {work_order: 'x', project: null}), {
+    ok: true, value: {work_order: 'x', project: null, session: 'latest'},
+  })
+  for (const invalid of [
+    {work_order: 'x', session: 'Named'},
+    {work_order: 'x', project: ''},
+    {work_order: 'x', project: 'p'.repeat(81)},
+    {work_order: 'x', title: ''},
+    {work_order: 'x', title: 't'.repeat(121)},
+    {work_order: 'x', action: 'start_session'},
+    {work_order: 'x', workspace: 'alpha'},
+    {project: 'alpha'},
+  ]) {
+    assert.equal(validateCodexRequest('project', 'run', invalid).ok, false, JSON.stringify(invalid))
   }
-  assert.equal(validateCodexRequest('project', 'project', {
-    action: 'start_session', workspace: 'alpha', work_order: 'x',
-  }).ok, false)
-  assert.equal(validateCodexRequest('project', 'project', {
-    action: 'create_workspace', workspace: 'alpha', session: 'Initial',
-  }).ok, false)
-  assert.equal(validateCodexRequest('project', 'run', {work_order: 'x'}).ok, false)
-  assert.equal(validateCodexRequest('live', 'project', {action: 'list'}).ok, false)
+  assert.deepEqual(validateCodexRequest('project', 'steer', {instruction: ' 约束 '}), {
+    ok: true, value: {instruction: '约束', project: null},
+  })
+  assert.deepEqual(validateCodexRequest('project', 'steer', {instruction: 'x', project: 'alpha'}), {
+    ok: true, value: {instruction: 'x', project: 'alpha'},
+  })
+  assert.equal(validateCodexRequest('project', 'steer', {instruction: 'x', work_id: 'w'}).ok, false)
+  assert.deepEqual(validateCodexRequest('project', 'cancel', {work_id: ' delegate-1 '}), {
+    ok: true, value: {work_id: 'delegate-1'},
+  })
+  assert.equal(validateCodexRequest('project', 'cancel', {work_id: 'w', extra: 1}).ok, false)
+  assert.equal(validateCodexRequest('project', 'cancel', {}).ok, false)
+  assert.deepEqual(validateCodexRequest('project', 'project', {action: 'list_workspaces'}), {
+    ok: false, error: 'unknown_op', op: 'project',
+  })
+  assert.equal(validateCodexRequest('live', 'cancel', {work_id: 'w'}).ok, false)
+  assert.equal(validateCodexRequest('live', 'run', {work_order: 'x', project: null}).ok, false)
 })
 
 test('status and run envelope helpers have fixed private-safe nesting', () => {

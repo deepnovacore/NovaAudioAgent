@@ -426,9 +426,13 @@ test('concurrent, terminal-turn, transport-loss, and unknown requests preserve f
     signal: new AbortController().signal,
   })
   assert.notEqual(concurrent, undefined)
-  assert.deepEqual(await concurrent, {result: {decision: 'decline'}})
+  assert.equal(controller.view.queued, 1, 'a concurrent request queues behind the head (spec 08 FIFO)')
   signal.abort()
   assert.deepEqual(await first, {result: {decision: 'decline'}})
+  assert.equal(controller.pending, true, 'the queued request is promoted once the head settles')
+  assert.equal(controller.view.queued, 0)
+  controller.invalidate('lost')
+  assert.deepEqual(await concurrent, {result: {decision: 'decline'}})
   assert.equal(controller.pending, false)
 
   const terminal = routeCodexApprovalServerRequest({
@@ -446,4 +450,60 @@ test('concurrent, terminal-turn, transport-loss, and unknown requests preserve f
     params: {},
     signal: new AbortController().signal,
   }), undefined)
+})
+
+test('approval FIFO: the head is the only voice-visible entry, queued TTLs start at promotion, work scoping', async () => {
+  const clock = new VirtualClock(100)
+  let nextId = 0
+  const controller = new CodexApprovalController({clock, idFactory: () => `public-${++nextId}`})
+  const offer = (command: string) => ({
+    kind: 'command_execution' as const,
+    local_detail: {kind: 'command_execution' as const, command, cwd: '/w'},
+    operation_summary: `Codex 请求执行 ${command}`,
+  })
+  const alpha = controller.forWork({work_id: 'work-a', project: 'alpha', title: '修复登录'})
+  const beta = controller.forWork({work_id: 'work-b', project: 'beta', title: '写文档'})
+  const views: {readonly id: string | undefined; readonly queued: number}[] = []
+  controller.observe(view => { views.push({id: view.pending_approval_id, queued: view.queued}) })
+
+  const first = alpha.offer(offer('a1'), new AbortController().signal)
+  const second = beta.offer(offer('b1'), new AbortController().signal)
+  const third = alpha.offer(offer('a2'), new AbortController().signal)
+  assert.equal(controller.view.pending_approval_id, 'public-1')
+  assert.deepEqual(controller.view.work, {work_id: 'work-a', project: 'alpha', title: '修复登录'})
+  assert.equal(controller.view.queued, 2)
+  assert.equal(controller.view.expires_at, 100 + 60)
+
+  // Decisions bind to the head id only; queued ids are not voice-visible.
+  assert.equal(controller.acceptDecision({approvalId: 'public-2', decision: 'accept'}), false)
+  assert.equal(controller.acceptDecision({approvalId: 'public-3', decision: 'accept'}), false)
+
+  // Invalidating beta's work drops its queued entry and leaves the head untouched.
+  clock.advanceTo(130)
+  assert.equal(beta.invalidate('turn_completed'), true)
+  assert.deepEqual(await second, {decision: 'decline'})
+  assert.equal(controller.view.pending_approval_id, 'public-1')
+  assert.equal(controller.view.queued, 1)
+  assert.equal(beta.invalidate('again'), false, 'nothing of beta remains')
+
+  // Accept the head; the next entry becomes head with a full TTL measured from now, not from its offer.
+  assert.equal(controller.acceptDecision({approvalId: 'public-1', decision: 'accept'}), true)
+  const resolution = await first
+  assert.equal(alpha.consume(resolution!), 'accept')
+  assert.equal(controller.view.pending_approval_id, 'public-3')
+  assert.equal(controller.view.queued, 0)
+  assert.equal(controller.view.expires_at, 130 + 60)
+  assert.equal(controller.pending, true)
+  clock.advanceTo(189)
+  assert.equal(controller.pending, true, 'the promoted entry did not age while queued')
+
+  // A work-scoped invalidation of the head promotes nothing further and declines it.
+  assert.equal(alpha.invalidate('closed'), true)
+  assert.deepEqual(await third, {decision: 'decline'})
+  assert.equal(controller.view.pending_approval, false)
+  assert.equal(controller.view.queued, 0)
+  assert.deepEqual(views.map(view => view.id), [
+    'public-1', 'public-1', 'public-1', 'public-1', 'public-1', 'public-3', undefined,
+  ])
+  assert.deepEqual(views.map(view => view.queued), [0, 1, 2, 1, 1, 0, 0])
 })

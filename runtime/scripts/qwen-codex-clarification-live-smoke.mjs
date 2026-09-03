@@ -2,7 +2,7 @@
  * Credential-gated, macOS-only voice E2E for adaptive Codex clarification.
  *
  * It uses the production Qwen realtime adapter, production frontend instructions, exact compiled
- * codex__project schema, locally synthesized Chinese PCM, and the shared semantic scorer. It never
+ * host `dispatch` schema, locally synthesized Chinese PCM, and the shared semantic scorer. It never
  * executes Codex: a tool call is captured as the model's dispatch decision and the case ends.
  */
 
@@ -52,8 +52,8 @@ const model = setting('NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL') ?? 'qwen-audio-3.0
 const voice = setting('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE') ?? 'longanqian'
 
 const compiled = compileToolSchema([CODEX_PROJECT_MANIFEST])
-const projectTool = compiled.schemas.find(schema => schema.function?.name === 'codex__project')
-if (!projectTool) throw new Error('compiled Codex project manifest has no codex__project tool')
+const projectTool = compiled.schemas.find(schema => schema.function?.name === 'dispatch')
+if (!projectTool) throw new Error('compiled Codex project manifest has no host dispatch tool')
 
 function wavPcm(path) {
   const wav = readFileSync(path)

@@ -138,6 +138,12 @@ export const executorManifestSchema = z.object({
   roles: z.array(executorRoleSchema).default([]),
   /** The executor raises mid-run approvals; the host attaches its approval surface. */
   approvals: z.boolean().default(false),
+  /**
+   * Present on agent executors (spec 08): the voice model reaches them only through the host
+   * `dispatch` / `cancel` / `confirm` tools, never as `${name}__${op}`. `summary` is one description
+   * line per executor in the `dispatch` tool; ops here are host-routed and model-invisible.
+   */
+  agent: z.object({summary: z.string().min(1).max(200)}).strict().optional(),
   ops: z.array(opSpecSchema),
   policy: handoffPolicySchema,
 }).strict().superRefine((value, context) => {

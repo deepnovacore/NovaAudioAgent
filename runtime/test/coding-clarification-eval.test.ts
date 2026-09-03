@@ -27,9 +27,9 @@ const scoreModule = await import(pathToFileURL(resolve(
 }
 const {scoreCodexClarificationTurn} = scoreModule
 
-const projectCall = (workOrder = '修复空密码登录并运行现有测试') => ({
-  name: 'codex__project',
-  arguments: {action: 'start_session', work_order: workOrder},
+const projectCall = (instruction = '修复空密码登录并运行现有测试') => ({
+  name: 'dispatch',
+  arguments: {executor: 'codex', instruction},
 })
 
 test('clarification requires one user-facing question and forbids project dispatch', () => {
@@ -41,7 +41,7 @@ test('clarification requires one user-facing question and forbids project dispat
     {expectation: 'clarify'},
     {transcript: '我来处理', toolCalls: [projectCall()]},
   ), [
-    'unexpected codex__project dispatch',
+    'unexpected dispatch',
     'clarification response does not contain a question',
   ])
   assert.deepEqual(scoreCodexClarificationTurn(
@@ -59,8 +59,8 @@ test('dispatch requires exactly one project call with the merged work order term
     {expectation: 'dispatch', requiredWorkOrderTerms: ['空密码', '校验错误']},
     {transcript: '收到。', toolCalls: [projectCall('修复空密码登录'), projectCall('再试一次')]},
   ), [
-    'expected exactly one codex__project dispatch, got 2',
-    'work_order is missing required term: 校验错误',
+    'expected exactly one dispatch, got 2',
+    'instruction is missing required term: 校验错误',
   ])
 })
 
@@ -73,7 +73,7 @@ test('discussion requests require a response without project dispatch', () => {
     {expectation: 'respond'},
     {transcript: '', toolCalls: [projectCall()]},
   ), [
-    'unexpected codex__project dispatch',
+    'unexpected dispatch',
     'response is empty',
   ])
 })

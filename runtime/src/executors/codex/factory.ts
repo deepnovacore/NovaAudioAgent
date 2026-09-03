@@ -40,6 +40,7 @@ import {CodexAdapter} from './adapter.js'
 import {ProjectConfirmationController} from '../../project-confirmation.js'
 import {
   CodexApprovalController,
+  type CodexApprovalPort,
   type CodexApprovalView,
 } from './approval.js'
 import {basename} from 'node:path'
@@ -61,7 +62,8 @@ export interface CodexTransportBinding {
   readonly resumeThreadId: string | null
   readonly workingInterval: number
   readonly launchProfile: CodexLaunchProfile
-  readonly approvalController: CodexApprovalController | null
+  /** Project mode: the shared controller scoped to the run's work (`forWork`), so one work's turn end never drops another's approval. */
+  readonly approvalController: CodexApprovalPort | null
 }
 
 export interface CodexBackendTransportFactory {
@@ -329,7 +331,7 @@ async function createProjectResource(
             resumeThreadId: binding.resumeThreadId,
             workingInterval: options.config.workingInterval,
             launchProfile,
-            approvalController,
+            approvalController: approvalController?.forWork(binding.work) ?? null,
           }))
           if (!isCodexTransport(transport)) {
             throw new CodexHostConfigurationError('codex_host_unavailable')
