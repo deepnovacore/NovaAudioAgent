@@ -4,6 +4,7 @@ import type {
   AgentController,
   AgentDispatchRequest,
   AgentDescriptor,
+  AgentRuntimeDispatchPort,
 } from '../../agent-controller.js'
 import type {AgentExecutor, CancelContext} from '../../coding-executor.js'
 import type {IntakeController} from '../coding/intake.js'
@@ -25,33 +26,52 @@ export class CodexAgentController implements AgentController {
   readonly descriptor = CODEX_AGENT_DESCRIPTOR
   readonly #intake: Pick<IntakeController, 'open' | 'view'> | undefined
   readonly #executor: Pick<AgentExecutor, 'cancel'> | undefined
+  readonly #dispatchPort: AgentRuntimeDispatchPort | undefined
   readonly #resolveCancelTarget: CancelContext['resolveCancelTarget']
 
   constructor(options: {
     readonly intake?: Pick<IntakeController, 'open' | 'view'>
     readonly executor?: Pick<AgentExecutor, 'cancel'>
+    readonly dispatchPort?: AgentRuntimeDispatchPort
     readonly resolveCancelTarget: CancelContext['resolveCancelTarget']
   }) {
     this.#intake = options.intake
     this.#executor = options.executor
+    this.#dispatchPort = options.dispatchPort
     this.#resolveCancelTarget = options.resolveCancelTarget
   }
 
   async dispatch(request: AgentDispatchRequest): Promise<AgentActionResult> {
     if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
     const intake = this.#intake
-    if (intake === undefined) return {code: 'unsupported_tool', accepted: false, detail: {}}
+    if (intake === undefined) {
+      const dispatchPort = this.#dispatchPort
+      if (dispatchPort === undefined) return {code: 'unsupported_tool', accepted: false, detail: {}}
+      // The controller owns the last fence before the runtime effect. The port repeats it at the
+      // host/runtime boundary so neither a synchronous nor an asynchronous caller can bypass it.
+      if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
+      const admission = dispatchPort.dispatch({
+        channel: 'codex', op: 'run', request: {work_order: request.instruction},
+        origin_ref: request.origin_ref, stillWanted: request.stillWanted,
+      })
+      if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
+      if (!admission.accepted || admission.delegate_id === null) {
+        return {code: 'runtime_rejected', accepted: false, detail: {}}
+      }
+      return {
+        code: 'delegated', accepted: true, delegate_id: admission.delegate_id,
+        detail: {channel: 'codex', op: 'run'},
+      }
+    }
     const code = intake.open(
       {work_order: request.instruction, project: null, session: 'latest'},
       request.originalUserText,
       request.origin_ref,
       String(request.sessionEpoch),
     )
-    return {
-      code,
-      accepted: true,
-      detail: intake.view === null ? {} : {state: intake.view.state},
-    }
+    const state = intake.view?.state
+    if (state === undefined) return {code: 'runtime_rejected', accepted: false, detail: {}}
+    return {code, accepted: true, detail: {state}}
   }
 
   async cancel(request: AgentCancelRequest): Promise<AgentActionResult> {

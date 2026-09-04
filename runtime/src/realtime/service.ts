@@ -33,9 +33,11 @@ import {
 } from '../executors/coding/intake.js'
 import {
   createAgentControllerRegistry,
+  parseAgentActionResult,
   type AgentActionResult,
   type AgentController,
   type AgentControllerRegistry,
+  type AgentRuntimeDispatchPort,
 } from '../agent-controller.js'
 import {CodexAgentController} from '../executors/codex/controller.js'
 import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
@@ -131,31 +133,6 @@ function sameAgentDescriptors(
       && descriptor.ownedChannels.length === other.ownedChannels.length
       && descriptor.ownedChannels.every((channel, channelIndex) => channel === other.ownedChannels[channelIndex])
   })
-}
-
-function cancelResultMessage(result: AgentActionResult): string | null {
-  if (result.code === 'not_running') return renderCancelResult({code: 'not_running'})
-  if (result.code === 'cancelled') {
-    const work = result.detail.work
-    if (isRunningWork(work)) return renderCancelResult({code: 'cancelled', work})
-    return null
-  }
-  if (result.code === 'ambiguous_work') {
-    const running = result.detail.running
-    if (Array.isArray(running) && running.every(isRunningWork)) {
-      return renderCancelResult({code: 'ambiguous_work', running})
-    }
-  }
-  return null
-}
-
-function isRunningWork(value: JsonValue | undefined): value is {readonly work_id: string; readonly project: string; readonly title: string} {
-  return typeof value === 'object'
-    && value !== null
-    && !Array.isArray(value)
-    && typeof value.work_id === 'string'
-    && typeof value.project === 'string'
-    && typeof value.title === 'string'
 }
 
 type ProviderReconnectReason =
@@ -338,6 +315,8 @@ export interface RealtimeServiceOptions {
   >
   /** The coding executor's private cancellation port; CodexAgentController owns its use. */
   readonly agentExecutor?: Pick<import('../coding-executor.js').AgentExecutor, 'cancel'>
+  /** The only runtime effect a no-intake controller may request. */
+  readonly agentDispatchPort?: AgentRuntimeDispatchPort
   /** Additional host-owned controllers. Codex is installed automatically for a hidden Codex manifest. */
   readonly agentControllers?: readonly AgentController[]
   readonly provider: ServiceProvider
@@ -666,10 +645,14 @@ export class RealtimeService {
       }
     }
     const controllers = [...(options.agentControllers ?? [])]
-    if (options.runtime.executors.get('codex')?.manifest.model_visibility === 'hidden') {
+    if (
+      options.runtime.executors.get('codex')?.manifest.model_visibility === 'hidden'
+      && !controllers.some(controller => controller.descriptor.name === 'codex')
+    ) {
       controllers.push(new CodexAgentController({
         ...(this.#intake === undefined ? {} : {intake: this.#intake}),
         ...(options.agentExecutor === undefined ? {} : {executor: options.agentExecutor}),
+        ...(options.agentDispatchPort === undefined ? {} : {dispatchPort: options.agentDispatchPort}),
         resolveCancelTarget: options.intake?.models.resolveCancelTarget ?? (() => Promise.resolve(null)),
       }))
     }
@@ -3633,10 +3616,10 @@ export class RealtimeService {
       readonly originRef?: string | null
     } = {},
   ): Promise<void> {
-    const rewritten = this.#directDispatch(call)
-    const event = rewritten ?? call
-    // A hidden agent op named by the provider (spec 08) was never offered to it; only the rewrite may name one.
-    const hidden = rewritten === null && this.#tools.hidden.has(call.name)
+    const event = call
+    // A hidden agent op named by the provider was never offered to it and cannot be reached through
+    // a host rewrite. Controllers are the only path from a public agent name to a hidden channel.
+    const hidden = this.#tools.hidden.has(call.name)
     const key = callKey(event.session_epoch, event.call_id)
     const existing = this.#toolCallState(key)
     if (existing !== undefined) {
@@ -3703,6 +3686,10 @@ export class RealtimeService {
     }
     const callOverCapacity = this.#toolCalls.size >= MAX_TRACKED_TOOL_CALLS
     const binding = hidden ? undefined : this.#tools.bindings.get(event.name)
+    const noIntakeAgentDispatch = !hidden
+      && event.name === DISPATCH_TOOL
+      && this.#intake === undefined
+      && this.#agentExecutorName(event.arguments.executor) !== null
     // A delegated call will eventually need to be spoken about, so its acknowledgement slot is
     // reserved *before* admission -- admitting work the agent could never mention is worse than
     // refusing it.
@@ -3716,7 +3703,7 @@ export class RealtimeService {
         binding.sync_result === true,
       )
     const requiresSemanticAcknowledgement = !superseded
-      && binding?.kind === 'delegate'
+      && (binding?.kind === 'delegate' || noIntakeAgentDispatch)
       && !synchronousDelegateCall
     let semanticReserved = false
     if (!callOverCapacity && requiresSemanticAcknowledgement) {
@@ -3924,34 +3911,6 @@ export class RealtimeService {
     return typeof value === 'string' && this.#agentControllers.has(value) ? value : null
   }
 
-  /** Whether `dispatch`/`cancel` on this executor goes through the coding intake coordinator. */
-  #intakeCoordinates(executor: string): boolean {
-    const controller = this.#agentControllers.get(executor)
-    return this.#intake !== undefined
-      && this.#coding !== null
-      && controller instanceof CodexAgentController
-      && controller.descriptor.ownedChannels.includes(this.#coding.channel)
-  }
-
-  /**
-   * A Codex variant without project intake preserves its existing direct `run` behavior. The raw
-   * binding is still hidden from the provider; only this host rewrite can reach it.
-   */
-  #directDispatch(event: ToolCallReady): ToolCallReady | null {
-    if (event.name !== DISPATCH_TOOL) return null
-    const executor = this.#agentExecutorName(event.arguments.executor)
-    if (executor === null || this.#intakeCoordinates(executor)) return null
-    const {instruction, origin_ref} = event.arguments
-    return {
-      ...event,
-      name: `${executor}__run`,
-      arguments: {
-        ...(instruction === undefined ? {} : {work_order: instruction}),
-        ...(origin_ref === undefined ? {} : {origin_ref}),
-      },
-    }
-  }
-
   /**
    * The host tools. A controller receives the fenced public request and returns structured facts;
    * RealtimeService alone maps those facts to provider-facing result language.
@@ -3970,8 +3929,6 @@ export class RealtimeService {
     if (executor === null || !instructionValid) {
       return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
     }
-    // A valid dispatch on a non-coordinated Codex variant was rewritten above.
-    if (event.name === DISPATCH_TOOL && (this.#intake === undefined || !this.#intakeCoordinates(executor))) return null
     // Both act on the user's behalf, so both need the current user turn as origin: a spontaneous
     // `cancel` would stop work nobody asked to stop.
     const user = this.#intakeUser
@@ -3987,7 +3944,7 @@ export class RealtimeService {
     const fence = (): boolean => this.session.sessionEpoch === event.session_epoch
       && this.session.userInputRevision === revision
       && this.#localSpeechOnsetRevision === localOnsetRevision
-    const result = event.name === DISPATCH_TOOL
+    const rawResult = event.name === DISPATCH_TOOL
       ? await controller.dispatch({
         instruction: instruction!, originalUserText: user.text, origin_ref: user.origin_ref,
         sessionEpoch: event.session_epoch, acceptedUserInputRevision: revision, stillWanted: fence,
@@ -3996,16 +3953,70 @@ export class RealtimeService {
         ...(instruction === null ? {} : {instruction}), originalUserText: user.text, origin_ref: user.origin_ref,
         sessionEpoch: event.session_epoch, acceptedUserInputRevision: revision, stillWanted: fence,
       })
+    const result = parseAgentActionResult(rawResult)
+    if (result === null) {
+      return this.#refusalAcceptance(event, 'controller_result_invalid', canonicalJson({code: 'controller_result_invalid'}))
+    }
+    if (result.code === 'delegated') {
+      if (!controller.descriptor.ownedChannels.includes(result.detail.channel)) {
+        return this.#refusalAcceptance(event, 'controller_result_invalid', canonicalJson({code: 'controller_result_invalid'}))
+      }
+      return this.#controllerDelegationAcceptance(event, result, instruction!)
+    }
     const acceptance = this.#refusalAcceptance(event, result.code, this.#agentActionContent(result))
     return result.accepted ? {...acceptance, accepted: true, inline_fulfilled: true} : acceptance
   }
 
   #agentActionContent(result: AgentActionResult): string {
-    const detail = result.detail
-    const message = result.code === 'intake_opened' || result.code === 'intake_in_progress'
-      ? '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。'
-      : cancelResultMessage(result)
-    return JSON.stringify({...detail, code: result.code, ...(message === null ? {} : {message})})
+    if (result.code === 'intake_opened' || result.code === 'intake_in_progress') {
+      return canonicalJson({
+        code: result.code, state: result.detail.state,
+        message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
+      })
+    }
+    if (result.code === 'cancelled') {
+      return canonicalJson({
+        code: result.code, work: result.detail.work,
+        message: renderCancelResult({code: 'cancelled', work: result.detail.work}),
+      })
+    }
+    if (result.code === 'ambiguous_work') {
+      return canonicalJson({
+        code: result.code, running: result.detail.running,
+        message: renderCancelResult({code: 'ambiguous_work', running: result.detail.running}),
+      })
+    }
+    if (result.code === 'not_running') {
+      return canonicalJson({code: result.code, message: renderCancelResult({code: 'not_running'})})
+    }
+    return canonicalJson({code: result.code})
+  }
+
+  #controllerDelegationAcceptance(
+    event: ToolCallReady,
+    result: Extract<AgentActionResult, {readonly code: 'delegated'}>,
+    instruction: string,
+  ): ToolAcceptance {
+    const hostItem: HostContextItem = {
+      kind: 'tool_output', host_item_id: this.#idFactory(), event_id: this.#idFactory(),
+      call_id: event.call_id, content: canonicalJson({state: 'accepted'}),
+    }
+    return {
+      accepted: true,
+      code: 'accepted',
+      host_item: hostItem,
+      response_intent: {
+        kind: 'delegation_acknowledgement', item: hostItem,
+        task_summary: [...stripLikePython(instruction)].slice(0, MAX_CONTINUATION_TASK_SUMMARY).join(''),
+        origin_spoken: false,
+      },
+      delegate_id: result.delegate_id,
+      sync_result: false,
+      executor: result.detail.channel,
+      op: result.detail.op,
+      inline_fulfilled: false,
+      telemetry: null,
+    }
   }
 
   #recordToolAdmission(input: {

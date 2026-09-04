@@ -22,6 +22,7 @@ import {
   CODEX_PROJECT_MANIFEST,
   CODEX_AGENT_SUMMARY,
 } from '../src/executors/codex/contract.js'
+import type {AgentController} from '../src/agent-controller.js'
 import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
@@ -649,6 +650,8 @@ function pipelineService(options: {
   readonly ensureResponseFailure?: boolean
   readonly failReconnect?: boolean
   readonly agentExecutor?: ConstructorParameters<typeof RealtimeService>[0]['agentExecutor']
+  readonly agentControllers?: readonly AgentController[]
+  readonly beforeAgentRuntimeDispatch?: () => void
   /** Fold the ops into the spec 08 host tools; a raw `codex__*` from the provider is then refused. */
   readonly agent?: boolean
 } = {}): {
@@ -661,6 +664,7 @@ function pipelineService(options: {
   readonly diagnostics: string[]
   readonly executorApproval: CodexApprovalController | null
   readonly telemetry: {readonly kind: string; readonly payload: Readonly<Record<string, JsonValue>>}[]
+  readonly runtimeDispatches: () => number
 } {
   const manifest = options.withExecutorApproval
     ? CODEX_PROJECT_APPROVAL_MANIFEST
@@ -786,6 +790,7 @@ function pipelineService(options: {
     onDiagnostic: line => diagnostics.push(line),
   })
   const scripted = options.toolResult ?? {accepted: true, delegateId: 'd-1'}
+  let runtimeDispatches = 0
   const pipelineDelegate = {
     delegate_id: 'd-1',
     executor: 'codex',
@@ -837,6 +842,15 @@ function pipelineService(options: {
     }),
     ...(options.intake === undefined ? {} : {intake: options.intake}),
     ...(options.agentExecutor === undefined ? {} : {agentExecutor: options.agentExecutor}),
+    ...(options.agentControllers === undefined ? {} : {agentControllers: options.agentControllers}),
+    agentDispatchPort: {
+      dispatch: request => {
+        options.beforeAgentRuntimeDispatch?.()
+        if (!request.stillWanted()) return {accepted: false, delegate_id: null}
+        runtimeDispatches += 1
+        return {accepted: scripted.accepted, delegate_id: scripted.delegateId}
+      },
+    },
     ...(executorApproval === null ? {} : {executorApproval}),
     idFactory: nextId,
     // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
@@ -850,7 +864,7 @@ function pipelineService(options: {
   })
   return {
     service, actions, injectedContents, injectedItems, session, clock, diagnostics, executorApproval,
-    telemetry,
+    telemetry, runtimeDispatches: () => runtimeDispatches,
   }
 }
 
@@ -1944,8 +1958,8 @@ async function dispatchTurn(
   return service.toolCallAcceptances().find(snapshot => snapshot.call_id === `call-${responseId}`)!.acceptance
 }
 
-test('dispatch on a Codex controller the intake does not coordinate is that controller run', async () => {
-  const {service} = pipelineService({agent: true})
+test('no-intake dispatch stays controller-owned while preserving the delegated acknowledgement', async () => {
+  const {service, runtimeDispatches} = pipelineService({agent: true})
   await service.connect()
   assert.equal(service.providerSchemasForTest.some(schema => (
     JSON.stringify(schema).includes('codex__run')
@@ -1958,7 +1972,46 @@ test('dispatch on a Codex controller the intake does not coordinate is that cont
   assert.equal(acceptance.op, 'run')
   assert.equal(acceptance.delegate_id, 'd-1')
   assert.equal(acceptance.response_intent.kind, 'delegation_acknowledgement')
-  assert.equal(acceptance.host_item.call_id, 'call-origin', 'the rewritten call keeps the provider call id')
+  assert.equal(acceptance.host_item.call_id, 'call-origin')
+  assert.equal(runtimeDispatches(), 1)
+  await service.close()
+})
+
+test('a local supersession before no-intake controller dispatch starts no runtime delegate', async () => {
+  let service!: RealtimeService
+  const fixture = pipelineService({
+    agent: true,
+    beforeAgentRuntimeDispatch: () => { void service.localSpeechOnset('supersede-no-intake') },
+  })
+  service = fixture.service
+  await service.connect()
+  const acceptance = await dispatchTurn(service, 'dispatch', {
+    executor: 'codex', instruction: 'build timer', origin_ref: 'conversation:1',
+  })
+  assert.equal(acceptance.accepted, false)
+  assert.equal(acceptance.code, 'superseded')
+  assert.equal(fixture.runtimeDispatches(), 0)
+  await service.close()
+})
+
+test('an invalid controller result is refused without serializing hostile detail', async () => {
+  const hostile: AgentController = {
+    descriptor: {name: 'codex', summary: CODEX_AGENT_SUMMARY, ownedChannels: ['codex']},
+    dispatch: async () => ({
+      code: 'intake_opened', accepted: true, detail: {state: 'open', message: 'do not expose'},
+    } as never),
+    cancel: async () => ({code: 'unsupported_tool', accepted: false, detail: {}}),
+  }
+  const {service, runtimeDispatches} = pipelineService({agent: true, agentControllers: [hostile]})
+  await service.connect()
+  const acceptance = await dispatchTurn(service, 'dispatch', {
+    executor: 'codex', instruction: 'build timer', origin_ref: 'conversation:1',
+  })
+  assert.equal(acceptance.accepted, false)
+  assert.equal(acceptance.code, 'controller_result_invalid')
+  assert.deepEqual(JSON.parse(acceptance.host_item.content), {code: 'controller_result_invalid'})
+  assert.equal(acceptance.host_item.content.includes('do not expose'), false)
+  assert.equal(runtimeDispatches(), 0)
   await service.close()
 })
 

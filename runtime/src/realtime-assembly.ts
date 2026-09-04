@@ -841,6 +841,16 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     providerSchemas,
     session,
     bridge,
+    agentDispatchPort: {
+      dispatch: request => {
+        // This is the runtime-side fence paired with the controller's last check. It must be
+        // immediately adjacent to dispatchExternal so a superseding user turn cannot start work.
+        if (!request.stillWanted()) return {accepted: false, delegate_id: null}
+        return core.runtime.dispatchExternal({
+          executor: request.channel, op: request.op, request: request.request, origin_ref: request.origin_ref,
+        }, USER_AWAITED_TOOL)
+      },
+    },
     ...(options.intake === undefined || projectAdapter === undefined ? {} : {intake: {
       ...options.intake,
       roster: () => projectAdapter.roster(),

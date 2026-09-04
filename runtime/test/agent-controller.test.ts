@@ -3,6 +3,7 @@ import {test} from 'node:test'
 
 import {
   createAgentControllerRegistry,
+  parseAgentActionResult,
   type AgentController,
   type AgentDescriptor,
 } from '../src/agent-controller.js'
@@ -68,7 +69,7 @@ test('agent registration closes controller names, owned channels, manifests, and
   const coder = controller({name: 'coder', summary: '编码', ownedChannels: ['codex']})
 
   const registry = createAgentControllerRegistry({controllers: [coder], manifests: [hidden, direct]})
-  assert.equal(registry.controllers.get('coder'), coder)
+  assert.notEqual(registry.controllers.get('coder'), coder)
   assert.equal(registry.agentNameForChannel('codex'), 'coder')
   assert.equal(registry.agentNameForChannel('watch'), null)
   assert.equal(activeExecutorContextData([['d-1', {
@@ -114,6 +115,59 @@ test('agent registry rejects blank public descriptor labels', () => {
     }),
     /agent summary must not be blank.*valid/iu,
   )
+})
+
+test('controller action results are closed, bounded, and accessor-safe', () => {
+  assert.deepEqual(parseAgentActionResult({
+    code: 'delegated', accepted: true, delegate_id: 'd-1', detail: {channel: 'codex', op: 'run'},
+  }), {
+    code: 'delegated', accepted: true, delegate_id: 'd-1', detail: {channel: 'codex', op: 'run'},
+  })
+  for (const value of [
+    {code: 'delegated', accepted: true, delegate_id: 'd-1', detail: {channel: 'codex', op: 'run'}, message: 'hostile'},
+    {code: 'cancelled', accepted: true, detail: {work: {work_id: 'w', project: 'p', title: 't'}, extra: true}},
+    {code: 'ambiguous_work', accepted: true, detail: {running: Array.from({length: 9}, () => ({work_id: 'w', project: 'p', title: 't'}))}},
+    {code: 'delegated', accepted: true, delegate_id: 'x'.repeat(129), detail: {channel: 'codex', op: 'run'}},
+  ]) assert.equal(parseAgentActionResult(value), null)
+
+  const accessor = {
+    code: 'accepted', accepted: true, detail: {},
+  } as Record<string, unknown>
+  Object.defineProperty(accessor, 'message', {enumerable: true, get: () => { throw new Error('must not read accessor') }})
+  assert.equal(parseAgentActionResult(accessor), null)
+
+  const prototype = Object.create({message: 'hostile'}) as Record<string, unknown>
+  Object.assign(prototype, {code: 'accepted', accepted: true, detail: {}})
+  assert.equal(parseAgentActionResult(prototype), null)
+})
+
+test('registry snapshots descriptors, controller methods, and map authority', async () => {
+  const descriptor = {name: 'coder', summary: '编码', ownedChannels: ['codex']}
+  let dispatches = 0
+  const source = {
+    descriptor,
+    dispatch: async () => {
+      dispatches += 1
+      return {code: 'accepted' as const, accepted: true as const, detail: {}}
+    },
+    cancel: async () => ({code: 'not_running' as const, accepted: true as const, detail: {}}),
+  }
+  const registry = createAgentControllerRegistry({controllers: [source], manifests: [manifest('codex', 'hidden')]})
+  descriptor.name = 'mutated'
+  descriptor.summary = 'mutated'
+  descriptor.ownedChannels.push('not_registered')
+  source.dispatch = async () => { throw new Error('mutated controller must not run') }
+
+  const registered = registry.controllers.get('coder')!
+  assert.notEqual(registered, source)
+  assert.deepEqual(registry.descriptors, [{name: 'coder', summary: '编码', ownedChannels: ['codex']}])
+  assert.equal(registry.agentNameForChannel('codex'), 'coder')
+  assert.equal((registry.controllers as unknown as {set?: unknown}).set, undefined)
+  await registered.dispatch({
+    instruction: 'x', originalUserText: 'x', origin_ref: 'conversation:1',
+    sessionEpoch: 1, acceptedUserInputRevision: 1, stillWanted: () => true,
+  })
+  assert.equal(dispatches, 1)
 })
 
 test('the Codex controller preserves intake dispatch and forwards the revision fence to cancellation', async () => {
@@ -171,4 +225,23 @@ test('the Codex controller preserves intake dispatch and forwards the revision f
     detail: {work: {work_id: 'w-1', project: 'site', title: '布局'}},
   })
   assert.equal(Object.hasOwn(cancellation, 'message'), false, 'controllers return structured facts, not user prose')
+})
+
+test('no-intake Codex dispatch fences a superseded request before the runtime delegate starts', async () => {
+  let runtimeDelegateStarts = 0
+  const codex = new CodexAgentController({
+    dispatchPort: {
+      dispatch: _request => {
+        runtimeDelegateStarts += 1
+        return {accepted: true, delegate_id: 'd-1'}
+      },
+    },
+    resolveCancelTarget: () => Promise.resolve(null),
+  })
+  const result = await codex.dispatch({
+    instruction: '不应执行', originalUserText: '不应执行', origin_ref: 'conversation:1',
+    sessionEpoch: 1, acceptedUserInputRevision: 2, stillWanted: () => false,
+  })
+  assert.deepEqual(result, {code: 'superseded', accepted: false, detail: {}})
+  assert.equal(runtimeDelegateStarts, 0)
 })
