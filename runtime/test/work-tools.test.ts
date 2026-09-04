@@ -21,8 +21,11 @@ test('deriveSessionTitle keeps the first sentence, stripped, at most 20 code poi
   assert.equal(deriveSessionTitle('   '), '')
 })
 
-test('host tool specs fold every agent executor into one enum with one description line each', () => {
-  const agents = [{name: 'codex', summary: '改代码'}, {name: 'acp', summary: '别的'}]
+test('host tool specs fold every registered controller into one enum with one description line each', () => {
+  const agents = [
+    {name: 'codex', summary: '改代码', ownedChannels: ['codex']},
+    {name: 'acp', summary: '别的', ownedChannels: ['acp']},
+  ]
   const dispatch = dispatchToolSpec(agents)
   assert.equal(dispatch.name, 'dispatch')
   assert.ok(dispatch.inject_origin_ref)

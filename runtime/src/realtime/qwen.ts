@@ -80,10 +80,11 @@ export function renderActiveProjectContext(view: ProjectConfirmationView): strin
 /** Latest in-flight delegate progress for user-initiated status answers. */
 export function renderActiveExecutorContext(
   delegates: readonly (readonly [string, DelegateRecord])[],
+  agentNameForChannel: (channel: string) => string | null = () => null,
 ): string | null {
   if (delegates.length === 0) return null
   const lines = ['<active_executor_context>']
-  const context = activeExecutorContextData(delegates)
+  const context = activeExecutorContextData(delegates, agentNameForChannel)
   for (const record of context.delegates) {
     lines.push(`delegate=${serializeContextRecord(record)}`)
   }

@@ -16,7 +16,7 @@ import {
 } from './desktop.js'
 import type {CameraPermissionStatus} from './desktop-camera.js'
 import {deliveryToEvent, type ExecutorIdentity} from './desktop-wire.js'
-import {executorDisplayName, executorWithRole} from './coding-executor.js'
+import {executorWithRole} from './coding-executor.js'
 import type {PlaybackCompletion, PlaybackFrame} from './playback.js'
 import type {RealtimeAssembly} from './realtime-assembly.js'
 import {memoryBoardMessage} from './realtime/memory-board.js'
@@ -165,7 +165,7 @@ export function buildDesktopRealtimeComposition(
   })
   holder.desktop = desktop
   const unsubscribeProgress = realtime.runtime.observe(event => {
-    const projected = projectExecutorEvent(event, realtime.runtime)
+    const projected = projectExecutorEvent(event, realtime.runtime, channel => realtime.service.agentNameForChannel(channel))
     if (projected !== null) desktop.bridge.onExecutorProgress(projected.progress, projected.result)
   })
   if (options.stop.signal.aborted) unsubscribeProgress()
@@ -174,12 +174,14 @@ export function buildDesktopRealtimeComposition(
 }
 
 /** The frame identity of the configured coding executor, or `null` when there is none. */
-export function codingExecutorIdentity(realtime: Pick<RealtimeAssembly, 'runtime'>): ExecutorIdentity | null {
+export function codingExecutorIdentity(realtime: Pick<RealtimeAssembly, 'runtime' | 'service'>): ExecutorIdentity | null {
   const manifest = executorWithRole(
     [...realtime.runtime.executors.values()].map(adapter => adapter.manifest),
     'coding',
   )
-  return manifest === null ? null : {executor: manifest.name, display_name: executorDisplayName(manifest)}
+  if (manifest === null) return null
+  const publicName = realtime.service.agentNameForChannel(manifest.name) ?? manifest.name
+  return {executor: publicName, display_name: publicName}
 }
 
 /** Project one already-published graph snapshot without opening any graph capability. */

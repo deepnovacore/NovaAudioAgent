@@ -39,7 +39,11 @@ export function safeProgressSummary(value: unknown, fallback: string): string {
 }
 
 /** Event-to-level table: start/final/guard hit=milestone; working/watch hit=detail. */
-export function projectExecutorEvent(event: EventRecord, runtime: RuntimeEvidence): {
+export function projectExecutorEvent(
+  event: EventRecord,
+  runtime: RuntimeEvidence,
+  agentNameForChannel: (channel: string) => string | null = () => null,
+): {
   progress: ExecutorProgress; result?: ExecutorResult
 } | null {
   if (event.kind !== 'progress' && event.kind !== 'handoff' && event.kind !== 'observation' && event.kind !== 'deadline') return null
@@ -51,8 +55,10 @@ export function projectExecutorEvent(event: EventRecord, runtime: RuntimeEvidenc
   if (event.kind !== 'deadline' && delegate.executor !== event.payload.channel) return null
   if ((event.kind === 'progress' || event.kind === 'observation') && delegate.op !== event.payload.op) return null
   if ((event.kind === 'handoff' || event.kind === 'observation') && delegate.origin_ref !== event.payload.origin_ref) return null
-  const label = delegate.executor === 'guard' ? '监护' : delegate.executor === 'watch' ? '观察'
-    : runtime.executors?.get(delegate.executor)?.manifest.display_name ?? '任务'
+  const agentName = agentNameForChannel(delegate.executor)
+  const label = agentName ?? (delegate.executor === 'guard' ? '监护' : delegate.executor === 'watch' ? '观察'
+    : runtime.executors?.get(delegate.executor)?.manifest.display_name ?? '任务')
+  const publicExecutor = agentName ?? delegate.executor
   let phase: ExecutorProgress['phase']
   let level: ExecutorProgress['level'] = 'milestone'
   let text: string
@@ -79,12 +85,12 @@ export function projectExecutorEvent(event: EventRecord, runtime: RuntimeEvidenc
     const fallback = outcome === 'ok' ? `${label} 已完成任务。` : `${label} ${outcome === 'unknown' ? '结果尚未确认' : outcome === 'refused' ? '请求被拒绝' : outcome === 'cancelled' ? '任务已停止' : '执行失败'}。`
     text = event.kind === 'handoff' ? safeProgressSummary(event.payload.content.summary, fallback) : fallback
     const changed = event.kind === 'handoff' ? event.payload.content.changed_files : null
-    result = {delegate_id: id, executor: delegate.executor, outcome, summary: text,
+    result = {delegate_id: id, executor: publicExecutor, outcome, summary: text,
       started_at: delegate.dispatched_at, ended_at: event.ts,
       changed_files: typeof changed === 'number' && Number.isSafeInteger(changed) && changed >= 0 ? changed : null}
   }
   const parsed = executorProgressSchema.safeParse({type: 'executor.progress', delegate_id: id,
-    executor: delegate.executor, phase, summary: text, level, ts: event.ts})
+    executor: publicExecutor, phase, summary: text, level, ts: event.ts})
   if (!parsed.success) return null
   if (result === undefined) return {progress: parsed.data}
   const parsedResult = executorResultSchema.safeParse({type: 'executor.result', result})

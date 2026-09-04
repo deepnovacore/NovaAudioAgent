@@ -12,6 +12,7 @@ import type {
   TransportOutcome,
 } from '../src/executors/codex/app-server-transport.js'
 import {CODEX_LIVE_MANIFEST} from '../src/executors/codex/contract.js'
+import {CODEX_AGENT_DESCRIPTOR} from '../src/executors/codex/controller.js'
 import type {ExecutorDispatchContext, ExecutorProgress} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
 import {CodexLiveAdapter} from '../src/executors/codex/adapter-live.js'
@@ -139,13 +140,13 @@ test('live manifest compiles exact run, steer, status order and sensitivity', ()
   assert.equal(adapter.manifest, CODEX_LIVE_MANIFEST)
   assert.deepEqual(adapter.manifest.ops.map(op => op.name), ['run', 'steer', 'status'])
   assert.deepEqual(adapter.manifest.ops[1]?.sensitive_params, ['instruction'])
-  const compiled = compileToolSchema([adapter.manifest])
+  const compiled = compileToolSchema([adapter.manifest], {agentDescriptors: [CODEX_AGENT_DESCRIPTOR]})
   assert.deepEqual(
     [...compiled.bindings.keys()].filter(key => key.startsWith('codex__')),
     ['codex__run', 'codex__steer', 'codex__status'],
   )
   assert.equal(compiled.schemas.some(schema => JSON.stringify(schema).includes('codex__')), false,
-    'agent executors are host-routed (spec 08): the model sees no codex__* schema')
+    'hidden controller-owned executors are host-routed: the model sees no codex__* schema')
   assert.deepEqual(adapter.status, {
     state: 'idle', run_sequence: 0, started_at: null, finished_at: null, elapsed: null,
     process_running: false, process_exited: false, terminal: null, exit_code: null,

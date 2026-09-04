@@ -30,6 +30,7 @@ export {
   type TransportOutcome,
 } from './app-server-transport.js'
 export * from './contract.js'
+export * from './controller.js'
 export * from './version.js'
 export {
   CODEX_CREDENTIAL_MARKER,

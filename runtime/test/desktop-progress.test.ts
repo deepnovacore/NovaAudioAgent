@@ -33,6 +33,9 @@ test('progress projects only correlated accepted evidence and never private comm
   assert.deepEqual(projectExecutorEvent(terminal, evidence)?.result, {
     delegate_id: 'd', executor: 'codex', outcome: 'ok', summary: 'Codex 已完成任务。', started_at: 1, ended_at: 3, changed_files: null,
   })
+  assert.deepEqual(projectExecutorEvent(terminal, evidence, channel => channel === 'codex' ? 'coding_agent' : null)?.result, {
+    delegate_id: 'd', executor: 'coding_agent', outcome: 'ok', summary: 'coding_agent 已完成任务。', started_at: 1, ended_at: 3, changed_files: null,
+  })
   assert.equal(projectExecutorEvent(terminal, {...evidence, claimedHandoff: () => undefined}), null)
   assert.equal(projectExecutorEvent({...terminal, ts: 0}, evidence), null)
   const frame = projectExecutorEvent(started, evidence)!.progress

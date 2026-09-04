@@ -196,35 +196,23 @@ test('wire names, reserved params, and readonly requirements are enforced', () =
   })]), ToolSchemaError)
 })
 
-test('agent executors fold into the three host tools while keeping their delegate bindings', () => {
+test('hidden executors fold into descriptor-driven host tools while keeping their delegate bindings', () => {
   const policy = handoffPolicySchema.parse({
     channel: 'codex', priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8,
   })
   const statusOp = {name: 'status', description: 'status', params: {type: 'object', properties: {}}, readonly: true}
   const runOp = {name: 'run', description: 'run', params: {type: 'object', properties: {work_order: {type: 'string'}}, required: ['work_order']}}
   const agent = executorManifestSchema.parse({
-    name: 'codex', display_name: 'Codex', policy, agent: {summary: '写代码、改项目'}, ops: [runOp, statusOp],
+    name: 'codex', display_name: 'Codex', model_visibility: 'hidden', policy, ops: [runOp, statusOp],
   })
-  // The v0.2 agent contract (spec 07): `dispatch` is rewritten into `run(work_order)`, so an agent
-  // manifest must declare that op with a required string `work_order`; anything less is refused.
-  for (const ops of [
-    [statusOp],
-    [{...runOp, params: {type: 'object', properties: {}}}, statusOp],
-    [{...runOp, params: {type: 'object', properties: {work_order: {type: 'string'}}}}, statusOp],
-    [{...runOp, params: {type: 'object', properties: {work_order: {type: 'number'}}, required: ['work_order']}}, statusOp],
-    [{...runOp, params: {
-      type: 'object', properties: {work_order: {type: 'string'}, mode: {type: 'string'}},
-      required: ['work_order', 'mode'],
-    }}, statusOp],
-  ]) {
-    assert.throws(() => compileToolSchema([executorManifestSchema.parse({...agent, ops})]), /needs run\(work_order\)/u, JSON.stringify(ops))
-  }
   const plain = executorManifestSchema.parse({
     name: 'sim', display_name: 'Sim', policy: handoffPolicySchema.parse({...policy, channel: 'sim'}),
     ops: [{...statusOp, name: 'peek'}],
   })
 
-  const compiled = compileToolSchema([agent, plain])
+  const compiled = compileToolSchema([agent, plain], {agentDescriptors: [{
+    name: 'codex', summary: '写代码、改项目', ownedChannels: ['codex'],
+  }]})
   const names = (schemas: readonly JsonValue[]): string[] =>
     schemas.map(schema => String(record(record(schema).function).name)).filter(name => !name.startsWith('update_'))
   assert.deepEqual(names(compiled.schemas), ['sim__peek', 'dispatch', 'cancel', 'confirm'], 'no codex__* schema reaches the model')
@@ -245,7 +233,7 @@ test('agent executors fold into the three host tools while keeping their delegat
   assert.match(String(dispatch.description), /codex: 写代码、改项目/u)
   assert.ok(Object.hasOwn(record(record(dispatch.parameters).properties), 'origin_ref'), 'dispatch carries the injected origin_ref')
 
-  // Without an agent manifest the host tools do not exist.
+  // Without a controller descriptor the host tools do not exist.
   const bare = compileToolSchema([plain])
   assert.deepEqual(names(bare.schemas), ['sim__peek'])
   assert.equal(bare.bindings.has('dispatch'), false)

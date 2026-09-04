@@ -11,10 +11,11 @@
  */
 
 import { z } from 'zod'
+import type {AgentDescriptor} from './agent-controller.js'
 import type { JsonValue } from './events.js'
 import type {ExecutorManifest, ExecutorRole, OpSpec} from './ports.js'
 import {stripLikePython} from './python-text.js'
-import {CONFIRM_TOOL_SPEC, cancelToolSpec, dispatchToolSpec, type AgentSummary, type HostToolSpec} from './work-tools.js'
+import {CONFIRM_TOOL_SPEC, cancelToolSpec, dispatchToolSpec, type HostToolSpec} from './work-tools.js'
 
 const WIRE_PART = /^[A-Za-z0-9_-]+$/u
 const MAX_WIRE_NAME = 64
@@ -42,6 +43,8 @@ export interface CompiledTools {
   readonly executor_roles: ReadonlyMap<string, readonly ExecutorRole[]>
   /** Agent-op wire names (spec 08): bound for the host's `dispatch` rewrite, never offered to or callable by the provider. */
   readonly hidden: ReadonlySet<string>
+  /** Exact descriptor projection that generated the public host-tool enum. */
+  readonly agent_descriptors: readonly Pick<AgentDescriptor, 'name' | 'summary' | 'ownedChannels'>[]
 }
 
 export class ToolSchemaError extends Error {
@@ -53,7 +56,7 @@ export class ToolSchemaError extends Error {
 
 export function compileToolSchema(
   manifests: readonly ExecutorManifest[],
-  options: {readonly includeMemoryRecall?: boolean} = {},
+  options: {readonly includeMemoryRecall?: boolean; readonly agentDescriptors?: readonly AgentDescriptor[]} = {},
 ): CompiledTools {
   const schemas: Readonly<Record<string, JsonValue>>[] = []
   const bindings = new Map<string, ToolBinding>()
@@ -90,7 +93,16 @@ export function compileToolSchema(
 
   const seen = new Set<string>()
   const hidden = new Set<string>()
-  const agents: AgentSummary[] = []
+  const descriptors = options.agentDescriptors ?? []
+  const agents: AgentDescriptor[] = []
+  const agentNames = new Set<string>()
+  for (const descriptor of descriptors) {
+    if (agentNames.has(descriptor.name)) {
+      throw new ToolSchemaError(`agent descriptor 名称重复：${descriptor.name}`)
+    }
+    agentNames.add(descriptor.name)
+    agents.push(descriptor)
+  }
   for (const manifest of manifests) {
     if (seen.has(manifest.name)) {
       throw new ToolSchemaError(`manifest 名称重复：${manifest.name}`)
@@ -100,28 +112,12 @@ export function compileToolSchema(
     if (!manifest.ops.some(op => op.readonly)) {
       throw new ToolSchemaError(`manifest '${manifest.name}' 至少需要一个 readonly op`)
     }
-    // Agent executors (spec 08) are host-routed: the model never sees `${name}__${op}` schemas, but the
-    // bindings stay so the service can rewrite `dispatch(executor, …)` into the executor's own `run`.
-    const agent = manifest.agent !== undefined
-    if (agent) {
-      // The v0.2 agent contract (spec 07 §manifest): that rewrite targets `run({work_order})`, so the
-      // manifest must promise exactly that op rather than the host assuming every agent is Codex-shaped.
-      const run = manifest.ops.find(op => op.name === 'run')
-      const properties = run === undefined ? undefined : run.params.properties
-      const workOrder = isJsonObject(properties) ? properties.work_order : undefined
-      const required = run?.params.required
-      if (!isJsonObject(workOrder) || workOrder.type !== 'string'
-        || !Array.isArray(required) || required.length !== 1 || required[0] !== 'work_order') {
-        throw new ToolSchemaError(`agent manifest '${manifest.name}' needs run(work_order)`)
-      }
-      agents.push({name: manifest.name, summary: manifest.agent!.summary})
-    }
     for (const op of manifest.ops) {
       const compiled = compileOp(manifest, op)
       if (bindings.has(compiled.wireName)) {
         throw new ToolSchemaError(`工具 wire name 重复：${compiled.wireName}`)
       }
-      if (agent) hidden.add(compiled.wireName)
+      if (manifest.model_visibility === 'hidden') hidden.add(compiled.wireName)
       else schemas.push(compiled.schema)
       bindings.set(compiled.wireName, compiled.binding)
     }
@@ -139,6 +135,11 @@ export function compileToolSchema(
     bindings,
     executor_roles: new Map(manifests.map(manifest => [manifest.name, manifest.roles])),
     hidden,
+    agent_descriptors: Object.freeze(descriptors.map(descriptor => Object.freeze({
+      name: descriptor.name,
+      summary: descriptor.summary,
+      ownedChannels: Object.freeze([...descriptor.ownedChannels]),
+    }))),
   }
 }
 

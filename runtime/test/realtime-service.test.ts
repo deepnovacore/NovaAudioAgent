@@ -20,6 +20,7 @@ import { VirtualClock } from '../src/clock.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
+  CODEX_AGENT_SUMMARY,
 } from '../src/executors/codex/contract.js'
 import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
@@ -668,8 +669,8 @@ function pipelineService(options: {
     display_name: 'Codex',
     roles: ['coding'],
     // A plain delegate by default so the acknowledgement / continuation tests drive `codex__run` directly;
-    // the agent shape (spec 08) reaches `run` only through the host `dispatch` tool.
-    ...(options.agent === true ? {agent: {summary: 'Codex 编程'}} : {}),
+    // a hidden Codex variant reaches `run` only through the host `dispatch` tool.
+    model_visibility: options.agent === true ? 'hidden' : 'direct',
     policy: {
       channel: 'codex',
       priority: 50,
@@ -700,6 +701,9 @@ function pipelineService(options: {
     ],
   })
   const clock = new VirtualClock()
+  const agentDescriptors = manifest.model_visibility === 'hidden'
+    ? [{name: 'codex', summary: CODEX_AGENT_SUMMARY, ownedChannels: ['codex']}]
+    : []
   const memory = new Memory({policies: [manifest.policy]})
   const executors = new Map([[manifest.name, {manifest}]])
   const actions: string[] = []
@@ -806,7 +810,7 @@ function pipelineService(options: {
         signal.addEventListener('abort', () => resolve(), {once: true})
       }),
     },
-    tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false}),
+    tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false, agentDescriptors}),
     session,
     bridge: new RealtimeRuntimeBridge({
       runtime: {
@@ -828,7 +832,7 @@ function pipelineService(options: {
           delegate_id: scripted.delegateId,
         }),
       },
-      tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false}),
+      tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false, agentDescriptors}),
       idFactory: nextId,
     }),
     ...(options.intake === undefined ? {} : {intake: options.intake}),
@@ -1940,7 +1944,7 @@ async function dispatchTurn(
   return service.toolCallAcceptances().find(snapshot => snapshot.call_id === `call-${responseId}`)!.acceptance
 }
 
-test('dispatch on an agent executor the intake does not coordinate is that executor run', async () => {
+test('dispatch on a Codex controller the intake does not coordinate is that controller run', async () => {
   const {service} = pipelineService({agent: true})
   await service.connect()
   assert.equal(service.providerSchemasForTest.some(schema => (
@@ -1958,7 +1962,7 @@ test('dispatch on an agent executor the intake does not coordinate is that execu
   await service.close()
 })
 
-test('a raw agent op from the provider is refused as unknown_tool while dispatch still runs it', async () => {
+test('a raw hidden Codex op from the provider is refused while dispatch still runs it', async () => {
   for (const [name, arguments_] of [
     ['codex__run', {work_order: 'build timer', origin_ref: 'conversation:1'}],
     ['codex__cancel', {work_id: 'w-1', origin_ref: 'conversation:1'}],

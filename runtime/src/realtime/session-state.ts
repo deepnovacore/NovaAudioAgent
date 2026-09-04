@@ -98,11 +98,12 @@ export interface ActiveExecutorContextData {
  */
 export function activeExecutorContextRecords(
   delegates: readonly (readonly [string, DelegateRecord])[],
+  agentNameForChannel: (channel: string) => string | null = () => null,
 ): readonly ActiveExecutorContextRecord[] {
   return delegates.map(([delegateId, record]) => Object.freeze({
     delegate_id: delegateId,
     host_state: Object.freeze({
-      channel: record.channel,
+      channel: agentNameForChannel(record.channel) ?? record.channel,
       state: record.state,
       elapsed_s: Math.floor(record.elapsed / ACTIVE_EXECUTOR_ELAPSED_BUCKET_S)
         * ACTIVE_EXECUTOR_ELAPSED_BUCKET_S,
@@ -123,8 +124,9 @@ export function activeExecutorContextRecords(
 /** Exact bounded structure visible to the provider and used for publication deduplication. */
 export function activeExecutorContextData(
   delegates: readonly (readonly [string, DelegateRecord])[],
+  agentNameForChannel: (channel: string) => string | null = () => null,
 ): ActiveExecutorContextData {
-  const records = activeExecutorContextRecords(delegates)
+  const records = activeExecutorContextRecords(delegates, agentNameForChannel)
   return Object.freeze({
     delegates: Object.freeze(records.slice(0, 3)),
     omitted_count: Math.max(0, records.length - 3),

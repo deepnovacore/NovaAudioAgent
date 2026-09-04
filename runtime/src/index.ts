@@ -1,5 +1,6 @@
 export * from './causal-runtime.js'
 export * from './assembly.js'
+export * from './agent-controller.js'
 export * from './calls.js'
 export * from './clock.js'
 export * from './executors/index.js'

@@ -124,6 +124,8 @@ export const opSpecSchema = z.object({
 /** Roles the host routes by. An executor is found by role, never by name. */
 export const executorRoleSchema = z.enum(['coding'])
 
+export const executorModelVisibilitySchema = z.enum(['direct', 'hidden'])
+
 export const executorManifestSchema = z.object({
   name: z.string().min(1),
   /** Human label for wire frames and bubbles. */
@@ -131,12 +133,8 @@ export const executorManifestSchema = z.object({
   roles: z.array(executorRoleSchema).default([]),
   /** The executor raises mid-run approvals; the host attaches its approval surface. */
   approvals: z.boolean().default(false),
-  /**
-   * Present on agent executors (spec 08): the voice model reaches them only through the host
-   * `dispatch` / `cancel` / `confirm` tools, never as `${name}__${op}`. `summary` is one description
-   * line per executor in the `dispatch` tool; ops here are host-routed and model-invisible.
-   */
-  agent: z.object({summary: z.string().min(1).max(200)}).strict().optional(),
+  /** Hidden executors retain runtime bindings but their raw operations never reach the provider. */
+  model_visibility: executorModelVisibilitySchema.default('direct'),
   ops: z.array(opSpecSchema),
   policy: handoffPolicySchema,
 }).strict().superRefine((value, context) => {
@@ -148,3 +146,4 @@ export const executorManifestSchema = z.object({
 export type OpSpec = z.infer<typeof opSpecSchema>
 export type ExecutorManifest = z.infer<typeof executorManifestSchema>
 export type ExecutorRole = z.infer<typeof executorRoleSchema>
+export type ExecutorModelVisibility = z.infer<typeof executorModelVisibilitySchema>

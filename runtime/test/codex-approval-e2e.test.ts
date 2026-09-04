@@ -6,6 +6,7 @@ import {WebSocket, type RawData} from 'ws'
 
 import {VirtualClock, type Clock} from '../src/clock.js'
 import {CODEX_PROJECT_APPROVAL_MANIFEST} from '../src/executors/codex/contract.js'
+import {CODEX_AGENT_DESCRIPTOR} from '../src/executors/codex/controller.js'
 import {OwnedCodexAppServerTransport} from '../src/executors/codex/app-server-transport.js'
 import {DesktopRealtime} from '../src/desktop-realtime.js'
 import {
@@ -132,7 +133,7 @@ function realtimeHarness(
     CODEX_PROJECT_APPROVAL_MANIFEST.name,
     {manifest: CODEX_PROJECT_APPROVAL_MANIFEST},
   ]])
-  const tools = compileToolSchema([CODEX_PROJECT_APPROVAL_MANIFEST])
+  const tools = compileToolSchema([CODEX_PROJECT_APPROVAL_MANIFEST], {agentDescriptors: [CODEX_AGENT_DESCRIPTOR]})
   let nextId = 0
   const idFactory = (): string => `e2e-${++nextId}`
   const playback = new PlaybackRegistry({

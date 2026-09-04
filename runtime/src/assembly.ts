@@ -21,6 +21,7 @@ import { GatewayCompressor, GatewaySurrogate } from './model-adapters.js'
 import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model-gateway.js'
 import { classifySurrogateVerdict, runSurrogateCall } from './calls.js'
 import { CamAdapter } from './executors/camera.js'
+import {CODEX_AGENT_DESCRIPTOR} from './executors/codex/controller.js'
 import { DisabledFrameSource } from './executors/frame-source.js'
 import {
   SearchAdapter,
@@ -36,6 +37,7 @@ import {
 } from './executors/watcher.js'
 import { MediaStore } from './media-store.js'
 import type { ExecutorManifest } from './ports.js'
+import type {AgentDescriptor} from './agent-controller.js'
 import { stripLikePython } from './python-text.js'
 import { buildSimulator, simManifestRegistry } from './sims.js'
 import { compileToolSchema, type CompiledTools } from './tool-schema.js'
@@ -64,6 +66,8 @@ export interface AssemblyOptions {
   readonly frameSource?: FrameSource
   readonly mediaStore?: MediaStore
   readonly telemetry?: RealtimeTelemetry
+  /** Public host-agent descriptors. Codex is registered by the production composition when enabled. */
+  readonly agentDescriptors?: readonly AgentDescriptor[]
 }
 
 export interface Assembly {
@@ -220,7 +224,11 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const configuredExecutors = resolveExecutors(settings, options.executors ?? [])
   const executors = [search, camera, watch, guard, ...configuredExecutors]
   const manifests = executors.map(adapter => adapter.manifest)
-  const tools = compileToolSchema(manifests, {includeMemoryRecall: true})
+  const agentDescriptors = [
+    ...(manifests.some(manifest => manifest.name === 'codex') ? [CODEX_AGENT_DESCRIPTOR] : []),
+    ...(options.agentDescriptors ?? []),
+  ]
+  const tools = compileToolSchema(manifests, {includeMemoryRecall: true, agentDescriptors})
 
   const surrogate = new GatewaySurrogate({
     gateway,

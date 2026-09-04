@@ -14,6 +14,7 @@ import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import { VirtualClock } from '../src/clock.js'
 import {CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
+import {CODEX_AGENT_DESCRIPTOR} from '../src/executors/codex/controller.js'
 import type { JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema, type ExecutorManifest } from '../src/ports.js'
@@ -225,7 +226,7 @@ test('every bridge scenario matches the Python-exported golden', async () => {
   assert.deepEqual(mismatched, [], 'bridge behavior differs from the oracle')
 })
 
-test('agent executor ops stay admissible as bindings behind the host tools (spec 08)', () => {
+test('hidden controller-owned executor ops stay admissible as host bindings', () => {
   // The voice model only sees `dispatch` / `cancel` / `confirm`; the service rewrites a `dispatch`
   // into `${executor}__run` and hands it here, so the binding must admit like any delegate call.
   const manifest = CODEX_PROJECT_MANIFEST
@@ -237,7 +238,7 @@ test('agent executor ops stay admissible as bindings behind the host tools (spec
     {dispatch_results: Array.from({length: 3}, (_, index) => ({accepted: true, delegate_id: `delegate-${index + 1}`}))},
   )
   let identifier = 0
-  const tools = compileToolSchema([manifest])
+  const tools = compileToolSchema([manifest], {agentDescriptors: [CODEX_AGENT_DESCRIPTOR]})
   const bridge = new RealtimeRuntimeBridge({runtime, tools, idFactory: () => `host-${++identifier}`, queryDigestKey: DIGEST_KEY})
   assert.equal(tools.schemas.some(schema => String((schema.function as {name: string}).name).startsWith('codex__')), false)
   for (const op of ['run', 'steer', 'status', 'cancel']) assert.equal(tools.bindings.get(`codex__${op}`)?.kind, 'delegate', op)

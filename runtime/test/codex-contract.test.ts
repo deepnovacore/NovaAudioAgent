@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
 import {test} from 'node:test'
 import {
-  CODEX_AGENT_SUMMARY,
   CODEX_BASE_MANIFEST,
   CODEX_LIVE_MANIFEST,
   CODEX_PROJECT_APPROVAL_MANIFEST,
@@ -17,6 +16,7 @@ import {
   sanitizePublicPreflightCode,
   validateCodexRequest,
 } from '../src/executors/codex/contract.js'
+import {CODEX_AGENT_DESCRIPTOR} from '../src/executors/codex/controller.js'
 import {compileToolSchema} from '../src/tool-schema.js'
 import * as runtimeIndex from '../src/index.js'
 
@@ -89,7 +89,7 @@ test('base, live, and project manifests pin exact immutable public operations an
     })
     assert.equal(Object.isFrozen(manifest), true)
     assert.equal(Object.isFrozen(manifest.ops), true)
-    assert.equal(manifest.agent?.summary, CODEX_AGENT_SUMMARY, 'every variant is an agent executor (spec 08)')
+    assert.equal(manifest.model_visibility, 'hidden', 'every Codex variant is host-controlled')
   }
   assert.equal(INTERNAL_CODEX_RUN_DEADLINE, 540)
 })
@@ -130,7 +130,9 @@ test('project manifests carry approvals as a flag and pin run/steer/cancel param
   assert.deepEqual(run?.sensitive_params, ['work_order'])
   assert.deepEqual(steer?.sensitive_params, ['instruction'])
   assert.deepEqual(cancel?.sensitive_params, [])
-  assert.equal(compileToolSchema([CODEX_PROJECT_APPROVAL_MANIFEST]).bindings.has('codex__confirm_codex_approval'), false)
+  assert.equal(compileToolSchema(
+    [CODEX_PROJECT_APPROVAL_MANIFEST], {agentDescriptors: [CODEX_AGENT_DESCRIPTOR]},
+  ).bindings.has('codex__confirm_codex_approval'), false)
 })
 
 test('base and live request validators use primitive strings, Python strip, and code points', () => {

@@ -190,15 +190,17 @@ test('ordinary adapter projects a valid app-server run into bounded public evide
   })
 })
 
-test('ordinary manifest is an agent executor: bindings stay, the model sees only the host tools', () => {
-  // This fails if the adapter advertises a project/live op, loses its `agent` summary, or the compiler
-  // still emits `codex__*` schemas for an agent executor (spec 08 folds those into `dispatch`).
+test('hidden Codex bindings stay while the model sees only descriptor-driven host tools', () => {
+  // This fails if the adapter advertises a project/live op, or the compiler still emits
+  // `codex__*` schemas for a hidden controller-owned executor (spec 08 folds those into `dispatch`).
   const adapter: ExecutorAdapter = new CodexAdapter(new ScriptedTransport())
   assert.equal(adapter.manifest, CODEX_MANIFEST)
   assert.equal(CODEX_MANIFEST, CODEX_BASE_MANIFEST)
   assert.deepEqual(CODEX_MANIFEST.ops.map(op => op.name), ['run', 'status'])
-  assert.deepEqual(CODEX_MANIFEST.agent, {summary: CODEX_AGENT_SUMMARY})
-  const compiled = compileToolSchema([adapter.manifest])
+  assert.equal(CODEX_MANIFEST.model_visibility, 'hidden')
+  const compiled = compileToolSchema([adapter.manifest], {agentDescriptors: [{
+    name: 'codex', summary: CODEX_AGENT_SUMMARY, ownedChannels: ['codex'],
+  }]})
   assert.deepEqual(
     [...compiled.bindings.keys()].slice(-5),
     ['codex__run', 'codex__status', 'dispatch', 'cancel', 'confirm'],

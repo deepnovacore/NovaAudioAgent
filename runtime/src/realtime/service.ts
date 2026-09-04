@@ -31,7 +31,13 @@ import {
   type IntakeOptions,
   type IntakeSession,
 } from '../executors/coding/intake.js'
-import type {AgentExecutor} from '../coding-executor.js'
+import {
+  createAgentControllerRegistry,
+  type AgentActionResult,
+  type AgentController,
+  type AgentControllerRegistry,
+} from '../agent-controller.js'
+import {CodexAgentController} from '../executors/codex/controller.js'
 import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
 import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { Clock } from '../clock.js'
@@ -112,6 +118,45 @@ import {UserOriginBindingLedger} from './user-origin-binding.js'
 const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
 const UNKNOWN_CONFIRMATION_TOOL_RESULT = JSON.stringify({code: 'unknown_confirmation', state: 'refused'})
 const CODEX_APPROVAL_CLARIFICATION = '请明确说同意或拒绝。'
+
+function sameAgentDescriptors(
+  left: readonly {readonly name: string; readonly summary: string; readonly ownedChannels: readonly string[]}[],
+  right: readonly {readonly name: string; readonly summary: string; readonly ownedChannels: readonly string[]}[],
+): boolean {
+  return left.length === right.length && left.every((descriptor, index) => {
+    const other = right[index]
+    return other !== undefined
+      && descriptor.name === other.name
+      && descriptor.summary === other.summary
+      && descriptor.ownedChannels.length === other.ownedChannels.length
+      && descriptor.ownedChannels.every((channel, channelIndex) => channel === other.ownedChannels[channelIndex])
+  })
+}
+
+function cancelResultMessage(result: AgentActionResult): string | null {
+  if (result.code === 'not_running') return renderCancelResult({code: 'not_running'})
+  if (result.code === 'cancelled') {
+    const work = result.detail.work
+    if (isRunningWork(work)) return renderCancelResult({code: 'cancelled', work})
+    return null
+  }
+  if (result.code === 'ambiguous_work') {
+    const running = result.detail.running
+    if (Array.isArray(running) && running.every(isRunningWork)) {
+      return renderCancelResult({code: 'ambiguous_work', running})
+    }
+  }
+  return null
+}
+
+function isRunningWork(value: JsonValue | undefined): value is {readonly work_id: string; readonly project: string; readonly title: string} {
+  return typeof value === 'object'
+    && value !== null
+    && !Array.isArray(value)
+    && typeof value.work_id === 'string'
+    && typeof value.project === 'string'
+    && typeof value.title === 'string'
+}
 
 type ProviderReconnectReason =
   | 'project_confirmation_ui_retry'
@@ -229,8 +274,7 @@ export interface ExecutorManifestLike {
   readonly display_name?: string | undefined
   readonly roles: readonly ExecutorRole[]
   readonly ops: readonly {readonly name: string; readonly sync_result?: boolean}[]
-  /** Present on an agent executor (spec 08): reached through `dispatch` / `cancel`, never `${name}__${op}`. */
-  readonly agent?: {readonly summary: string} | undefined
+  readonly model_visibility?: 'direct' | 'hidden' | undefined
   readonly policy: {
     readonly priority: number
     readonly suggest?: boolean
@@ -292,8 +336,10 @@ export interface RealtimeServiceOptions {
     IntakeOptions,
     'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'dispatch' | 'steer' | 'cancel' | 'record'
   >
-  /** The coding executor's `cancel` port (spec 08); absent → `cancel` refuses `unsupported_tool`. */
-  readonly agentExecutor?: Pick<AgentExecutor, 'cancel'>
+  /** The coding executor's private cancellation port; CodexAgentController owns its use. */
+  readonly agentExecutor?: Pick<import('../coding-executor.js').AgentExecutor, 'cancel'>
+  /** Additional host-owned controllers. Codex is installed automatically for a hidden Codex manifest. */
+  readonly agentControllers?: readonly AgentController[]
   readonly provider: ServiceProvider
   readonly runtime: ServiceRuntime
   readonly tools: CompiledTools
@@ -370,8 +416,9 @@ export class RealtimeService {
   readonly #executorApproval: ExecutorApprovalController | undefined
   /** The coding-role executor's channel and label, resolved once from the registered manifests. */
   readonly #coding: CodingChannel | null
-  readonly #agentExecutor: Pick<AgentExecutor, 'cancel'> | undefined
-  readonly #intakeModels: IntakeOptions['models'] | undefined
+  readonly #agentRegistry: AgentControllerRegistry
+  /** Public agent name -> host controller; never inferred from runtime manifest metadata. */
+  readonly #agentControllers: ReadonlyMap<string, AgentController>
   readonly #commitProjectOperation:
     | ((operation: ConfirmedProjectOperation) => Promise<{
       readonly accepted: boolean
@@ -618,8 +665,22 @@ export class RealtimeService {
         break
       }
     }
-    this.#agentExecutor = options.agentExecutor
-    this.#intakeModels = options.intake?.models
+    const controllers = [...(options.agentControllers ?? [])]
+    if (options.runtime.executors.get('codex')?.manifest.model_visibility === 'hidden') {
+      controllers.push(new CodexAgentController({
+        ...(this.#intake === undefined ? {} : {intake: this.#intake}),
+        ...(options.agentExecutor === undefined ? {} : {executor: options.agentExecutor}),
+        resolveCancelTarget: options.intake?.models.resolveCancelTarget ?? (() => Promise.resolve(null)),
+      }))
+    }
+    this.#agentRegistry = createAgentControllerRegistry({
+      controllers,
+      manifests: [...options.runtime.executors.values()].map(adapter => adapter.manifest),
+    })
+    if (!sameAgentDescriptors(this.#agentRegistry.descriptors, options.tools.agent_descriptors)) {
+      throw new TypeError('agent controller registry does not match compiled tool descriptors')
+    }
+    this.#agentControllers = this.#agentRegistry.controllers
     this.#commitProjectOperation = options.commitProjectOperation
     this.#onProjectView = options.onProjectView
     this.#projectViewProvider = options.projectViewProvider
@@ -644,6 +705,7 @@ export class RealtimeService {
 
   get intakeSession(): Readonly<IntakeSession> | null { return this.#intake?.view ?? null }
   async settleIntakeForTest(): Promise<void> { await this.#intake?.settled() }
+  agentNameForChannel(channel: string): string | null { return this.#agentRegistry.agentNameForChannel(channel) }
 
   onProjectWorkspaceChanged(workspaceId: string | null): void {
     if (this.#intakeWorkspaceId !== undefined && this.#intakeWorkspaceId !== workspaceId
@@ -3857,19 +3919,23 @@ export class RealtimeService {
     }
   }
 
-  /** The `executor` argument names a registered agent executor (manifest has `agent`), or nothing. */
+  /** The `executor` argument names a registered host controller, or nothing. */
   #agentExecutorName(value: JsonValue | undefined): string | null {
-    return typeof value === 'string' && this.#runtime.executors.get(value)?.manifest.agent !== undefined ? value : null
+    return typeof value === 'string' && this.#agentControllers.has(value) ? value : null
   }
 
   /** Whether `dispatch`/`cancel` on this executor goes through the coding intake coordinator. */
   #intakeCoordinates(executor: string): boolean {
-    return this.#intake !== undefined && this.#coding !== null && executor === this.#coding.channel
+    const controller = this.#agentControllers.get(executor)
+    return this.#intake !== undefined
+      && this.#coding !== null
+      && controller instanceof CodexAgentController
+      && controller.descriptor.ownedChannels.includes(this.#coding.channel)
   }
 
   /**
-   * `dispatch` on an agent executor the intake does not coordinate is that executor's own `run`,
-   * admitted like any delegate call (the `${executor}__run` binding is compiled for every agent).
+   * A Codex variant without project intake preserves its existing direct `run` behavior. The raw
+   * binding is still hidden from the provider; only this host rewrite can reach it.
    */
   #directDispatch(event: ToolCallReady): ToolCallReady | null {
     if (event.name !== DISPATCH_TOOL) return null
@@ -3887,9 +3953,8 @@ export class RealtimeService {
   }
 
   /**
-   * The host tools (spec 08). `dispatch` on the coding executor opens the intake, which decides
-   * project / session / questions itself; `cancel` is answered synchronously from the executor's
-   * run slots; a `confirm` that reached here names no pending confirmation (spec 08 `unknown_confirmation`).
+   * The host tools. A controller receives the fenced public request and returns structured facts;
+   * RealtimeService alone maps those facts to provider-facing result language.
    */
   async #interceptHost(event: ToolCallReady, originRef: string | null): Promise<ToolAcceptance | null> {
     if (event.name === CONFIRM_TOOL) {
@@ -3905,10 +3970,7 @@ export class RealtimeService {
     if (executor === null || !instructionValid) {
       return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
     }
-    if (event.name === CANCEL_TOOL && (this.#agentExecutor === undefined || executor !== this.#coding?.channel)) {
-      return this.#refusalAcceptance(event, 'unsupported_tool', '{"code":"unsupported_tool"}')
-    }
-    // A valid `dispatch` on a non-coordinated agent never gets here: `#directDispatch` rewrote it.
+    // A valid dispatch on a non-coordinated Codex variant was rewritten above.
     if (event.name === DISPATCH_TOOL && (this.#intake === undefined || !this.#intakeCoordinates(executor))) return null
     // Both act on the user's behalf, so both need the current user turn as origin: a spontaneous
     // `cancel` would stop work nobody asked to stop.
@@ -3916,34 +3978,34 @@ export class RealtimeService {
     if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref) {
       return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
     }
-    if (event.name === CANCEL_TOOL) {
-      const models = this.#intakeModels
-      // The >1 case awaits a model call; a user turn in that gap (a correction, a new request) makes
-      // the resolved target stale, and a stale cancel must stop nothing (same rule as the intake path).
-      const revision = this.session.userInputRevision
-      const localOnsetRevision = this.#localSpeechOnsetRevision
-      const result = await this.#agentExecutor!.cancel(instruction ?? undefined, {
-        resolveCancelTarget: models === undefined
-          ? () => Promise.resolve(null)
-          : (target, running) => models.resolveCancelTarget(target, running),
-        stillWanted: () => this.session.sessionEpoch === event.session_epoch
-          && this.session.userInputRevision === revision
-          && this.#localSpeechOnsetRevision === localOnsetRevision,
+    const controller = this.#agentControllers.get(executor)
+    if (controller === undefined) return this.#refusalAcceptance(event, 'unsupported_tool', '{"code":"unsupported_tool"}')
+    // A user turn that supersedes an async controller operation makes its result informational only;
+    // the controller must re-check this fence before it changes executor state.
+    const revision = this.session.userInputRevision
+    const localOnsetRevision = this.#localSpeechOnsetRevision
+    const fence = (): boolean => this.session.sessionEpoch === event.session_epoch
+      && this.session.userInputRevision === revision
+      && this.#localSpeechOnsetRevision === localOnsetRevision
+    const result = event.name === DISPATCH_TOOL
+      ? await controller.dispatch({
+        instruction: instruction!, originalUserText: user.text, origin_ref: user.origin_ref,
+        sessionEpoch: event.session_epoch, acceptedUserInputRevision: revision, stillWanted: fence,
       })
-      const acceptance = this.#refusalAcceptance(event, result.code, JSON.stringify({...result, message: renderCancelResult(result)}))
-      return {...acceptance, accepted: true, inline_fulfilled: true}
-    }
-    const intake = this.#intake!
-    const code = intake.open(
-      {work_order: instruction!, project: null, session: 'latest'},
-      user.text,
-      user.origin_ref,
-      String(event.session_epoch),
-    )
-    const result = this.#refusalAcceptance(event, code, JSON.stringify({
-      code, state: intake.view?.state, message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
-    }))
-    return {...result, accepted: true, inline_fulfilled: true}
+      : await controller.cancel({
+        ...(instruction === null ? {} : {instruction}), originalUserText: user.text, origin_ref: user.origin_ref,
+        sessionEpoch: event.session_epoch, acceptedUserInputRevision: revision, stillWanted: fence,
+      })
+    const acceptance = this.#refusalAcceptance(event, result.code, this.#agentActionContent(result))
+    return result.accepted ? {...acceptance, accepted: true, inline_fulfilled: true} : acceptance
+  }
+
+  #agentActionContent(result: AgentActionResult): string {
+    const detail = result.detail
+    const message = result.code === 'intake_opened' || result.code === 'intake_in_progress'
+      ? '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。'
+      : cancelResultMessage(result)
+    return JSON.stringify({...detail, code: result.code, ...(message === null ? {} : {message})})
   }
 
   #recordToolAdmission(input: {
@@ -3988,7 +4050,10 @@ export class RealtimeService {
    */
   #publishExecutorState(): void {
     const delegates = this.session.snapshot().active_delegates
-    const fingerprint = canonicalJson(activeExecutorContextData(delegates))
+    const fingerprint = canonicalJson(activeExecutorContextData(
+      delegates,
+      channel => this.#agentRegistry.agentNameForChannel(channel),
+    ))
     if (fingerprint !== this.#activeWorkFingerprint) {
       this.#activeWorkFingerprint = fingerprint
       try {

@@ -161,9 +161,9 @@ class IdleProvider implements RealtimeProvider {
   close(): Promise<void> { return Promise.resolve() }
 }
 
-test('connected realtime provider reaches the project Codex agent only through host work tools', async () => {
-  // This fails if a `codex__*` schema leaks to the model (spec 08: agent executors are host-routed)
-  // or the host work tools stop being declared for an agent executor.
+test('connected realtime provider reaches the project Codex controller only through host work tools', async () => {
+  // This fails if a `codex__*` schema leaks to the model (spec 08: hidden executors are host-routed)
+  // or the host work tools stop being declared for the controller descriptor.
   const adapter = new ProjectCodexAdapter({} as never)
   const core = buildAssembly({
     settings: settingsSchema.parse({executors: ['codex']}),

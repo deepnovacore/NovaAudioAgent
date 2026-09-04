@@ -53,13 +53,13 @@ function executeConfirmed(
   }))
 }
 
-test('project manifest exposes run, steer, status, cancel with sensitivity and an agent summary', () => {
+test('project manifest exposes run, steer, status, cancel with sensitivity and hidden visibility', () => {
   const adapter = new ProjectCodexAdapter({} as never)
   assert.equal(adapter.manifest, CODEX_PROJECT_MANIFEST)
   assert.deepEqual(adapter.manifest.ops.map(op => op.name), ['run', 'steer', 'status', 'cancel'])
   assert.deepEqual(adapter.manifest.ops[0]?.sensitive_params, ['work_order'])
   assert.deepEqual(adapter.manifest.ops[1]?.sensitive_params, ['instruction'])
-  assert.ok(adapter.manifest.agent, 'agent executors carry a summary for the host dispatch tool')
+  assert.equal(adapter.manifest.model_visibility, 'hidden', 'Codex raw tools stay host-controlled')
 })
 
 test('initialize publishes the pre-existing active project with its roster using only the committed view', async () => {

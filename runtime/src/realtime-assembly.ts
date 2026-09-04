@@ -629,6 +629,7 @@ export class RealtimeAssembly {
   ): Promise<void> {
     const activeExecutorContext = renderActiveExecutorContext(
       this.session.snapshot().active_delegates,
+      channel => this.service.agentNameForChannel(channel),
     )
     if (
       view === null

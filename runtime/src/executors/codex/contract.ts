@@ -133,7 +133,7 @@ function manifest(ops: readonly OpSpec[], approvals = false): ExecutorManifest {
     display_name: 'Codex',
     roles: ['coding'],
     approvals,
-    agent: {summary: CODEX_AGENT_SUMMARY},
+    model_visibility: 'hidden',
     ops,
     policy: CODEX_POLICY,
   }))

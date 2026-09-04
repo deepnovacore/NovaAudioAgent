@@ -1,12 +1,13 @@
 /**
- * The three host tools the voice model uses for agent executors (spec 08).
+ * The three host tools the voice model uses for registered agent controllers (spec 08).
  *
- * `dispatch` / `cancel` are one global `host` binding each; the executor names come from every
- * manifest carrying `agent` and the per-executor summaries are description lines, because a realtime
+ * `dispatch` / `cancel` are one global `host` binding each; the public agent names come from host
+ * controller descriptors and the per-agent summaries are description lines, because a realtime
  * function schema cannot be assumed to support per-enum-value branches. `confirm` is the one yes/no
  * tool for project proposals and executor approvals; the `id` selects the FSM.
  */
 import type {JsonValue} from './events.js'
+import type {AgentDescriptor} from './agent-controller.js'
 import {stripLikePython} from './python-text.js'
 
 export const DISPATCH_TOOL = 'dispatch'
@@ -27,11 +28,6 @@ export function deriveSessionTitle(objective: string): string {
   return [...first].slice(0, MAX_SESSION_TITLE_CODE_POINTS).join('')
 }
 
-export interface AgentSummary {
-  readonly name: string
-  readonly summary: string
-}
-
 export interface HostToolSpec {
   readonly name: string
   readonly description: string
@@ -42,11 +38,11 @@ export interface HostToolSpec {
 
 const INSTRUCTION = {type: 'string', minLength: 1, maxLength: 4000} as const
 
-function executorLines(agents: readonly AgentSummary[]): string {
+function executorLines(agents: readonly AgentDescriptor[]): string {
   return agents.map(agent => `${agent.name}: ${agent.summary}`).join('；')
 }
 
-export function dispatchToolSpec(agents: readonly AgentSummary[]): HostToolSpec {
+export function dispatchToolSpec(agents: readonly AgentDescriptor[]): HostToolSpec {
   return {
     name: DISPATCH_TOOL,
     description: `把用户的自然语言需求交给一个 agent 执行器；由宿主判断项目、会话、是否追问。executor 可选：${executorLines(agents)}`,
@@ -63,7 +59,7 @@ export function dispatchToolSpec(agents: readonly AgentSummary[]): HostToolSpec 
   }
 }
 
-export function cancelToolSpec(agents: readonly AgentSummary[]): HostToolSpec {
+export function cancelToolSpec(agents: readonly AgentDescriptor[]): HostToolSpec {
   return {
     name: CANCEL_TOOL,
     description: `停止一个正在执行的任务；用户明确要求停止或取消时调用。executor 可选：${executorLines(agents)}`,
