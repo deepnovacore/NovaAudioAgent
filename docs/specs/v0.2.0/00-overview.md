@@ -182,8 +182,8 @@ From [`docs/glossary.md`](../../glossary.md):
 12. Secrets are absent from logs and configuration errors.
 13. Speaking priority is bound to the triggering event.
 
-Intake state, capability registry, and knowledge recalls must respect these. In
-particular, intake must not write `intent` / `goal` by a side channel, and
+Revision-bound intake slots are the sole planning state; no parallel planning
+state exists. Capability registry and knowledge recalls must respect this, and
 knowledge chunks remain `untrusted_external` evidence.
 
 ## Verification posture

@@ -212,6 +212,10 @@ type AgentActionResult =
   | { readonly code: 'intake_opened' | 'intake_in_progress'; readonly accepted: true; readonly detail: { readonly state: 'open' | 'clarifying' | 'ready_to_plan' | 'planning' | 'readback' | 'committing' | 'closed' } }
   | { readonly code: 'cancelled'; readonly accepted: true; readonly detail: { readonly work: { readonly work_id: string; readonly project: string; readonly title: string } } }
   | { readonly code: 'not_running'; readonly accepted: true; readonly detail: {} }
+  | { readonly code: 'busy'; readonly accepted: true; readonly detail: {} }
+  | { readonly code: 'clarification_required'; readonly accepted: true; readonly detail: {} }
+  | { readonly code: 'assessment_unavailable'; readonly accepted: false; readonly detail: {} }
+  | { readonly code: 'monitor_stop_requested'; readonly accepted: true; readonly detail: { readonly channel: 'watch' | 'guard'; readonly op: 'stop' } }
   | { readonly code: 'ambiguous_work'; readonly accepted: true; readonly detail: { readonly running: readonly { readonly work_id: string; readonly project: string; readonly title: string }[] } }
   | { readonly code: 'unsupported_tool' | 'superseded' | 'runtime_rejected'; readonly accepted: false; readonly detail: {} }
 
@@ -241,7 +245,9 @@ dispatch port rechecks it immediately before dispatch. `origin_ref`,
 turn; missing, stale, or mismatched values reject the request. The result is a
 closed, strict discriminated union: controllers return codes and typed detail
 only, never `text`, arbitrary JSON, or user-facing prose. The service projects
-accepted and rejected codes into user wording.
+accepted and rejected codes into user wording. For Vision's
+`clarification_required`, the host maps the code to one fixed question;
+controller output cannot provide or alter that question.
 
 The registry is closed at assembly: agent names and owned channels are unique;
 every `ownedChannels` entry names one registered executor manifest; every hidden

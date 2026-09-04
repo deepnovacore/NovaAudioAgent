@@ -171,24 +171,29 @@ removes `mcp__nova_camera__snapshot`, the Vision controller, and its hidden
 `watch` / `guard` channels together.
 
 Monitoring is policy-driven: the host owns sampling cadence, wake priority,
-side-VLM objective limits, and delivery mode. Watch/guard cannot alter those
+side-VLM invocation policy, and delivery mode. Watch/guard cannot alter those
 policies through model output, and both remain behind the same camera-module
 assembly gate.
 
 The Camera MCP is deliberately in-process and in-memory. It supports exactly
-one image result per snapshot. The boundary validates canonical base64 (no
-alternate textual encodings or hidden second image) and the decoded payload is
-at most 5 MiB. The validated bytes are written to `MediaStore`, which returns
-the authoritative digest and `evidence_ref`; raw bytes, paths, and arbitrary
-MCP result objects do not cross into Qwen.
+one image result per snapshot, with supported MIME types limited to
+`image/jpeg`, `image/png`, and `image/webp`. The boundary validates canonical
+base64 (no alternate textual encodings, malformed padding, or hidden second
+image) and the decoded payload is at most 5 MiB. The validated bytes are
+written to `MediaStore`, which returns the authoritative digest and
+`evidence_ref`; raw bytes, paths, and arbitrary MCP result objects do not cross
+into Qwen.
 
-The `watch_model` side VLM receives that one stored image plus a self-contained
-objective of at most 400 characters. Qwen receives only the resulting
-`observation`, `captured_at`, image `dimensions`, and `evidence_ref`. If the
-side VLM cannot produce a bounded description, the operation fails with
-`vision_description_unavailable`. Qwen's original-image capability remains
-`false` pending a separately verified future provider; an image ref in the
-Qwen context is evidence metadata, not an implicit image input.
+The `watch_model` side VLM receives that one stored image plus the host-provided
+objective; the objective input is not subject to the observation output bound.
+It must produce strict JSON with exactly one `observation` string, whose
+length is at most 400 characters. JSON parse failure, extra or missing fields,
+an oversized observation, or model refusal fails with
+`vision_description_unavailable`. Qwen receives only the resulting
+`observation`, `captured_at`, image `dimensions`, and `evidence_ref`. Qwen's
+original-image capability remains `false` pending a separately verified future
+provider; an image ref in the Qwen context is evidence metadata, not an
+implicit image input.
 
 ### Precedence
 
@@ -420,12 +425,16 @@ No MCP SDK in the sandboxed renderer.
       approval FSM created and no dispatch/intake route. A valid call preserves
       the exact origin and revision; ASR semantic mishearing remains outside
       this provenance fence.
-- [ ] Camera M1.5c: in-process/in-memory MCP accepts exactly one canonical
-      base64 image with decoded bytes ≤5 MiB, stores bytes in `MediaStore` and
-      returns its digest/ref; `watch_model` objective ≤400 chars; Qwen receives
-      only observation, captured_at, dimensions, evidence_ref; unavailable VLM
-      description returns `vision_description_unavailable`; Qwen original-image
-      capability is false until a future provider is verified.
+- [ ] Camera M1.5c: in-process/in-memory MCP accepts exactly one image with
+      supported MIME (`image/jpeg`, `image/png`, or `image/webp`), canonical
+      base64, and decoded bytes ≤5 MiB; it stores bytes in `MediaStore` and
+      returns its digest/ref. `watch_model` must return strict JSON with only
+      `observation` ≤400 chars; malformed JSON, extra/missing fields, an
+      oversized observation, or model refusal returns
+      `vision_description_unavailable`. The input objective is not bounded by
+      that output limit. Qwen receives only observation, captured_at,
+      dimensions, evidence_ref; Qwen original-image capability is false until
+      a future provider is verified.
 - [ ] Disabled search / camera / coding / knowledge → tools absent from compiled
       schema and Qwen instructions.
 - [ ] Fake MCP search server → `SearchAdapter` digests match golden URL rules;
