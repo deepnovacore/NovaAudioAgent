@@ -146,13 +146,26 @@ concurrent approvals, and Windows acceptance.
 | Check | Evidence |
 |---|---|
 | Root `npm run check` | Green: typecheck, lint, environment contract, Node parity (195 files / 304 occurrences), executor boundary (15 allowlisted) |
-| Runtime full suite | 2167 total, 2162 passed, 0 failed, 5 skipped |
+| Runtime full suite | 2174 total, 2169 passed, 0 failed, 5 skipped |
 | Runtime fixtures | 19 scenarios |
 | Desktop full suite | 810 total, 807 passed, 0 failed, 3 Windows skips |
 | CLI suite | 18/18 passed |
 
 These results cover deterministic validation only. `M1.5c/live/Windows acceptance
 remains pending`, and the overall M1.5c release gate is not complete.
+
+The final whole-branch review closed three Important findings: Camera snapshot
+`sync_result` now returns the same provider function output in the same call,
+with failures preserved exactly as `vision_description_unavailable` and no late
+fact; a late camera-permission grant is fenced synchronously before `armed`,
+snapshot, side-VLM, and hit, while an unbound raw hidden start fails closed; and
+the production camera gate is now `env → Settings → assembly`, with registry
+precedence explicitly deferred to the future M3 implementation. These closures
+do not change the live acceptance boundary above.
+
+Desktop `EPERM` / `SIGABRT` observations inside the sandbox were environmental;
+the exact desktop result was reproduced successfully outside the sandbox. This
+does not constitute real voice, macOS camera, Windows, or Search-flip completion.
 
 M1.5c live acceptance is still open: rerun the applicable 08 voice rows after
 the surface change, including real voice `dispatch` / `cancel` / `confirm`,

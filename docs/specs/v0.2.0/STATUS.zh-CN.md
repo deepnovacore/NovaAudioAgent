@@ -70,6 +70,13 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
   surface；当前六工具中的 direct MCP 只有内置 Camera MCP。
 - 桌面 package contract 已按 MCP SDK 的固定版本和锁文件解析出的传递闭包登记；
   这是精确 allowlist，不是放宽成任意依赖，原有 forbidden media/camera 规则仍然有效。
+- 最后一轮 whole-branch review 的三个 Important 已闭合：Camera snapshot 的
+  `sync_result` 在同一次 provider function 调用中返回受限文本结果（成功字段闭合，
+  失败精确保留 code 为 `vision_description_unavailable`），且不会补写 late fact；
+  permission 的 late grant
+  在 `armed`、snapshot、side-VLM、hit 之前都有同步 fence，未绑定的 raw hidden
+  start 直接 fail-closed；production camera gate 现在是
+  `env → Settings → assembly`，registry precedence 明确留给未来 M3。
 
 本节的“完成”仅指代码和已通过的确定性定向覆盖（工具面、camera gate、Vision
 隐藏 channel、monitor policy、state retirement、package/release closure）。root
@@ -105,7 +112,7 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 | 套件 | 结果 |
 |---|---|
 | root `npm run check`（typecheck、lint、env contract、Node parity、executor boundary） | 全绿；Node parity 审计 195 files / 304 occurrences，executor boundary 15 allowlisted |
-| runtime 完整套件 | 2167 total，2162 pass，0 fail，5 skip |
+| runtime 完整套件 | 2174 total，2169 pass，0 fail，5 skip |
 | runtime fixtures | 19 scenarios |
 | desktop 完整套件 | 810 total，807 pass，0 fail，3 Windows skip |
 | CLI | 18/18 pass |
@@ -113,6 +120,10 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 这些是确定性验证结果。`M1.5c/live/Windows acceptance remains pending`：真人语音
 `dispatch` / `cancel` / `confirm`、macOS camera permission/side-VLM live、Guard
 抢话 live、耳机与并发审批、Windows 仍待验，M1.5c 总体发布门尚未完成。
+
+沙箱内出现过的 desktop `EPERM` / `SIGABRT` 属于环境性问题；沙箱外已对同一
+desktop 套件精确复现并通过。这里不把它冒充真人语音、macOS camera、Windows 或
+Search flip 完成。
 
 **旧 08 确定性测试（M1.5b/08 历史基线快照；不是 M1.5c 当前验收）**
 
