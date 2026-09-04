@@ -632,3 +632,16 @@ test('watch and guard are the same logic behind different manifests', () => {
     captureEnabled: true,
   }), /必须是 watch 或 guard/u)
 })
+
+test('watch and guard declare their monitor alert semantics in their manifests', () => {
+  const watch = WATCH_MANIFEST.policy
+  const guard = GUARD_MANIFEST.policy
+  assert.deepEqual(
+    {operation_class: watch.operation_class, alert_delivery: watch.alert_delivery},
+    {operation_class: 'monitor', alert_delivery: 'deferred'},
+  )
+  assert.deepEqual(
+    {operation_class: guard.operation_class, alert_delivery: guard.alert_delivery},
+    {operation_class: 'monitor', alert_delivery: 'preemptive'},
+  )
+})

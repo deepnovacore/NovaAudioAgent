@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {executorProgressSchema, executorResultSchema, projectExecutorEvent, safeProgressSummary} from '../src/desktop-progress.js'
 import type {EventRecord} from '../src/events.js'
+import type {HandoffPolicy} from '../src/memory.js'
 import type {Delegate} from '../src/ports.js'
 
 const delegate: Delegate = {delegate_id: 'd', executor: 'codex', op: 'project', request: {},
@@ -49,4 +50,33 @@ test('progress projects only correlated accepted evidence and never private comm
     type: 'executor.result',
     result: {delegate_id: 'd', executor: 'codex', outcome: 'ok', summary: 'done', started_at: 2, ended_at: 1, changed_files: null},
   }).success, false)
+})
+
+test('monitor progress follows policy when its channel is renamed', () => {
+  const monitor: HandoffPolicy = {
+    channel: 'renamed-sensor', priority: 40, wake: 'surrogate', typical_latency: 300,
+    compress_watermark: 20, operation_class: 'monitor', alert_delivery: 'deferred',
+    suggest: false, progress_via_surrogate: false,
+  }
+  const monitorDelegate: Delegate = {...delegate, executor: monitor.channel, op: 'start'}
+  const monitorEvidence = {
+    ...evidence,
+    inFlightDelegate: () => monitorDelegate,
+    claimedHandoff: () => monitorDelegate,
+    delegateFor: () => monitorDelegate,
+  }
+  const heartbeat: EventRecord = {seq: 3, ts: 5, kind: 'progress', payload: {
+    channel: monitor.channel, delegate_id: 'd', op: 'start', phase: 'working', internal_activity: 1,
+    elapsed: 30, summary: '仍在监控：杯子',
+  }}
+  const hit: EventRecord = {seq: 4, ts: 6, kind: 'observation', payload: {
+    channel: monitor.channel, delegate_id: 'd', op: 'start', origin_ref: 'conversation:1',
+    trust: 'untrusted_external', content: {hit: true}, refs: [],
+  }}
+  assert.equal(projectExecutorEvent(heartbeat, monitorEvidence, () => 'vision', () => monitor)?.progress, undefined)
+  assert.equal(projectExecutorEvent(hit, monitorEvidence, () => 'vision', () => monitor)?.progress.executor, 'vision')
+  assert.equal(projectExecutorEvent(hit, monitorEvidence, () => 'vision', () => monitor)?.progress.level, 'detail')
+
+  const urgent: HandoffPolicy = {...monitor, alert_delivery: 'preemptive'}
+  assert.equal(projectExecutorEvent(hit, monitorEvidence, () => 'vision', () => urgent)?.progress.level, 'milestone')
 })

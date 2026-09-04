@@ -83,3 +83,18 @@ test('memory preserves refused separately from failed and unknown', () => {
 
   assert.equal(item.outcome, 'refused')
 })
+
+test('handoff policies default to ordinary tasks and reject task alert delivery', () => {
+  const ordinary = handoffPolicySchema.parse({
+    channel: 'ordinary', priority: 40, wake: 'surrogate', typical_latency: 1, compress_watermark: 20,
+  })
+  assert.equal(ordinary.operation_class, 'task')
+  assert.equal(ordinary.alert_delivery, 'none')
+
+  for (const alert_delivery of ['deferred', 'preemptive']) {
+    assert.throws(() => handoffPolicySchema.parse({
+      channel: 'invalid-task', priority: 40, wake: 'surrogate', typical_latency: 1,
+      compress_watermark: 20, operation_class: 'task', alert_delivery,
+    }), /task.*none|none.*task/u)
+  }
+})

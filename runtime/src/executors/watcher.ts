@@ -74,7 +74,7 @@ export const WATCH_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   ops: [START, STOP, STATUS],
   policy: handoffPolicySchema.parse({
     channel: 'watch', priority: 40, wake: 'surrogate', typical_latency: 300,
-    compress_watermark: 20, suggest: true,
+    compress_watermark: 20, operation_class: 'monitor', alert_delivery: 'deferred', suggest: true,
   }),
 })
 
@@ -84,7 +84,7 @@ export const GUARD_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   ops: [START, STOP, STATUS],
   policy: handoffPolicySchema.parse({
     channel: 'guard', priority: 90, wake: 'fast', typical_latency: 300,
-    compress_watermark: 20, suggest: false,
+    compress_watermark: 20, operation_class: 'monitor', alert_delivery: 'preemptive', suggest: false,
   }),
 })
 
@@ -295,7 +295,7 @@ export class WatchAdapter implements ExecutorAdapter {
         this.#onObservationAdmission?.(admission, this.manifest.name as 'watch' | 'guard')
       } catch { /* telemetry is advisory */ }
       if (admission === 'denied' || admission === 'restricted') {
-        const task = this.manifest.name === 'guard' ? 'Guard' : 'Watch'
+        const task = this.manifest.display_name
         return {
           outcome: 'refused',
           trust: 'trusted_system',

@@ -1,5 +1,5 @@
 import { validProgressSummary, type JsonValue } from '../events.js'
-import { CONVERSATION_CHANNEL, type MemoryItem } from '../memory.js'
+import { CONVERSATION_CHANNEL, isMonitorPolicy, type HandoffPolicy, type MemoryItem } from '../memory.js'
 import {pythonFloat} from '../python-number.js'
 import {stripLikePython} from '../python-text.js'
 import { prepareForSpeech, SPEECH_FINAL_LIMIT } from './speech-prep.js'
@@ -104,6 +104,7 @@ export function genericFinalSpeechView(
   displayName: string,
   outcome: string,
   content: unknown,
+  operationClass: 'task' | 'monitor' = 'task',
 ): string {
   const values = isObject(content) ? content : {}
   const prose = ['observation', 'summary', 'message']
@@ -117,15 +118,17 @@ export function genericFinalSpeechView(
       : `${displayName} 报告命中`
     text = typeof prose === 'string' ? `${prefix}：${stripLikePython(prose)}` : prefix
   } else if (outcome === 'ok' && values.hit === false) {
-    text = `${displayName} 监控结束，未命中条件`
+    text = operationClass === 'monitor'
+      ? `${displayName} 监控结束，未命中条件`
+      : `${displayName} 报告任务完成`
   } else if (outcome === 'ok') {
     text = typeof prose === 'string'
       ? `${displayName} 报告：${stripLikePython(prose)}`
-      : `${displayName} 报告任务完成`
+      : `${displayName} ${operationClass === 'monitor' ? '监控结束' : '报告任务完成'}`
   } else if (outcome === 'failed') {
-    text = `${displayName} 任务失败`
+    text = `${displayName} ${operationClass === 'monitor' ? '监控失败' : '任务失败'}`
   } else if (outcome === 'cancelled') {
-    text = `${displayName} 任务已停止`
+    text = `${displayName} ${operationClass === 'monitor' ? '监控已停止' : '任务已停止'}`
   } else if (outcome === 'refused') {
     text = values.error === 'camera_permission_denied'
       && values.recoverable === true
@@ -133,7 +136,7 @@ export function genericFinalSpeechView(
       ? stripLikePython(prose)
       : `${displayName} 未执行，需要选择或修正请求`
   } else {
-    text = `${displayName} 任务结果不确定`
+    text = `${displayName} ${operationClass === 'monitor' ? '监控结果不确定' : '任务结果不确定'}`
   }
   if (
     outcome !== 'ok'
@@ -147,7 +150,11 @@ export function genericFinalSpeechView(
   return prepareForSpeech(text, {limit: SPEECH_FINAL_LIMIT}).text
 }
 
-export function safeMemoryEvidence(item: MemoryItem, coding: CodingChannel | null = null): string | null {
+export function safeMemoryEvidence(
+  item: MemoryItem,
+  coding: CodingChannel | null = null,
+  policy: HandoffPolicy | null = null,
+): string | null {
   const content = item.content
   const outcome = item.outcome ?? 'unknown'
 
@@ -165,21 +172,24 @@ export function safeMemoryEvidence(item: MemoryItem, coding: CodingChannel | nul
 
   if (item.channel === 'search') return searchEvidence(content)
 
-  if (item.channel === 'watch' || item.channel === 'guard') {
+  if (isMonitorPolicy(policy)) {
     if (
       item.trust === 'trusted_system'
       && outcome === 'refused'
       && content.error === 'camera_permission_denied'
       && content.recoverable === true
     ) {
-      const task = item.channel === 'guard' ? 'Guard' : 'Watch'
-      return nonemptyPrepared(`权限不足，无法创建 ${task} 任务。请授予摄像头权限后重试。`)
+      return genericFinalSpeechView(item.channel, outcome, selectKeys(content, [
+        'error',
+        'recoverable',
+        'message',
+      ]))
     }
     return genericFinalSpeechView(item.channel, outcome, selectKeys(content, [
       'condition',
       'hit',
       'observation',
-    ]))
+    ]), 'monitor')
   }
 
   if (!STRUCTURED_EVIDENCE_CHANNELS.has(item.channel)) {

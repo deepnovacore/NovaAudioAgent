@@ -1,6 +1,7 @@
 import {z} from 'zod'
 import type {CausalRuntime} from './causal-runtime.js'
 import {validProgressSummary, type EventRecord} from './events.js'
+import { isMonitorPolicy, monitorHitProgressLevel, type HandoffPolicy } from './memory.js'
 import type {Suggestion} from './suggestions.js'
 
 const identifier = z.string().min(1).max(128)
@@ -27,7 +28,10 @@ export const executorResultSchema = z.object({
 export type ExecutorResult = z.infer<typeof executorResultSchema>['result']
 export type ProgressMode = 'off' | 'milestones' | 'all'
 type RuntimeEvidence = Pick<CausalRuntime, 'inFlightDelegate' | 'claimedHandoff' | 'delegateFor' | 'terminatedByDeadline'>
-  & {readonly executors?: ReadonlyMap<string, {readonly manifest: {readonly display_name?: string | undefined}}>}
+  & {readonly executors?: ReadonlyMap<string, {readonly manifest: {
+    readonly display_name?: string | undefined
+    readonly policy?: HandoffPolicy | undefined
+  }}>}
 
 /** Prefer a neutral reminder to exposing a command, path or credential in the orb. */
 export function safeProgressSummary(value: unknown, fallback: string): string {
@@ -38,11 +42,12 @@ export function safeProgressSummary(value: unknown, fallback: string): string {
   return value.trim()
 }
 
-/** Event-to-level table: start/final/guard hit=milestone; working/watch hit=detail. */
+/** Policy-aware public projection; the channel remains only a causal correlation key. */
 export function projectExecutorEvent(
   event: EventRecord,
   runtime: RuntimeEvidence,
   agentNameForChannel: (channel: string) => string | null = () => null,
+  policyForChannel: (channel: string) => HandoffPolicy | null = () => null,
 ): {
   progress: ExecutorProgress; result?: ExecutorResult
 } | null {
@@ -55,9 +60,13 @@ export function projectExecutorEvent(
   if (event.kind !== 'deadline' && delegate.executor !== event.payload.channel) return null
   if ((event.kind === 'progress' || event.kind === 'observation') && delegate.op !== event.payload.op) return null
   if ((event.kind === 'handoff' || event.kind === 'observation') && delegate.origin_ref !== event.payload.origin_ref) return null
+  const policy = policyForChannel(delegate.executor)
+    ?? runtime.executors?.get(delegate.executor)?.manifest.policy
+    ?? null
+  const monitor = isMonitorPolicy(policy)
   const agentName = agentNameForChannel(delegate.executor)
-  const label = agentName ?? (delegate.executor === 'guard' ? '监护' : delegate.executor === 'watch' ? '观察'
-    : runtime.executors?.get(delegate.executor)?.manifest.display_name ?? '任务')
+  const label = agentName ?? runtime.executors?.get(delegate.executor)?.manifest.display_name
+    ?? (monitor ? '监控' : '任务')
   const publicExecutor = agentName ?? delegate.executor
   let phase: ExecutorProgress['phase']
   let level: ExecutorProgress['level'] = 'milestone'
@@ -70,19 +79,23 @@ export function projectExecutorEvent(
       || (p.phase === 'started' ? p.internal_activity !== 0 : p.internal_activity < 1 || p.internal_activity > 1_048_576)) return null
     phase = p.phase
     if (phase === 'working') {
-      if (p.summary === null || delegate.executor === 'guard' || delegate.executor === 'watch') return null
+      if (p.summary === null || monitor) return null
       level = 'detail'
     } else result = null
-    text = phase === 'started' ? `${label} 已开始处理任务。` : safeProgressSummary(p.summary, `${label} 正在处理任务。`)
+    text = phase === 'started'
+      ? `${label} 已开始${monitor ? '监控。' : '处理任务。'}`
+      : safeProgressSummary(p.summary, `${label} 正在${monitor ? '监控。' : '处理任务。'}`)
   } else if (event.kind === 'observation') {
     if (event.payload.content.hit !== true) return null
     phase = 'alert'
-    level = delegate.executor === 'guard' ? 'milestone' : 'detail'
+    level = monitorHitProgressLevel(policy)
     text = `${label} 发现需要关注的变化。`
   } else {
     const outcome = event.kind === 'deadline' ? 'unknown' : event.payload.outcome
     phase = outcome === 'ok' ? 'completed' : outcome
-    const fallback = outcome === 'ok' ? `${label} 已完成任务。` : `${label} ${outcome === 'unknown' ? '结果尚未确认' : outcome === 'refused' ? '请求被拒绝' : outcome === 'cancelled' ? '任务已停止' : '执行失败'}。`
+    const fallback = outcome === 'ok'
+      ? `${label} ${monitor ? '监控已停止' : '已完成任务'}。`
+      : `${label} ${outcome === 'unknown' ? '结果尚未确认' : outcome === 'refused' ? '请求被拒绝' : outcome === 'cancelled' ? (monitor ? '监控已停止' : '任务已停止') : (monitor ? '监控失败' : '执行失败')}。`
     text = event.kind === 'handoff' ? safeProgressSummary(event.payload.content.summary, fallback) : fallback
     const changed = event.kind === 'handoff' ? event.payload.content.changed_files : null
     result = {delegate_id: id, executor: publicExecutor, outcome, summary: text,

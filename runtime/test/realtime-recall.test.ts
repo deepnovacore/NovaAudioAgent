@@ -64,6 +64,8 @@ function buildMemory(scenario: Scenario): Memory {
       wake: 'none',
       typical_latency: 1,
       compress_watermark: 100,
+      operation_class: 'task',
+      alert_delivery: 'none',
       suggest: false,
       progress_via_surrogate: false,
     }))

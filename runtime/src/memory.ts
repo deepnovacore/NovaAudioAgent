@@ -50,11 +50,37 @@ export const handoffPolicySchema = z.object({
   wake: z.enum(['fast', 'surrogate', 'none']),
   typical_latency: z.number().finite().nonnegative(),
   compress_watermark: z.number().int().positive(),
+  /** What kind of work this handoff represents; semantics must not infer it from the channel id. */
+  operation_class: z.enum(['task', 'monitor']).default('task'),
+  /** How a monitor's hit reaches the user. Ordinary tasks do not deliver alerts. */
+  alert_delivery: z.enum(['none', 'deferred', 'preemptive']).default('none'),
   suggest: z.boolean().default(false),
   progress_via_surrogate: z.boolean().default(false),
-}).strict()
+}).strict().superRefine((value, context) => {
+  if (value.operation_class === 'task' && value.alert_delivery !== 'none') {
+    context.addIssue({
+      code: 'custom',
+      message: 'task handoff policies must use alert_delivery none',
+      path: ['alert_delivery'],
+    })
+  }
+})
 
 export type HandoffPolicy = z.infer<typeof handoffPolicySchema>
+
+/** A policy, not a channel name, owns monitoring semantics. */
+export function isMonitorPolicy(policy: Pick<HandoffPolicy, 'operation_class'> | null | undefined): boolean {
+  return policy?.operation_class === 'monitor'
+}
+
+/** A preemptive monitor hit is prominent; deferred and non-alerting hits remain detail. */
+export function monitorHitProgressLevel(
+  policy: Pick<HandoffPolicy, 'operation_class' | 'alert_delivery'> | null | undefined,
+): 'milestone' | 'detail' {
+  return policy?.operation_class === 'monitor' && policy.alert_delivery === 'preemptive'
+    ? 'milestone'
+    : 'detail'
+}
 
 export const CONVERSATION_CHANNEL_POLICY: HandoffPolicy = handoffPolicySchema.parse({
   channel: CONVERSATION_CHANNEL,

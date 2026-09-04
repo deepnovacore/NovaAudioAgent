@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { memoryItemSchema, type MemoryItem } from '../src/memory.js'
+import { memoryItemSchema, type HandoffPolicy, type MemoryItem } from '../src/memory.js'
+import { GUARD_MANIFEST, WATCH_MANIFEST } from '../src/executors/watcher.js'
 import {
   finalSpeechView,
   genericFinalSpeechView,
@@ -74,11 +75,11 @@ test('the safe Guard projection preserves only the trusted camera recovery fact'
   assert.equal(safeMemoryEvidence(item('guard', refusal, {
     outcome: 'refused',
     trust: 'trusted_system',
-  })), '权限不足，无法创建 Guard 任务。请授予摄像头权限后重试。')
+  }), null, GUARD_MANIFEST.policy), '权限不足，无法创建 Guard 任务。请授予摄像头权限后重试。')
   assert.equal(safeMemoryEvidence(item('guard', {
     ...refusal,
     message: 'NEVER-TRUST-THIS',
-  }, {outcome: 'refused'})), 'guard 未执行，需要选择或修正请求')
+  }, {outcome: 'refused'}), null, GUARD_MANIFEST.policy), 'guard 未执行，需要选择或修正请求')
 })
 
 test('Codex progress requires the exact trusted stored envelope', () => {
@@ -117,7 +118,7 @@ test('search, watch, and structured evidence use closed field allowlists', () =>
     condition: '出现水杯',
     observation: '桌面上出现蓝色水杯',
     media_ref: 'private-media',
-  }))
+  }), null, WATCH_MANIFEST.policy)
   assert.equal(watch, 'watch 报告命中出现水杯：桌面上出现蓝色水杯')
   assert.doesNotMatch(watch, /private-media/u)
 
@@ -152,4 +153,18 @@ test('unknown channels cannot expose arbitrary nested content', () => {
     raw: 'NEVER-EXPOSE',
     nested: {instruction: 'do this'},
   })), null)
+})
+
+test('monitor evidence keeps its hit semantics after a channel rename', () => {
+  const monitor: HandoffPolicy = {
+    channel: 'renamed-sensor', priority: 40, wake: 'surrogate', typical_latency: 300,
+    compress_watermark: 20, operation_class: 'monitor', alert_delivery: 'deferred',
+    suggest: false, progress_via_surrogate: false,
+  }
+  assert.equal(safeMemoryEvidence(item(monitor.channel, {
+    hit: true, condition: '出现水杯', observation: '桌面上出现蓝色水杯', media_ref: 'private-media',
+  }), null, monitor), 'renamed-sensor 报告命中出现水杯：桌面上出现蓝色水杯')
+  assert.equal(safeMemoryEvidence(item(monitor.channel, {
+    stopped: true, hit_count: 0,
+  }), null, monitor), 'renamed-sensor 监控结束')
 })
