@@ -20,13 +20,16 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
 
 ## M1.5 (inserted before M2)
 
-- [ ] 07 executor boundary: move Codex under `executors/codex/`, `roles` /
+- [x] 07 executor boundary: move Codex under `executors/codex/`, `roles` /
   `display_name` / `approvals` on the manifest, `ApprovalBroker` port, role-based
   routing, `executor.*` / `project.*` wire, fixture executor,
-  `check:executor-boundary`. Behaviour identical to M1.
-- [ ] 08 project/session/work — **implemented 2026-09-04, live acceptance pending**
-  (coordinator sink). Deterministic coverage is in; nothing below has been
-  exercised against DashScope + a real Codex yet.
+  `check:executor-boundary`. Behaviour identical to M1. Deterministic list green;
+  independent review follow-ups landed in `2447010`; live rows share M1's open
+  voice/headset items.
+- [ ] 08 project/session/work — **implemented 2026-09-04, reviewed, live
+  acceptance partial** (coordinator sink). Deterministic coverage is in; the
+  coordinator model and the adapter↔Codex path have live evidence below; the
+  voice path does not yet.
   - [x] Voice tools `dispatch(executor, instruction)` / `cancel(executor,
     instruction?)` / `confirm(id, accepted)` are single global `host` bindings
     (`work-tools.ts`, `tool-schema.ts`); executors with manifest `agent.summary`
@@ -70,9 +73,6 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
     Not yet exercised: parallel Codex children per workspace, approval queueing
     against a real app-server, and DashScope calling `dispatch` / `cancel` /
     `confirm` from the rewritten instructions (needs a voice session).
-  - Known residue: `realtime/evidence.ts` still carries speech-match branches
-    for `reuse_workspace` / `select_workspace` / `resume_session`, now
-    unreachable (the host emits only `create_workspace`).
 - [ ] Live acceptance for 08 recorded below with DashScope + Codex 0.152.0
   evidence (transcript, tool calls, `thread/list`). Partial as of 2026-09-04:
   coordinator eval and adapter-level Codex smoke recorded; voice transcript,
