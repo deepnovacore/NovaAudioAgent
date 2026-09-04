@@ -54,6 +54,7 @@ const agentWorkSchema = z.object({
 const intakeStateSchema = z.enum([
   'open', 'clarifying', 'ready_to_plan', 'planning', 'readback', 'committing', 'closed',
 ])
+const visionChannelSchema = z.enum(['watch', 'guard'])
 
 /**
  * Closed controller facts. Adding a future controller variant requires adding one exact arm here and
@@ -78,6 +79,13 @@ export const agentActionResultSchema = z.discriminatedUnion('code', [
     detail: z.object({work: agentWorkSchema}).strict(),
   }).strict(),
   z.object({code: z.literal('not_running'), accepted: z.literal(true), detail: noDetailSchema}).strict(),
+  z.object({code: z.literal('busy'), accepted: z.literal(true), detail: noDetailSchema}).strict(),
+  z.object({code: z.literal('clarification_required'), accepted: z.literal(true), detail: noDetailSchema}).strict(),
+  z.object({code: z.literal('assessment_unavailable'), accepted: z.literal(false), detail: noDetailSchema}).strict(),
+  z.object({
+    code: z.literal('monitor_stop_requested'), accepted: z.literal(true),
+    detail: z.object({channel: visionChannelSchema, op: z.literal('stop')}).strict(),
+  }).strict(),
   z.object({
     code: z.literal('ambiguous_work'), accepted: z.literal(true),
     detail: z.object({running: z.array(agentWorkSchema).min(2).max(8)}).strict(),
@@ -239,6 +247,10 @@ function freezeAgentActionResult(value: AgentActionResult): AgentActionResult {
     ...value,
     detail: Object.freeze({running: Object.freeze(value.detail.running.map(work => Object.freeze({...work})))}),
   }) as AgentActionResult
+  if (value.code === 'monitor_stop_requested') return Object.freeze({
+    ...value,
+    detail: Object.freeze({channel: value.detail.channel, op: value.detail.op}),
+  })
   return Object.freeze({...value, detail: noDetail()})
 }
 

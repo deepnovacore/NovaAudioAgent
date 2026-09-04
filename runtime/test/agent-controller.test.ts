@@ -141,6 +141,24 @@ test('controller action results are closed, bounded, and accessor-safe', () => {
   assert.equal(parseAgentActionResult(prototype), null)
 })
 
+test('vision action result variants are closed and stop details are channel-bounded', () => {
+  for (const value of [
+    {code: 'busy', accepted: true, detail: {}},
+    {code: 'clarification_required', accepted: true, detail: {}},
+    {code: 'assessment_unavailable', accepted: false, detail: {}},
+    {code: 'monitor_stop_requested', accepted: true, detail: {channel: 'watch', op: 'stop'}},
+    {code: 'monitor_stop_requested', accepted: true, detail: {channel: 'guard', op: 'stop'}},
+  ]) {
+    assert.deepEqual(parseAgentActionResult(value), value)
+  }
+  for (const value of [
+    {code: 'monitor_stop_requested', accepted: true, detail: {channel: 'codex', op: 'stop'}},
+    {code: 'monitor_stop_requested', accepted: true, detail: {channel: 'watch', op: 'run'}},
+    {code: 'monitor_stop_requested', accepted: true, detail: {channel: 'watch', op: 'stop'}, message: 'speak this'},
+    {code: 'clarification_required', accepted: true, detail: {question: 'smuggled prose'}},
+  ]) assert.equal(parseAgentActionResult(value), null)
+})
+
 test('registry snapshots descriptors, controller methods, and map authority', async () => {
   const descriptor = {name: 'coder', summary: '编码', ownedChannels: ['codex']}
   let dispatches = 0
