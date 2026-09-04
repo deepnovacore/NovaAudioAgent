@@ -120,7 +120,7 @@ export interface AgentController {
 export interface AgentControllerRegistry {
   readonly controllers: ReadonlyMap<string, AgentController>
   readonly descriptors: readonly AgentDescriptor[]
-  agentNameForChannel(channel: string): string | null
+  readonly agentNameForChannel: (channel: string) => string | null
 }
 
 export class AgentControllerRegistryError extends Error {
@@ -186,11 +186,11 @@ export function createAgentControllerRegistry(input: {
     if (controllers.has(descriptor.name)) {
       throw new AgentControllerRegistryError(`duplicate agent name: ${descriptor.name}`)
     }
-    const dispatch = source.dispatch
-    const cancel = source.cancel
-    if (typeof dispatch !== 'function' || typeof cancel !== 'function') {
+    if (typeof source.dispatch !== 'function' || typeof source.cancel !== 'function') {
       throw new AgentControllerRegistryError(`agent controller must implement dispatch and cancel: ${descriptor.name}`)
     }
+    const dispatch = source.dispatch.bind(source)
+    const cancel = source.cancel.bind(source)
     const controller: AgentController = Object.freeze({
       descriptor,
       dispatch: (request: AgentDispatchRequest) => dispatch.call(source, request),

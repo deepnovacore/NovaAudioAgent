@@ -37,8 +37,8 @@ function manifest(name: string, modelVisibility: 'direct' | 'hidden' = 'direct')
 function controller(descriptor: AgentDescriptor): AgentController {
   return {
     descriptor,
-    dispatch: async () => ({code: 'accepted', accepted: true, detail: {}}),
-    cancel: async () => ({code: 'accepted', accepted: true, detail: {}}),
+    dispatch: () => Promise.resolve({code: 'accepted', accepted: true, detail: {}}),
+    cancel: () => Promise.resolve({code: 'accepted', accepted: true, detail: {}}),
   }
 }
 
@@ -182,17 +182,17 @@ test('registry snapshots descriptors, controller methods, and map authority', as
   let dispatches = 0
   const source = {
     descriptor,
-    dispatch: async () => {
+    dispatch: () => {
       dispatches += 1
-      return {code: 'accepted' as const, accepted: true as const, detail: {}}
+      return Promise.resolve({code: 'accepted' as const, accepted: true as const, detail: {}})
     },
-    cancel: async () => ({code: 'not_running' as const, accepted: true as const, detail: {}}),
+    cancel: () => Promise.resolve({code: 'not_running' as const, accepted: true as const, detail: {}}),
   }
   const registry = createAgentControllerRegistry({controllers: [source], manifests: [manifest('codex', 'hidden')]})
   descriptor.name = 'mutated'
   descriptor.summary = 'mutated'
   descriptor.ownedChannels.push('not_registered')
-  source.dispatch = async () => { throw new Error('mutated controller must not run') }
+  source.dispatch = () => Promise.reject(new Error('mutated controller must not run'))
 
   const registered = registry.controllers.get('coder')!
   assert.notEqual(registered, source)
@@ -222,10 +222,10 @@ test('the Codex controller preserves intake dispatch and forwards the revision f
   const codex = new CodexAgentController({
     intake: intake as never,
     executor: {
-      cancel: async (instruction, context) => {
+      cancel: (instruction, context) => {
         cancelInstruction = instruction
         cancelStillWanted = context.stillWanted
-        return {code: 'cancelled' as const, work: {work_id: 'w-1', project: 'site', title: '布局'}}
+        return Promise.resolve({code: 'cancelled' as const, work: {work_id: 'w-1', project: 'site', title: '布局'}})
       },
     },
     resolveCancelTarget: () => Promise.resolve(null),
@@ -267,7 +267,7 @@ test('no-intake Codex dispatch fences a superseded request before the runtime de
   let runtimeDelegateStarts = 0
   const codex = new CodexAgentController({
     dispatchPort: {
-      dispatch: _request => {
+      dispatch: () => {
         runtimeDelegateStarts += 1
         return {accepted: true, delegate_id: 'd-1'}
       },
