@@ -13,7 +13,7 @@ import {randomUUID} from 'node:crypto'
 import { z } from 'zod'
 import { canonicalJson } from '../canonical-json.js'
 import { jsonValueSchema, type JsonValue } from '../events.js'
-import {GUARD_ACTIVATION_PREFIX} from './cascaded/llm.js'
+import {HOST_ACTIVATION_PREFIX} from './cascaded/llm.js'
 import type {ProjectConfirmationView} from '../project-confirmation.js'
 import {
   activeExecutorContextData,
@@ -52,7 +52,7 @@ export const MAX_TIMED_OUT_ITEM_IDS = 256
  */
 export const MAX_QWEN_EVENT_QUEUE = 4_096
 
-export {GUARD_ACTIVATION_PREFIX} from './cascaded/llm.js'
+export {HOST_ACTIVATION_PREFIX, GUARD_ACTIVATION_PREFIX} from './cascaded/llm.js'
 
 function serializeProjectDisplayName(value: string | null): string {
   return JSON.stringify(value ?? '')
@@ -475,7 +475,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       throw new QwenRealtimeError('workspace context delivery is unavailable until provider capability is proven')
     }
     if (options.asUserActivation && item.kind !== 'progress' && item.kind !== 'final') {
-      throw new TypeError('user activation requires a Guard progress or final item')
+      throw new TypeError('user activation requires a host progress or final item')
     }
     // Python requires a strictly positive confirmation timeout. The neutral session
     // layer only rejects negatives, so the adapter keeps the stricter contract.
@@ -624,7 +624,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   async createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void> {
     // DashScope's official qwen-audio-agent targets injected results with one response-local
     // instruction and disables tools for that response. Keeping that boundary per response avoids
-    // letting the latest real user turn (for example, "确认") own a later Guard result.
+    // letting the latest real user turn (for example, "确认") own a later host result.
     void intent
     void signal
     await this.#sendJson({
@@ -720,7 +720,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       }
     }
     void asUserActivation
-    let text = `${GUARD_ACTIVATION_PREFIX}以下内容不是用户说的话，`
+    let text = `${HOST_ACTIVATION_PREFIX}以下内容不是用户说的话，`
       + '也不是新的用户目标。只把该事实作为宿主提供的上下文：'
       + `Nova Audio Agent 任务${label}事实：${item.content}`
     if (item.kind === 'final') text += FINAL_HOST_RESPONSE_INSTRUCTION

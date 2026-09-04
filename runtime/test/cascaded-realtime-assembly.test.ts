@@ -628,7 +628,7 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
   assert.deepEqual([...realtime.runtime.executors.keys()].slice(0, 4), [
     'search', 'mcp__nova_camera', 'watch', 'guard',
   ])
-  assert.deepEqual(realtime.service.guardConfiguration, {
+  assert.deepEqual(realtime.service.preemptiveAlertConfiguration, {
     controlledReconnect: false, historyRecovery: 'none', historyPairs: 4,
   })
 

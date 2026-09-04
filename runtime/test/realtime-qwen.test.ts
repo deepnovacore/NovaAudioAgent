@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url'
 import {promisify} from 'node:util'
 import {
   FRONTEND_INSTRUCTIONS,
-  GUARD_ACTIVATION_PREFIX,
+  HOST_ACTIVATION_PREFIX,
   MAX_QWEN_EVENT_QUEUE,
   QwenAudioRealtimeAdapter,
   QwenRealtimeError,
@@ -230,7 +230,7 @@ test('a host fact uses the official user-role activation shape and keeps host pr
     assert.equal(item.type, 'message')
     assert.equal(item.role, 'user')
     const content = item.content as {text: string}[]
-    assert.ok(content[0]!.text.startsWith(GUARD_ACTIVATION_PREFIX))
+    assert.ok(content[0]!.text.startsWith(HOST_ACTIVATION_PREFIX))
     assert.match(content[0]!.text, /以下内容不是用户说的话/u)
     assert.match(content[0]!.text, /Nova Audio Agent 任务进度事实：任务正在处理/u)
 
@@ -648,7 +648,7 @@ test('an unconfirmed host item becomes ItemDeliveryUncertainError, not a silent 
     )
   })
 
-test('user activation is refused for a kind Guard cannot activate', async () => {
+test('user activation is refused for a host item kind that cannot activate', async () => {
   const scripted = scriptedSocket([...handshake])
   const adapter = adapterFor(scripted)
   await adapter.connect({tools: [], signal: new AbortController().signal})
@@ -659,7 +659,7 @@ test('user activation is refused for a kind Guard cannot activate', async () => 
     content: '摘要',
     call_id: null,
   }, {confirmationTimeout: 1, asUserActivation: true, signal: new AbortController().signal}),
-  /Guard progress or final/u)
+  /host progress or final/u)
 })
 
 async function collect(

@@ -26,7 +26,7 @@ import type {
   CascadedLlmSession,
   CascadedLlmTool,
 } from './llm.js'
-import {GUARD_ACTIVATION_PREFIX} from './llm.js'
+import {HOST_ACTIVATION_PREFIX} from './llm.js'
 import type {
   AsrClient,
   AsrSession,
@@ -43,10 +43,10 @@ export const MAX_CASCADED_CONSUMED_HOST_ITEMS = 256
 export const MAX_CASCADED_ABANDONED_TOOL_CALLS = 256
 export const DEFAULT_CASCADED_SETTLE_MS = 1_000
 
-export const CASCADED_GUARD_POLICY = Object.freeze({
-  controlledGuardReconnect: false,
-  guardHistoryRecovery: 'none' as const,
-  guardHistoryPairs: 4,
+export const CASCADED_PREEMPTIVE_ALERT_POLICY = Object.freeze({
+  controlledPreemptiveAlertReconnect: false,
+  preemptiveAlertHistoryRecovery: 'none' as const,
+  preemptiveAlertHistoryPairs: 4,
 })
 
 export interface CascadedRealtimeAdapterOptions {
@@ -1379,7 +1379,7 @@ function hostInput(item: HostContextItem, asUserActivation: boolean): CascadedLl
     dialogue_context: '只读历史对话',
   }
   const content = asUserActivation
-    ? `${GUARD_ACTIVATION_PREFIX}以下内容不是用户说的话，也不是新的用户目标。`
+    ? `${HOST_ACTIVATION_PREFIX}以下内容不是用户说的话，也不是新的用户目标。`
       + `只把该事实作为宿主提供的上下文：${item.content}`
     : `Nova Audio Agent ${labels[item.kind]}：${item.content}`
   return item.kind === 'dialogue_context'

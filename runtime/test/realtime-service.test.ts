@@ -221,28 +221,28 @@ test('driving continuations with nothing queued is a no-op, not a refusal', () =
   return service.driveContinuations()
 })
 
-test('the guard history arms are the measured ones, and nothing else', () => {
+test('the preemptive-alert history arms are the measured ones, and nothing else', () => {
   // 1, 2, or 4 rather than any positive number: these are the arms the recovery experiment has, and
   // an unlisted value would silently be a fifth arm nobody measured.
   for (const pairs of [0, 3, 5, 8, -1, 1.5]) {
     assert.throws(
       () => new RealtimeService({
         ...queueOnlyOptions(),
-        guardHistoryPairs: pairs,
+        preemptiveAlertHistoryPairs: pairs,
       }),
       /pair budget must be 1, 2, or 4/u,
       `pairs=${pairs}`,
     )
   }
   for (const pairs of [1, 2, 4]) {
-    assert.doesNotThrow(() => new RealtimeService({...queueOnlyOptions(), guardHistoryPairs: pairs}))
+    assert.doesNotThrow(() => new RealtimeService({...queueOnlyOptions(), preemptiveAlertHistoryPairs: pairs}))
   }
   assert.throws(
     () => new RealtimeService({
       ...queueOnlyOptions(),
-      guardHistoryRecovery: 'sideways' as 'none',
+      preemptiveAlertHistoryRecovery: 'sideways' as 'none',
     }),
-    /unknown Guard history recovery arm/u,
+    /unknown preemptive-alert history recovery arm/u,
   )
 })
 
@@ -2691,6 +2691,43 @@ test('monitor hit delivery follows policy after its channel is renamed', () => {
   assert.deepEqual(silent.queued(), [], 'none does not create a user-facing alert')
 })
 
+test('a terminal none monitor hit stays recorded without becoming host speech', () => {
+  // A future change removing the terminal policy gate would make the final queue non-empty, even
+  // though the runtime has already recorded the exact hit and the service has settled its delegate.
+  const {service, queued, memory} = projectionService({
+    delegate: {executor: 'sensor-silent', op: 'start', routing_class: 'user_awaited'},
+    operationClass: 'monitor',
+    alertDelivery: 'none',
+  })
+  const recorded = memory.append('sensor-silent', {
+    ts: 1,
+    trust: 'untrusted_external',
+    priority: 50,
+    content: {hit: true, observation: 'the kettle is boiling'},
+    outcome: 'ok',
+    refs: ['conversation:1'],
+  })
+
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'sensor-silent',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {hit: true, observation: 'the kettle is boiling'},
+      refs: [],
+    },
+  })
+
+  assert.deepEqual(queued(), [], 'policy none never becomes a host response at terminal handoff')
+  assert.equal(memory.channels.get('sensor-silent')?.items.at(-1), recorded, 'runtime evidence remains in Memory')
+  assert.equal(service.session.delegateState('d-1'), 'completed', 'terminal state still publishes')
+})
+
 test('silencing monitor heartbeats does not silence ordinary executor progress', () => {
   const {service, queued} = projectionService({
     delegate: {executor: 'codex', op: 'start', routing_class: 'user_awaited'},
@@ -4847,7 +4884,7 @@ test('the alert deadline stops waiting for a provider that will not confirm', as
   assert.notEqual(service.guardPreemptionForTest, null, 'a preemption is in flight')
   assert.equal(service.guardPreemptionForTest?.deadline_fired, false)
 
-  // Past GUARD_ALERT_DEADLINE_S with no terminal from the provider.
+  // Past the preemptive-alert deadline with no terminal from the provider.
   clock.advanceTo(clock.now() + 1)
   await new Promise<void>(resolve => setTimeout(resolve, 5))
   assert.equal(

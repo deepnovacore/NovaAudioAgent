@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import type { RealtimeProviderEvent } from '../src/realtime/protocol.js'
 import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
 import {
-  CASCADED_GUARD_POLICY,
+  CASCADED_PREEMPTIVE_ALERT_POLICY,
   CascadedRealtimeAdapter,
   CascadedRealtimeError,
 } from '../src/realtime/cascaded/adapter.js'
@@ -495,13 +495,13 @@ test('cascaded happy path preserves VAD, ASR, LLM, TTS, and normalized event ord
   assert.equal(endpointing.resets, 2, 'connect and utterance completion reset endpointing')
 })
 
-test('cascaded Guard policy is fixed and cannot inherit the Qwen reconnect policy', () => {
-  assert.deepEqual(CASCADED_GUARD_POLICY, {
-    controlledGuardReconnect: false,
-    guardHistoryRecovery: 'none',
-    guardHistoryPairs: 4,
+test('cascaded preemptive-alert policy is fixed and cannot inherit the Qwen reconnect policy', () => {
+  assert.deepEqual(CASCADED_PREEMPTIVE_ALERT_POLICY, {
+    controlledPreemptiveAlertReconnect: false,
+    preemptiveAlertHistoryRecovery: 'none',
+    preemptiveAlertHistoryPairs: 4,
   })
-  assert.equal(Object.isFrozen(CASCADED_GUARD_POLICY), true)
+  assert.equal(Object.isFrozen(CASCADED_PREEMPTIVE_ALERT_POLICY), true)
 })
 
 test('one adapter reconnects with a fresh LLM epoch instead of reusing a closed session', async () => {

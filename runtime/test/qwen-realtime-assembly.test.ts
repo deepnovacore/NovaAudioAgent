@@ -512,7 +512,7 @@ test('Qwen factory preserves resource identity, explicit Guard settings, and one
   assert.equal(realtime.service.session, realtime.session)
   assert.equal(realtime.service.internals.runtime, realtime.runtime)
   assert.equal(realtime.service.internals.tools, realtime.tools)
-  assert.deepEqual(realtime.service.guardConfiguration, {
+  assert.deepEqual(realtime.service.preemptiveAlertConfiguration, {
     controlledReconnect: true,
     historyRecovery: 'packed',
     historyPairs: 1,
@@ -602,12 +602,12 @@ test('desktop Qwen composition shares one clock, Chromium source, and camera ser
   await assert.rejects(source.snapshot(), /camera source is unavailable/u)
 })
 
-test('Qwen factory passes default and every Guard history pair arm to the service', () => {
+test('Qwen factory maps legacy history settings to the generic preemptive-alert service seam', () => {
   const defaults = buildQwenRealtimeAssembly(qwenOptions(
     settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
     recordingConnector().connector,
   ))
-  assert.deepEqual(defaults.service.guardConfiguration, {
+  assert.deepEqual(defaults.service.preemptiveAlertConfiguration, {
     controlledReconnect: false,
     historyRecovery: 'none',
     historyPairs: 4,
@@ -619,7 +619,7 @@ test('Qwen factory passes default and every Guard history pair arm to the servic
       NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY: 'packed',
       NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS: pairs,
     }), recordingConnector().connector))
-    assert.deepEqual(realtime.service.guardConfiguration, {
+    assert.deepEqual(realtime.service.preemptiveAlertConfiguration, {
       controlledReconnect: true,
       historyRecovery: 'packed',
       historyPairs: Number(pairs),

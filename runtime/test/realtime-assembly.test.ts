@@ -481,7 +481,7 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
   assert.equal(realtime.service.internals.bridge, realtime.bridge)
   assert.equal(realtime.service.internals.runtime, realtime.runtime)
   assert.equal(realtime.service.internals.tools, realtime.tools)
-  assert.deepEqual(realtime.service.guardConfiguration, {
+  assert.deepEqual(realtime.service.preemptiveAlertConfiguration, {
     controlledReconnect: true,
     historyRecovery: 'packed',
     historyPairs: 2,

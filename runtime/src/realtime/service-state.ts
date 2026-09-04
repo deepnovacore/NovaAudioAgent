@@ -40,8 +40,14 @@ export const STALE_DELIVERY_RETRY_S = 1
 export const PREEMPT_MIN_PRIORITY = 80
 /** Ordinary progress older than this is stale operational narration, not a current user fact. */
 export const PROGRESS_HOST_ITEM_TTL_S = 45
-export const GUARD_ALERT_DEADLINE_S = 0.35
-export const GUARD_CLEAR_ACK_DEADLINE_S = 0.5
+/** The bounded interruption deadline for an alert whose policy permits preemption. */
+export const PREEMPTIVE_ALERT_DEADLINE_S = 0.35
+/** The bounded renderer-clear acknowledgement wait for a preemptive alert. */
+export const PREEMPTIVE_ALERT_CLEAR_ACK_DEADLINE_S = 0.5
+/** @deprecated Compatibility alias; new callers use `PREEMPTIVE_ALERT_DEADLINE_S`. */
+export const GUARD_ALERT_DEADLINE_S = PREEMPTIVE_ALERT_DEADLINE_S
+/** @deprecated Compatibility alias; new callers use `PREEMPTIVE_ALERT_CLEAR_ACK_DEADLINE_S`. */
+export const GUARD_CLEAR_ACK_DEADLINE_S = PREEMPTIVE_ALERT_CLEAR_ACK_DEADLINE_S
 /**
  * A monitoring hit outranks routine executor announcements (codex=50) without reaching the
  * preemption band; heartbeats and misses keep the manifest priority.

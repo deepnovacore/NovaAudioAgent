@@ -79,8 +79,8 @@ import {
 } from './session-state.js'
 import {codePointLengthLikePython, stripLikePython} from '../python-text.js'
 import {
-  GUARD_ALERT_DEADLINE_S,
-  GUARD_CLEAR_ACK_DEADLINE_S,
+  PREEMPTIVE_ALERT_DEADLINE_S,
+  PREEMPTIVE_ALERT_CLEAR_ACK_DEADLINE_S,
   HIT_ALERT_MIN_PRIORITY,
   MAX_HOST_FACT_CHARS,
   MAX_LATE_SYNC_RESULTS,
@@ -577,13 +577,13 @@ export class RealtimeService {
   constructor(options: RealtimeServiceOptions) {
     const recovery = options.preemptiveAlertHistoryRecovery ?? options.guardHistoryRecovery ?? 'none'
     if (recovery !== 'none' && recovery !== 'packed') {
-      throw new TypeError('unknown Guard history recovery arm')
+      throw new TypeError('unknown preemptive-alert history recovery arm')
     }
     const pairs = options.preemptiveAlertHistoryPairs ?? options.guardHistoryPairs ?? 4
     // 1, 2, or 4 rather than any positive number: these are the arms the recovery experiment has,
     // and an unlisted value would silently be a fifth arm nobody measured.
     if (pairs !== 1 && pairs !== 2 && pairs !== 4) {
-      throw new TypeError('Guard history pair budget must be 1, 2, or 4')
+      throw new TypeError('preemptive-alert history pair budget must be 1, 2, or 4')
     }
     this.#provider = options.provider
     this.#runtime = options.runtime
@@ -2483,6 +2483,7 @@ export class RealtimeService {
     // CP1: a settled delegate leaves no dedup residue behind.
     this.#lastProgressSummary.delete(payload.delegate_id)
     this.#publishExecutorState()
+    if (isMonitorPolicy(manifest.policy) && monitorAlertDelivery(manifest.policy) === 'none') return
     if (suppressUnselectedSuggestion) return
 
     const successfulMonitorStop = isMonitorPolicy(manifest.policy)
@@ -6917,7 +6918,7 @@ export class RealtimeService {
     try {
       const delay = Math.max(
         0,
-        preemption.queued_at + GUARD_ALERT_DEADLINE_S - this.#clock.now(),
+        preemption.queued_at + PREEMPTIVE_ALERT_DEADLINE_S - this.#clock.now(),
       )
       await this.#clock.sleep(delay, this.#preemptiveAlertAbort?.signal)
       const current = this.#preemptiveAlert
@@ -6993,7 +6994,7 @@ export class RealtimeService {
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      await this.#clock.sleep(GUARD_CLEAR_ACK_DEADLINE_S, signal)
+      await this.#clock.sleep(PREEMPTIVE_ALERT_CLEAR_ACK_DEADLINE_S, signal)
       if (!this.session.retirePlaybackClearUnknown(generation)) return
       this.#telemetry?.record('renderer_clear_unknown', {
         session_epoch: generation.session_epoch,

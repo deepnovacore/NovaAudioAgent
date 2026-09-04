@@ -1747,7 +1747,7 @@ export class RealtimeSession {
     const handoff = this.#preemptiveAlertHandoffGeneration
     if (handoff !== null) {
       if (current !== null && sameGeneration(current, handoff)) {
-        // The Guard's retained generation becomes this response's, so the user hears no seam.
+        // The preemptive alert's retained generation becomes this response's, so the user hears no seam.
         if (!this.#playback.switchGeneration(handoff)) return false
         this.#floor = this.#floor.onSpeakEnd(handoff.utterance_id)
       } else if (current !== null) {

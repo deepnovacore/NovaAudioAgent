@@ -94,7 +94,7 @@ function makeSession(options: {readonly ids?: readonly string[]} = {}): {
   return {session, actions}
 }
 
-test('an unknown Guard history mode is refused before the session is touched', async () => {
+test('an unknown preemptive-alert history mode is refused before the session is touched', async () => {
   // This method closes the provider session, so a malformed argument has to fail before anything is
   // given up rather than after. The TypeScript annotation is not the guard: a value arriving from
   // JSON is unchecked at runtime, which is exactly how a service would pass one.
@@ -103,7 +103,7 @@ test('an unknown Guard history mode is refused before the session is touched', a
   const before = actions.length
 
   await assert.rejects(
-    () => session.reconnectForGuard({
+    () => session.reconnectForPreemptiveAlert({
       tools: [],
       oldGeneration: {
         session_epoch: 1,
@@ -114,18 +114,18 @@ test('an unknown Guard history mode is refused before the session is touched', a
       },
       historyMode: 'bogus' as 'none',
     }),
-    /unknown Guard history recovery arm/u,
+    /unknown preemptive-alert history recovery arm/u,
   )
   assert.deepEqual(actions.slice(before), [], 'no provider call may have happened')
   assert.equal(session.sessionEpoch, 1, 'the epoch must not have advanced')
 })
 
-test('a Guard handoff refuses a generation the session did not open', async () => {
+test('a preemptive-alert handoff refuses a generation the session did not open', async () => {
   const {session} = makeSession()
   await session.connect({tools: []})
 
   await assert.rejects(
-    () => session.reconnectForGuard({
+    () => session.reconnectForPreemptiveAlert({
       tools: [],
       oldGeneration: {
         session_epoch: 1,
@@ -139,12 +139,12 @@ test('a Guard handoff refuses a generation the session did not open', async () =
   )
 })
 
-test('a Guard handoff refuses a generation from a previous session', async () => {
+test('a preemptive-alert handoff refuses a generation from a previous session', async () => {
   const {session} = makeSession()
   await session.connect({tools: []})
 
   await assert.rejects(
-    () => session.reconnectForGuard({
+    () => session.reconnectForPreemptiveAlert({
       tools: [],
       oldGeneration: {
         session_epoch: 0,
@@ -633,18 +633,18 @@ test('expiring with no preempt outstanding is refused', async () => {
 
 test('a Guard handoff generation can be alert-fenced exactly once', async () => {
   const {session, actions, generation} = await withPlayingResponse()
-  await session.reconnectForGuard({tools: [], oldGeneration: generation})
+  await session.reconnectForPreemptiveAlert({tools: [], oldGeneration: generation})
   // The retained generation is still playing under the new provider session.
   assert.equal(session.currentGeneration, generation)
 
-  assert.equal(session.alertGuardHandoff(generation), true)
+  assert.equal(session.alertPreemptiveAlertHandoff(generation), true)
   assert.ok(actions.includes('alert:utterance-1:1'), 'the retained generation is alert-fenced')
-  assert.equal(session.alertGuardHandoff(generation), false, 'the handoff is spent')
+  assert.equal(session.alertPreemptiveAlertHandoff(generation), false, 'the handoff is spent')
 })
 
 test('alerting a generation that was never handed off is refused', async () => {
   const {session, generation} = await withPlayingResponse()
-  assert.equal(session.alertGuardHandoff(generation), false, 'no handoff is in progress')
+  assert.equal(session.alertPreemptiveAlertHandoff(generation), false, 'no handoff is in progress')
 })
 
 test('a Guard handoff alert names one exact generation, not whichever is retained', async () => {
@@ -653,7 +653,7 @@ test('a Guard handoff alert names one exact generation, not whichever is retaine
   // something current, a mismatched generation is refused for a different reason and the
   // exact-match check would look redundant.
   const {session, generation} = await withPlayingResponse()
-  await session.reconnectForGuard({tools: [], oldGeneration: generation})
+  await session.reconnectForPreemptiveAlert({tools: [], oldGeneration: generation})
   assert.equal(
     session.playbackDone(generation.utterance_id, generation.generation_epoch, 100),
     true,
@@ -662,10 +662,10 @@ test('a Guard handoff alert names one exact generation, not whichever is retaine
 
   const other: PlaybackGeneration = {...generation, generation_id: 'other', utterance_id: 'other'}
   const before = session.snapshot().version
-  assert.equal(session.alertGuardHandoff(other), false, 'a different generation is not it')
+  assert.equal(session.alertPreemptiveAlertHandoff(other), false, 'a different generation is not it')
   assert.equal(session.snapshot().version, before, 'and nothing was published')
   // The handoff must still be there for the generation it actually names.
-  assert.equal(session.alertGuardHandoff(generation), true, 'the real one still works')
+  assert.equal(session.alertPreemptiveAlertHandoff(generation), true, 'the real one still works')
 })
 
 test('retiring an unaccountable clear frees the slot without inventing a delivery', async () => {
