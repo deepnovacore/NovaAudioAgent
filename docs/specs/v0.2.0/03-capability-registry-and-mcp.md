@@ -189,7 +189,11 @@ objective; the objective input is not subject to the observation output bound.
 It must produce strict JSON with exactly one `observation` string, whose
 length is at most 400 characters. JSON parse failure, extra or missing fields,
 an oversized observation, or model refusal fails with
-`vision_description_unavailable`. Qwen receives only the resulting
+`vision_description_unavailable`. The snapshot binding's provider-facing
+`ToolAcceptance` / tool-result envelope must preserve that exact code (plus
+only a fixed host-authored message, if the envelope includes one); it must not
+remap the failure to generic `untrusted_external` or any other code. Qwen
+receives only the resulting
 `observation`, `captured_at`, image `dimensions`, and `evidence_ref`. Qwen's
 original-image capability remains `false` pending a separately verified future
 provider; an image ref in the Qwen context is evidence metadata, not an
@@ -431,10 +435,11 @@ No MCP SDK in the sandboxed renderer.
       returns its digest/ref. `watch_model` must return strict JSON with only
       `observation` ≤400 chars; malformed JSON, extra/missing fields, an
       oversized observation, or model refusal returns
-      `vision_description_unavailable`. The input objective is not bounded by
-      that output limit. Qwen receives only observation, captured_at,
-      dimensions, evidence_ref; Qwen original-image capability is false until
-      a future provider is verified.
+      `vision_description_unavailable`; the provider-facing acceptance/result
+      preserves that exact code and never remaps it to a generic trust/error
+      label. The input objective is not bounded by that output limit. Qwen
+      receives only observation, captured_at, dimensions, evidence_ref; Qwen
+      original-image capability is false until a future provider is verified.
 - [ ] Disabled search / camera / coding / knowledge → tools absent from compiled
       schema and Qwen instructions.
 - [ ] Fake MCP search server → `SearchAdapter` digests match golden URL rules;
