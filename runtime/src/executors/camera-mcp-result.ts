@@ -20,6 +20,7 @@ export const CAMERA_MIN_CAPTURED_AT = 946_684_800
 export const CAMERA_MAX_CAPTURED_AT = 4_102_444_800
 
 const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const MISSING_PROPERTY = Symbol('missing-property')
 
 export const CAMERA_VISION_JSON_SCHEMA: Readonly<Record<string, JsonValue>> = {
   type: 'object',
@@ -92,15 +93,26 @@ export async function projectCameraMcpResult(
   input: unknown,
   options: CameraProjectionOptions,
 ): Promise<CameraProjection> {
-  const parsed = parseInput(input)
+  let parsed: ReturnType<typeof parseInput>
+  try {
+    parsed = parseInput(input)
+  } catch {
+    return failure('invalid_content')
+  }
   if ('error' in parsed) return failure(parsed.error)
 
-  const metadata = parseMetadata(parsed.structuredContent)
+  let metadata: ReturnType<typeof parseMetadata>
+  try {
+    metadata = parseMetadata(parsed.structuredContent)
+  } catch {
+    return failure('invalid_metadata')
+  }
   if (metadata === null) return failure('invalid_metadata')
 
-  const payload = decodeBase64(parsed.image.data)
-  if (payload === null) return failure('invalid_base64')
-  if (payload.byteLength > CAMERA_MAX_IMAGE_BYTES) return failure('image_too_large')
+  const decoded = decodeBase64(parsed.image.data)
+  if (decoded.kind === 'invalid') return failure('invalid_base64')
+  if (decoded.kind === 'too_large') return failure('image_too_large')
+  const payload = decoded.payload
 
   let entry
   try {
@@ -130,12 +142,26 @@ export async function projectCameraMcpResult(
     return failure('vision_description_unavailable')
   }
 
-  const observation = parseObservation(isPlainObject(response) ? response.text : null)
+  let observation: string | null
+  try {
+    observation = parseObservation(readDataProperty(response, 'text'))
+  } catch {
+    return failure('vision_description_unavailable')
+  }
   if (observation === null) return failure('vision_description_unavailable')
 
   // A gateway callback or concurrent request may evict the just-captured evidence while VLM I/O
   // is in flight. Never publish a digest for bytes that are no longer retained.
-  if (options.mediaStore.get(entry.ref) === undefined) return failure('media_unavailable')
+  try {
+    const retained = options.mediaStore.get(entry.ref)
+    if (retained === undefined) return failure('media_unavailable')
+    if (retained.ref !== entry.ref || retained.digest !== entry.digest
+      || retained.media_type !== entry.media_type || retained.width !== entry.width
+      || retained.height !== entry.height || retained.captured_at !== entry.captured_at
+      || !sameBytes(retained.payload, payload)) return failure('media_unavailable')
+  } catch {
+    return failure('media_unavailable')
+  }
   const evidenceRef = `camera.snapshot://sha256/${entry.digest}`
   return {
     outcome: 'ok',
@@ -163,26 +189,32 @@ function parseInput(input: unknown):
   }
   const content = input.content as readonly unknown[]
   const candidate = content[0]
-  if (!isPlainObject(candidate) || candidate.type !== 'image'
-    || typeof candidate.data !== 'string' || typeof candidate.mimeType !== 'string') {
+  if (!isPlainObject(candidate) || hasSymbolKeys(candidate)) {
     return {error: 'invalid_content'}
   }
-  if (!SUPPORTED_MIME_TYPES.has(candidate.mimeType)) return {error: 'unsupported_mime'}
+  const type = readDataProperty(candidate, 'type')
+  const data = readDataProperty(candidate, 'data')
+  const mimeType = readDataProperty(candidate, 'mimeType')
+  if (type !== 'image' || typeof data !== 'string' || typeof mimeType !== 'string') {
+    return {error: 'invalid_content'}
+  }
+  if (!SUPPORTED_MIME_TYPES.has(mimeType)) return {error: 'unsupported_mime'}
   return {
-    image: {type: 'image', data: candidate.data, mimeType: candidate.mimeType},
-    structuredContent: input.structuredContent,
+    image: {type: 'image', data, mimeType},
+    structuredContent: readDataProperty(input, 'structuredContent'),
   }
 }
 
 function parseMetadata(value: unknown): {readonly captured_at: number; readonly width: number; readonly height: number} | null {
-  if (!isPlainObject(value)) return null
-  const keys = Object.keys(value)
-  if (keys.length !== 3 || !keys.includes('captured_at') || !keys.includes('width') || !keys.includes('height')) {
+  if (!isPlainObject(value) || hasSymbolKeys(value)) return null
+  const keys = Reflect.ownKeys(value)
+  if (keys.length !== 3 || keys.some(key => typeof key !== 'string')
+    || !keys.includes('captured_at') || !keys.includes('width') || !keys.includes('height')) {
     return null
   }
-  const capturedAt = value.captured_at
-  const width = value.width
-  const height = value.height
+  const capturedAt = readDataProperty(value, 'captured_at')
+  const width = readDataProperty(value, 'width')
+  const height = readDataProperty(value, 'height')
   if (typeof capturedAt !== 'number' || !Number.isFinite(capturedAt)
     || capturedAt < CAMERA_MIN_CAPTURED_AT || capturedAt > CAMERA_MAX_CAPTURED_AT
     || typeof width !== 'number' || !Number.isSafeInteger(width) || width <= 0 || width > CAMERA_MAX_WIDTH
@@ -191,15 +223,19 @@ function parseMetadata(value: unknown): {readonly captured_at: number; readonly 
   return {captured_at: capturedAt, width, height}
 }
 
-function decodeBase64(value: string): Uint8Array | null {
+function decodeBase64(value: string):
+  | {readonly kind: 'ok'; readonly payload: Uint8Array}
+  | {readonly kind: 'invalid'}
+  | {readonly kind: 'too_large'} {
   // Avoid allocating a giant decoded buffer for a syntactically valid attack payload.
   if (value.length > Math.ceil(CAMERA_MAX_IMAGE_BYTES / 3) * 4) {
-    return new Uint8Array(CAMERA_MAX_IMAGE_BYTES + 1)
+    return {kind: 'too_large'}
   }
-  if (!isCanonicalBase64(value)) return null
+  if (!isCanonicalBase64(value)) return {kind: 'invalid'}
   const decoded = Buffer.from(value, 'base64')
-  if (decoded.byteLength === 0 || decoded.toString('base64') !== value) return null
-  return new Uint8Array(decoded)
+  if (decoded.byteLength === 0 || decoded.toString('base64') !== value) return {kind: 'invalid'}
+  if (decoded.byteLength > CAMERA_MAX_IMAGE_BYTES) return {kind: 'too_large'}
+  return {kind: 'ok', payload: new Uint8Array(decoded)}
 }
 
 function isCanonicalBase64(value: string): boolean {
@@ -227,14 +263,35 @@ function parseObservation(text: unknown): string | null {
   if (typeof text !== 'string') return null
   let value: unknown
   try { value = JSON.parse(text) } catch { return null }
-  if (!isPlainObject(value) || Object.keys(value).length !== 1 || !Object.hasOwn(value, 'observation')) return null
-  const observation = value.observation
-  if (typeof observation !== 'string' || Array.from(observation).length > CAMERA_MAX_DESCRIPTION_CHARS) return null
+  if (!isPlainObject(value) || hasSymbolKeys(value) || Reflect.ownKeys(value).length !== 1
+    || !Object.hasOwn(value, 'observation')) return null
+  const observation = readDataProperty(value, 'observation')
+  if (typeof observation !== 'string' || observation.trim() === ''
+    || Array.from(observation).length > CAMERA_MAX_DESCRIPTION_CHARS) return null
   return observation
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false
-  const prototype = Reflect.getPrototypeOf(value)
+  let prototype: object | null
+  try { prototype = Reflect.getPrototypeOf(value) } catch { return false }
   return prototype === Object.prototype || prototype === null
+}
+
+function hasSymbolKeys(value: object): boolean {
+  return Reflect.ownKeys(value).some(key => typeof key === 'symbol')
+}
+
+function readDataProperty(value: object, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key)
+  if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) return MISSING_PROPERTY
+  return descriptor.value
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
 }

@@ -121,7 +121,7 @@ test('oversized payload and invalid structured metadata fail closed', async () =
 test('vision timeout, refusal, malformed JSON, schema mismatch, and overlong text do not guess', async () => {
   const responses: (string | Error)[] = [
     new Error('timeout'), new Error('refused'), 'not-json', '{"observation":3}',
-    JSON.stringify({observation: '场景'.repeat(401)}),
+    '{"observation":" \\n\\t"}', JSON.stringify({observation: '场景'.repeat(401)}),
   ]
   for (const response of responses) {
     const projected = await projectCameraMcpResult(
@@ -158,4 +158,61 @@ test('missing retained MediaStore object is not projected as evidence', async ()
   }
   const projected = await projectCameraMcpResult(result(), options(gateway, store))
   assert.equal(contentOf(projected).error, 'media_unavailable')
+})
+
+test('a retained ref replaced with different bytes is not projected as evidence', async () => {
+  class OverwrittenStore extends MediaStore {
+    override get(ref: string) {
+      const entry = super.get(ref)
+      return entry === undefined ? undefined : {
+        ...entry,
+        digest: '0'.repeat(64),
+        payload: new Uint8Array([99]),
+      }
+    }
+  }
+  const projected = await projectCameraMcpResult(
+    result(), options(new ScriptedGateway(), new OverwrittenStore()),
+  )
+  assert.equal(contentOf(projected).error, 'media_unavailable')
+})
+
+test('throwing MCP getters and proxy traps fail closed with stable validation codes', async () => {
+  const input = Object.defineProperty({}, 'content', {
+    get(): never { throw new Error('content getter must not escape') },
+  })
+  const inputResult = await projectCameraMcpResult(input, options(new ScriptedGateway()))
+  assert.equal(contentOf(inputResult).error, 'invalid_content')
+
+  const throwingMetadata = Object.defineProperties({}, {
+    captured_at: {enumerable: true, get(): never { throw new Error('metadata getter') }},
+    width: {value: 640, enumerable: true}, height: {value: 480, enumerable: true},
+  })
+  const metadataResult = await projectCameraMcpResult(
+    result({metadata: throwingMetadata}), options(new ScriptedGateway()),
+  )
+  assert.equal(contentOf(metadataResult).error, 'invalid_metadata')
+
+  const proxyInput = new Proxy({}, {getPrototypeOf(): never { throw new Error('proxy trap') }})
+  const proxyResult = await projectCameraMcpResult(proxyInput, options(new ScriptedGateway()))
+  assert.equal(contentOf(proxyResult).error, 'invalid_content')
+
+  const gateway: ModelGateway = {
+    async *stream(): AsyncIterable<never> { await Promise.resolve() },
+    async complete(): Promise<{readonly text: string}> {
+      await Promise.resolve()
+      return new Proxy({}, {get(): never { throw new Error('response getter') }}) as {readonly text: string}
+    },
+  }
+  const responseResult = await projectCameraMcpResult(result(), options(gateway))
+  assert.equal(contentOf(responseResult).error, 'vision_description_unavailable')
+})
+
+test('symbol metadata fields are rejected rather than silently dropped', async () => {
+  const metadata = {captured_at: CAPTURED_AT, width: 640, height: 480}
+  Object.defineProperty(metadata, Symbol('unexpected'), {value: true})
+  const projected = await projectCameraMcpResult(
+    result({metadata}), options(new ScriptedGateway()),
+  )
+  assert.equal(contentOf(projected).error, 'invalid_metadata')
 })
