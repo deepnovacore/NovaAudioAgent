@@ -27,7 +27,6 @@ import {createHash, randomUUID} from 'node:crypto'
 import {canonicalJson} from '../canonical-json.js'
 import {
   IntakeController,
-  renderCancelResult,
   type IntakeOptions,
   type IntakeSession,
 } from '../executors/coding/intake.js'
@@ -3968,28 +3967,33 @@ export class RealtimeService {
   }
 
   #agentActionContent(result: AgentActionResult): string {
-    if (result.code === 'intake_opened' || result.code === 'intake_in_progress') {
-      return canonicalJson({
-        code: result.code, state: result.detail.state,
-        message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
-      })
+    switch (result.code) {
+      case 'intake_opened':
+      case 'intake_in_progress':
+        return canonicalJson({
+          code: result.code,
+          message: '宿主正在整理需求，尚未派单。等待宿主问题或计划，不自行追问。',
+        })
+      case 'cancelled':
+        return canonicalJson({
+          code: result.code,
+          message: 'code=cancelled：已请求停止任务，稍后有终态事实。',
+        })
+      case 'ambiguous_work':
+        return canonicalJson({
+          code: result.code,
+          running_count: result.detail.running.length,
+          message: 'code=ambiguous_work：有多个任务正在执行，请说明要停止哪一个。',
+        })
+      case 'not_running':
+        return canonicalJson({code: result.code, message: 'code=not_running：当前没有正在执行的任务。'})
+      case 'accepted':
+      case 'delegated':
+      case 'unsupported_tool':
+      case 'superseded':
+      case 'runtime_rejected':
+        return canonicalJson({code: result.code})
     }
-    if (result.code === 'cancelled') {
-      return canonicalJson({
-        code: result.code, work: result.detail.work,
-        message: renderCancelResult({code: 'cancelled', work: result.detail.work}),
-      })
-    }
-    if (result.code === 'ambiguous_work') {
-      return canonicalJson({
-        code: result.code, running: result.detail.running,
-        message: renderCancelResult({code: 'ambiguous_work', running: result.detail.running}),
-      })
-    }
-    if (result.code === 'not_running') {
-      return canonicalJson({code: result.code, message: renderCancelResult({code: 'not_running'})})
-    }
-    return canonicalJson({code: result.code})
   }
 
   #controllerDelegationAcceptance(
