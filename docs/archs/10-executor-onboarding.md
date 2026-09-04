@@ -15,7 +15,9 @@ Add an executor in this order:
 6. Add a live smoke only after deterministic lifecycle coverage passes.
 7. Document credentials and least-privilege setup in Getting Started.
 
-If no manifest declares the `coding` role, intake and `dispatch`/`cancel` are not compiled; direct
-read-only tools remain valid and assembly does not fail. Do not add an executor by giving the model
-direct transport access. The adapter must translate the external protocol into bounded progress and
-one typed terminal handoff.
+The host tools `dispatch`, `cancel`, and `confirm` compile when at least one `AgentController` is
+registered. A missing `coding` role removes only coding intake/controller wiring; a Vision controller
+may keep those host tools available. With zero registered controllers, the same compiler condition
+omits all three host tools while direct read-only tools remain valid and assembly does not fail. Do
+not add an executor by giving the model direct transport access. The adapter must translate the
+external protocol into bounded progress and one typed terminal handoff.

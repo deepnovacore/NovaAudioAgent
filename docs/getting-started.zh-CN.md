@@ -121,7 +121,8 @@ provider 故障转移。
 的后台重启。因此管线、provider、模型、音色和密钥的取值是在那一次下次启动时生效，而不是会话
 中途热更；配色也改为在同一个提交点生效，不再实时应用。
 
-Node 执行器名称是任意唯一的 manifest key，由 role 路由，不再使用固定执行器枚举。Codex 的
+Node 执行器名称是任意唯一的 manifest key，由 role 路由，不再使用固定执行器枚举。下面的源码生成
+契约默认不选择执行器；显式 `fast_sim` 仅保留为测试 fixture 选择器，而非生产默认值。Codex 的
 ordinary/live/project 模式共用有界 app-server transport。Camera 文件输入只接受主机验证过的
 绝对路径；默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 回放均使用 Chromium
 摄像头链路。外部 MCP 设置尚未作为面向用户的配置面交付。

@@ -72,9 +72,12 @@ Follow [Executor onboarding](docs/archs/10-executor-onboarding.md):
 6. Add a live smoke only after deterministic lifecycle coverage passes.
 7. Document credentials and least-privilege setup in [Getting started](docs/getting-started.md).
 
-If no manifest declares the `coding` role, intake and `dispatch`/`cancel` are not compiled; direct
-read-only tools remain valid. Do not give the model direct transport access; the adapter must
-translate the external protocol into bounded progress and one typed terminal handoff.
+The host tools `dispatch`, `cancel`, and `confirm` compile when at least one `AgentController` is
+registered. A missing `coding` role removes only coding intake/controller wiring; a Vision controller
+may keep those host tools available. With zero registered controllers, the same compiler condition
+omits all three host tools while direct read-only tools remain valid. Do not give the model direct
+transport access; the adapter must translate the external protocol into bounded progress and one
+typed terminal handoff.
 
 ## Security
 

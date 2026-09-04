@@ -14,13 +14,13 @@ is never model context.
   instance plus bounded preferences; and
 - an optional `<workspace_hints authority="suggestion_only"
   scope="current_workspace_next_step" cross_workspace="forbidden" action="forbidden">` Recall Pack
-  containing at most two whole, intent-matched relation hints and one evidence pointer per hint.
+  containing at most two whole, request-matched relation hints and one evidence pointer per hint.
 
 There is no relation-only fallback. Items are structurally neutralized and dropped whole rather than
 clipped. Token estimates, Unicode code-point limits, and UTF-8 byte limits all apply; the strictest
-limit wins. The blocks render after runtime material and before intent, goal, and authorization, so
-their lower authority is explicit without displacing the current user request. Authorization is not
-in `ContextView`; it remains host FSM state.
+limit wins. `ContextView` carries the current user request, bounded intake facts, active delegates,
+and typed results. These graph blocks are lower-authority suggestions and never displace those
+fields; host approval state is compiled separately and is not part of this projection.
 
 Hints can only suggest a next step inside the current workspace. They never request or execute a
 workspace switch, inspect another workspace, call an action tool, or act as user instructions.

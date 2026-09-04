@@ -2,6 +2,11 @@
 
 **What survives when the model finally owns the speak decision itself — and what you should never have built.**
 
+> **Historical design exploration.** This essay records an earlier design discussion and is not the
+> current operational contract. For the v0.2dev boundaries, read the
+> [current v0.2.0 specifications](../specs/v0.2.0/00-overview.md), especially the capability,
+> executor, and project/work volumes.
+
 > Distilled from a design session on 2026-08-07. Everything marked *shipped* is shipped and tested;
 > everything else is a bet, and the text says which is which.
 > Revised 2026-08-12 against the [DuplexLM survey](https://arxiv.org/abs/2606.19453),

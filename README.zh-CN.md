@@ -21,7 +21,7 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 
 同期工作 [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) 回答的是
 「怎么让 agent 边干活边说话」；我们在此基础上又追问了一层——**开口这件事，什么时候才值得**
-（详见[设计文档](docs/blog/2026-08-proactive-voice-agent-design-space.md)）。
+（详见[历史设计探索文档](docs/blog/2026-08-proactive-voice-agent-design-space.md)）。
 
 
 - **主动有分寸：** 话有轻重。Coding 的琐碎进度不必说，里程碑应该汇报；Vision Guard 告警说话权更高，可以打断 Nova 正在播放的语音，但绝不打断用户说话。
@@ -96,7 +96,7 @@ node runtime/dist/src/cli.js demo all
 | [术语与不变量](docs/glossary.md) | 核心常量 |
 | [上手指南](docs/getting-started.zh-CN.md) | 安装与集成 |
 | [v0.2.0 规格](docs/specs/v0.2.0/00-overview.md) | `v0.2.0dev` 上进行中的功能契约 |
-| [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 设计博客 |
+| [历史设计探索：A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 历史设计博客 |
 
 ## 5. 路线图
 - [ ] **v0.2.0（分支 `v0.2.0dev`）：** M1.5b → M1.5c 薄前端 → 03a 能力扩展。M1.5c 需验证最终六工具面、Camera MCP + 侧边 VLM 投影、Vision 隐藏 watch/guard、策略驱动监控并重跑 08 live acceptance；live 与 Windows 证据仍待完成。外部 MCP 设置尚未交付。规格：[docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md)。

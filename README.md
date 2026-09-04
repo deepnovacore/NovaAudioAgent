@@ -23,7 +23,7 @@ keeps responsive while doing long-running tasks in the background, reporting
 
 A concurrent work [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) answers
 *how to keep an agent talking while it works*, while we ask a step further — **when is talking
-worth it at all** (see the [design post](docs/blog/2026-08-proactive-voice-agent-design-space.md) for more details).
+worth it at all** (see the [historical design post](docs/blog/2026-08-proactive-voice-agent-design-space.md) for more details).
 
 
 - **Restrained proactivity:** Not all words are created equal: trivial coding progress can stay quiet while milestones are reported. Vision Guard alerts have higher speaking rights and may preempt Nova playback, never user speech.
@@ -102,7 +102,7 @@ Note that native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windo
 | [Glossary and invariants](docs/glossary.md) | Vocabulary and rules |
 | [Getting started](docs/getting-started.md) | Setup and integrations |
 | [v0.2.0 specs](docs/specs/v0.2.0/00-overview.md) | In-progress feature contracts on `v0.2.0dev` |
-| [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | The design-space essay |
+| [Historical design exploration: A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | Historical design-space essay |
 
 ## 5. Roadmap
 - [ ] **v0.2.0 (branch `v0.2.0dev`):** M1.5b → M1.5c thin frontend → 03a capability expansion. The M1.5c gate covers the final six-tool surface, Camera MCP + side VLM projection, Vision hidden watch/guard, policy-driven monitoring, and rerun of the 08 live acceptance; live and Windows evidence remain pending. External MCP settings are not shipped. Specs: [docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md).

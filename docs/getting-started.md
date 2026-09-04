@@ -142,8 +142,10 @@ voice, and key values therefore take effect on that next launch of the backend r
 mid-session, and the palette commits on the same boundary instead of applying live.
 
 Configured executor names are arbitrary unique manifest keys routed by roles; there is no fixed
-executor enum. Codex ordinary/live/project modes share the bounded app-server transport. Camera file
-input accepts only an absolute host-validated path, and both the local-camera default and
+executor enum. The source-generated contract below selects no executor by default; explicit
+`fast_sim` remains a test fixture selector rather than a production default. Codex
+ordinary/live/project modes share the bounded app-server transport. Camera file input
+accepts only an absolute host-validated path, and both the local-camera default and
 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback use Chromium's camera pipeline. External MCP settings
 are not shipped as a user-facing configuration surface.
 

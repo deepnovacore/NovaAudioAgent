@@ -5,9 +5,11 @@ assembly routes it by declared roles and does not expose a fixed executor enum.
 The manifest describes operations, schemas, policy, and trust. The separate `AgentController`
 registry describes model-facing controllers and their owned hidden channels.
 
-The `coding` role is optional. If no manifest declares it, intake and `dispatch`/`cancel` are not
-compiled, while direct read-only tools remain available. Disabling that role is a valid assembly,
-not an `AssemblyError`.
+The `coding` role is optional. If no manifest declares it, only coding intake/controller wiring is
+removed; a registered Vision controller may keep the host tools `dispatch`, `cancel`, and `confirm`
+compiled. Those three tools compile whenever at least one `AgentController` is registered; with zero
+controllers the compiler omits them while direct read-only tools remain available. Disabling coding
+is a valid assembly, not an `AssemblyError`.
 
 ## Codex
 
