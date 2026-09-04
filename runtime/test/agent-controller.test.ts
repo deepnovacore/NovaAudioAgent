@@ -159,6 +159,17 @@ test('vision action result variants are closed and stop details are channel-boun
   ]) assert.equal(parseAgentActionResult(value), null)
 })
 
+test('generic action result parsing rejects Proxies without triggering traps', () => {
+  let traps = 0
+  const proxy = new Proxy({code: 'accepted', accepted: true, detail: {}}, {
+    get: () => { traps += 1; throw new Error('get trap') },
+    getPrototypeOf: () => { traps += 1; throw new Error('prototype trap') },
+    ownKeys: () => { traps += 1; throw new Error('keys trap') },
+  })
+  assert.equal(parseAgentActionResult(proxy), null)
+  assert.equal(traps, 0)
+})
+
 test('registry snapshots descriptors, controller methods, and map authority', async () => {
   const descriptor = {name: 'coder', summary: '编码', ownedChannels: ['codex']}
   let dispatches = 0

@@ -6,6 +6,7 @@
  * descriptors provide the only public agent roster the model and desktop can see.
  */
 import {z} from 'zod'
+import {types as nodeTypes} from 'node:util'
 import type {JsonValue} from './events.js'
 
 export interface AgentDescriptor {
@@ -258,6 +259,11 @@ function isSafeDataTree(value: unknown, seen: Set<object>, depth: number): boole
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
   if (typeof value === 'number') return Number.isFinite(value)
   if (typeof value !== 'object' || depth > 4 || seen.has(value)) return false
+  try {
+    if (nodeTypes.isProxy(value)) return false
+  } catch {
+    return false
+  }
   seen.add(value)
   if (Array.isArray(value)) {
     if (Object.getPrototypeOf(value) !== Array.prototype) return false

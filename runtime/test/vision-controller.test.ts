@@ -75,9 +75,77 @@ test('vision facade strips hostile detail and fails closed for invalid core fact
       detail: {channel: 'codex', op: 'stop'}} as never),
   } as unknown as VisionAgentControllerCore})
   assert.deepEqual(await facade.dispatch(dispatchRequest), {
-    code: 'delegated', accepted: true, delegate_id: 'watch-1', detail: {channel: 'watch', op: 'start'},
+    code: 'assessment_unavailable', accepted: false, detail: {},
   } satisfies AgentActionResult)
   assert.deepEqual(await facade.cancel(cancelRequest), {
     code: 'assessment_unavailable', accepted: false, detail: {},
   } satisfies AgentActionResult)
+})
+
+test('vision facade does not invoke result getters and rejects proxy traps', async () => {
+  let getterCalls = 0
+  const getterResult = Object.create(Object.prototype) as Record<string, unknown>
+  Object.defineProperty(getterResult, 'code', {
+    enumerable: true, get: () => { getterCalls += 1; return 'busy' },
+  })
+  Object.defineProperty(getterResult, 'accepted', {enumerable: true, value: true})
+  Object.defineProperty(getterResult, 'detail', {enumerable: true, value: {}})
+  const getterFacade = new VisionAgentController({core: fakeCore(getterResult as never)})
+  assert.deepEqual(await getterFacade.dispatch(dispatchRequest), {
+    code: 'assessment_unavailable', accepted: false, detail: {},
+  })
+  assert.equal(getterCalls, 0)
+
+  let traps = 0
+  const proxy = new Proxy({code: 'busy', accepted: true, detail: {}}, {
+    get: (_target, key) => {
+      if (key === 'then') return undefined
+      traps += 1
+      throw new Error('get trap')
+    },
+    getPrototypeOf: () => { traps += 1; throw new Error('prototype trap') },
+    ownKeys: () => { traps += 1; throw new Error('keys trap') },
+  })
+  const proxyFacade = new VisionAgentController({core: fakeCore(proxy as never)})
+  assert.deepEqual(await proxyFacade.dispatch(dispatchRequest), {
+    code: 'assessment_unavailable', accepted: false, detail: {},
+  })
+  assert.equal(traps, 0)
+})
+
+test('vision facade requires exact own enumerable data keys for result and detail', async () => {
+  const inherited = Object.create({code: 'busy'}) as Record<string, unknown>
+  Object.assign(inherited, {accepted: true, detail: {}})
+  const nonEnumerable = {code: 'busy', accepted: true, detail: {}} as Record<string, unknown>
+  Object.defineProperty(nonEnumerable, 'code', {enumerable: false, value: 'busy'})
+  const extra = {code: 'busy', accepted: true, detail: {}, extra: 'prose'}
+  const inheritedDetail = Object.create({channel: 'watch'}) as Record<string, unknown>
+  inheritedDetail.op = 'start'
+  const inheritedDetailResult = {code: 'delegated', accepted: true, delegate_id: 'd-1', detail: inheritedDetail}
+  for (const result of [inherited, nonEnumerable, extra, inheritedDetailResult]) {
+    const facade = new VisionAgentController({core: fakeCore(result as never)})
+    assert.deepEqual(await facade.dispatch(dispatchRequest), {
+      code: 'assessment_unavailable', accepted: false, detail: {},
+    })
+  }
+})
+
+test('vision facade requires the exact accepted literal for every core result class', async () => {
+  const cases = [
+    {code: 'delegated', accepted: false, delegate_id: 'd-1', detail: {channel: 'watch', op: 'start'}},
+    {code: 'cancelled', accepted: false, detail: {channel: 'watch', op: 'stop'}},
+    {code: 'requested_stop', accepted: false, detail: {channel: 'watch', op: 'stop'}},
+    {code: 'unclear', accepted: false, detail: {reason: 'assessment_unclear'}},
+    {code: 'busy', accepted: false, detail: {}},
+    {code: 'not_running', accepted: false, detail: {}},
+    {code: 'assessment_unavailable', accepted: true, detail: {}},
+    {code: 'superseded', accepted: true, detail: {}},
+    {code: 'runtime_rejected', accepted: true, detail: {}},
+  ] as const
+  for (const result of cases) {
+    const facade = new VisionAgentController({core: fakeCore(result as never)})
+    const mapped = result.code === 'cancelled' || result.code === 'requested_stop'
+      ? await facade.cancel(cancelRequest) : await facade.dispatch(dispatchRequest)
+    assert.deepEqual(mapped, {code: 'assessment_unavailable', accepted: false, detail: {}})
+  }
 })
