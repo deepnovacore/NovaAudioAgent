@@ -258,28 +258,6 @@ test('deadline writes unknown before termination and a late handoff still append
   )
 })
 
-test('structured update rejection is evidence rather than an exception', () => {
-  const runtime = new CoreRuntime({
-    manifests: [manifest],
-    ids: new ScriptedIdFactory({delegate: []}),
-  })
-  const user = runtime.post({kind: 'user_input', payload: {text: 'relax'}}, 0)
-  const reason = runtime.apply(runtime.queue.popReady(0)!)
-  runtime.consumeFastBrain(fastBrainOutputSchema.parse({
-    speak: {act: 'none'},
-    action: {act: 'update', update: {target: 'intent', delta: {mood: 'calm'}}},
-  }), reason!, user.seq)
-
-  const rejection = runtime.memory.channels.get('conversation')?.items.at(-1)
-  assert.equal(rejection?.outcome, 'failed')
-  assert.deepEqual(rejection?.content, {
-    error: 'update_rejected',
-    target: 'intent',
-    reason: 'unknown_fields',
-    unknown: ['mood'],
-  })
-})
-
 test('scripted ids fail when exhausted or left unused', () => {
   const ids = new ScriptedIdFactory({delegate: ['d-1']})
   assert.throws(() => ids.assertExhausted(), /unused scripted ids/u)
@@ -1629,8 +1607,8 @@ test('speech is still consumed when the action is rejected', () => {
 /**
  * The external-admission surface.
  *
- * `dispatchExternal` and `updateExternal` exist so a caller that is not the model -- the realtime
- * bridge -- can propose work without inventing a second path into the reducer. What makes them safe
+ * `dispatchExternal` exists so a caller that is not the model -- the realtime bridge -- can propose
+ * work without inventing a second path into the reducer. What makes it safe
  * is that they are *not* a shortcut: they reach the same guards a model dispatch reaches, and they
  * compile the visible-reference set themselves rather than inheriting one.
  */
@@ -1873,44 +1851,4 @@ test('an external dispatch distinguishes a malformed reference from a missing it
     assert.equal(rejected.accepted, false)
     assert.equal(rejected.problem, expected)
   }
-})
-
-test('an external update goes through the sole structured-state writer', () => {
-  const runtime = externalRuntime()
-  const before = runtime.memory.structured.intent.revision
-  assert.equal(
-    runtime.updateExternal({target: 'intent', delta: {uncertainty: 0.4}}, externalReason),
-    true,
-  )
-  assert.equal(runtime.memory.structured.intent.uncertainty, 0.4)
-  assert.equal(
-    runtime.memory.structured.intent.revision,
-    before + 1,
-    'the spine increments revision; a caller cannot supply it',
-  )
-
-  // A field absent from the delta is left alone: overwrite by field, never reset the structure.
-  runtime.updateExternal({target: 'intent', delta: {objective_hypothesis: 'compile'}}, externalReason)
-  assert.equal(runtime.memory.structured.intent.uncertainty, 0.4)
-  assert.equal(runtime.memory.structured.intent.objective_hypothesis, 'compile')
-})
-
-test('a rejected external update is recorded as a failed observation, not raised', () => {
-  // Letting one bad field throw out of the writer would kill the loop. Nothing is waiting on it
-  // either -- no work was dispatched -- so it records and returns rather than waking.
-  const runtime = externalRuntime()
-  const before = runtime.memory.channels.get('conversation')?.items.length ?? 0
-  assert.equal(
-    runtime.updateExternal({target: 'intent', delta: {revision: 7}}, externalReason),
-    false,
-    'revision is not a field a caller may set',
-  )
-  const items = runtime.memory.channels.get('conversation')?.items ?? []
-  assert.equal(items.length, before + 1)
-  const recorded = items.at(-1)!
-  assert.equal(recorded.outcome, 'failed')
-  assert.equal(recorded.content.error, 'update_rejected')
-  assert.equal(recorded.content.target, 'intent')
-  // The structure is untouched.
-  assert.equal(runtime.memory.structured.intent.revision, 0)
 })

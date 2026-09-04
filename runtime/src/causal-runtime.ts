@@ -7,7 +7,6 @@ import type {
   Delegate,
   DelegateRequest,
   ExecutorManifest,
-  UpdateSpec,
 } from './ports.js'
 import {
   CoreRuntime,
@@ -226,14 +225,6 @@ export class CausalRuntime {
       this.#notifyWork()
     }
     return admission
-  }
-
-  /** Route an external update through the reducer's sole structured-state writer. */
-  updateExternal(spec: UpdateSpec, reason: WakeReason): boolean {
-    if (this.#state === 'closed') return false
-    const accepted = this.core.updateExternal(spec, reason)
-    this.#notifyWork()
-    return accepted
   }
 
   /** The delegate a handoff claimed, for an observer projecting that exact event. */

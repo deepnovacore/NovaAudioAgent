@@ -31,11 +31,6 @@ export const executorHandoffSchema = z.object({
   refs: z.array(z.string()).default([]),
 }).strict()
 
-export const updateSpecSchema = z.object({
-  target: z.string().min(1),
-  delta: z.record(z.string(), jsonValueSchema),
-}).strict()
-
 export const speakOutputSchema = z.discriminatedUnion('act', [
   z.object({act: z.literal('none')}).strict(),
   z.object({act: z.literal('say'), text: z.string()}).strict(),
@@ -45,7 +40,6 @@ export const speakOutputSchema = z.discriminatedUnion('act', [
 export const actionOutputSchema = z.discriminatedUnion('act', [
   z.object({act: z.literal('none')}).strict(),
   z.object({act: z.literal('delegate'), delegate: delegateRequestSchema}).strict(),
-  z.object({act: z.literal('update'), update: updateSpecSchema}).strict(),
 ])
 
 export const contractFailureSchema = z.object({
@@ -92,7 +86,6 @@ export const compressorOutputSchema = z.object({
   summary: z.string(),
 }).strict()
 
-export type UpdateSpec = z.infer<typeof updateSpecSchema>
 export type FastBrainOutput = z.infer<typeof fastBrainOutputSchema>
 export type SurrogateOutput = z.infer<typeof surrogateOutputSchema>
 export type CompressorOutput = z.infer<typeof compressorOutputSchema>

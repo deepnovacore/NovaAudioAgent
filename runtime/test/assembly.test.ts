@@ -220,8 +220,7 @@ test('the compiled tool schema advertises always-on adapters before configured e
   assert.ok(names.includes('guard__status'))
   assert.ok(names.includes('fast_sim__set_light'))
   assert.ok(names.includes('slow_sim__get_state'))
-  // The three structured-update tools are always present.
-  assert.ok(names.includes('update_intent'))
+  assert.ok(!names.includes('update_intent'))
   // The realtime front brain is the only front brain, so recall is always on the table.
   assert.ok(names.includes('memory__recall'))
 })

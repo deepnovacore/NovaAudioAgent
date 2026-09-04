@@ -158,7 +158,6 @@ function realtimeHarness(
         })
         return Promise.resolve(`${item.channel}:${item.seq}`)
       },
-      updateExternal: () => true,
       dispatchExternal: () => ({accepted: false, delegate_id: null}),
     },
     tools,

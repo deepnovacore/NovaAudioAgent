@@ -97,27 +97,4 @@
   "floor": "idle",
   "in_flight": [],
   "now": 12.0,
-  "structured": {
-    "authorization": {
-      "allow": [],
-      "deny": [],
-      "evidence_refs": [],
-      "revision": 0
-    },
-    "goal": {
-      "acceptance_criteria": [],
-      "objective": "说明 Nova Audio Agent v3 架构",
-      "revision": 1,
-      "status": "accepted"
-    },
-    "intent": {
-      "constraints": [
-        "不要执行任何操作"
-      ],
-      "objective_hypothesis": "根据搜索证据解释 Nova Audio Agent v3",
-      "revision": 1,
-      "uncertainty": 0.1,
-      "unresolved_questions": []
-    }
-  }
 }

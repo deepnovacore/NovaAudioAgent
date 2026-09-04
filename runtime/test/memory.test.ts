@@ -4,11 +4,9 @@ import {
   CONVERSATION_CHANNEL,
   Channel,
   Memory,
-  applyStructuredUpdate,
   handoffPolicySchema,
   makeMemoryRef,
   parseMemoryRef,
-  structuredStateSchema,
 } from '../src/memory.js'
 
 const slowPolicy = handoffPolicySchema.parse({
@@ -84,64 +82,4 @@ test('memory preserves refused separately from failed and unknown', () => {
   })
 
   assert.equal(item.outcome, 'refused')
-})
-
-test('structured updates overwrite named fields and bump only their revision', () => {
-  const initial = structuredStateSchema.parse({
-    intent: {
-      objective_hypothesis: 'dim the light',
-      constraints: ['do not switch off'],
-      unresolved_questions: ['how dim?'],
-      uncertainty: 0.4,
-      revision: 2,
-    },
-    goal: {objective: 'light below 40%', revision: 1},
-  })
-  const result = applyStructuredUpdate(initial, 'intent', {uncertainty: 0.1})
-
-  assert.equal(result.ok, true)
-  if (!result.ok) return
-  assert.equal(result.state.intent.uncertainty, 0.1)
-  assert.equal(result.state.intent.revision, 3)
-  assert.deepEqual(result.state.intent.constraints, ['do not switch off'])
-  assert.deepEqual(result.state.goal, initial.goal)
-})
-
-test('structured updates use explicit target and field maps', () => {
-  const initial = structuredStateSchema.parse({})
-  assert.deepEqual(
-    applyStructuredUpdate(initial, 'made_up', {objective: 'x'}),
-    {ok: false, reason: 'unknown_target'},
-  )
-  assert.deepEqual(
-    applyStructuredUpdate(initial, 'intent', {}),
-    {ok: false, reason: 'empty_delta'},
-  )
-  assert.deepEqual(
-    applyStructuredUpdate(initial, 'intent', {revision: 99, mood: 'calm'}),
-    {ok: false, reason: 'unknown_fields', unknown: ['mood', 'revision']},
-  )
-  assert.deepEqual(
-    applyStructuredUpdate(initial, 'intent', {constraints: [['nested']]}),
-    {ok: false, reason: 'bad_types', fields: ['constraints']},
-  )
-  assert.deepEqual(
-    applyStructuredUpdate(initial, 'intent', {uncertainty: true}),
-    {ok: false, reason: 'bad_types', fields: ['uncertainty']},
-  )
-  const paused = applyStructuredUpdate(initial, 'goal', {status: 'paused'})
-  assert.equal(paused.ok, true)
-  if (paused.ok) assert.equal(paused.state.goal.status, 'paused')
-
-  const shapeOnly = applyStructuredUpdate(initial, 'intent', {uncertainty: 2})
-  assert.equal(shapeOnly.ok, true)
-  if (shapeOnly.ok) assert.equal(shapeOnly.state.intent.uncertainty, 2)
-
-  const evidence = applyStructuredUpdate(initial, 'authorization', {
-    evidence_refs: ['not-a-canonical-memory-ref'],
-  })
-  assert.equal(evidence.ok, true)
-  if (evidence.ok) {
-    assert.deepEqual(evidence.state.authorization.evidence_refs, ['not-a-canonical-memory-ref'])
-  }
 })

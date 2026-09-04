@@ -3,12 +3,6 @@
   "description": "Executor manifests compiled into provider function schemas. Expected output is exported by Python tool_schema.compile_tool_schema and matched byte for byte by the Node port.",
   "scenarios": [
     {
-      "id": "structured-updates-only",
-      "include_memory_recall": false,
-      "manifests": [],
-      "covers": "Only the three structured-update tools; no executors and no recall."
-    },
-    {
       "id": "with-memory-recall",
       "include_memory_recall": true,
       "manifests": [],

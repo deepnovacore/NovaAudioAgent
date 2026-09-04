@@ -24,7 +24,6 @@ const redactionFixtureRoot = resolve(fixtureParent, 'deadline-sensitive-redactio
 const malformedFixtureRoot = resolve(fixtureParent, 'malformed-fastbrain-output')
 const staleFixtureRoot = resolve(fixtureParent, 'stale-model-action')
 const progressFixtureRoot = resolve(fixtureParent, 'progress-surrogate-selection')
-const structuredFixtureRoot = resolve(fixtureParent, 'structured-update-model-view')
 
 test('every version-one fixture directory validates', async () => {
   const entries = await readdir(fixtureParent, {withFileTypes: true})
@@ -209,35 +208,6 @@ test('malformed model raw output never enters the runtime snapshot', async () =>
 
   assert.doesNotMatch(durableOutput, /fixture-private-model-output-sentinel/u)
   assert.match(durableOutput, /model_contract_failure/u)
-})
-
-test('Python-exported model views expose structured update parity to the next call', async () => {
-  const fixture = await loadRuntimeFixture(structuredFixtureRoot)
-  const actual = runRuntimeFixture(fixture, [slowManifest])
-
-  assert.equal(canonicalJson(actual), canonicalJson(fixture.expected))
-  assert.equal(actual.model_views.length, 2)
-  const second = actual.model_views[1]?.view
-  assert.equal(second?.structured !== null && typeof second?.structured === 'object'
-    && !Array.isArray(second.structured)
-    && second.structured.intent !== null
-    && typeof second.structured.intent === 'object'
-    && !Array.isArray(second.structured.intent)
-    ? second.structured.intent.revision
-    : undefined, 1)
-  assert.deepEqual(actual.memory.structured.intent, {
-    objective_hypothesis: 'keep the room quiet and dim',
-    constraints: ['do not speak loudly'],
-    unresolved_questions: [],
-    uncertainty: 0.25,
-    revision: 1,
-  })
-  assert.deepEqual(actual.memory.channels.conversation?.at(-1)?.content, {
-    error: 'update_rejected',
-    target: 'intent',
-    reason: 'unknown_fields',
-    unknown: ['revision'],
-  })
 })
 
 test('fixture contracts can be emitted as JSON Schema', () => {

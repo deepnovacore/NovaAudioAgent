@@ -319,7 +319,6 @@ function queueOnlyOptions(): ConstructorParameters<typeof RealtimeService>[0] {
         memory,
         executors,
         ingestUserInput: unreachable('ingestUserInput'),
-        updateExternal: unreachable('updateExternal'),
         dispatchExternal: unreachable('dispatchExternal'),
       },
       tools: compileToolSchema([manifest]),
@@ -824,7 +823,6 @@ function pipelineService(options: {
           })
           return Promise.resolve(`${item.channel}:${item.seq}`)
         },
-        updateExternal: () => true,
         dispatchExternal: () => ({
           accepted: scripted.accepted,
           delegate_id: scripted.delegateId,
@@ -1549,7 +1547,6 @@ function projectionService(options: {
         memory,
         executors,
         ingestUserInput: () => Promise.reject(new Error('unused')),
-        updateExternal: () => true,
         dispatchExternal: () => ({accepted: true, delegate_id: 'd-1'}),
       },
       tools: compileToolSchema([manifest]),
@@ -4514,7 +4511,6 @@ function guardService(options: {
         memory,
         executors,
         ingestUserInput: () => Promise.reject(new Error('unused')),
-        updateExternal: () => false,
         dispatchExternal: () => ({accepted: false, delegate_id: null}),
       },
       tools: compileToolSchema([manifest]),
@@ -7117,7 +7113,6 @@ function confirmationService(options: {
           })
           return Promise.resolve(`${item.channel}:${item.seq}`)
         },
-        updateExternal: () => true,
         dispatchExternal: () => ({accepted: true, delegate_id: 'd-1'}),
       },
       tools: compileToolSchema([manifest]),
@@ -9276,7 +9271,6 @@ test('a view observer that throws does not break the state change that produced 
         memory,
         executors,
         ingestUserInput: () => Promise.reject(new Error('unused')),
-        updateExternal: () => false,
         dispatchExternal: () => ({accepted: false, delegate_id: null}),
       },
       tools: compileToolSchema([manifest]),

@@ -416,7 +416,6 @@ function runtimeSnapshot(runtime: CoreRuntime): FixtureExpected {
     applied_events: runtime.appliedEvents,
     memory: {
       channels,
-      structured: runtime.memory.structured,
       summaries,
     },
     delegates: runtime.activeDelegates(),

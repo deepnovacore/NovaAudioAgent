@@ -5,17 +5,10 @@ import type { Affordance, ContextView } from '../src/context-view.js'
 import { wakeReasonSchema } from '../src/slots.js'
 
 const view: ContextView = {
-  structured: {
-    intent: {objective_hypothesis: '', constraints: [], unresolved_questions: [],
-      uncertainty: 0.5, revision: 0},
-    goal: {objective: '', acceptance_criteria: [], status: 'unset', revision: 0},
-    authorization: {allow: [], deny: [], evidence_refs: [], revision: 0},
-  },
   channels: [],
   in_flight: [],
   affordances: [
     {source: 'suggestion', ref: 's-1', content: {kind: 'notify'}, conclusive: null},
-    {source: 'unresolved_question', ref: 'q-1', content: {question: '?'}, conclusive: null},
     {source: 'suggestion', ref: 's-2', content: {kind: 'question'}, conclusive: null},
   ],
   floor: 'idle',

@@ -26,7 +26,6 @@ import {
   CONVERSATION_CHANNEL,
   USER_PRIORITY,
   Memory,
-  applyStructuredUpdate,
   parseMemoryRef,
   type MemoryItem,
 } from './memory.js'
@@ -40,7 +39,6 @@ import {
   type Delegate,
   type DelegateRequest,
   type ExecutorManifest,
-  type UpdateSpec,
   type FastBrainOutput,
 } from './ports.js'
 import {
@@ -566,8 +564,6 @@ export class CoreRuntime {
 
     if (parsed.action.act === 'delegate') {
       return this.#dispatch(parsed.action.delegate, reason, job?.visibleRefs).wake
-    } else if (parsed.action.act === 'update') {
-      this.#updateStructured(parsed.action.update, reason)
     }
     return null
   }
@@ -629,47 +625,6 @@ export class CoreRuntime {
     } finally {
       finishConfirmedProjectAdmission(capability, accepted)
     }
-  }
-
-  /**
-   * Route an external update through the sole structured-state writer.
-   *
-   * Deliberately the same writer the model's updates go through, so an external proposal cannot get
-   * a laxer path into Structured State than a model one. The return value says whether it applied;
-   * a rejection is recorded as a failed observation either way.
-   */
-  updateExternal(spec: UpdateSpec, reason: WakeReason): boolean {
-    return this.#updateStructured(spec, reason)
-  }
-
-  /**
-   * Apply `act=update`, the sole writer of Structured State.
-   *
-   * A rejected update is recorded as a failed observation rather than raised: letting one
-   * hallucinated field throw out of `apply` would kill the loop. Nothing is waiting on it either --
-   * no work was dispatched -- so this deliberately does not wake.
-   */
-  #updateStructured(spec: UpdateSpec, reason: WakeReason): boolean {
-    const result = applyStructuredUpdate(this.memory.structured, spec.target, spec.delta)
-    if (result.ok) {
-      this.memory.structured = result.state
-      return true
-    }
-    const content: Record<string, JsonValue> = {
-      error: 'update_rejected',
-      target: spec.target,
-      reason: result.reason,
-    }
-    if (result.unknown !== undefined) content.unknown = [...result.unknown]
-    if (result.fields !== undefined) content.fields = [...result.fields]
-    this.#appendMemory(CONVERSATION_CHANNEL, {
-      ts: this.appliedEvents.at(-1)?.ts ?? 0,
-      trust: 'trusted_system',
-      priority: reason.priority,
-      content,
-      outcome: 'failed',
-    })
-    return false
   }
 
   /**

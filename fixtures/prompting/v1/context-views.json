@@ -11,28 +11,7 @@
         "trigger_kind": null,
         "in_flight": [],
         "channels": [],
-        "affordances": [],
-        "structured": {
-          "intent": {
-            "objective_hypothesis": "",
-            "constraints": [],
-            "unresolved_questions": [],
-            "uncertainty": 0.5,
-            "revision": 0
-          },
-          "goal": {
-            "objective": "",
-            "acceptance_criteria": [],
-            "status": "unset",
-            "revision": 0
-          },
-          "authorization": {
-            "allow": [],
-            "deny": [],
-            "evidence_refs": [],
-            "revision": 0
-          }
-        }
+        "affordances": []
       }
     },
     {
@@ -101,14 +80,6 @@
             }
           },
           {
-            "source": "unresolved_question",
-            "ref": "q-1",
-            "conclusive": null,
-            "content": {
-              "question": "要多暗？"
-            }
-          },
-          {
             "source": "probe",
             "ref": "slow_sim:3",
             "conclusive": true,
@@ -134,40 +105,7 @@
               }
             }
           }
-        ],
-        "structured": {
-          "intent": {
-            "objective_hypothesis": "把房间调暗",
-            "constraints": [
-              "不要大声"
-            ],
-            "unresolved_questions": [
-              "要多暗"
-            ],
-            "uncertainty": 0.25,
-            "revision": 1
-          },
-          "goal": {
-            "objective": "调暗灯光",
-            "acceptance_criteria": [
-              "亮度<=30"
-            ],
-            "status": "active",
-            "revision": 1
-          },
-          "authorization": {
-            "allow": [
-              "slow_sim.set_light"
-            ],
-            "deny": [
-              "camera"
-            ],
-            "evidence_refs": [
-              "conversation:1"
-            ],
-            "revision": 1
-          }
-        }
+        ]
       }
     },
     {
@@ -202,28 +140,7 @@
             ]
           }
         ],
-        "affordances": [],
-        "structured": {
-          "intent": {
-            "objective_hypothesis": "",
-            "constraints": [],
-            "unresolved_questions": [],
-            "uncertainty": 0.5,
-            "revision": 0
-          },
-          "goal": {
-            "objective": "",
-            "acceptance_criteria": [],
-            "status": "unset",
-            "revision": 0
-          },
-          "authorization": {
-            "allow": [],
-            "deny": [],
-            "evidence_refs": [],
-            "revision": 0
-          }
-        }
+        "affordances": []
       }
     },
     {
@@ -311,28 +228,7 @@
               }
             }
           }
-        ],
-        "structured": {
-          "intent": {
-            "objective_hypothesis": "",
-            "constraints": [],
-            "unresolved_questions": [],
-            "uncertainty": 0.5,
-            "revision": 0
-          },
-          "goal": {
-            "objective": "",
-            "acceptance_criteria": [],
-            "status": "unset",
-            "revision": 0
-          },
-          "authorization": {
-            "allow": [],
-            "deny": [],
-            "evidence_refs": [],
-            "revision": 0
-          }
-        }
+        ]
       }
     },
     {
@@ -365,28 +261,7 @@
             ]
           }
         ],
-        "affordances": [],
-        "structured": {
-          "intent": {
-            "objective_hypothesis": "",
-            "constraints": [],
-            "unresolved_questions": [],
-            "uncertainty": 0.5,
-            "revision": 0
-          },
-          "goal": {
-            "objective": "",
-            "acceptance_criteria": [],
-            "status": "unset",
-            "revision": 0
-          },
-          "authorization": {
-            "allow": [],
-            "deny": [],
-            "evidence_refs": [],
-            "revision": 0
-          }
-        }
+        "affordances": []
       }
     },
     {
@@ -424,28 +299,7 @@
             ]
           }
         ],
-        "affordances": [],
-        "structured": {
-          "intent": {
-            "objective_hypothesis": "",
-            "constraints": [],
-            "unresolved_questions": [],
-            "uncertainty": 0.5,
-            "revision": 0
-          },
-          "goal": {
-            "objective": "",
-            "acceptance_criteria": [],
-            "status": "unset",
-            "revision": 0
-          },
-          "authorization": {
-            "allow": [],
-            "deny": [],
-            "evidence_refs": [],
-            "revision": 0
-          }
-        }
+        "affordances": []
       }
     },
     {
@@ -457,40 +311,7 @@
         "trigger_kind": null,
         "in_flight": [],
         "channels": [],
-        "affordances": [],
-        "structured": {
-          "intent": {
-            "objective_hypothesis": "",
-            "constraints": [
-              "first\nsecond",
-              "tab\there",
-              "has'quote"
-            ],
-            "unresolved_questions": [
-              "has\"double",
-              "both'and\"",
-              "ctrl\u0001here"
-            ],
-            "uncertainty": 0.5,
-            "revision": 0
-          },
-          "goal": {
-            "objective": "",
-            "acceptance_criteria": [
-              "line\r\nbreak"
-            ],
-            "status": "unset",
-            "revision": 0
-          },
-          "authorization": {
-            "allow": [
-              "back\\slash"
-            ],
-            "deny": [],
-            "evidence_refs": [],
-            "revision": 0
-          }
-        }
+        "affordances": []
       }
     }
   ],

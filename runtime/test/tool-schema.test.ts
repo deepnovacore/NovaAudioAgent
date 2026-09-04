@@ -86,7 +86,7 @@ test('the golden is not vacuous', () => {
   const golden = loadJson<Golden>('manifests-expected.json')
   const one = golden.scenarios['one-executor']
   assert.ok(one !== undefined)
-  assert.ok(one.schemas.length >= 7, 'three updates plus four ops')
+  assert.ok(one.schemas.length >= 4, 'four executor ops')
   // origin_ref must be injected into every delegate op and appended to required.
   const rendered = JSON.stringify(one.schemas)
   assert.match(rendered, /origin_ref/u)
@@ -132,7 +132,7 @@ test('origin_ref is injected into every discriminated object branch', () => {
     }],
   })
 
-  const parameters = record(record(compileToolSchema([manifest]).schemas[3]).function).parameters
+  const parameters = record(record(compileToolSchema([manifest]).schemas[0]).function).parameters
   const params = record(parameters)
   assert.ok('origin_ref' in record(params.properties))
   assert.ok((params.required as unknown[]).includes('origin_ref'))
@@ -236,7 +236,7 @@ test('agent executors fold into the three host tools while keeping their delegat
   assert.equal(compiled.hidden.has('sim__peek'), false)
   for (const name of ['dispatch', 'cancel', 'confirm']) {
     assert.deepEqual(compiled.bindings.get(name), {
-      kind: 'host', logical_name: `host.${name}`, executor: null, op: null, target: null, sync_result: false,
+      kind: 'host', logical_name: `host.${name}`, executor: null, op: null, sync_result: false,
     })
   }
   const dispatch = record(record(compiled.schemas.find(schema => record(record(schema).function).name === 'dispatch')).function)

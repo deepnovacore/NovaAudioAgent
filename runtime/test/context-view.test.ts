@@ -6,7 +6,6 @@ import {
   CONVERSATION_CHANNEL,
   Memory,
   handoffPolicySchema,
-  structuredStateSchema,
 } from '../src/memory.js'
 import { delegateSchema, executorManifestSchema } from '../src/ports.js'
 import { SuggestionPool } from '../src/suggestions.js'
@@ -53,14 +52,6 @@ function loadedMemory(): Memory {
     outcome: 'ok',
     refs: ['conversation:1'],
   })
-  memory.structured = structuredStateSchema.parse({
-    intent: {
-      objective_hypothesis: 'dim the light',
-      unresolved_questions: ['how dim?'],
-      uncertainty: 0.4,
-      revision: 1,
-    },
-  })
   return memory
 }
 
@@ -85,7 +76,7 @@ test('context compilation is deterministic, bounded, and leaves memory untouched
   assert.equal(conversation.omitted, 2)
 })
 
-test('affordance sources are probe, suggestion, unresolved question, then update', () => {
+test('affordance sources are probe, suggestion, then update', () => {
   const memory = loadedMemory()
   memory.append('slow_sim', {
     ts: 6.5,
@@ -121,7 +112,7 @@ test('affordance sources are probe, suggestion, unresolved question, then update
   })
   assert.deepEqual(
     view.affordances.map(affordance => affordance.source),
-    ['probe', 'suggestion', 'unresolved_question', 'channel_update'],
+    ['probe', 'suggestion', 'channel_update'],
   )
   assert.equal(view.affordances[0]?.conclusive, true)
   assert.equal(view.affordances[1]?.content.selected, true)

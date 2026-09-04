@@ -20,7 +20,7 @@ import { canonicalJson } from '../canonical-json.js'
 import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { JsonValue } from '../events.js'
 import { USER_PRIORITY } from '../memory.js'
-import type { DelegateRequest, UpdateSpec } from '../ports.js'
+import type { DelegateRequest } from '../ports.js'
 import type { WakeReason } from '../slots.js'
 import type { CompiledTools } from '../tool-schema.js'
 import type {CodingChannel} from './evidence.js'
@@ -45,7 +45,6 @@ export interface BridgeRuntime {
   readonly memory: Parameters<typeof compileMemoryRecall>[0]
   readonly executors: ReadonlyMap<string, ExecutorAdapterLike>
   ingestUserInput(input: {readonly text: string}): Promise<string>
-  updateExternal(spec: UpdateSpec, reason: WakeReason): boolean
   dispatchExternal(
     request: DelegateRequest,
     reason: WakeReason,
@@ -155,9 +154,8 @@ export class RealtimeRuntimeBridge {
   /**
    * Admit one tool call, or refuse it with a reason the provider can render.
    *
-   * The three binding kinds are genuinely different admissions, not variants of one: an `update`
-   * writes structured state and completes immediately, a `query` reads memory and returns its answer
-   * inline, and everything else dispatches an executor and returns an acknowledgement.
+   * Query reads memory and returns its answer inline; everything else dispatches an executor and
+   * returns an acknowledgement.
    */
   acceptToolCall(
     call: ToolCallReady,
@@ -172,29 +170,6 @@ export class RealtimeRuntimeBridge {
       routing_class: 'user_awaited',
       origin: null,
       selected_suggestion: null,
-    }
-    if (binding.kind === 'update') {
-      const schema = this.#wireParams(call.name)
-      if (
-        binding.target === undefined
-        || binding.target === null
-        || schema === null
-        || !validParams(call.arguments, schema)
-      ) {
-        return this.#refused(call, 'invalid_params')
-      }
-      const accepted = this.#runtime.updateExternal(
-        {target: binding.target, delta: {...call.arguments}},
-        reason,
-      )
-      if (!accepted) return this.#refused(call, 'invalid_params')
-      const hostItem = this.#toolOutput(call, {state: 'completed'})
-      return acceptance({
-        accepted: true,
-        code: 'completed',
-        host_item: hostItem,
-        response_intent: toolResultIntent(hostItem),
-      })
     }
     if (binding.kind === 'query') return this.#acceptMemoryRecall(call, originRef)
     if (

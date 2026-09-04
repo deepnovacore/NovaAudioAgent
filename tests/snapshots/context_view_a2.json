@@ -96,36 +96,5 @@
   "floor": "idle",
   "in_flight": [],
   "now": 7.0,
-  "structured": {
-    "authorization": {
-      "allow": [
-        "客厅灯开关"
-      ],
-      "deny": [],
-      "evidence_refs": [
-        "conversation:1"
-      ],
-      "revision": 1
-    },
-    "goal": {
-      "acceptance_criteria": [
-        "亮度 < 40%"
-      ],
-      "objective": "客厅灯调暗",
-      "revision": 1,
-      "status": "accepted"
-    },
-    "intent": {
-      "constraints": [
-        "不要全关"
-      ],
-      "objective_hypothesis": "把客厅灯调到偏暗",
-      "revision": 2,
-      "uncertainty": 0.4,
-      "unresolved_questions": [
-        "要多暗？"
-      ]
-    }
-  },
   "trigger_kind": null
 }

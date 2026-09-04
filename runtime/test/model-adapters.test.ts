@@ -50,12 +50,6 @@ class ScriptedGateway implements ModelGateway {
 }
 
 const emptyView: ContextView = {
-  structured: {
-    intent: {objective_hypothesis: '', constraints: [], unresolved_questions: [],
-      uncertainty: 0.5, revision: 0},
-    goal: {objective: '', acceptance_criteria: [], status: 'unset', revision: 0},
-    authorization: {allow: [], deny: [], evidence_refs: [], revision: 0},
-  },
   channels: [], in_flight: [], affordances: [], floor: 'idle', now: 0, trigger_kind: null,
 }
 

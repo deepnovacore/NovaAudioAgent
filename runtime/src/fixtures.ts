@@ -8,7 +8,7 @@ import {
   outcomeSchema,
   trustSchema,
 } from './events.js'
-import { memoryItemSchema, memoryRefSchema, structuredStateSchema } from './memory.js'
+import { memoryItemSchema, memoryRefSchema } from './memory.js'
 import {
   delegateSchema,
 } from './ports.js'
@@ -300,7 +300,6 @@ export const fixtureExpectedSchema = z.object({
   applied_events: z.array(eventRecordSchema),
   memory: z.object({
     channels: z.record(z.string(), z.array(fixtureMemoryItemSchema)),
-    structured: structuredStateSchema,
     summaries: z.record(z.string(), z.string().nullable()),
   }).strict(),
   delegates: z.array(delegateSchema),

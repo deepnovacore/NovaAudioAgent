@@ -105,25 +105,4 @@
   "floor": "idle",
   "in_flight": [],
   "now": 601.0,
-  "structured": {
-    "authorization": {
-      "allow": [],
-      "deny": [],
-      "evidence_refs": [],
-      "revision": 0
-    },
-    "goal": {
-      "acceptance_criteria": [],
-      "objective": "",
-      "revision": 0,
-      "status": "accepted"
-    },
-    "intent": {
-      "constraints": [],
-      "objective_hypothesis": "",
-      "revision": 0,
-      "uncertainty": 1.0,
-      "unresolved_questions": []
-    }
-  }
 }

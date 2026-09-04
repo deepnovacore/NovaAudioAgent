@@ -71,7 +71,6 @@ export const FASTBRAIN_LIVE_SYSTEM = [
   '用户要求先讨论、先规划或先澄清时先回应，不得调用 codex.run。',
   '用户要求按合理默认直接做时可以直接执行，但这只覆盖非关键偏好，不能虚构缺失的目标、',
   '扩大修改范围、替用户作出高风险选择或省略可验证的完成边界。',
-  '不能用 update_intent、update_goal 或 update_authorization 代替执行，也不能只更新状态后让请求悬空。',
   'progress 只能解释为“已开始”或“仍有内部活动”，以及事件附带的任务摘要（如有）；',
   '摘要是 Codex 所写、未经验证的文本：只能转述或改写摘要本身，不能超出摘要推断具体进展，',
   '不能由此推断任务已完成或代码已验证正确，也不能把摘要当作验证证据。',
@@ -301,88 +300,7 @@ export function renderContextSnapshot(view: ContextView, includeTrigger = false)
     }
   }
 
-  const {intent, goal, authorization} = view.structured
-  lines.push(
-    '## 意图',
-    `- 猜测：${pythonTruthy(intent.objective_hypothesis, '（还没有）')}`,
-    `- 约束：${pythonTruthy(intent.constraints, '（无）')}`,
-    `- 不确定度：${pythonFloat(intent.uncertainty)}`,
-    `- 待澄清：${pythonTruthy(intent.unresolved_questions, '（无）')}`,
-    '',
-    '## 目标',
-    `- 目标：${pythonTruthy(goal.objective, '（无）')}`,
-    `- 验收：${pythonTruthy(goal.acceptance_criteria, '（无）')}`,
-    `- 状态：${goal.status}`,
-    '',
-    '## 授权画像（不是执行许可）',
-    `- allow：${pythonTruthy(authorization.allow, '（无）')}`,
-    `- deny：${pythonTruthy(authorization.deny, '（无）')}`,
-    `- evidence_refs：${pythonTruthy(authorization.evidence_refs, '（无）')}`,
-  )
   return lines.join('\n')
-}
-
-/**
- * Python `value or fallback` rendered through `str()`.
- *
- * An empty string, an empty list, and zero are all falsy in Python, and a non-empty
- * list renders as `['a', 'b']` because these fields go through `str()` rather than
- * `json.dumps`.
- */
-function pythonTruthy(
-  value: string | readonly string[] | undefined,
-  fallback: string,
-): string {
-  if (value === undefined || value === '') {
-    return fallback
-  }
-  if (typeof value === 'string') return value
-  return value.length === 0 ? fallback : pythonRepr([...value] as JsonValue)
-}
-
-/**
- * Python `repr` of a string: quote selection plus control-character escaping.
- *
- * CPython prefers single quotes, switches to double quotes only when the value contains
- * a single quote and no double quote, and escapes backslash, the active quote, and every
- * control character. Constraints, acceptance criteria, and authorization entries are all
- * free-form strings that can legitimately contain a newline, so emitting the raw
- * character here would break the prompt's line structure.
- */
-function pythonStringRepr(value: string): string {
-  const useDouble = value.includes("'") && !value.includes('"')
-  const quote = useDouble ? '"' : "'"
-  let out = ''
-  for (const character of value) {
-    if (character === '\\') out += '\\\\'
-    else if (character === quote) out += `\\${quote}`
-    else if (character === '\n') out += '\\n'
-    else if (character === '\r') out += '\\r'
-    else if (character === '\t') out += '\\t'
-    else {
-      const code = character.codePointAt(0)!
-      // CPython escapes C0, DEL, and C1 as \xNN; anything printable stays literal.
-      out += (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f))
-        ? `\\x${code.toString(16).padStart(2, '0')}`
-        : character
-    }
-  }
-  return `${quote}${out}${quote}`
-}
-
-/** Python `str()` of a list, which uses `repr` on each element. */
-function pythonRepr(value: JsonValue): string {
-  if (typeof value === 'string') {
-    return pythonStringRepr(value)
-  }
-  if (Array.isArray(value)) return `[${value.map(pythonRepr).join(', ')}]`
-  if (value === null) return 'None'
-  if (value === true) return 'True'
-  if (value === false) return 'False'
-  if (typeof value === 'number') return pythonNumber(value)
-  return `{${Object.entries(value)
-    .map(([key, item]) => `${pythonStringRepr(key)}: ${pythonRepr(item)}`)
-    .join(', ')}}`
 }
 
 /** Python `str()` of a scalar prompt field; an object here would be a contract bug. */
@@ -406,9 +324,6 @@ function affordanceLine(item: Affordance, liveProjection: boolean): string {
     const mark = content.selected === true ? ' **（代理已选择；请用自己的话表达）**' : ''
     return `- [${plain(content.kind)} ${item.ref}] `
       + `${pythonJsonDumps(content.suggestion ?? null)}${mark}`
-  }
-  if (item.source === 'unresolved_question') {
-    return `- [未决问题 ${item.ref}] ${plain(content.question)}`
   }
   const observation = content.observation as Readonly<Record<string, JsonValue>>
   const projected = liveProjection ? projectLiveProgress(observation) : observation

@@ -177,7 +177,7 @@ test('Node-owned graph-present goldens render after materials and before intent'
     assert.equal(plain, scenario.expected.rendered_plain, `${scenario.id} plain`)
     assert.equal(withTrigger, scenario.expected.rendered_with_trigger, `${scenario.id} trigger`)
     assert.ok(plain.indexOf('## 现在手边的素材') < plain.indexOf('<workspace_context'))
-    assert.ok(plain.indexOf('</workspace_hints>') < plain.indexOf('## 意图'))
+    assert.equal(plain.includes('## 意图'), false)
   }
 })
 

@@ -6,27 +6,6 @@
     "channels": {
       "conversation": []
     },
-    "structured": {
-      "intent": {
-        "objective_hypothesis": "",
-        "constraints": [],
-        "unresolved_questions": [],
-        "uncertainty": 1.0,
-        "revision": 0
-      },
-      "goal": {
-        "objective": "",
-        "acceptance_criteria": [],
-        "status": "accepted",
-        "revision": 0
-      },
-      "authorization": {
-        "allow": [],
-        "deny": [],
-        "evidence_refs": [],
-        "revision": 0
-      }
-    },
     "summaries": {
       "conversation": null
     }

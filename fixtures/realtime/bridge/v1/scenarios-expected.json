@@ -1093,254 +1093,6 @@
       ]
     },
     {
-      "name": "a-structured-update-completes-inline",
-      "steps": [
-        {
-          "step": 0,
-          "kind": "accept_tool_call",
-          "result": {
-            "accepted": true,
-            "code": "completed",
-            "host_item": {
-              "kind": "tool_output",
-              "host_item_id": "id-1",
-              "event_id": "id-2",
-              "content": "{\"state\":\"completed\"}",
-              "call_id": "call-1"
-            },
-            "response_intent": {
-              "kind": "tool_result",
-              "item": {
-                "kind": "tool_output",
-                "host_item_id": "id-1",
-                "event_id": "id-2",
-                "content": "{\"state\":\"completed\"}",
-                "call_id": "call-1"
-              },
-              "task_summary": null,
-              "origin_spoken": false
-            },
-            "delegate_id": null,
-            "sync_result": false,
-            "executor": null,
-            "op": null,
-            "inline_fulfilled": false,
-            "telemetry": null
-          },
-          "runtime_calls": [
-            {
-              "call": "update_external",
-              "target": "intent",
-              "delta": {
-                "objective_hypothesis": "compile and report"
-              },
-              "routing_class": "user_awaited",
-              "priority": 100,
-              "accepted": true
-            }
-          ]
-        },
-        {
-          "step": 1,
-          "kind": "accept_tool_call",
-          "result": {
-            "accepted": false,
-            "code": "invalid_params",
-            "host_item": {
-              "kind": "tool_output",
-              "host_item_id": "id-3",
-              "event_id": "id-4",
-              "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-              "call_id": "call-2"
-            },
-            "response_intent": {
-              "kind": "tool_result",
-              "item": {
-                "kind": "tool_output",
-                "host_item_id": "id-3",
-                "event_id": "id-4",
-                "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-                "call_id": "call-2"
-              },
-              "task_summary": null,
-              "origin_spoken": false
-            },
-            "delegate_id": null,
-            "sync_result": false,
-            "executor": null,
-            "op": null,
-            "inline_fulfilled": false,
-            "telemetry": null
-          },
-          "runtime_calls": [
-            {
-              "call": "update_external",
-              "target": "intent",
-              "delta": {
-                "uncertainty": 0.4,
-                "constraints": [
-                  "no network"
-                ]
-              },
-              "routing_class": "user_awaited",
-              "priority": 100,
-              "accepted": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "an-update-with-a-field-the-schema-forbids-never-reaches-the-reducer",
-      "steps": [
-        {
-          "step": 0,
-          "kind": "accept_tool_call",
-          "result": {
-            "accepted": false,
-            "code": "invalid_params",
-            "host_item": {
-              "kind": "tool_output",
-              "host_item_id": "id-1",
-              "event_id": "id-2",
-              "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-              "call_id": "call-1"
-            },
-            "response_intent": {
-              "kind": "tool_result",
-              "item": {
-                "kind": "tool_output",
-                "host_item_id": "id-1",
-                "event_id": "id-2",
-                "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-                "call_id": "call-1"
-              },
-              "task_summary": null,
-              "origin_spoken": false
-            },
-            "delegate_id": null,
-            "sync_result": false,
-            "executor": null,
-            "op": null,
-            "inline_fulfilled": false,
-            "telemetry": null
-          },
-          "runtime_calls": []
-        },
-        {
-          "step": 1,
-          "kind": "accept_tool_call",
-          "result": {
-            "accepted": false,
-            "code": "invalid_params",
-            "host_item": {
-              "kind": "tool_output",
-              "host_item_id": "id-3",
-              "event_id": "id-4",
-              "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-              "call_id": "call-2"
-            },
-            "response_intent": {
-              "kind": "tool_result",
-              "item": {
-                "kind": "tool_output",
-                "host_item_id": "id-3",
-                "event_id": "id-4",
-                "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-                "call_id": "call-2"
-              },
-              "task_summary": null,
-              "origin_spoken": false
-            },
-            "delegate_id": null,
-            "sync_result": false,
-            "executor": null,
-            "op": null,
-            "inline_fulfilled": false,
-            "telemetry": null
-          },
-          "runtime_calls": [
-            {
-              "call": "update_external",
-              "target": "intent",
-              "delta": {},
-              "routing_class": "user_awaited",
-              "priority": 100,
-              "accepted": false
-            }
-          ]
-        },
-        {
-          "step": 2,
-          "kind": "accept_tool_call",
-          "result": {
-            "accepted": false,
-            "code": "invalid_params",
-            "host_item": {
-              "kind": "tool_output",
-              "host_item_id": "id-5",
-              "event_id": "id-6",
-              "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-              "call_id": "call-3"
-            },
-            "response_intent": {
-              "kind": "tool_result",
-              "item": {
-                "kind": "tool_output",
-                "host_item_id": "id-5",
-                "event_id": "id-6",
-                "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-                "call_id": "call-3"
-              },
-              "task_summary": null,
-              "origin_spoken": false
-            },
-            "delegate_id": null,
-            "sync_result": false,
-            "executor": null,
-            "op": null,
-            "inline_fulfilled": false,
-            "telemetry": null
-          },
-          "runtime_calls": []
-        },
-        {
-          "step": 3,
-          "kind": "accept_tool_call",
-          "result": {
-            "accepted": false,
-            "code": "invalid_params",
-            "host_item": {
-              "kind": "tool_output",
-              "host_item_id": "id-7",
-              "event_id": "id-8",
-              "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-              "call_id": "call-4"
-            },
-            "response_intent": {
-              "kind": "tool_result",
-              "item": {
-                "kind": "tool_output",
-                "host_item_id": "id-7",
-                "event_id": "id-8",
-                "content": "{\"code\":\"invalid_params\",\"state\":\"refused\"}",
-                "call_id": "call-4"
-              },
-              "task_summary": null,
-              "origin_spoken": false
-            },
-            "delegate_id": null,
-            "sync_result": false,
-            "executor": null,
-            "op": null,
-            "inline_fulfilled": false,
-            "telemetry": null
-          },
-          "runtime_calls": []
-        }
-      ]
-    },
-    {
       "name": "recall-is-fulfilled-inline-with-telemetry",
       "steps": [
         {
@@ -1389,7 +1141,7 @@
                 "recency_fallback": 0
               },
               "omitted": 0,
-              "elapsed": 0.0
+              "elapsed": 0
             }
           },
           "runtime_calls": []
@@ -1447,7 +1199,7 @@
                 "recency_fallback": 2
               },
               "omitted": 0,
-              "elapsed": 0.0
+              "elapsed": 0
             }
           },
           "runtime_calls": []
@@ -1906,7 +1658,7 @@
                 "recency_fallback": 0
               },
               "omitted": 2,
-              "elapsed": 0.0
+              "elapsed": 0
             }
           },
           "runtime_calls": []

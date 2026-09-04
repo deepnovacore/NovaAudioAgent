@@ -16,7 +16,7 @@ import { VirtualClock } from '../src/clock.js'
 import {CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
 import type { JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
-import { executorManifestSchema, type ExecutorManifest, type UpdateSpec } from '../src/ports.js'
+import { executorManifestSchema, type ExecutorManifest } from '../src/ports.js'
 import type { DelegateRequest } from '../src/ports.js'
 import { RealtimeRuntimeBridge, validParams, type BridgeRuntime } from '../src/realtime/bridge.js'
 import type { WakeReason } from '../src/slots.js'
@@ -67,7 +67,6 @@ interface Scenario {
   readonly include_memory_recall?: boolean
   readonly runtime?: {
     readonly ingest_refs?: readonly string[]
-    readonly update_results?: readonly boolean[]
     readonly dispatch_results?: readonly {
       readonly accepted: boolean
       readonly delegate_id?: string | null
@@ -89,7 +88,6 @@ const golden = JSON.parse(
 class ScriptedRuntime implements BridgeRuntime {
   readonly calls: Record<string, unknown>[] = []
   #ingest: string[]
-  #updates: boolean[]
   #dispatches: {readonly accepted: boolean; readonly delegate_id?: string | null}[]
 
   constructor(
@@ -99,7 +97,6 @@ class ScriptedRuntime implements BridgeRuntime {
     script: Scenario['runtime'],
   ) {
     this.#ingest = [...(script?.ingest_refs ?? [])]
-    this.#updates = [...(script?.update_results ?? [])]
     this.#dispatches = [...(script?.dispatch_results ?? [])]
   }
 
@@ -108,20 +105,6 @@ class ScriptedRuntime implements BridgeRuntime {
     if (reference === undefined) throw new Error('ingest_refs exhausted')
     this.calls.push({call: 'ingest_user_input', text: input.text, ref: reference})
     return Promise.resolve(reference)
-  }
-
-  updateExternal(spec: UpdateSpec, reason: WakeReason): boolean {
-    const accepted = this.#updates.shift()
-    if (accepted === undefined) throw new Error('update_results exhausted')
-    this.calls.push({
-      call: 'update_external',
-      target: spec.target,
-      delta: {...spec.delta},
-      routing_class: reason.routing_class,
-      priority: reason.priority,
-      accepted,
-    })
-    return accepted
   }
 
   dispatchExternal(
@@ -145,7 +128,6 @@ class ScriptedRuntime implements BridgeRuntime {
   unconsumed(): Record<string, number> {
     return {
       ingest_refs: this.#ingest.length,
-      update_results: this.#updates.length,
       dispatch_results: this.#dispatches.length,
     }
   }
@@ -286,7 +268,7 @@ test('agent executor ops stay admissible as bindings behind the host tools (spec
     assert.equal(refused.accepted, false, name)
     assert.equal(refused.code, 'invalid_params', name)
   }
-  assert.deepEqual(runtime.unconsumed(), {ingest_refs: 0, update_results: 0, dispatch_results: 0})
+  assert.deepEqual(runtime.unconsumed(), {ingest_refs: 0, dispatch_results: 0})
 })
 
 test('the golden records one result per scenario, in order', () => {
@@ -317,7 +299,6 @@ test('the scenario set reaches every acceptance code the bridge can produce', ()
   }
   for (const expected of [
     'accepted',
-    'completed',
     'ok',
     'unknown_tool',
     'invalid_params',
@@ -516,7 +497,6 @@ test('a clock that moved backwards reports zero elapsed rather than a negative',
       memory,
       executors: new Map(manifests.map(manifest => [manifest.name, {manifest}])),
       ingestUserInput: () => Promise.reject(new Error('unused')),
-      updateExternal: () => false,
       dispatchExternal: () => ({accepted: false, delegate_id: null}),
     },
     tools: compileToolSchema(manifests, {includeMemoryRecall: true}),
@@ -582,7 +562,6 @@ test('a container summary renders as canonical JSON, which is a recorded diverge
       memory,
       executors: new Map([[manifest.name, {manifest}]]),
       ingestUserInput: () => Promise.reject(new Error('unused')),
-      updateExternal: () => false,
       dispatchExternal: () => ({accepted: true, delegate_id: 'd-1'}),
     },
     tools: compileToolSchema([manifest]),

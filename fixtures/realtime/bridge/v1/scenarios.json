@@ -14,7 +14,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -35,7 +35,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -47,7 +47,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -88,7 +88,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -131,7 +131,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -152,7 +152,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -164,7 +164,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -205,7 +205,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -234,7 +234,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -255,7 +255,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -267,7 +267,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -308,7 +308,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -378,7 +378,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -399,7 +399,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -411,7 +411,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -452,7 +452,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -489,7 +489,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -510,7 +510,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -522,7 +522,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -563,7 +563,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -609,7 +609,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -630,7 +630,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -642,7 +642,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -683,7 +683,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -718,7 +718,7 @@
             "channel": "ambient_sim",
             "priority": 40,
             "wake": "fast",
-            "typical_latency": 3.0,
+            "typical_latency": 3,
             "compress_watermark": 8,
             "suggest": true
           },
@@ -738,7 +738,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "stop",
@@ -748,7 +748,7 @@
                 "properties": {},
                 "additionalProperties": false
               },
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "probe",
@@ -759,7 +759,7 @@
                 "additionalProperties": false
               },
               "readonly": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             }
           ]
         }
@@ -807,7 +807,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -828,7 +828,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -840,7 +840,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -881,7 +881,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -931,7 +931,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -952,7 +952,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -964,7 +964,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -1005,7 +1005,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -1148,255 +1148,6 @@
       "allow_unconsumed": true
     },
     {
-      "name": "a-structured-update-completes-inline",
-      "covers": [
-        "bridge.update_binding"
-      ],
-      "manifests": [
-        {
-          "name": "worker_sim",
-          "policy": {
-            "channel": "worker_sim",
-            "priority": 50,
-            "wake": "fast",
-            "typical_latency": 5.0,
-            "compress_watermark": 8,
-            "progress_via_surrogate": true
-          },
-          "ops": [
-            {
-              "name": "start",
-              "description": "begin a unit of work",
-              "params": {
-                "type": "object",
-                "properties": {
-                  "work_order": {
-                    "type": "string",
-                    "maxLength": 400
-                  }
-                },
-                "required": [
-                  "work_order"
-                ],
-                "additionalProperties": false
-              },
-              "deadline_budget": 30.0
-            },
-            {
-              "name": "status",
-              "description": "read current status",
-              "params": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false
-              },
-              "readonly": true,
-              "sync_result": true,
-              "deadline_budget": 5.0
-            },
-            {
-              "name": "configure",
-              "description": "exercise every scalar type in validation",
-              "params": {
-                "type": "object",
-                "properties": {
-                  "mode": {
-                    "type": "string",
-                    "enum": [
-                      "fast",
-                      "slow"
-                    ]
-                  },
-                  "retries": {
-                    "type": "integer"
-                  },
-                  "ratio": {
-                    "type": "number"
-                  },
-                  "verbose": {
-                    "type": "boolean"
-                  },
-                  "tags": {
-                    "type": "array"
-                  },
-                  "extra": {
-                    "type": "object"
-                  },
-                  "label": {
-                    "type": "string",
-                    "minLength": 2,
-                    "maxLength": 6
-                  }
-                },
-                "required": [
-                  "mode"
-                ],
-                "additionalProperties": false
-              },
-              "deadline_budget": 10.0
-            }
-          ]
-        }
-      ],
-      "runtime": {
-        "update_results": [
-          true,
-          false
-        ]
-      },
-      "steps": [
-        {
-          "kind": "accept_tool_call",
-          "call_id": "call-1",
-          "name": "update_intent",
-          "arguments": {
-            "objective_hypothesis": "compile and report"
-          }
-        },
-        {
-          "kind": "accept_tool_call",
-          "call_id": "call-2",
-          "name": "update_intent",
-          "arguments": {
-            "uncertainty": 0.4,
-            "constraints": [
-              "no network"
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "name": "an-update-with-a-field-the-schema-forbids-never-reaches-the-reducer",
-      "covers": [
-        "bridge.update_validation",
-        "bridge.min_properties_unenforced"
-      ],
-      "manifests": [
-        {
-          "name": "worker_sim",
-          "policy": {
-            "channel": "worker_sim",
-            "priority": 50,
-            "wake": "fast",
-            "typical_latency": 5.0,
-            "compress_watermark": 8,
-            "progress_via_surrogate": true
-          },
-          "ops": [
-            {
-              "name": "start",
-              "description": "begin a unit of work",
-              "params": {
-                "type": "object",
-                "properties": {
-                  "work_order": {
-                    "type": "string",
-                    "maxLength": 400
-                  }
-                },
-                "required": [
-                  "work_order"
-                ],
-                "additionalProperties": false
-              },
-              "deadline_budget": 30.0
-            },
-            {
-              "name": "status",
-              "description": "read current status",
-              "params": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false
-              },
-              "readonly": true,
-              "sync_result": true,
-              "deadline_budget": 5.0
-            },
-            {
-              "name": "configure",
-              "description": "exercise every scalar type in validation",
-              "params": {
-                "type": "object",
-                "properties": {
-                  "mode": {
-                    "type": "string",
-                    "enum": [
-                      "fast",
-                      "slow"
-                    ]
-                  },
-                  "retries": {
-                    "type": "integer"
-                  },
-                  "ratio": {
-                    "type": "number"
-                  },
-                  "verbose": {
-                    "type": "boolean"
-                  },
-                  "tags": {
-                    "type": "array"
-                  },
-                  "extra": {
-                    "type": "object"
-                  },
-                  "label": {
-                    "type": "string",
-                    "minLength": 2,
-                    "maxLength": 6
-                  }
-                },
-                "required": [
-                  "mode"
-                ],
-                "additionalProperties": false
-              },
-              "deadline_budget": 10.0
-            }
-          ]
-        }
-      ],
-      "runtime": {
-        "update_results": [
-          false
-        ]
-      },
-      "steps": [
-        {
-          "kind": "accept_tool_call",
-          "call_id": "call-1",
-          "name": "update_intent",
-          "arguments": {
-            "revision": 7
-          }
-        },
-        {
-          "kind": "accept_tool_call",
-          "call_id": "call-2",
-          "name": "update_intent",
-          "arguments": {}
-        },
-        {
-          "kind": "accept_tool_call",
-          "call_id": "call-3",
-          "name": "update_intent",
-          "arguments": {
-            "uncertainty": "high"
-          }
-        },
-        {
-          "kind": "accept_tool_call",
-          "call_id": "call-4",
-          "name": "update_intent",
-          "arguments": {
-            "constraints": "no network"
-          }
-        }
-      ]
-    },
-    {
       "name": "recall-is-fulfilled-inline-with-telemetry",
       "covers": [
         "bridge.recall_inline",
@@ -1409,7 +1160,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1430,7 +1181,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -1442,7 +1193,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -1483,7 +1234,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -1492,7 +1243,7 @@
       "memory": [
         {
           "channel": "conversation",
-          "ts": 1.0,
+          "ts": 1,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1501,7 +1252,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 2.0,
+          "ts": 2,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1510,7 +1261,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 3.0,
+          "ts": 3,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1558,7 +1309,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1579,7 +1330,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -1591,7 +1342,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -1632,7 +1383,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -1641,7 +1392,7 @@
       "memory": [
         {
           "channel": "conversation",
-          "ts": 1.0,
+          "ts": 1,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1650,7 +1401,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 2.0,
+          "ts": 2,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1659,7 +1410,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 3.0,
+          "ts": 3,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1731,7 +1482,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1752,7 +1503,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -1764,7 +1515,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -1805,7 +1556,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         },
@@ -1815,7 +1566,7 @@
             "channel": "ambient_sim",
             "priority": 40,
             "wake": "fast",
-            "typical_latency": 3.0,
+            "typical_latency": 3,
             "compress_watermark": 8,
             "suggest": true
           },
@@ -1835,7 +1586,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "stop",
@@ -1845,7 +1596,7 @@
                 "properties": {},
                 "additionalProperties": false
               },
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "probe",
@@ -1856,7 +1607,7 @@
                 "additionalProperties": false
               },
               "readonly": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             }
           ]
         }
@@ -1931,7 +1682,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1952,7 +1703,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -1964,7 +1715,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -2005,7 +1756,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -2035,7 +1786,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -2056,7 +1807,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -2068,7 +1819,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -2109,7 +1860,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -2118,7 +1869,7 @@
       "memory": [
         {
           "channel": "conversation",
-          "ts": 1.0,
+          "ts": 1,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -2127,7 +1878,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 2.0,
+          "ts": 2,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -2136,7 +1887,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 3.0,
+          "ts": 3,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -2145,7 +1896,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 4.0,
+          "ts": 4,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -2154,7 +1905,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 5.0,
+          "ts": 5,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -2163,7 +1914,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 6.0,
+          "ts": 6,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -2172,7 +1923,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 99.0,
+          "ts": 99,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -2206,7 +1957,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -2227,7 +1978,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -2239,7 +1990,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -2280,7 +2031,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -2319,7 +2070,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -2340,7 +2091,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -2352,7 +2103,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -2393,7 +2144,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -2430,7 +2181,7 @@
             "channel": "param_sim",
             "priority": 45,
             "wake": "fast",
-            "typical_latency": 4.0,
+            "typical_latency": 4,
             "compress_watermark": 8
           },
           "ops": [
@@ -2455,7 +2206,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_int",
@@ -2475,7 +2226,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_str",
@@ -2495,7 +2246,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_bool",
@@ -2515,7 +2266,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_arr",
@@ -2535,7 +2286,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_obj",
@@ -2555,7 +2306,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "look",
@@ -2566,7 +2317,7 @@
                 "additionalProperties": false
               },
               "readonly": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             }
           ]
         }
@@ -2645,7 +2396,7 @@
             "channel": "param_sim",
             "priority": 45,
             "wake": "fast",
-            "typical_latency": 4.0,
+            "typical_latency": 4,
             "compress_watermark": 8
           },
           "ops": [
@@ -2670,7 +2421,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_int",
@@ -2690,7 +2441,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_str",
@@ -2710,7 +2461,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_bool",
@@ -2730,7 +2481,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_arr",
@@ -2750,7 +2501,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "loose_obj",
@@ -2770,7 +2521,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             },
             {
               "name": "look",
@@ -2781,7 +2532,7 @@
                 "additionalProperties": false
               },
               "readonly": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             }
           ]
         }
@@ -2952,7 +2703,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -2973,7 +2724,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -2985,7 +2736,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -3026,7 +2777,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }
@@ -3085,7 +2836,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5.0,
+            "typical_latency": 5,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -3106,7 +2857,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30.0
+              "deadline_budget": 30
             },
             {
               "name": "status",
@@ -3118,7 +2869,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5.0
+              "deadline_budget": 5
             },
             {
               "name": "configure",
@@ -3159,7 +2910,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10.0
+              "deadline_budget": 10
             }
           ]
         }

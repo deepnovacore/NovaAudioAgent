@@ -12,7 +12,6 @@
 
 import { z } from 'zod'
 import type { JsonValue } from './events.js'
-import type { StructuredTarget } from './memory.js'
 import type {ExecutorManifest, ExecutorRole, OpSpec} from './ports.js'
 import {stripLikePython} from './python-text.js'
 import {CONFIRM_TOOL_SPEC, cancelToolSpec, dispatchToolSpec, type AgentSummary, type HostToolSpec} from './work-tools.js'
@@ -20,45 +19,17 @@ import {CONFIRM_TOOL_SPEC, cancelToolSpec, dispatchToolSpec, type AgentSummary, 
 const WIRE_PART = /^[A-Za-z0-9_-]+$/u
 const MAX_WIRE_NAME = 64
 
-/**
- * The model-writable structured targets, in the order their tools are offered.
- *
- * `StructuredTarget` itself is owned by `memory.ts`; this pins the tool ordering,
- * which is contract because it is the order the provider sees.
- */
-export const STRUCTURED_TARGETS: readonly StructuredTarget[] = ['intent', 'goal', 'authorization']
-
 const ORIGIN_REF: Readonly<Record<string, JsonValue>> = {
   type: 'string',
   description: '当前 ContextView 中、这次动作所回答内容的 ref',
 }
 
-const UPDATE_PROPERTIES: Readonly<Record<StructuredTarget, Readonly<Record<string, JsonValue>>>> = {
-  intent: {
-    objective_hypothesis: {type: 'string'},
-    constraints: {type: 'array', items: {type: 'string'}},
-    unresolved_questions: {type: 'array', items: {type: 'string'}},
-    uncertainty: {type: 'number'},
-  },
-  goal: {
-    objective: {type: 'string'},
-    acceptance_criteria: {type: 'array', items: {type: 'string'}},
-    status: {type: 'string', enum: ['accepted', 'superseded']},
-  },
-  authorization: {
-    allow: {type: 'array', items: {type: 'string'}},
-    deny: {type: 'array', items: {type: 'string'}},
-    evidence_refs: {type: 'array', items: {type: 'string'}},
-  },
-}
-
 export const toolBindingSchema = z.object({
   /** `host`: resolved by the service from the call's own `executor` / `id` argument; `executor` and `op` stay null. */
-  kind: z.enum(['delegate', 'update', 'query', 'host']),
+  kind: z.enum(['delegate', 'query', 'host']),
   logical_name: z.string().min(1),
   executor: z.string().min(1).nullable().default(null),
   op: z.string().min(1).nullable().default(null),
-  target: z.enum(STRUCTURED_TARGETS).nullable().default(null),
   sync_result: z.boolean().default(false),
 }).strict()
 
@@ -86,25 +57,6 @@ export function compileToolSchema(
 ): CompiledTools {
   const schemas: Readonly<Record<string, JsonValue>>[] = []
   const bindings = new Map<string, ToolBinding>()
-
-  for (const target of STRUCTURED_TARGETS) {
-    const wireName = `update_${target}`
-    schemas.push(functionSchema(
-      wireName,
-      `按字段更新 ${target}；只传本轮确实变化的字段`,
-      {
-        type: 'object',
-        properties: structuredClone(UPDATE_PROPERTIES[target]) as JsonValue,
-        additionalProperties: false,
-        minProperties: 1,
-      },
-    ))
-    bindings.set(wireName, toolBindingSchema.parse({
-      kind: 'update',
-      logical_name: `update.${target}`,
-      target,
-    }))
-  }
 
   if (options.includeMemoryRecall === true) {
     const wireName = 'memory__recall'

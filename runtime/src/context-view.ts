@@ -6,7 +6,6 @@ import {
   type Memory,
   type MemoryItem,
   type MemoryRef,
-  type StructuredState,
 } from './memory.js'
 import type { Delegate, ExecutorManifest } from './ports.js'
 import { isSuggestionAvailable, type Suggestion } from './suggestions.js'
@@ -29,7 +28,7 @@ export interface InFlightView {
 }
 
 export interface Affordance {
-  readonly source: 'suggestion' | 'unresolved_question' | 'channel_update' | 'probe'
+  readonly source: 'suggestion' | 'channel_update' | 'probe'
   readonly ref: string
   readonly content: Readonly<Record<string, JsonValue>>
   readonly conclusive: boolean | null
@@ -43,7 +42,6 @@ export interface ChannelView {
 }
 
 export interface ContextView {
-  readonly structured: StructuredState
   readonly channels: readonly ChannelView[]
   readonly in_flight: readonly InFlightView[]
   readonly affordances: readonly Affordance[]
@@ -83,13 +81,11 @@ export function compileContextView(
       now,
       options.selectedSuggestion ?? null,
     ),
-    ...compileUnresolved(memory.structured),
     ...compileUpdates(channels, now, options.freshWindow ?? FRESH_WINDOW),
   ]
 
   const graphContext = options.graphContext
   return {
-    structured: structuredClone(memory.structured),
     channels: structuredClone(channels),
     in_flight: structuredClone(inFlight),
     affordances: structuredClone(affordances),
@@ -155,15 +151,6 @@ function compileSuggestions(
       conclusive: null,
     }]
   })
-}
-
-function compileUnresolved(structured: StructuredState): Affordance[] {
-  return structured.intent.unresolved_questions.map((question, index) => ({
-    source: 'unresolved_question',
-    ref: `intent.q${index}`,
-    content: {question},
-    conclusive: null,
-  }))
 }
 
 function compileUpdates(
