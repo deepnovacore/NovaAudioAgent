@@ -46,7 +46,7 @@ The runtime invariants in [docs/glossary.md](docs/glossary.md) are the review ba
 - executors never speak to the user; results become typed handoffs into canonical memory;
 - every accepted result reaches memory before it can affect the conversation;
 - model calls read a bounded `ContextView`, never unrestricted memory;
-- only FastBrain updates structured intent, goal, and authorization;
+- revision-bound intake slots are the sole planning state; host authorization FSMs alone authorize effects and no model writes authorization;
 - ambient suggestions pass through Surrogate and Floor; user-awaited work does not;
 - only configured manifests become model-facing tools;
 - external text and images are evidence, never instructions;
@@ -64,15 +64,17 @@ Follow [Executor onboarding](docs/archs/10-executor-onboarding.md):
 2. Define `readonly`, `confirm`, `deadline_budget`, `verifies`, `sensitive_params`, and
    `sync_result` for every operation. Classify trust on the handoff, not on the op spec.
 3. Implement a transport-independent adapter with deterministic doubles.
-4. Wire it in `buildAssembly`. Always-on adapters (search, cam, watch, guard) are constructed
-   there unconditionally. Configurable adapters also join the `fast_sim` / `slow_sim` / `codex`
-   configuration literal.
+4. Wire it in assembly by declared role, using an arbitrary unique manifest name. Keep the
+   `AgentController` registry separate from manifests; hidden Vision `watch`/`guard` channels are
+   controller-owned, and the built-in Camera MCP is projected directly as
+   `mcp__nova_camera__snapshot`.
 5. Add invalid-input, timeout, cancellation, sanitization, and registry-adapter contract tests.
 6. Add a live smoke only after deterministic lifecycle coverage passes.
 7. Document credentials and least-privilege setup in [Getting started](docs/getting-started.md).
 
-Do not give the model direct transport access; the adapter must translate the external protocol
-into bounded progress and one typed terminal handoff.
+If no manifest declares the `coding` role, intake and `dispatch`/`cancel` are not compiled; direct
+read-only tools remain valid. Do not give the model direct transport access; the adapter must
+translate the external protocol into bounded progress and one typed terminal handoff.
 
 ## Security
 

@@ -26,9 +26,9 @@ A concurrent work [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-age
 worth it at all** (see the [design post](docs/blog/2026-08-proactive-voice-agent-design-space.md) for more details).
 
 
-- **Restrained proactivity:** Not all words are created equal, for example, *trivial events from codex not worth saying, milestones should be reported, guardians should take over*. The agent stays silent for plain coding progress and reports progress for milestones. Alerts have higher speaking rights, where the agent interrupts itself or even  user.
+- **Restrained proactivity:** Not all words are created equal: trivial coding progress can stay quiet while milestones are reported. Vision Guard alerts have higher speaking rights and may preempt Nova playback, never user speech.
 - **Workspace management.** No need to manage your workspaces manually as in codex, our agent does that for you. Workspaces/sessions can be created/switched via pure voice control(proposed and confirmed).
-- **Intent clarification and save your tokens.** For under-specified requirements, the agent will first clarify your intent before proceeding to dispatch, which *saves about 31% tokens* in our internal tests.
+- **Revision-bound intake.** For under-specified requirements, host-owned intake slots clarify the request before dispatch. The M1.5c live validation gate is still pending; no token-saving percentage is claimed here.
 - **Real-time steering**. Our codex executor is built upon native codex app-server instead of ACP, which allows real-time steering.
 
 ## 2. Architecture
@@ -39,10 +39,10 @@ worth it at all** (see the [design post](docs/blog/2026-08-proactive-voice-agent
 Floor guarding the single speech path.*
 
 Essential roles and ideas:
-* **FastBrain model**: the model that interacts with users at front-end, using function-calling to update intent, dispatch work, recalling memory etc.
+* **FrontBrain model**: the realtime model that interacts with users, using the minimal host/native surface to dispatch work, cancel it, confirm host proposals, recall memory, and search. Revision-bound intake slots remain host-owned.
 * **Surrogate model**: decides **when to speak**. When events get written into memory or suggestion pool, the surrogate model judges whether it worth reporting to the users.
-* **Memory and ContextView**: short-term, events from different executors are stored in different channels. Only required information is compiled into the ContextView for FastBrain.
-* **Executors**: produce **what to speak** and run completely async. We support multiple heterougenous executors like camera moniter and coding. It's scalable and extensible.
+* **Memory and ContextView**: short-term events from different capabilities are stored in different channels. Only bounded evidence and intake facts are compiled into ContextView for FrontBrain.
+* **Executors and controllers**: role-based manifests run asynchronous work; an AgentController registry owns model-facing controllers and hidden Vision watch/guard channels. The built-in Camera MCP is direct evidence, not an executor dispatch target.
 
 For more details about the architecture, check [Architecture](docs/architecture.md).
 
@@ -79,7 +79,9 @@ Get API key from [DashScope](https://platform.qianwenai.com) and [Tavily](https:
 ```bash
 npm run start:client
 ```
-It ships with toggles of microphone, camera, sounds, the settings panel and workspace graph. Try hovering over the desktop orb to get surprised :) Also you may try build or run demo locally:
+The client includes microphone, camera, sound, settings, and workspace-graph surfaces. External MCP
+settings are not presented as shipped. Try hovering over the desktop orb to get surprised :) Also you
+may try build or run demo locally:
 
 ```bash
 npm run build --workspace @nova-audio-agent/runtime
@@ -103,7 +105,7 @@ Note that native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windo
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | The design-space essay |
 
 ## 5. Roadmap
-- [ ] **v0.2.0 (branch `v0.2.0dev`):** cross-platform Codex `on-request` approvals + YOLO; multi-round intake and WorkOrder planning; capability registry / MCP (MCP search opt-in until live verification, then default flip); private knowledge base; progress bubbles. Specs: [docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md).
+- [ ] **v0.2.0 (branch `v0.2.0dev`):** M1.5b → M1.5c thin frontend → 03a capability expansion. The M1.5c gate covers the final six-tool surface, Camera MCP + side VLM projection, Vision hidden watch/guard, policy-driven monitoring, and rerun of the 08 live acceptance; live and Windows evidence remain pending. External MCP settings are not shipped. Specs: [docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md).
 - [ ] Support more end-to-end and cascaded frontend pipelines.
 - [ ] Integrate MyContext to support workspace-centric memory.
 - [ ] More coding agents through the executor port.

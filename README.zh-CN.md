@@ -24,9 +24,9 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 （详见[设计文档](docs/blog/2026-08-proactive-voice-agent-design-space.md)）。
 
 
-- **主动有分寸：** 话有轻重。Coding的琐碎进度不必说，里程碑应该汇报；Guardian 告警（火灾、警报一类）说话权更高，agent 可以打断自己甚至打断用户。目前绝大部分的全双工模型都不具备这样的主动性 (Proactivity)。
+- **主动有分寸：** 话有轻重。Coding 的琐碎进度不必说，里程碑应该汇报；Vision Guard 告警说话权更高，可以打断 Nova 正在播放的语音，但绝不打断用户说话。
 - **语音管工作区。** 不必像 Codex 那样自己切工作区，Agent 帮你代劳，全程通过语音创建和、切换 workspace / session，提案会让你确认。
-- **先问清再派活，省 token。** 需求说不清时，Agent 先澄清意图再下发，在内部测试用例上大约节省 **31% token**。
+- **先问清再派活。** 需求说不清时，主机拥有的 revision-bound intake slots 先澄清请求再下发；M1.5c 真实验证仍待完成，不在此宣称 token 节省比例。
 - **实时 steer 你的 coding agent。** Codex执行器基于原生 app-server而非ACP实现，任务进行中可以随时加约束。
 
 ## 2. 设计架构
@@ -36,12 +36,12 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 *一个事件循环，两个模型端口共读一份 ContextView，Memory 当公共黑板，Floor 把守唯一说话通路。*
 
 几个关键角色：
-* **FastBrain：** 前台交互模型，用函数调用更新意图、派活、召回记忆。
+* **FrontBrain：** 实时前台模型，通过最小主机工具面派活、取消、确认主机提案、召回记忆和搜索；revision-bound intake slots 由主机拥有。
 * **Surrogate：** 决定**何时开口**。事件写入 Memory 或建议池后，由它判断值不值得告诉用户。
-* **Memory 与 ContextView：** Memory 短期、分通道；摄像头监控、搜索、编码等执行器分开记录，只有需要的信息才编进 ContextView 给 FastBrain。
+* **Memory 与 ContextView：** Memory 短期、分通道；能力证据与 intake facts 受限编译进 ContextView 给 FrontBrain。
 * **Floor：** 说话权。不同事件自带不同优先级。
-* **Executor：** 产出**说什么**，完全异步。已支持摄像头 watch/guardian、Codex 等异构能力，你可以轻松扩展。
-* **Compressor：** 对话变长后，短期记忆可能撑爆 FastBrain 和 Surrogate 的上下文，Agent用摘要模型自动压缩。
+* **Executor 与 Controller：** role-based manifest 运行异步工作；AgentController registry 拥有面向模型的 controller 及隐藏的 Vision watch/guard。内置 Camera MCP 直接提供证据，不是 dispatch executor。
+* **Compressor：** 对话变长后，短期记忆可能撑爆 FrontBrain 和 Surrogate 的上下文，Agent用摘要模型自动压缩。
 
 架构细节见 [架构](docs/architecture.md)。
 
@@ -74,7 +74,7 @@ npm ci && cp .env.example .env
 ```bash
 npm run start:client
 ```
-客户端包含麦克风、摄像头、声音开关等按钮，以及设置面板和工作区图谱。你也可以试试把鼠标悬在桌面 orb 上，会有惊喜）
+客户端包含麦克风、摄像头、声音开关等按钮，以及设置面板和工作区图谱；外部 MCP 设置尚未作为已交付功能宣称。你也可以试试把鼠标悬在桌面 orb 上，会有惊喜）
 
 从 [DashScope](https://platform.qianwenai.com) 和 [Tavily](https://docs.tavily.com) 获取 API Key 并配置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。
 
@@ -99,7 +99,7 @@ node runtime/dist/src/cli.js demo all
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 设计博客 |
 
 ## 5. 路线图
-- [ ] **v0.2.0（分支 `v0.2.0dev`）：** 跨平台 Codex `on-request` 审批与 YOLO；多轮意图澄清与 WorkOrder 规划；能力注册表 / MCP（MCP 搜索先 opt-in，真实接入验证通过后再切默认）；私人知识库；进度气泡。规格：[docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md)。
+- [ ] **v0.2.0（分支 `v0.2.0dev`）：** M1.5b → M1.5c 薄前端 → 03a 能力扩展。M1.5c 需验证最终六工具面、Camera MCP + 侧边 VLM 投影、Vision 隐藏 watch/guard、策略驱动监控并重跑 08 live acceptance；live 与 Windows 证据仍待完成。外部 MCP 设置尚未交付。规格：[docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md)。
 - [ ] 支持更多端到端与级联前端管线。
 - [ ] 接入 MyContext，做以工作区为中心的记忆。
 - [ ] 通过 executor 端口接入更多 coding agent。

@@ -1,8 +1,8 @@
 # 3. Context View
 
 Models never receive unrestricted memory or a raw workspace graph. `ContextView` is the only bounded
-call-level model projection: recent conversation, relevant channel evidence, structured state,
-active delegates, and—when present—one immutable `GraphContext`. `GraphContext` is the sole graph
+call-level model projection: recent conversation, relevant channel evidence, revision-bound intake
+facts, active delegates, and—when present—one immutable `GraphContext`. `GraphContext` is the sole graph
 projection allowed to feed `ContextView`; the graph board is a separate read-only UI projection and
 is never model context.
 
@@ -19,7 +19,8 @@ is never model context.
 There is no relation-only fallback. Items are structurally neutralized and dropped whole rather than
 clipped. Token estimates, Unicode code-point limits, and UTF-8 byte limits all apply; the strictest
 limit wins. The blocks render after runtime material and before intent, goal, and authorization, so
-their lower authority is explicit without displacing the current user request.
+their lower authority is explicit without displacing the current user request. Authorization is not
+in `ContextView`; it remains host FSM state.
 
 Hints can only suggest a next step inside the current workspace. They never request or execute a
 workspace switch, inspect another workspace, call an action tool, or act as user instructions.
@@ -44,8 +45,8 @@ inventing an edge across a dropped or unknown event.
 
 ## Realtime delivery truth
 
-`workspace_context` is an inject-only host item. It cannot become a host response intent or user
-activation, and a provider may deliver it only through a proven replacement/refresh capability.
+`workspace_context` is an inject-only host item. It cannot become a host action or user activation,
+and a provider may deliver it only through a proven replacement/refresh capability.
 Qwen Header replacement uses an ordered delete-confirm then distinct create-confirm protocol, so a
 new committed workspace supersedes the provider-visible prior Header rather than accumulating stale
 items.

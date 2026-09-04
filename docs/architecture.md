@@ -4,11 +4,16 @@ Nova Audio Agent is organized around a continuous event loop rather than a turn-
 The runtime accepts user input, dispatches work, receives progress or terminal handoffs, writes the
 result to memory, and independently decides whether another response is useful.
 
+The v0.2 target keeps Nova's stable host/native voice surface to five tools — `dispatch`, `cancel`,
+`confirm`, `memory__recall`, and `search__search` — plus the built-in direct Camera MCP
+`mcp__nova_camera__snapshot`. External MCP servers are user-selected surface and context cost, not
+something Nova may silently trim. The M1.5c thin-frontend/live and Windows gates remain pending.
+
 ```mermaid
 flowchart TB
   I["Input: text, audio, media"] --> Q["Event queue"]
   Q --> RT["Runtime spine"]
-  RT --> FB["FastBrain slot"]
+  RT --> FB["FrontBrain slot"]
   RT --> EX["Executor slots"]
   EX --> H["Typed handoff"]
   H --> MEM["Canonical memory"]
@@ -25,7 +30,7 @@ flowchart TB
 | Module | Responsibility |
 |---|---|
 | `runtime/src/causal-runtime.ts` | Event application, dispatch, single-flight slots, wake routing, delegate identity/deadline/terminal state, and the `ExecutorAdapter` port |
-| `runtime/src/memory.ts` | Append-only channel memory plus structured intent, goal, and authorization |
+| `runtime/src/memory.ts` | Append-only channel memory, accepted handoffs, and revision-bound intake snapshots; host authorization FSMs remain outside model state |
 | `runtime/src/context-view.ts` | The bounded model-facing view of current state |
 | `runtime/src/floor.ts` | Exclusive ownership of the user-facing speaking path |
 | `runtime/src/ports.ts` | Executor manifests, operation contracts, requests, and typed handoffs |
@@ -40,22 +45,26 @@ flowchart TB
 An executor declares a manifest containing its operations, input schema, deadline, trust level, and
 channel policy. Assembly exposes only manifests selected by configuration. Runtime binds each tool
 request to a delegate identity before dispatch and accepts progress or completion only for that
-identity. An executor cannot write structured user intent and cannot speak directly.
+identity. Revision-bound intake slots are host-owned and an executor cannot mutate them, host
+authorization, or the speaking path. AgentController descriptors and owned hidden channels are
+registered separately from executor manifests; direct MCP tools are model-visible only through
+their consumer-specific projection.
 
 ## Memory and attention
 
 All observations reach canonical memory before conversational projection. User-awaited work wakes
-FastBrain directly. Eligible unsolicited observations (channels whose policy allows suggestions)
-first become pooled suggestions and pass through the Surrogate attention policy; urgent monitors
-such as Guard bypass the pool and wake FastBrain directly.
+the realtime FrontBrain directly. Eligible unsolicited observations (channels whose policy allows
+suggestions) first become pooled suggestions and pass through the Surrogate attention policy; urgent
+Vision Guard facts bypass the pool and wake FrontBrain directly.
 
 Floor is not a mutex but a three-way arbiter: for every speech attempt it rules `allow`, `preempt`,
 or `defer`, comparing the priority bound to the triggering event against the priority of whatever
 is currently speaking. Priorities are assigned by the runtime, never by the model — user input is
 fixed at 100, the Guard monitor at 90, active executors at 50, and ambient observations at 40 — so
-a model cannot escalate its own urgency. On the text path a `preempt` verdict is bookkeeping (there
+a model cannot escalate its own urgency. Preemptive means interrupting Nova playback currently being
+spoken; it never interrupts user speech. On the text path a `preempt` verdict is bookkeeping (there
 is no audio to cut); on the realtime path only channels at or above the preemption band (today only
-Guard) actually cancel in-flight speech, and a hit never interrupts the user. A deferred utterance
+Guard) actually cancel in-flight Nova playback. A deferred utterance
 is not dropped: it lands in the suggestion pool, where a fired entry cools down and re-arms only
 when new evidence arrives on its channel.
 
@@ -113,12 +122,15 @@ endpointing stage that probes a LiveKit-style v1-mini turn detector with a bound
 fallback. There is no automatic provider failover.
 
 Two assembly differences distinguish this path from the text CLI. First, there is no separate
-FastBrain model call: the realtime provider model itself fills the FastBrain role (the code calls
+secondary model call: the realtime provider model itself fills the FrontBrain role (the code calls
 this port the realtime front brain), reading the same host-compiled context and tool schemas.
 Second, the Codex executor is assembled on its live app-server backend, which adds the
 `codex.steer` operation for same-turn steering, and the read-only `memory.recall` tool is exposed.
 Neither is exposed by the text CLI; steering is also reachable through the explicit
 `build_codex_live_assembly` entry point used by live evaluations.
+
+`FASTBRAIN_SYSTEM` is retained legacy/dead code and is deferred for removal or reuse; it is not a
+live second model, planning-state writer, or authorization path.
 
 ## Security boundaries
 

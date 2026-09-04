@@ -5,8 +5,9 @@
 ## 当前发布边界
 
 Node.js 与 TypeScript 是唯一的产品运行时。Codex 只使用 app-server；JSONL 仅为
-fixture-parser-only，不再拥有生产进程执行路径。Search、Camera、Watch 和 Guard 始终装配，
-不属于执行器选择项。遗留 HA 或 AutoGLM 配置会在 provider、进程、设备和桌面构造前返回稳定且
+fixture-parser，不再拥有生产进程执行路径。v0.2dev 薄前端目标通过 Vision controller 的隐藏
+Watch/Guard 通道投影 Camera MCP 证据；M1.5c、live 与 Windows 验收仍待完成。遗留 HA 或 AutoGLM
+配置会在 provider、进程、设备和桌面构造前返回稳定且
 不泄露凭据的迁移错误。
 
 ## 源码开发安装
@@ -120,13 +121,14 @@ provider 故障转移。
 的后台重启。因此管线、provider、模型、音色和密钥的取值是在那一次下次启动时生效，而不是会话
 中途热更；配色也改为在同一个提交点生效，不再实时应用。
 
-Node 可配置执行器为 `fast_sim`、`slow_sim`、`codex`。Codex 的
+Node 执行器名称是任意唯一的 manifest key，由 role 路由，不再使用固定执行器枚举。Codex 的
 ordinary/live/project 模式共用有界 app-server transport。Camera 文件输入只接受主机验证过的
 绝对路径；默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 回放均使用 Chromium
-摄像头链路。
+摄像头链路。外部 MCP 设置尚未作为面向用户的配置面交付。
 
-真实 provider、麦克风/扬声器、Camera、Codex 登录、WindowServer、Windows 后代进程清理、
-clean-machine installer、签名和发布仍是 pending external evidence。
+M1.5c 薄前端验收、真实 provider、麦克风/扬声器、Camera、Codex 登录、WindowServer、Windows
+后代进程清理、clean-machine installer、签名和发布仍是 pending external evidence。实时 direct-tool
+候选预算 B=24 仍待 Qwen live 验证，并非已证明的常量；Codex 投影不受该预算限制。
 
 ### 可选在线 smoke
 

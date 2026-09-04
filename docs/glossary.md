@@ -2,18 +2,20 @@
 
 | Term | Meaning |
 |---|---|
-| FastBrain | The user-facing reasoning path that can speak and dispatch work |
+| FastBrain | Historical name for the user-facing reasoning path; the realtime implementation calls this the FrontBrain |
 | FrontBrain | The realtime provider model filling the FastBrain role on the voice path |
 | Surrogate | A bounded attention policy for unsolicited suggestions; it selects pooled entries and never generates words |
 | Runtime spine | The event loop that applies state and coordinates work |
-| Memory | Canonical per-channel observations and structured user state |
-| Channel | One append-only observation stream per capability: `conversation`, `search`, `cam`, `watch`, `guard`, plus one per active executor |
+| Memory | Canonical per-channel observations, accepted handoffs, and revision-bound intake facts |
+| Channel | One append-only observation stream per capability: `conversation`, `search`, Camera MCP evidence, hidden Vision `watch`/`guard`, plus one per active executor |
 | ContextView | A bounded snapshot compiled for a model call |
 | Floor | Speaking-path arbitration with three verdicts: `allow`, `preempt`, `defer` |
 | Priority | Urgency bound to the triggering event, never chosen by the model: user 100, guard 90, active executors 50, ambient observations 40 |
-| Preempt | Floor verdict that outranks the current utterance; real audio cancellation exists only on the realtime path |
+| Preempt | Floor verdict that interrupts Nova playback when allowed; it never interrupts user speech, and real audio cancellation exists only on the realtime path |
 | Defer | Floor verdict that sends the utterance to the suggestion pool instead of dropping it |
 | Executor | A manifest-declared capability behind the port contract |
+| AgentController | A host registry entry describing a model-facing controller and its owned hidden channels; separate from executor manifests |
+| Direct MCP tool | A consumer-projected `${name}__${op}` operation, never an executor dispatch target or intake writer |
 | Delegate | One identity-bound, deadline-bounded unit of dispatched work |
 | Progress | A non-terminal executor event bound to its delegate |
 | Observation | A non-terminal fact emitted by an active delegate outside the progress cadence (for example a monitoring hit) |
@@ -38,7 +40,7 @@
 1. Runtime does not await executor completion in the event-loop body.
 2. Executors never speak directly to the user.
 3. Every accepted result is written to memory before it affects conversation.
-4. Only FastBrain may update structured intent, goal, or authorization.
+4. Revision-bound intake slots are the sole planning state; host authorization FSMs alone authorize effects and no model writes authorization.
 5. A model sees a bounded ContextView, never unrestricted memory.
 6. Delegate identity and operation must match progress and terminal events.
 7. Terminal completion is accepted at most once.

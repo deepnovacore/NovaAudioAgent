@@ -5,8 +5,9 @@
 ## Current release boundary
 
 Node.js and TypeScript are the only product runtime. Codex is app-server-only; JSONL is
-fixture-parser-only and has no production process execution path. Search, Camera, Watch, and Guard
-are always assembled and are not executor selector values. Legacy HA and AutoGLM settings produce
+fixture-parser-only and has no production process execution path. The v0.2dev thin-frontend target
+projects direct Camera MCP evidence through the Vision controller's hidden Watch/Guard channels;
+M1.5c/live/Windows acceptance remains pending. Legacy HA and AutoGLM settings produce
 a stable, credential-safe migration error before provider, process, device, or desktop
 construction.
 
@@ -140,13 +141,16 @@ configuration, and performs exactly one controlled backend restart. Pipeline, pr
 voice, and key values therefore take effect on that next launch of the backend rather than
 mid-session, and the palette commits on the same boundary instead of applying live.
 
-The configured Node executor names are
-`fast_sim`, `slow_sim`, and `codex`. Codex ordinary/live/project modes share the bounded app-server
-transport. Camera file input accepts only an absolute host-validated path, and both the local-camera
-default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback use Chromium's camera pipeline.
+Configured executor names are arbitrary unique manifest keys routed by roles; there is no fixed
+executor enum. Codex ordinary/live/project modes share the bounded app-server transport. Camera file
+input accepts only an absolute host-validated path, and both the local-camera default and
+`NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback use Chromium's camera pipeline. External MCP settings
+are not shipped as a user-facing configuration surface.
 
-Live provider, microphone/speaker, camera, Codex login, WindowServer, Windows descendant cleanup,
-clean-machine installer, signing, and publication checks are pending external evidence.
+M1.5c thin-frontend acceptance, live provider, microphone/speaker, camera, Codex login, WindowServer,
+Windows descendant cleanup, clean-machine installer, signing, and publication checks are pending
+external evidence. The candidate realtime direct-tool budget B=24 is pending Qwen live validation,
+not a proven constant; Codex projection is outside that budget.
 
 ### Opt-in live smoke
 

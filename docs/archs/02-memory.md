@@ -5,10 +5,11 @@ of prompt text.
 
 ## Layers
 
-- **L0 — causal runtime blackboard.** `Memory` channels and structured intent, goal, authorization,
-  active delegates, and current work-order state are the live session truth. Entries carry time,
-  trust, priority, outcome, and evidence references. Applying an event precedes any response derived
-  from it. Only the causal runtime owns current task/executor state.
+- **L0 — causal runtime blackboard.** `Memory` channels, active delegates, accepted handoffs, and
+  revision-bound intake slots are the live session truth. Host authorization and project-confirmation
+  FSMs are separate host state, never model-writable planning state. Entries carry time, trust,
+  priority, outcome, and evidence references. Applying an event precedes any response derived from
+  it. Only the causal runtime owns current task/executor state.
 - **L1 — durable workspace observation store.** A dedicated Worker owns SQLite, append-only gated
   observations, operation receipts, identity bindings, projection records, and optimistic revisions.
   The main thread and voice hot path never open SQLite. One transaction persists an observation and
@@ -23,7 +24,7 @@ of prompt text.
   snapshot. It exposes safe metadata and evidence counts, never paths, relation reasons, evidence
   bodies, aliases, or mutation commands.
 - **L4 — recall and explanation projections.** `GraphRecall` and `ContextBudgeter` read only the
-  latest published snapshot. Automatic recall is local, intent-matched, suggestion-only, and has no
+  latest published snapshot. Automatic recall is local, request-matched, suggestion-only, and has no
   global or recency fallback. An explicit evidence request may additionally query a compatible
   MyContext adapter for the authoritative current workspace; those results remain untrusted,
   non-persistent explanation data.
@@ -31,7 +32,8 @@ of prompt text.
 ## Authority and failure boundaries
 
 The SQLite sidecar is the source of truth only for workspace-memory observations, cards, relations,
-and receipts. L0 remains authoritative for the present conversation and work. A graph hint cannot
+and receipts. L0 remains authoritative for the present conversation and work; revision-bound intake
+slots are the sole planning state and no parallel planning state exists. A graph hint cannot
 authorize a tool, mutate a task, inspect another workspace, or become a user instruction.
 
 All discovery and free-text fields pass path/content sensitivity gates before persistence. Denied
