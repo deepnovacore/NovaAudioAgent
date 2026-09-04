@@ -10,14 +10,14 @@ const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const fixtureRoot = resolve(repositoryRoot, 'fixtures/runtime/v1')
 
 test('Node CLI fixture check runs every committed scenario', async () => {
-  assert.equal(await checkRuntimeFixtures(fixtureRoot), 20)
+  assert.equal(await checkRuntimeFixtures(fixtureRoot), 19)
 
   let output = ''
   assert.equal(await main(['fixture', 'check'], {
     cwd: repositoryRoot,
     io: {write: text => { output += text }},
   }), 0)
-  assert.equal(output, 'Node fixture parity passed: 20 scenario(s)\n')
+  assert.equal(output, 'Node fixture parity passed: 19 scenario(s)\n')
 })
 
 test('Node CLI fixture replay emits a verified deterministic runtime snapshot', async () => {

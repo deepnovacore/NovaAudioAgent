@@ -189,7 +189,8 @@ test('durable relation restarts into bounded text-only suggestion context and re
   const rendered = renderContextSnapshot(view)
   assert.match(rendered, /<workspace_context kind="data">/u)
   assert.ok(rendered.includes(WORKSPACE_HINTS_POLICY_OPEN))
-  assert.ok(rendered.indexOf('<workspace_hints') < rendered.indexOf('## 意图'))
+  assert.ok(rendered.indexOf('<workspace_hints') > rendered.indexOf('## 现在手边的素材'))
+  assert.equal(rendered.includes('## 意图'), false)
   assert.doesNotMatch(rendered, /\/safe\/nova-beta|host-beta|<tool_call>|switch_workspace|inspect_workspace/u)
 
   const irrelevant = restarted.contextForTurn({
