@@ -132,12 +132,27 @@ Deterministic M1.5c coverage is recorded in targeted tests: `assembly.test.ts`,
 `realtime-service.test.ts` cover the runtime boundaries; desktop
 `package-inspection.test.mjs` and `release-targets.test.mjs` cover the exact
 MCP SDK closure and release target contract. This is the covered deterministic
-scope, not a claim that full runtime/desktop suites, real voice, macOS camera,
-Windows, or live acceptance have completed.
+scope; the full validation ledger is recorded below.
 
-The root `npm run check`, complete runtime suite, desktop suite, and CLI suite
-were not rerun for M1.5c. Their older M1.5b/08 results remain historical
-snapshots below; they are not current M1.5c acceptance evidence.
+M1.5c product code is recorded at integration `65a6`; the migrated test set is
+recorded at `83d6`. `M1.5c/live/Windows acceptance remains pending`: deterministic
+validation is green, but the release gate is not complete. Remaining live rows
+include real voice `dispatch` / `cancel` / `confirm`, macOS camera permission
+and side-VLM live behavior, Guard interruption/takeover behavior, headset and
+concurrent approvals, and Windows acceptance.
+
+## Validation (M1.5c, integration `65a6` + test migration `83d6`)
+
+| Check | Evidence |
+|---|---|
+| Root `npm run check` | Green: typecheck, lint, environment contract, Node parity (195 files / 304 occurrences), executor boundary (15 allowlisted) |
+| Runtime full suite | 2167 total, 2162 passed, 0 failed, 5 skipped |
+| Runtime fixtures | 19 scenarios |
+| Desktop full suite | 810 total, 807 passed, 0 failed, 3 Windows skips |
+| CLI suite | 18/18 passed |
+
+These results cover deterministic validation only. `M1.5c/live/Windows acceptance
+remains pending`, and the overall M1.5c release gate is not complete.
 
 M1.5c live acceptance is still open: rerun the applicable 08 voice rows after
 the surface change, including real voice `dispatch` / `cancel` / `confirm`,
@@ -205,7 +220,10 @@ approval; it now drops the expired head through the normal fail-closed path.
 All four were reproduced red before the minimal fixes and have regression
 coverage.
 
-## Validation (2026-09-04, 08 deterministic, after third-review fixes)
+## Historical validation snapshot (2026-09-04, 08 deterministic, after third-review fixes)
+
+The following 08 numbers are an older M1.5b baseline snapshot, not current
+M1.5c acceptance evidence.
 
 | Check | Evidence |
 |---|---|

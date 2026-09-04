@@ -73,8 +73,8 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 本节的“完成”仅指代码和已通过的确定性定向覆盖（工具面、camera gate、Vision
 隐藏 channel、monitor policy、state retirement、package/release closure）。root
-`npm run check`、完整 runtime、desktop、CLI 套件本轮均未复跑；不把定向覆盖
-冒充成全量套件、真人语音、macOS camera、Windows 或 live 完成。
+`npm run check`、完整 runtime、desktop、CLI 套件本轮均已复跑并通过；但不把
+确定性通过冒充成真人语音、macOS camera、Windows 或 live 完成。
 
 **编码执行器内部的 intake（跑在便宜的文本模型 `qwen-flash` 上）负责决定**：
 
@@ -100,10 +100,24 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 ## 四、我们是怎么验的
 
-**确定性测试（M1.5b/08 历史基线快照；不是 M1.5c 当前验收）**
+**M1.5c 当前确定性 validation（integration 产品代码 `65a6` + 测试迁移 `83d6`）**
 
-下表数字来自旧的 08 验证快照；本轮没有重新运行 root `npm run check`、完整
-runtime、desktop 或 CLI 套件。M1.5c 当前只认上面的定向确定性覆盖。
+| 套件 | 结果 |
+|---|---|
+| root `npm run check`（typecheck、lint、env contract、Node parity、executor boundary） | 全绿；Node parity 审计 195 files / 304 occurrences，executor boundary 15 allowlisted |
+| runtime 完整套件 | 2167 total，2162 pass，0 fail，5 skip |
+| runtime fixtures | 19 scenarios |
+| desktop 完整套件 | 810 total，807 pass，0 fail，3 Windows skip |
+| CLI | 18/18 pass |
+
+这些是确定性验证结果。`M1.5c/live/Windows acceptance remains pending`：真人语音
+`dispatch` / `cancel` / `confirm`、macOS camera permission/side-VLM live、Guard
+抢话 live、耳机与并发审批、Windows 仍待验，M1.5c 总体发布门尚未完成。
+
+**旧 08 确定性测试（M1.5b/08 历史基线快照；不是 M1.5c 当前验收）**
+
+下表数字来自旧的 08 验证快照，仅保留作为历史证据；M1.5c 当前验收以
+上面的 validation 表和 live pending 边界为准。
 
 | 套件 | 结果 |
 |---|---|
