@@ -240,3 +240,16 @@ test('MCP foundation accepts bounded plain text or one image only and fails clos
     content: [{type: 'image', data: 'A'.repeat(Math.ceil(CAMERA_MAX_IMAGE_BYTES / 3) * 4 + 4), mimeType: 'image/jpeg'}],
   }).kind, 'invalid')
 })
+
+test('MCP foundation bounds text at 400 UTF-16 code units', () => {
+  for (const [text, expected] of [
+    ['a'.repeat(400), 'text'],
+    ['a'.repeat(401), 'invalid'],
+    ['😀'.repeat(200), 'text'],
+    ['😀'.repeat(201), 'invalid'],
+  ] as const) {
+    const parsed = parseMcpToolResult({content: [{type: 'text', text}]})
+    assert.equal(parsed.kind, expected)
+    if (parsed.kind === 'text') assert.equal(parsed.text, text)
+  }
+})

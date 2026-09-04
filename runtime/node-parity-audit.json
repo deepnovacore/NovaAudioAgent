@@ -1571,7 +1571,7 @@
       "snippet_sha256": "31f0aac22fe94df0a91fd5b1737d95b6a706d864e63e32c27a525968fc9e7a56",
       "disposition": "intentional_utf16",
       "test": "runtime/test/mcp-camera.test.ts",
-      "behavior": "MCP result parser accepts canonical four and five MiB image payloads"
+      "behavior": "MCP foundation bounds text at 400 UTF-16 code units"
     },
     {
       "file": "runtime/src/executors/mcp-camera.ts",
@@ -1582,7 +1582,7 @@
       "snippet_sha256": "31f0aac22fe94df0a91fd5b1737d95b6a706d864e63e32c27a525968fc9e7a56",
       "disposition": "intentional_utf16",
       "test": "runtime/test/mcp-camera.test.ts",
-      "behavior": "MCP result parser accepts canonical four and five MiB image payloads"
+      "behavior": "MCP foundation bounds text at 400 UTF-16 code units"
     },
     {
       "file": "runtime/src/executors/mcp-camera.ts",
