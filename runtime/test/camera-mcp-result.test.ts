@@ -4,6 +4,7 @@ import {test} from 'node:test'
 import {MediaStore} from '../src/media-store.js'
 import type {CompleteRequest, ModelGateway} from '../src/model-gateway.js'
 import {
+  CAMERA_MAX_IMAGE_BYTES,
   CAMERA_VISION_JSON_SCHEMA,
   projectCameraMcpResult,
   type CameraMcpCallToolResult,
@@ -116,6 +117,28 @@ test('oversized payload and invalid structured metadata fail closed', async () =
   ]) {
     const invalid = await projectCameraMcpResult(result({metadata}), options(new ScriptedGateway()))
     assert.equal(contentOf(invalid).error, 'invalid_metadata')
+  }
+})
+
+test('projector rejects five MiB plus one byte before decoding', async () => {
+  const data = Buffer.alloc(CAMERA_MAX_IMAGE_BYTES + 1).toString('base64')
+  const original = Object.getOwnPropertyDescriptor(Buffer, 'from')
+  if (original === undefined) throw new Error('Buffer.from descriptor missing')
+  const originalFrom = Buffer.from.bind(Buffer) as (value: string, encoding: BufferEncoding) => Buffer
+  let decodes = 0
+  Object.defineProperty(Buffer, 'from', {
+    ...original,
+    value(value: string, encoding: BufferEncoding): Buffer {
+      decodes += 1
+      return originalFrom(value, encoding)
+    },
+  })
+  try {
+    const projected = await projectCameraMcpResult(result({data}), options(new ScriptedGateway()))
+    assert.equal(contentOf(projected).error, 'image_too_large')
+    assert.equal(decodes, 0)
+  } finally {
+    Object.defineProperty(Buffer, 'from', original)
   }
 })
 

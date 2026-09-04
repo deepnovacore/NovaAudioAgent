@@ -270,27 +270,40 @@ function decodeBase64(value: string):
   if (value.length > Math.ceil(CAMERA_MAX_IMAGE_BYTES / 3) * 4) {
     return {kind: 'too_large'}
   }
-  if (!isCanonicalBase64(value)) return {kind: 'invalid'}
+  const byteLength = canonicalBase64ByteLength(value)
+  if (byteLength === null) return {kind: 'invalid'}
+  if (byteLength > CAMERA_MAX_IMAGE_BYTES) return {kind: 'too_large'}
   const decoded = Buffer.from(value, 'base64')
-  if (decoded.byteLength === 0 || decoded.toString('base64') !== value) return {kind: 'invalid'}
-  if (decoded.byteLength > CAMERA_MAX_IMAGE_BYTES) return {kind: 'too_large'}
+  if (decoded.byteLength !== byteLength) return {kind: 'invalid'}
   return {kind: 'ok', payload: new Uint8Array(decoded)}
 }
 
-function isCanonicalBase64(value: string): boolean {
-  if (value === '' || value.length % 4 !== 0) return false
+/** Returns the exact decoded size only for canonical RFC 4648 base64. */
+export function canonicalBase64ByteLength(value: string): number | null {
+  if (value === '' || value.length % 4 !== 0) return null
   let padding = 0
   if (value.endsWith('=')) padding += 1
   if (value.endsWith('==')) padding += 1
   const bodyLength = value.length - padding
   if (padding > 2 || (padding === 1 && bodyLength % 4 !== 3)
-    || (padding === 2 && bodyLength % 4 !== 2)) return false
+    || (padding === 2 && bodyLength % 4 !== 2)) return null
+  let finalSextet = 0
   for (let index = 0; index < bodyLength; index += 1) {
-    const code = value.charCodeAt(index)
-    if (!((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)
-      || (code >= 0x30 && code <= 0x39) || code === 0x2b || code === 0x2f)) return false
+    finalSextet = base64Sextet(value.charCodeAt(index))
+    if (finalSextet < 0) return null
   }
-  return true
+  if ((padding === 2 && (finalSextet & 0x0f) !== 0)
+    || (padding === 1 && (finalSextet & 0x03) !== 0)) return null
+  return value.length / 4 * 3 - padding
+}
+
+function base64Sextet(code: number): number {
+  if (code >= 0x41 && code <= 0x5a) return code - 0x41
+  if (code >= 0x61 && code <= 0x7a) return code - 0x61 + 26
+  if (code >= 0x30 && code <= 0x39) return code - 0x30 + 52
+  if (code === 0x2b) return 62
+  if (code === 0x2f) return 63
+  return -1
 }
 
 function buildVisionPrompt(objective: string): string {

@@ -22,6 +22,7 @@ import {
   CAMERA_MAX_WIDTH,
   CAMERA_MAX_CAPTURED_AT,
   CAMERA_MIN_CAPTURED_AT,
+  canonicalBase64ByteLength,
   projectCameraMcpResult,
   type CameraMcpCallToolResult,
 } from './camera-mcp-result.js'
@@ -92,34 +93,13 @@ function parseMcpToolResultUnchecked(input: unknown): ParsedMcpResult {
 }
 
 function canonicalImage(data: string, mimeType: string): boolean {
-  if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimeType) || data === '' || data.length > MAX_BASE64_CHARS
-    || !canonicalBase64(data)) return false
-  if (decodedByteLength(data) > CAMERA_MAX_IMAGE_BYTES) return false
+  if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimeType) || data === '' || data.length > MAX_BASE64_CHARS) return false
+  const byteLength = canonicalBase64ByteLength(data)
+  if (byteLength === null || byteLength > CAMERA_MAX_IMAGE_BYTES) return false
   try {
     const decoded = Buffer.from(data, 'base64')
-    return decoded.byteLength > 0 && decoded.byteLength <= CAMERA_MAX_IMAGE_BYTES
+    return decoded.byteLength === byteLength
   } catch { return false }
-}
-
-function canonicalBase64(value: string): boolean {
-  if (value.length % 4 !== 0) return false
-  let padding = 0
-  if (value.endsWith('=')) padding += 1
-  if (value.endsWith('==')) padding += 1
-  const bodyLength = value.length - padding
-  if (padding > 2 || (padding === 1 && bodyLength % 4 !== 3)
-    || (padding === 2 && bodyLength % 4 !== 2)) return false
-  for (let index = 0; index < bodyLength; index += 1) {
-    const code = value.charCodeAt(index)
-    if (!((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)
-      || (code >= 0x30 && code <= 0x39) || code === 0x2b || code === 0x2f)) return false
-  }
-  return true
-}
-
-function decodedByteLength(value: string): number {
-  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
-  return value.length / 4 * 3 - padding
 }
 
 interface AdmissionGatedFrameSource extends FrameSource {

@@ -176,6 +176,30 @@ test('MCP result parser rejects five MiB plus one byte before decoding', () => {
   }
 })
 
+test('MCP result parser rejects non-zero base64 pad bits before decoding', () => {
+  const original = Object.getOwnPropertyDescriptor(Buffer, 'from')
+  if (original === undefined) throw new Error('Buffer.from descriptor missing')
+  const originalFrom = Buffer.from.bind(Buffer) as (value: string, encoding: BufferEncoding) => Buffer
+  let decodes = 0
+  Object.defineProperty(Buffer, 'from', {
+    ...original,
+    value(value: string, encoding: BufferEncoding): Buffer {
+      decodes += 1
+      return originalFrom(value, encoding)
+    },
+  })
+  try {
+    for (const data of ['AB==', 'AAB=']) {
+      assert.equal(parseMcpToolResult({
+        content: [{type: 'image', data, mimeType: 'image/jpeg'}],
+      }).kind, 'invalid')
+    }
+    assert.equal(decodes, 0)
+  } finally {
+    Object.defineProperty(Buffer, 'from', original)
+  }
+})
+
 test('MCP foundation accepts bounded plain text or one image only and fails closed for other shapes', () => {
   assert.deepEqual(parseMcpToolResult({content: [{type: 'text', text: 'ok'}]}), {kind: 'text', text: 'ok'})
   assert.equal(parseMcpToolResult({content: []}).kind, 'invalid')
