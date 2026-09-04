@@ -14,6 +14,7 @@ import {
   buildRealtimeAssembly,
 } from '../src/realtime-assembly.js'
 import { VirtualClock } from '../src/clock.js'
+import { ScriptedIdFactory } from '../src/ids.js'
 import {CodexApprovalController} from '../src/executors/codex/approval.js'
 import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
 import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
@@ -26,7 +27,7 @@ import {
 } from '../src/project-store.js'
 import { settingsSchema } from '../src/config.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
-import { executorManifestSchema } from '../src/ports.js'
+import { executorManifestSchema, type Delegate } from '../src/ports.js'
 import {
   ProjectCodexAdapter,
   type ProjectTransportBinding,
@@ -548,21 +549,31 @@ test('realtime assembly supplies the coding controller for an arbitrary hidden c
 
 test('production Vision dispatch owns hidden Watch admission and fences stale provider calls', async () => {
   const clock = new VirtualClock(0)
+  const ids = new ScriptedIdFactory({
+    vision: ['vision-request'], delegate: ['watch-start', 'watch-stop'],
+  })
   const gateway = new VisionAssessGateway()
   const core = buildAssembly({
     settings: settingsSchema.parse({executors: [], fresh_window: 1}),
-    clock,
+    clock, ids,
     gateway,
     searchTransport: new NeverCalledSearch(),
     frameSource: new RecordingFrameSource(),
   })
   const provider = new RecordingProgressProvider()
   const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+  const handoffClaims: {readonly delegateId: string; readonly delegate: Delegate | undefined}[] = []
+  const unsubscribeRuntime = core.runtime.observe(event => {
+    if (event.kind === 'handoff') {
+      handoffClaims.push({delegateId: event.payload.delegate_id, delegate: core.runtime.claimedHandoff(event.seq)})
+    }
+  })
   const submit = async (
     turn: string,
     text: string,
     name: 'dispatch' | 'cancel',
     arguments_: Readonly<Record<string, JsonValue>>,
+    afterToolCall?: () => void,
   ): Promise<void> => {
     await realtime.service.handleEvent({
       kind: 'user_speech_started', session_epoch: 1, speech_id: `speech-${turn}`, provider_item_id: `user-${turn}`,
@@ -578,6 +589,7 @@ test('production Vision dispatch owns hidden Watch admission and fences stale pr
       kind: 'tool_call_ready', session_epoch: 1, call_id: `call-${turn}`, item_id: `tool-${turn}`,
       name, arguments: arguments_, response_id: `response-${turn}`,
     })
+    afterToolCall?.()
     await realtime.service.handleEvent({
       kind: 'response_terminal', session_epoch: 1, response_id: `response-${turn}`, status: 'completed', reason: '',
     })
@@ -600,10 +612,24 @@ test('production Vision dispatch owns hidden Watch admission and fences stale pr
     assert.equal(start?.code, 'accepted')
     assert.equal(start?.executor, 'watch')
     assert.equal(start?.op, 'start')
-    assert.ok(start?.delegate_id)
+    assert.equal(start?.delegate_id, 'watch-start')
     await waitNamed('admitted Watch runtime work', () => core.frameSource instanceof RecordingFrameSource
       && core.frameSource.snapshots > 0)
     assert.equal(gateway.requests.length, 1)
+    // The accepted start owns a host continuation. A silent terminal would trigger its retry, so
+    // model one audible acknowledgement before the next user turn opens a new tool-owning response.
+    await waitNamed('start host continuation', () => provider.responses.length === 1)
+    await realtime.service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'host-start'})
+    await realtime.service.handleEvent({
+      kind: 'response_audio_delta', session_epoch: 1, response_id: 'host-start', pcm: new Uint8Array([0, 1]),
+    })
+    const acknowledgement = realtime.session.currentGeneration
+    assert.ok(acknowledgement)
+    assert.equal(realtime.service.playbackStarted(acknowledgement.utterance_id, acknowledgement.generation_epoch), true)
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1, response_id: 'host-start', status: 'completed', reason: '',
+    })
+    assert.equal(realtime.service.playbackDone(acknowledgement.utterance_id, acknowledgement.generation_epoch, 0), true)
     const startOrigin = 'conversation:1'
     // External admission checks the ContextView's five recent items, not wall-clock age alone.
     for (let index = 0; index < 5; index += 1) {
@@ -611,17 +637,27 @@ test('production Vision dispatch owns hidden Watch admission and fences stale pr
         ts: clock.now(), trust: 'trusted_system', priority: 0, content: {filler: index},
       })
     }
-    const currentRef = await core.runtime.ingestUserInput({text: 'Stop monitoring.'})
+    let currentRef: string | undefined
+    await submit('cancel', 'Stop monitoring.', 'cancel', {executor: 'vision'}, () => {
+      const currentUser = core.runtime.memory.channels.get('conversation')!.items
+        .filter(item => item.trust === 'trusted_user').at(-1)!
+      currentRef = `${currentUser.channel}:${currentUser.seq}`
+    })
+    assert.ok(currentRef)
     const recentRefs = core.runtime.memory.channels.get('conversation')!.items.slice(-5)
       .map(item => `${item.channel}:${item.seq}`)
     assert.equal(recentRefs.includes(startOrigin), false)
     assert.equal(recentRefs.includes(currentRef), true)
-    const stop = await core.visionController!.cancel({
-      originalUserText: 'Stop monitoring.', origin_ref: currentRef, sessionEpoch: 1,
-      acceptedUserInputRevision: 2, stillWanted: () => true,
+    const stop = realtime.service.toolCallAcceptances().find(item => item.call_id === 'call-cancel')?.acceptance
+    assert.equal(stop?.code, 'monitor_stop_requested')
+    assert.equal(stop?.accepted, true)
+    clock.advanceTo(2)
+    await waitNamed('Watch stop runtime handoff', () => handoffClaims.some(claim => claim.delegateId === 'watch-stop'))
+    const stopClaim = handoffClaims.find(claim => claim.delegateId === 'watch-stop')
+    assert.deepEqual(stopClaim?.delegate, {
+      executor: 'watch', op: 'stop', request: {}, origin_ref: currentRef,
+      delegate_id: 'watch-stop', deadline: 7, routing_class: 'user_awaited', dispatched_at: 0,
     })
-    assert.equal(stop.code, 'monitor_stop_requested')
-    assert.equal(stop.accepted, true)
     const stale = core.runtime.dispatchExternal({
       executor: 'watch', op: 'status', request: {}, origin_ref: startOrigin,
     }, {
@@ -629,7 +665,9 @@ test('production Vision dispatch owns hidden Watch admission and fences stale pr
     })
     assert.equal(stale.accepted, false)
     assert.equal(stale.problem, 'origin_not_visible')
+    ids.assertExhausted()
   } finally {
+    unsubscribeRuntime()
     await realtime.stop()
   }
 })
