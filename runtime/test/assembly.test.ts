@@ -3,9 +3,9 @@ import { test } from 'node:test'
 import { AssemblyError, buildAssembly } from '../src/assembly.js'
 import { VirtualClock } from '../src/clock.js'
 import { settingsSchema, type Settings } from '../src/config.js'
-import type { ExecutorDispatchContext } from '../src/causal-runtime.js'
+import type { ExecutorAdapter, ExecutorDispatchContext } from '../src/causal-runtime.js'
 import type { EventRecord } from '../src/events.js'
-import { CamAdapter } from '../src/executors/camera.js'
+import { CameraMcpAdapter, MCP_CAMERA_EXECUTOR } from '../src/executors/mcp-camera.js'
 import { ChromiumFrameSource } from '../src/executors/chromium-frame-source.js'
 import { DisabledFrameSource } from '../src/executors/frame-source.js'
 import type { SearchTransport } from '../src/executors/search.js'
@@ -211,11 +211,12 @@ test('the compiled tool schema advertises always-on adapters before configured e
     gateway: new ScriptedGateway([]),
   })
   assert.deepEqual(assembly.manifests.map(manifest => manifest.name), [
-    'search', 'cam', 'watch', 'guard', 'fast_sim', 'slow_sim',
+    'search', 'mcp__nova_camera', 'watch', 'guard', 'fast_sim', 'slow_sim',
   ])
   const names = [...assembly.tools.bindings.keys()]
   assert.ok(names.includes('search__search'))
-  assert.ok(names.includes('cam__snapshot'))
+  assert.ok(names.includes('mcp__nova_camera__snapshot'))
+  assert.ok(!names.includes('cam__snapshot'))
   assert.ok(names.includes('watch__start'))
   assert.ok(names.includes('guard__status'))
   assert.ok(names.includes('fast_sim__set_light'))
@@ -225,6 +226,44 @@ test('the compiled tool schema advertises always-on adapters before configured e
   assert.ok(names.includes('memory__recall'))
 })
 
+test('camera module off removes MCP camera, watch, and guard without affecting search, memory, or configured executors', () => {
+  const assembly = buildAssembly({
+    settings: settings({executors: ['fast_sim']}),
+    gateway: new ScriptedGateway([]),
+    cameraModuleEnabled: false,
+  })
+  const names = [...assembly.tools.bindings.keys()]
+  assert.deepEqual(assembly.manifests.map(manifest => manifest.name), ['search', 'fast_sim'])
+  assert.ok(names.includes('search__search'))
+  assert.ok(names.includes('memory__recall'))
+  assert.ok(names.includes('fast_sim__set_light'))
+  assert.ok(!names.some(name => name.startsWith('mcp__nova_camera__') || name.startsWith('watch__') || name.startsWith('guard__')))
+})
+
+test('camera module off does not acquire the camera source lifecycle', async () => {
+  const source = new ScriptedFrameSource(null)
+  const assembly = buildAssembly({
+    settings: settings(),
+    gateway: new ScriptedGateway([]),
+    searchTransport: new ScriptedSearchTransport(),
+    frameSource: source,
+    cameraModuleEnabled: false,
+  })
+  await assembly.start()
+  await assembly.stop()
+  assert.equal(source.starts, 0)
+  assert.equal(source.stops, 0)
+})
+
+test('a supplied camera MCP adapter cannot override Nova built-in camera authority', () => {
+  const adapter = {
+    manifest: {name: MCP_CAMERA_EXECUTOR},
+    dispatch: () => Promise.resolve({outcome: 'ok' as const, trust: 'trusted_system' as const, content: {}}),
+  } as unknown as ExecutorAdapter
+  assert.throws(() => buildAssembly({settings: settings(), gateway: new ScriptedGateway([]), executors: [adapter]}),
+    (error: unknown) => error instanceof AssemblyError && error.message.includes(MCP_CAMERA_EXECUTOR))
+})
+
 test('search and camera dispatch through the real runtime and shared media store', async () => {
   const searchTransport = new ScriptedSearchTransport()
   const frame: Frame = {
@@ -232,7 +271,7 @@ test('search and camera dispatch through the real runtime and shared media store
     media_type: 'image/jpeg',
     width: 2,
     height: 2,
-    captured_at: 7,
+    captured_at: 1_700_000_007,
   }
   const frameSource = new ScriptedFrameSource(frame)
   const mediaStore = new MediaStore(1_024, {idFactory: () => 'assembly-frame'})
@@ -267,16 +306,16 @@ test('search and camera dispatch through the real runtime and shared media store
   assert.deepEqual(searchTransport.queries, [{query: 'Nova', maxResults: 1}])
 
   assert.equal(assembly.runtime.dispatchExternal({
-    executor: 'cam', op: 'snapshot', request: {}, origin_ref: originRef,
+    executor: MCP_CAMERA_EXECUTOR, op: 'snapshot', request: {}, origin_ref: originRef,
   }, reason).accepted, true)
   await waitFor(() => events.some(event => event.kind === 'handoff'
-    && event.payload.channel === 'cam'))
+    && event.payload.channel === MCP_CAMERA_EXECUTOR))
   stop.abort()
   await serving
 
   assert.equal(assembly.mediaStore, mediaStore)
   assert.equal(assembly.frameSource, frameSource)
-  assert.equal(mediaStore.peek('media:assembly-frame')?.captured_at, 7)
+  assert.equal(mediaStore.peek('media:assembly-frame')?.captured_at, 1_700_000_007)
 })
 
 test('camera, watch, and guard share capture while only Guard prepares a restartable source', async () => {
@@ -308,7 +347,7 @@ test('camera, watch, and guard share capture while only Guard prepares a restart
     clock,
   })
 
-  assert.ok(assembly.runtime.executors.get('cam') instanceof CamAdapter)
+  assert.ok(assembly.runtime.executors.get(MCP_CAMERA_EXECUTOR) instanceof CameraMcpAdapter)
   const watch = assembly.runtime.executors.get('watch')
   const guard = assembly.runtime.executors.get('guard')
   assert.ok(watch instanceof WatchAdapter)
@@ -524,7 +563,7 @@ test('assembly owns an idempotent retryable frame-source lifecycle', async () =>
   })
 
   source.failNextStart = true
-  await assert.rejects(assembly.start(), /start failed/u)
+  await assert.rejects(assembly.start(), AssemblyError)
   await assembly.start()
   await assembly.start()
   assert.equal(source.starts, 2, 'a failed start is retried and a successful start is idempotent')
@@ -586,11 +625,11 @@ test('the default disabled source reports unavailable capture and has a no-op li
     clock,
   })
   assert.ok(assembly.frameSource instanceof DisabledFrameSource)
-  const cam = assembly.runtime.executors.get('cam')
+  const cam = assembly.runtime.executors.get(MCP_CAMERA_EXECUTOR)
   const watch = assembly.runtime.executors.get('watch')
-  assert.ok(cam instanceof CamAdapter)
+  assert.ok(cam instanceof CameraMcpAdapter)
   assert.ok(watch instanceof WatchAdapter)
-  const cameraHandoff = await cam.dispatch('snapshot', {}, watchContext('cam', clock))
+  const cameraHandoff = await cam.dispatch('snapshot', {}, watchContext(MCP_CAMERA_EXECUTOR, clock))
   assert.equal(cameraHandoff.outcome, 'unknown')
   assert.equal(cameraHandoff.content.error, 'capture_unavailable')
   const watchHandoff = await watch.dispatch(
@@ -608,7 +647,7 @@ test('the default disabled source reports unavailable capture and has a no-op li
 })
 
 function watchContext(
-  executor: 'cam' | 'watch' | 'guard',
+  executor: typeof MCP_CAMERA_EXECUTOR | 'watch' | 'guard',
   clock: VirtualClock,
 ): ExecutorDispatchContext {
   return {

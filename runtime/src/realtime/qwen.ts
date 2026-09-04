@@ -320,6 +320,8 @@ interface OwnedWorkspaceContext {
 const providerEventEnvelope = z.record(z.string(), jsonValueSchema)
 
 export class QwenAudioRealtimeAdapter implements RealtimeProvider {
+  /** Qwen receives the bounded host text projection, never original camera bytes. */
+  readonly mediaCapability = Object.freeze({originalImageInput: false as const})
   readonly #url: string
   readonly #apiKey: string
   readonly #model: string

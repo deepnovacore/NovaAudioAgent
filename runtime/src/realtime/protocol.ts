@@ -268,6 +268,20 @@ export const itemIdentitySchema = z.object({
 export type SessionIdentity = z.infer<typeof sessionIdentitySchema>
 export type ItemIdentity = z.infer<typeof itemIdentitySchema>
 
+/**
+ * A provider must positively attest before original camera bytes may become
+ * provider-visible.  Current providers only receive bounded text tool output.
+ */
+export type RealtimeProviderMediaCapability =
+  | Readonly<{readonly originalImageInput: false}>
+  | Readonly<{
+      readonly originalImageInput: true
+      injectOriginalImage(
+        image: Readonly<{readonly media_type: string; readonly payload: Uint8Array}>,
+        signal: AbortSignal,
+      ): Promise<void>
+    }>
+
 const sessionEvent = <Kind extends z.ZodLiteral<string>, Shape extends z.ZodRawShape>(
   kind: Kind,
   shape: Shape,
@@ -375,6 +389,8 @@ export type RealtimeProviderEvent = z.infer<typeof realtimeProviderEventSchema>
 export type JsonObject = Readonly<Record<string, JsonValue>>
 
 export interface RealtimeProvider {
+  /** Absent and false both prohibit original-media injection. */
+  readonly mediaCapability?: RealtimeProviderMediaCapability
   connect(options: {
     readonly tools: readonly JsonObject[]
     readonly signal: AbortSignal

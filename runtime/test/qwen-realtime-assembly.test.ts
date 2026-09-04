@@ -242,7 +242,7 @@ test('Qwen factory and plain assembly both leave the fast slot to the realtime o
   const qwenBindings = realtime.tools.bindings
   assert.equal(qwenBindings.has('memory__recall'), true)
   assert.deepEqual([...realtime.core.runtime.executors.keys()].slice(0, 4), [
-    'search', 'cam', 'watch', 'guard',
+    'search', 'mcp__nova_camera', 'watch', 'guard',
   ])
   const qwenInput = realtime.runtime.core.post({kind: 'user_input', payload: {text: 'hello'}}, 0)
   realtime.runtime.core.apply(qwenInput)
@@ -261,6 +261,21 @@ test('Qwen factory and plain assembly both leave the fast slot to the realtime o
   ordinary.runtime.core.apply(ordinaryInput)
   assert.equal(ordinary.runtime.core.slots.inflight.fast, false)
   assert.equal(connector.calls.length, 0)
+})
+
+test('Qwen reports no validated original-image injection capability', () => {
+  const qwen = buildQwenRealtimeAssembly({
+    config: {
+      url: 'wss://qwen.example/realtime?model=qwen-test', apiKey: 'dash-key',
+      model: 'qwen-test', voice: 'voice-test',
+    },
+    idFactory: () => 'qwen-capability',
+    now: () => 0,
+    workspaceGraphPolicy: false,
+    executorApproval: false,
+    connector: recordingConnector().connector,
+  })
+  assert.deepEqual(qwen.mediaCapability, {originalImageInput: false})
 })
 
 test('Qwen factory owns enabled graph storage while unsafe graph config stays voice-only', async () => {

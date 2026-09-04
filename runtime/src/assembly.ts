@@ -20,8 +20,8 @@ import { MonotonicIdFactory, type IdFactory } from './ids.js'
 import { GatewayCompressor, GatewaySurrogate } from './model-adapters.js'
 import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model-gateway.js'
 import { classifySurrogateVerdict, runSurrogateCall } from './calls.js'
-import { CamAdapter } from './executors/camera.js'
-import {CODEX_AGENT_DESCRIPTOR} from './executors/codex/controller.js'
+import { CameraMcpAdapter, MCP_CAMERA_EXECUTOR } from './executors/mcp-camera.js'
+import {CODEX_AGENT_DESCRIPTOR} from './executors/index.js'
 import { DisabledFrameSource } from './executors/frame-source.js'
 import {
   SearchAdapter,
@@ -66,6 +66,8 @@ export interface AssemblyOptions {
   readonly frameSource?: FrameSource
   readonly mediaStore?: MediaStore
   readonly telemetry?: RealtimeTelemetry
+  /** False removes all camera-facing model tools, including watch and guard. */
+  readonly cameraModuleEnabled?: boolean
   /** Public host-agent descriptors. Codex is registered by the production composition when enabled. */
   readonly agentDescriptors?: readonly AgentDescriptor[]
 }
@@ -175,11 +177,16 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     ?? new TavilyTransport(requireTavilyApiKey(settings))
   const mediaStore = options.mediaStore ?? new MediaStore()
   const frameSource = options.frameSource ?? new DisabledFrameSource()
-  const captureEnabled = !(frameSource instanceof DisabledFrameSource)
+  const cameraModuleEnabled = options.cameraModuleEnabled ?? true
+  if ((options.executors ?? []).some(adapter => adapter.manifest.name === MCP_CAMERA_EXECUTOR)) {
+    throw new AssemblyError(`built-in executor cannot be overridden: ${MCP_CAMERA_EXECUTOR}`)
+  }
   const watchModel = stripLikePython(settings.watch_model ?? '') || settings.fast_model
 
   const search = new SearchAdapter(searchTransport)
-  const camera = new CamAdapter(frameSource, mediaStore)
+  const camera = cameraModuleEnabled ? new CameraMcpAdapter({
+    source: frameSource, mediaStore, gateway, model: watchModel,
+  }) : undefined
   const admissionOptions = isAdmissionGatedFrameSource(frameSource)
     ? {
         admitObservation: () => frameSource.admitObservation(),
@@ -200,29 +207,22 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
             }}),
       }
     : {}
-  const watch = new WatchAdapter({
-    manifest: WATCH_MANIFEST,
-    source: frameSource,
-    gateway,
-    mediaStore,
-    model: watchModel,
-    captureEnabled,
-    ...admissionOptions,
-  })
-  const guard = new WatchAdapter({
-    manifest: GUARD_MANIFEST,
-    source: frameSource,
-    gateway,
-    mediaStore,
-    model: watchModel,
-    captureEnabled,
-    ...admissionOptions,
-    ...(isFileBackedFrameSource(frameSource)
-      ? {prepareObservation: () => frameSource.restart()}
-      : {}),
-  })
+  const captureEnabled = !(frameSource instanceof DisabledFrameSource)
+  const watch = cameraModuleEnabled ? new WatchAdapter({
+    manifest: WATCH_MANIFEST, source: frameSource, gateway, mediaStore, model: watchModel,
+    captureEnabled, ...admissionOptions,
+  }) : undefined
+  const guard = cameraModuleEnabled ? new WatchAdapter({
+    manifest: GUARD_MANIFEST, source: frameSource, gateway, mediaStore, model: watchModel,
+    captureEnabled, ...admissionOptions,
+    ...(isFileBackedFrameSource(frameSource) ? {prepareObservation: () => frameSource.restart()} : {}),
+  }) : undefined
   const configuredExecutors = resolveExecutors(settings, options.executors ?? [])
-  const executors = [search, camera, watch, guard, ...configuredExecutors]
+  const executors = [
+    search,
+    ...(camera === undefined || watch === undefined || guard === undefined ? [] : [camera, watch, guard]),
+    ...configuredExecutors,
+  ]
   const manifests = executors.map(adapter => adapter.manifest)
   const agentDescriptors = [
     ...(manifests.some(manifest => manifest.name === 'codex') ? [CODEX_AGENT_DESCRIPTOR] : []),
@@ -300,14 +300,30 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     start(): Promise<void> {
       return serializeLifecycle(async () => {
         if (started) return
-        await frameSource.start()
+        if (!cameraModuleEnabled) {
+          started = true
+          return
+        }
+        let frameStarted = false
+        try {
+          await frameSource.start()
+          frameStarted = true
+          await camera!.connect()
+        } catch {
+          if (frameStarted) {
+            try { await frameSource.stop() } catch { /* the setup error is authoritative */ }
+          }
+          throw new AssemblyError('camera MCP startup failed')
+        }
         started = true
       })
     },
     stop(): Promise<void> {
       return serializeLifecycle(async () => {
         if (!started) return
-        await frameSource.stop()
+        if (cameraModuleEnabled) {
+          try { await camera!.close() } finally { await frameSource.stop() }
+        }
         started = false
       })
     },
