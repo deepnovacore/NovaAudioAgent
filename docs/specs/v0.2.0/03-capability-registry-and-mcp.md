@@ -160,6 +160,36 @@ enabled; `modules.camera.enabled = false` disables it, but it is not an entry
 under user `mcpServers` and cannot be separately reconfigured as an external
 server.
 
+### M1.5c Vision and Camera contract
+
+The current M1.5c Vision controller owns the hidden `watch` and `guard`
+channels. Its only voice entry points are `dispatch(executor: 'vision', ...)`
+and `cancel(executor: 'vision', ...)`; `watch` and `guard` are never direct
+model tools, and Vision does not add a separate confirmation tool. The camera
+module is one assembly gate: when `modules.camera.enabled = false`, assembly
+removes `mcp__nova_camera__snapshot`, the Vision controller, and its hidden
+`watch` / `guard` channels together.
+
+Monitoring is policy-driven: the host owns sampling cadence, wake priority,
+side-VLM objective limits, and delivery mode. Watch/guard cannot alter those
+policies through model output, and both remain behind the same camera-module
+assembly gate.
+
+The Camera MCP is deliberately in-process and in-memory. It supports exactly
+one image result per snapshot. The boundary validates canonical base64 (no
+alternate textual encodings or hidden second image) and the decoded payload is
+at most 5 MiB. The validated bytes are written to `MediaStore`, which returns
+the authoritative digest and `evidence_ref`; raw bytes, paths, and arbitrary
+MCP result objects do not cross into Qwen.
+
+The `watch_model` side VLM receives that one stored image plus a self-contained
+objective of at most 400 characters. Qwen receives only the resulting
+`observation`, `captured_at`, image `dimensions`, and `evidence_ref`. If the
+side VLM cannot produce a bounded description, the operation fails with
+`vision_description_unavailable`. Qwen's original-image capability remains
+`false` pending a separately verified future provider; an image ref in the
+Qwen context is evidence metadata, not an implicit image input.
+
 ### Precedence
 
 The registry is the only place module enablement, MCP servers, and the search
@@ -365,6 +395,7 @@ No MCP SDK in the sandboxed renderer.
 
 | Phase | Scope | Gate |
 |---|---|---|
+| M1.5c | Thin frontend contract: final six-tool Nova surface; in-process Camera MCP + side-VLM projection; Vision controller owns hidden `watch` / `guard`; camera module gate and policy-driven monitoring | Exact 6-tool compile; Camera boundary and `vision_description_unavailable` checks; Vision hidden-channel/controller checks; rerun applicable 08 live acceptance |
 | 03a | Registry schema + load + precedence; module enable filters; MCP `SearchTransport` + Bailian preset (opt-in); Tavily optional | Deterministic tests green |
 | 03a-flip | Default search provider → `mcp` | Live smoke recorded in Getting Started |
 | 03b | `McpExecutorAdapter` + compiler adaptation; desktop MCP editor; Codex projection with closure rules 1–5 | Fake MCP server + fake app-server fixtures green; live Codex run shows only allowlisted tools |
@@ -373,6 +404,28 @@ No MCP SDK in the sandboxed renderer.
 
 - [ ] Registry schema rejects oversize / bad keys / missing `${VAR}`.
 - [ ] Per-server failure isolates: one bad server → `failed`, others assembled.
+- [ ] FrontBrain tool count is exact: the final Nova surface counts as six
+      (`dispatch`, `cancel`, `confirm`, `memory__recall`, `search__search`,
+      `mcp__nova_camera__snapshot`) before external direct tools; `N/B` is
+      shown in the 能力 panel and `N > B` fails assembly with no truncation or
+      partial tool table. The candidate default `B = 24` remains explicitly
+      pending Qwen realtime live validation.
+- [ ] Codex projection is excluded from the FrontBrain `N/B` count; large
+      Codex-only toolsets remain available under their independent allowlist.
+- [ ] A newly added external server defaults to
+      `exposeTo: {frontbrain: false, codex: true}`; no server is exposed to
+      FrontBrain until the user explicitly adds it and allowlists tools.
+- [ ] Non-readonly direct MCP calls reject missing, stale, or mismatched
+      origin/session-epoch/current-turn revision at the shared gate, with no
+      approval FSM created and no dispatch/intake route. A valid call preserves
+      the exact origin and revision; ASR semantic mishearing remains outside
+      this provenance fence.
+- [ ] Camera M1.5c: in-process/in-memory MCP accepts exactly one canonical
+      base64 image with decoded bytes ≤5 MiB, stores bytes in `MediaStore` and
+      returns its digest/ref; `watch_model` objective ≤400 chars; Qwen receives
+      only observation, captured_at, dimensions, evidence_ref; unavailable VLM
+      description returns `vision_description_unavailable`; Qwen original-image
+      capability is false until a future provider is verified.
 - [ ] Disabled search / camera / coding / knowledge → tools absent from compiled
       schema and Qwen instructions.
 - [ ] Fake MCP search server → `SearchAdapter` digests match golden URL rules;

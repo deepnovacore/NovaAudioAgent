@@ -87,8 +87,8 @@ flowchart TD
   E0[05 core: milestone bubbles + last-result entry] --> M1
   M1[M1 complete coding loop] --> X1[07 executor boundary]
   X1 --> X2[08 project session work]
-  X1 --> C1[03a registry + MCP search opt-in]
-  X2 --> C1
+  X2 --> T1[M1.5c thin frontend]
+  T1 --> C1[03a registry + MCP search opt-in]
   C1 --> C1f[03a-flip default search → mcp]
   C1 --> C2[03b external MCP adapter + Codex projection]
   C2 --> D2[04b work-order references + nova-knowledge MCP]
@@ -106,6 +106,7 @@ the listed checklists are green on `v0.2.0dev`.
 | **M1 — one complete coding experience** | User asks → only necessary user-owned questions → WorkOrder v2 → `on-request` approvals on macOS and Windows → execution → visible result (milestone bubbles + last-result entry). YOLO selectable. | 01 deterministic + live lists; 02 checklist; 05 core items (frames, stack, last-result entry, bounds reservation); 06 migration + coordinated commit |
 | **M1.5a — executor boundary** | Codex moved under `executors/codex/`; core routes by `roles: ['coding']`; approval / project confirmation are host capabilities; `executor.*` / `project.*` wire; fixture executor proves the port; `check:executor-boundary` in `npm run check`. No user-visible change. | 07 deterministic list; live rows identical to M1 validation |
 | **M1.5b — project, session and work** | `dispatch(executor, instruction)` / `cancel(executor, instruction?)` / `confirm(id, accepted)` replace `codex__project` and the two confirm tools; project / session / cancel-target selection sinks into `executors/coding/` intake; session is `latest \| new`; per-project run slots (global cap 3) with FIFO-queued approvals; adapter-level cancel with `cancelled` outcome; host-derived titles via `thread/name/set`. | 08 deterministic list; 08 live rows with DashScope + Codex 0.152.0 evidence |
+| **M1.5c — thin frontend** | Final six-tool Nova surface (`dispatch`, `cancel`, `confirm`, `memory__recall`, `search__search`, `mcp__nova_camera__snapshot`); Camera MCP + VLM projection; current Vision controller owns hidden `watch` / `guard` channels and monitoring is policy-driven. External MCP remains user-selected direct cost. | Final 6-tool compilation and exact Camera boundary; Vision hidden-channel/controller checks; monitoring policy checks; rerun every applicable 08 live-acceptance row after the surface change |
 | **M2 — capability registry** | `capabilities.json`, module toggles, MCP search provider opt-in, Tavily optional | 03a checklist; then 03a-flip after the live smoke is recorded |
 | **M3 — external MCP** | FrontBrain MCP executors with compiler adaptation; Codex projection with allowlist closure | 03b checklist incl. `mcpServerStatus/list` verification |
 | **M4 — knowledge** | Layer K store, ingest UI, `knowledge__recall`, then host-attached references + `nova-knowledge` | 04 checklist; release-gate decision below |
@@ -172,8 +173,11 @@ From [`docs/glossary.md`](../../glossary.md):
 1. The event-loop body never awaits executor completion.
 2. Executors never speak to the user.
 3. Accepted results reach Memory before they affect conversation.
-4. Only FastBrain / FrontBrain updates structured intent, goal, authorization.
-5. Models see a bounded ContextView, never unrestricted memory.
+4. Every intake result is bound to `(intake_id, revision)` and every compiled
+   plan is valid only when `plan_revision === revision`; only a host FSM with
+   matching origin, session epoch, and accepted current-turn revision may
+   authorize an effectful dispatch.
+5. Models see bounded ContextView data, never unrestricted memory.
 11. Only configured manifests become model-facing tools.
 12. Secrets are absent from logs and configuration errors.
 13. Speaking priority is bound to the triggering event.

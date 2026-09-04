@@ -111,16 +111,20 @@ flowchart LR
 
 - **Agent controllers** publish `AgentDescriptor{name, summary, ownedChannels}`
   through the registry in [07](07-executor-boundary.md). The current coding
-  controller owns the hidden `codex` channel; a future Vision controller may
-  own hidden `watch` and `guard` channels. The voice model calls `dispatch` /
-  `cancel`; the host routes through the controller port to
-  `executors/coding/intake` (or the controller's equivalent).
+  controller owns the hidden `codex` channel. The M1.5c Vision controller owns
+  the hidden `watch` and `guard` channels; its only voice entry points are
+  `dispatch(executor: 'vision', ...)` and `cancel(executor: 'vision', ...)`.
+  The voice model never names `watch` or `guard`; the host routes through the
+  controller port to `executors/coding/intake` or the controller's equivalent.
 - **Direct tools** are non-agent operations compiled from `model_visibility:
   'direct'` manifests: stable `memory__recall` and `search__search`, the
-  built-in Camera MCP `mcp__nova_camera__snapshot`, and explicitly
+  built-in Camera MCP `mcp__nova_camera__snapshot` while the camera module is
+  enabled, and explicitly
   user-selected external MCP tools. They have no coordinator and never enter
   coding intake. Hidden `watch` / `guard` remain runtime channels owned by the
-  Vision controller, not direct model tools.
+  Vision controller, not direct model tools. Disabling the camera module removes
+  the Camera MCP and the Vision controller/hidden channels as one assembly
+  gate.
 
 ### Controller registry contract
 

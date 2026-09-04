@@ -188,6 +188,33 @@ export const executorManifestSchema = z.object({
 Agent publication is a separate host registry, not a manifest `agent` field:
 
 ```ts
+interface AgentDispatchRequest {
+  readonly instruction: string
+  readonly originalUserText: string
+  readonly origin_ref: string
+  readonly sessionEpoch: number
+  readonly acceptedUserInputRevision: number
+  readonly stillWanted: () => boolean
+}
+
+interface AgentCancelRequest {
+  readonly instruction?: string
+  readonly originalUserText: string
+  readonly origin_ref: string
+  readonly sessionEpoch: number
+  readonly acceptedUserInputRevision: number
+  readonly stillWanted: () => boolean
+}
+
+type AgentActionResult =
+  | { readonly code: 'accepted'; readonly accepted: true; readonly detail: {} }
+  | { readonly code: 'delegated'; readonly accepted: true; readonly delegate_id: string; readonly detail: { readonly channel: string; readonly op: string } }
+  | { readonly code: 'intake_opened' | 'intake_in_progress'; readonly accepted: true; readonly detail: { readonly state: 'open' | 'clarifying' | 'ready_to_plan' | 'planning' | 'readback' | 'committing' | 'closed' } }
+  | { readonly code: 'cancelled'; readonly accepted: true; readonly detail: { readonly work: { readonly work_id: string; readonly project: string; readonly title: string } } }
+  | { readonly code: 'not_running'; readonly accepted: true; readonly detail: {} }
+  | { readonly code: 'ambiguous_work'; readonly accepted: true; readonly detail: { readonly running: readonly { readonly work_id: string; readonly project: string; readonly title: string }[] } }
+  | { readonly code: 'unsupported_tool' | 'superseded' | 'runtime_rejected'; readonly accepted: false; readonly detail: {} }
+
 interface AgentDescriptor {
   readonly name: string
   readonly summary: string
@@ -206,6 +233,15 @@ interface AgentControllerRegistry {
   agentNameForChannel(channel: string): string | null
 }
 ```
+
+The request fence is part of the controller contract, not advisory metadata:
+the controller checks `stillWanted()` before any effect, and the host/runtime
+dispatch port rechecks it immediately before dispatch. `origin_ref`,
+`sessionEpoch`, and `acceptedUserInputRevision` must match the current host
+turn; missing, stale, or mismatched values reject the request. The result is a
+closed, strict discriminated union: controllers return codes and typed detail
+only, never `text`, arbitrary JSON, or user-facing prose. The service projects
+accepted and rejected codes into user wording.
 
 The registry is closed at assembly: agent names and owned channels are unique;
 every `ownedChannels` entry names one registered executor manifest; every hidden
