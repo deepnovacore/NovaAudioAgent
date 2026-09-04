@@ -264,3 +264,27 @@ test('non-enumerable MCP shape fields are rejected consistently', async () => {
   const topLevelResult = await projectCameraMcpResult(topLevel, options(new ScriptedGateway()))
   assert.equal(contentOf(topLevelResult).error, 'invalid_content')
 })
+
+test('entry metadata mutation during gateway completion fails closed', async () => {
+  class MutatingStore extends MediaStore {
+    entry: ReturnType<MediaStore['put']> | undefined
+
+    override put(...args: Parameters<MediaStore['put']>) {
+      this.entry = super.put(...args)
+      return this.entry
+    }
+  }
+  const store = new MutatingStore()
+  const gateway: ModelGateway = {
+    async *stream(): AsyncIterable<never> { await Promise.resolve() },
+    async complete(): Promise<{readonly text: string}> {
+      await Promise.resolve()
+      const mutable = store.entry as unknown as {width: number; captured_at: number}
+      mutable.width = 1
+      mutable.captured_at = CAPTURED_AT + 1
+      return {text: '{"observation":"一张室内照片"}'}
+    },
+  }
+  const projected = await projectCameraMcpResult(result(), options(gateway, store))
+  assert.equal(contentOf(projected).error, 'media_unavailable')
+})

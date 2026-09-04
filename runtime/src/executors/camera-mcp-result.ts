@@ -84,6 +84,17 @@ export interface CameraProjectionOptions {
   readonly signal?: AbortSignal
 }
 
+interface ExpectedEvidence {
+  readonly ref: string
+  readonly digest: string
+  readonly media_type: string
+  readonly width: number
+  readonly height: number
+  readonly captured_at: number
+  readonly payload: Uint8Array
+  readonly payload_digest: string
+}
+
 /**
  * Convert a single MCP image result into a bounded, evidence-only handoff.
  *
@@ -115,16 +126,29 @@ export async function projectCameraMcpResult(
   if (decoded.kind === 'too_large') return failure('image_too_large')
   const payload = decoded.payload
 
-  let entry
+  let expected: ExpectedEvidence
   try {
     // Keep the retained bytes independent from the mutable GatewayImage payload.
     const retainedPayload = new Uint8Array(payload)
-    entry = options.mediaStore.put(retainedPayload, {
+    const entry = options.mediaStore.put(retainedPayload, {
       mediaType: parsed.image.mimeType,
       width: metadata.width,
       height: metadata.height,
       capturedAt: metadata.captured_at,
     })
+    // Snapshot all evidence facts before the asynchronous gateway call. A custom store must not
+    // be able to mutate the returned entry object and thereby mutate the facts we later compare.
+    const expectedPayload = new Uint8Array(entry.payload)
+    expected = {
+      ref: entry.ref,
+      digest: entry.digest,
+      media_type: entry.media_type,
+      width: entry.width,
+      height: entry.height,
+      captured_at: entry.captured_at,
+      payload: expectedPayload,
+      payload_digest: payloadDigest(expectedPayload),
+    }
   } catch {
     return failure('media_unavailable')
   }
@@ -137,7 +161,7 @@ export async function projectCameraMcpResult(
       prompt: buildVisionPrompt(options.objective),
       jsonSchema: CAMERA_VISION_JSON_SCHEMA,
       // Do not send the internal ref as the provider-visible image label.
-      images: [{ref: 'camera-frame', media_type: parsed.image.mimeType, payload: new Uint8Array(payload)}],
+      images: [{ref: 'camera-frame', media_type: expected.media_type, payload: new Uint8Array(expected.payload)}],
       ...(options.signal === undefined ? {} : {signal: options.signal}),
     }
     response = await options.gateway.complete(request)
@@ -158,25 +182,25 @@ export async function projectCameraMcpResult(
   // A gateway callback or concurrent request may evict the just-captured evidence while VLM I/O
   // is in flight. Never publish a digest for bytes that are no longer retained.
   try {
-    const retained = options.mediaStore.get(entry.ref)
+    const retained = options.mediaStore.get(expected.ref)
     if (retained === undefined) return failure('media_unavailable')
-    if (retained.ref !== entry.ref || retained.digest !== entry.digest
-      || retained.media_type !== entry.media_type || retained.width !== entry.width
-      || retained.height !== entry.height || retained.captured_at !== entry.captured_at
-      || payloadDigest(retained.payload) !== entry.digest
-      || !sameBytes(retained.payload, entry.payload)) return failure('media_unavailable')
+    if (retained.ref !== expected.ref || retained.digest !== expected.digest
+      || retained.media_type !== expected.media_type || retained.width !== expected.width
+      || retained.height !== expected.height || retained.captured_at !== expected.captured_at
+      || payloadDigest(retained.payload) !== expected.payload_digest
+      || !sameBytes(retained.payload, expected.payload)) return failure('media_unavailable')
   } catch {
     return failure('media_unavailable')
   }
-  const evidenceRef = `camera.snapshot://sha256/${entry.digest}`
+  const evidenceRef = `camera.snapshot://sha256/${expected.digest}`
   return {
     outcome: 'ok',
     trust: 'untrusted_external',
     content: {
       observation,
-      captured_at: metadata.captured_at,
-      width: metadata.width,
-      height: metadata.height,
+      captured_at: expected.captured_at,
+      width: expected.width,
+      height: expected.height,
       evidence_ref: evidenceRef,
     },
     refs: [evidenceRef],
