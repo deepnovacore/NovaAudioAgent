@@ -59,6 +59,8 @@ export interface ApprovalView {
   readonly work: ApprovalWork | null
   /** Approvals waiting behind the head; never rendered, only counted. */
   readonly queued: number
+  /** Present (true) only while the head is parked by `hold`: no countdown runs, a click still decides. */
+  readonly held?: boolean
 }
 
 /** The half of an executor's approval broker that the host is allowed to touch. */
@@ -68,4 +70,8 @@ export interface ApprovalController {
   observe(observer: (view: ApprovalView) => void): () => void
   acceptDecision(input: {readonly approvalId: string; readonly decision: ApprovalDecision}): boolean
   invalidate(reason: string): boolean
+  /** Park the head while something else holds the floor: its expiry timer stops, `pending` stays true. */
+  hold(): boolean
+  /** Un-park the head with a fresh full TTL, as if it had just become head. */
+  release(): boolean
 }

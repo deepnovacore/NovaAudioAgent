@@ -14,6 +14,7 @@ import {
 } from '../../approval-port.js'
 import {snapshotJsonRecord} from './safe-json.js'
 import {codePointLengthLikePython, isWellFormed, stripLikePython} from '../../python-text.js'
+import {MAX_CONCURRENT_WORK} from '../../work-tools.js'
 
 export const CODEX_APPROVAL_TTL_SECONDS = APPROVAL_TTL_SECONDS
 const CODEX_APPROVAL_ID_LIMIT = 128
@@ -79,7 +80,10 @@ interface PendingApproval {
   expiresAt: number
   readonly signal: AbortSignal
   readonly resolve: (resolution: CodexApprovalResolution) => void
-  readonly expiryAbort: AbortController
+  /** Replaced by `release`, which re-arms the head with a fresh deadline. */
+  expiryAbort: AbortController
+  /** Parked by `hold` behind a project confirmation: the deadline is stale and must not drop the entry. */
+  held: boolean
   onSignalAbort: (() => void) | null
   state: 'pending' | 'responding'
   resolution: CodexApprovalResolution | null
@@ -148,6 +152,7 @@ export class CodexApprovalController {
       ...(current.offer.allowed_decisions === undefined ? {} : {allowed_decisions: current.offer.allowed_decisions}),
       work: current.work,
       queued: this.#queue.length,
+      ...(current.held ? {held: true} : {}),
     }
   }
 
@@ -161,7 +166,28 @@ export class CodexApprovalController {
   }
 
   get pending(): boolean {
-    return this.#current?.state === 'pending' && this.#clock.now() < this.#current.expiresAt
+    return this.#current?.state === 'pending' && (this.#current.held || this.#clock.now() < this.#current.expiresAt)
+  }
+
+  /** Park the head (spec 08: it waits behind a project confirmation). The timer stops; a renderer click still decides. */
+  hold(): boolean {
+    const current = this.#current
+    if (current?.state !== 'pending' || current.held) return false
+    current.held = true
+    current.expiryAbort.abort()
+    this.#publish()
+    return true
+  }
+
+  /** Un-park the head with a fresh full TTL, exactly as if it had just been promoted. */
+  release(): boolean {
+    const current = this.#current
+    if (current?.state !== 'pending' || !current.held) return false
+    current.held = false
+    current.expiryAbort = new AbortController()
+    this.#arm(current)
+    this.#publish()
+    return true
   }
 
   observe(observer: (view: CodexApprovalView) => void): () => void {
@@ -180,6 +206,16 @@ export class CodexApprovalController {
   ): Promise<CodexApprovalResolution | null> {
     if (!(signal instanceof AbortSignal) || signal.aborted) return null
     const offer = validateAndSnapshotOffer(input)
+    // ponytail: the FIFO holds at most MAX_CONCURRENT_WORK entries and one per work. A Codex turn blocks
+    // on its pending approval, so a second request from the same work is a protocol anomaly, and there
+    // are never more asking works than run slots. An over-cap offer is declined at once (the shape the
+    // transport already handles) and publishes nothing; a per-work sub-queue is the upgrade path if a
+    // transport ever legitimately pipelines approvals.
+    const pending = this.#current === null ? this.#queue : [this.#current, ...this.#queue]
+    if (
+      pending.length >= MAX_CONCURRENT_WORK
+      || (work !== null && pending.some(entry => entry.work?.work_id === work.work_id))
+    ) return Object.freeze({decision: 'decline'})
     const id = validateApprovalId(this.#idFactory())
     let resolve!: (resolution: CodexApprovalResolution) => void
     const decision = new Promise<CodexApprovalResolution>(done => { resolve = done })
@@ -191,6 +227,7 @@ export class CodexApprovalController {
       signal,
       resolve,
       expiryAbort: new AbortController(),
+      held: false,
       onSignalAbort: null,
       state: 'pending',
       resolution: null,
@@ -215,7 +252,7 @@ export class CodexApprovalController {
       || input.approvalId !== current.id
       || !(current.offer.allowed_decisions ?? ['accept', 'decline']).includes(input.decision)
     ) return false
-    if (this.#clock.now() >= current.expiresAt || current.signal.aborted) {
+    if ((!current.held && this.#clock.now() >= current.expiresAt) || current.signal.aborted) {
       this.#drop(current)
       return false
     }
@@ -272,13 +309,17 @@ export class CodexApprovalController {
     } catch {
       return
     }
-    if (this.#current !== current || this.#clock.now() < current.expiresAt) return
+    if (this.#current !== current || current.held || this.#clock.now() < current.expiresAt) return
     this.#drop(current)
   }
 
   #promote(entry: PendingApproval): void {
-    entry.expiresAt = this.#clock.now() + CODEX_APPROVAL_TTL_SECONDS
     this.#current = entry
+    this.#arm(entry)
+  }
+
+  #arm(entry: PendingApproval): void {
+    entry.expiresAt = this.#clock.now() + CODEX_APPROVAL_TTL_SECONDS
     void this.#expireAtDeadline(entry)
   }
 

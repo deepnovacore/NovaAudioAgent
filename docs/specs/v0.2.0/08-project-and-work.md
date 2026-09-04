@@ -1,6 +1,6 @@
 # 08. Project, Session and Work
 
-> 摘要：语音模型不再操作 workspace/session 状态机，也不再看见项目清单。今天的 `codex__project` 六个 action 加两个独立确认工具，换成三个通用宿主工具：`dispatch(executor, instruction)`、`cancel(executor, instruction?)`、`confirm(id, accepted)`；非 agent 执行器（`cam` / `search` / `watcher` / `memory`）保持 `${name}__${op}` 直接工具不变。项目/会话编排下沉到 **coding 执行器侧**的 intake coordinator：`assess` 一步兼任 kind / project / session 决策（`latest | new` 仅二选一）；roster 只作为 coordinator 输入，不进 ContextView。切换既有项目**不确认**（可逆），新建才确认（不可逆）。适配器锁从全局单飞改为**每项目一把**（`Map<workspace_id, RunSlot>`，跨项目全局 cap 3）；取消的是正在跑的 **work**，session 与历史保留。多个 work 并发时审批按 `{work_id, approval_id}` FIFO 排队，一次只对语音暴露一条。session 标题由宿主从 work order 生成，经 `RunInput.threadName` 由 transport 写回 Codex。里程碑 **M1.5b**，依赖 07。
+> 摘要：语音模型不再操作 workspace/session 状态机，也不再看见项目清单。今天的 `codex__project` 六个 action 加两个独立确认工具，换成三个通用宿主工具：`dispatch(executor, instruction)`、`cancel(executor, instruction?)`、`confirm(id, accepted)`；非 agent 执行器（`cam` / `search` / `watcher` / `memory`）保持 `${name}__${op}` 直接工具不变。项目/会话编排下沉到 **coding 执行器侧**的 intake coordinator：`assess` 一步兼任 kind / project / session 决策（`latest | new` 仅二选一）；roster 只作为 coordinator 输入，不进 ContextView。**任何改变当前项目的决定都要用户确认**（明说切换、派到非当前项目的隐含切换、新建；产品决定 2026-09-04），只有当前项目内派单、steer、cancel 不确认。适配器锁从全局单飞改为**每项目一把**（`Map<workspace_id, RunSlot>`，跨项目全局 cap 3）；取消的是正在跑的 **work**，session 与历史保留。多个 work 并发时审批按 `{work_id, approval_id}` FIFO 排队，一次只对语音暴露一条。session 标题由宿主从 work order 生成，经 `RunInput.threadName` 由 transport 写回 Codex。里程碑 **M1.5b**，依赖 07。
 >
 > 修订（2026-09-03）：吸收对本卷改版稿的独立评审 12 条——审批 FIFO 队列、`cancel` 目标解析定型、`create` 仍走规划、跨项目选择必须给 `project_evidence`、并发改为每项目一槽、`dispatch` / `cancel` 为全局宿主工具绑定、`cancelDelegate` 论证更正。
 
@@ -161,19 +161,25 @@ through `dispatch` (see Coordinator); it is not a tool the model can name.
 2. Host calls `AgentExecutor.openDispatch(draft, userText, originRef,
    sessionEpoch)`.
 3. Intake coordinator runs `assess` (see Coordinator) → branches on `kind`.
-4. For `kind: 'work'`, existing intake flow: clarify → plan → dispatch
-   through `dispatchExternal` / `dispatchConfirmedExternal`; `plan_readback`
-   gate unchanged from [02](02-intake-and-planning.md).
-5. For `kind: 'create'`, intake **continues** — see Create below. Creating a
-   workspace is irreversible, so it always confirms, but it does not
-   short-circuit clarification or planning.
-6. For `switch | steer | cancel`, coordinator resolves project/session or the
-   target work and routes directly to the adapter; intake closes without a
-   plan cycle. `kind: 'cancel'` is deliberately redundant with the explicit
-   `cancel` tool: a voice model that routes "取消" through `dispatch` still
-   lands on the same resolver instead of starting new work.
-7. Switching an existing project (`switch`) sets it active before work; no
-   proposal, because switching is reversible.
+4. For `kind: 'work'` on the **active** project, existing intake flow: clarify
+   → plan → dispatch through `dispatchExternal`; `plan_readback` gate
+   unchanged from [02](02-intake-and-planning.md).
+5. **Every decision whose target project differs from the active one is
+   confirmed by the user through the project-confirmation FSM before any side
+   effect** (product decision 2026-09-04): `work` on a non-active project
+   (the implied switch) clarifies and plans like `work`, then proposes
+   `{action: 'reuse' | 'resume', work_order}`; `create` proposes
+   `{action: 'create', work_order | null}` — see Create below; `switch`
+   proposes `{action: 'select', work_order: null}` with no plan cycle. The
+   activation (and the dispatch, when there is a work order) happens inside
+   `commitConfirmed` while the intake is `committing`, so a user turn during
+   the commit is ignored rather than re-assessed. Only `work` on the active
+   project, `steer` and `cancel` stay unconfirmed.
+6. For `steer | cancel`, coordinator resolves the target work and routes
+   directly to the adapter; intake closes without a plan cycle. `kind:
+   'cancel'` is deliberately redundant with the explicit `cancel` tool: a voice
+   model that routes "取消" through `dispatch` still lands on the same resolver
+   instead of starting new work.
 
 ### `cancel`
 
@@ -312,12 +318,18 @@ inferred:
 - Whenever `project` is not the active project, assess must also return
   `project_evidence`: the span of the user's utterance that names it
   ("改**博客**的暗色模式" → `博客`).
-- The host verifies that span occurs in the raw utterance, comparing after
-  `stripLikePython`-style whitespace and case normalisation (`python-text.ts`).
-  Missing, empty, or not found → the result is treated as `unclear` and
-  FrontBrain asks the one-line question "是在 X 里做吗？" naming the selected
-  project. A hallucinated project name therefore costs one question, never a
-  dispatch.
+- The host verifies that span occurs in the raw utterance **and** overlaps
+  (one contains the other) exactly one roster name, which must be the selected
+  project, comparing after `stripLikePython`-style whitespace and case
+  normalisation (`python-text.ts`). Missing, empty, not found, or a shared
+  prefix (`pricing` with both `pricing-page` and `pricing-svc` in the roster)
+  → the result is treated as `unclear` and FrontBrain asks the one-line
+  question "是在 X 里做吗？" naming the selected project. A hallucinated
+  project name therefore costs one question, never a dispatch. The one
+  host-authored exception: when the latest turn's question is exactly that
+  "是在 X 里做吗？" and the user affirmed it, X is accepted without the span
+  check (an alias such as 博客→blog, or `blog` beside `blog-v2`, would
+  otherwise loop).
 - Selecting the **active** project needs no evidence: `project_evidence` may be
   null and is not checked.
 - The readback line always names the project — the `summary` sentence under
@@ -331,9 +343,11 @@ inferred:
 
 | `kind` | Path |
 |---|---|
-| `work` | Clarify → plan → dispatch (today's intake) |
+| `work` (active project) | Clarify → plan → dispatch (today's intake) |
+| `work` (other project) | Clarify → plan → proposal `reuse` / `resume`; confirmed commit activates and dispatches |
 | `create` | Intake continues (below); always confirms |
-| `switch` / `steer` / `cancel` | Adapter resolver, intake closes |
+| `switch` | Proposal `select` with `work_order: null`, no plan cycle; confirmed commit activates |
+| `steer` / `cancel` | Adapter resolver, intake closes |
 | `unclear` | Ask one clarifying question |
 
 ### Create
@@ -491,11 +505,12 @@ Cancellation is deliberately **adapter-level**, not runtime-level:
 - `project.state` adds `roster: [{name, last_used_at, running: [{work_id,
   title}]}]` for UI only (Orb sidebar, bubbles). Voice model does not read
   this wire.
-- `pending_action` retains only `create_workspace`; switching does not surface
-  a confirmation pill.
+- `pending_action` is `create_workspace | reuse_workspace | select_workspace |
+  resume_session`: every change of the active project surfaces a confirmation
+  pill whose text names the action (decision 2026-09-04).
 - Progress bubbles and last-result key on `work_id` (`delegate_id`) so two
   concurrent works do not overwrite each other's bubble/last-result.
-- Confirmation pill appears for `create` proposals and executor approvals
+- Confirmation pill appears for every project proposal and executor approvals
   (both routed through `confirm` on the voice side). The approval pill shows
   the asking work's project and session title, and only ever shows the queue
   head — queued approvals from other works are not rendered until their turn.
@@ -588,8 +603,8 @@ Deterministic:
       the adapter sends the method nowhere; `thread/name/updated` mirrors via
       `onThreadNamed`; `任务 N` code deleted.
 - [ ] Prompt goldens updated; intake fact text has no `codex__`.
-- [ ] Desktop: `project.state` schema with roster (UI only); pill on create +
-      approval; bubbles/last-result keyed by `work_id` under two concurrent
+- [ ] Desktop: `project.state` schema with roster (UI only); pill on every
+      project proposal + approval; bubbles/last-result keyed by `work_id` under two concurrent
       works.
 - [ ] Full `npm test` green; `check:executor-boundary` still zero violations.
 
@@ -597,9 +612,11 @@ Live (DashScope FastBrain / Qwen realtime, real Codex 0.152.0, macOS headset
 first, Windows second). Each row records transcript, tool calls, and Codex
 `thread/list` output as evidence in IMPLEMENTATION.md:
 
-- [ ] **Direct dispatch.** With `blog` existing and not active, say
+- [ ] **Cross-project dispatch.** With `blog` existing and not active, say
       "改博客的暗色模式". Expect exactly one `dispatch(executor:'codex', …)`,
-      no confirmation prompt, active project switched, bubble within 3 s.
+      one confirmation prompt naming `blog` (pill `reuse_workspace` /
+      `resume_session`), no activation before `confirm(id, true)`, then active
+      project switched and bubble within 3 s.
       *2026-09-04: not run — needs a live voice session; only the coordinator
       half (non-active pick with verbatim evidence) is covered by the eval.*
 - [x] **New session + title.** Say "在博客里重新开一个，把 README 翻译成英文".
@@ -653,7 +670,7 @@ first, Windows second). Each row records transcript, tool calls, and Codex
 
 | Decision | Chosen boundary | Rejected alternative |
 |---|---|---|
-| Project selection | Executor-side coordinator (`assess` + roster input); voice sends natural language via `dispatch`; switching unconfirmed, create confirms and still plans; a non-active project must be quoted in `project_evidence` and verified against the raw utterance | Voice model picks roster from ContextView; six `work__`/`project__` tools; model-driven list/select/start state machine; trusting an unquoted project name; `create` short-circuiting intake |
+| Project selection | Executor-side coordinator (`assess` + roster input); voice sends natural language via `dispatch`; every change of the active project confirms (switch, cross-project work, create — decision 2026-09-04), create still plans; a non-active project must be quoted in `project_evidence` and verified against the raw utterance | Voice model picks roster from ContextView; six `work__`/`project__` tools; model-driven list/select/start state machine; trusting an unquoted project name; `create` short-circuiting intake |
 | Voice tool surface | Three host tools (`dispatch`, `cancel`, `confirm`) + non-agent direct ops; `dispatch` / `cancel` are one `host` binding each, routed by the `executor` argument; executor names only in the `dispatch.executor` enum, summaries as description lines | Per-executor prefixed tools; one binding per agent executor; per-enum-value schema descriptions (`oneOf` / `const`); separate confirm tools per FSM |
 | Session surface | `latest` / `new` only; coordinator decides; titles derived by host, sent by the transport via `thread/name/set`, owned by Codex afterwards | `<session_id>` parameter; `project__sessions`; model-authored session titles; adapter-sent naming calls; `任务 N` |
 | Roster visibility | Coordinator input + desktop UI; not in ContextView; running works identified in `active_executor_context` by host-authored project + title | Roster in versioned `workspace_context` for the voice model; a status tool |

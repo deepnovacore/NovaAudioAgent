@@ -220,7 +220,7 @@ test('Codex project view carries a bounded public confirmation description', () 
   }), DesktopProtocolError)
 })
 
-test('project view carries the spec 08 roster for the UI and only a create as pill action', () => {
+test('project view carries the spec 08 roster for the UI and every project proposal as a pill action', () => {
   const roster = [
     {name: 'blog', last_used_at: 1_700_000_000, running: [{work_id: 'w1', title: '暗色模式'}]},
     {name: 'pricing', last_used_at: 1_600_000_000, running: []},
@@ -234,24 +234,27 @@ test('project view carries the spec 08 roster for the UI and only a create as pi
   })) as Readonly<Record<string, unknown>>
   assert.deepEqual(parsed.roster, roster)
 
-  // A voice-only proposal (plan readback / switch) is pending with metadata but no pill action.
-  const voiceOnly = JSON.parse(projectStateMessage({
-    workspace_display_name: 'blog',
-    session_title: null,
-    pending_confirmation: true,
-    pending_confirmation_busy: false,
-    pending_confirmation_id: 'proposal-1',
-    pending_action: null,
-    pending_workspace_display_name: 'blog',
-    pending_session_title: '暗色模式',
-    pending_expires_in_seconds: 30,
-  })) as Readonly<Record<string, unknown>>
-  assert.equal(voiceOnly.pending_action, null)
-  assert.equal(voiceOnly.pending_confirmation, true)
+  // A plan readback on the active project is pending with metadata but no pill action; every change of
+  // the active project (switch, work elsewhere, create) names its action (decision 2026-09-04).
+  for (const action of [null, 'select_workspace', 'reuse_workspace', 'resume_session'] as const) {
+    const pending = JSON.parse(projectStateMessage({
+      workspace_display_name: 'blog',
+      session_title: null,
+      pending_confirmation: true,
+      pending_confirmation_busy: false,
+      pending_confirmation_id: 'proposal-1',
+      pending_action: action,
+      pending_workspace_display_name: 'blog',
+      pending_session_title: '暗色模式',
+      pending_expires_in_seconds: 30,
+    })) as Readonly<Record<string, unknown>>
+    assert.equal(pending.pending_action, action)
+    assert.equal(pending.pending_confirmation, true)
+  }
 
   const base = {workspace_display_name: 'blog', session_title: null, pending_confirmation: false, pending_confirmation_busy: false}
   for (const invalid of [
-    {...base, pending_action: 'select_workspace' as unknown as 'create_workspace'},
+    {...base, pending_confirmation: true, pending_workspace_display_name: 'blog', pending_expires_in_seconds: 30, pending_action: 'start_session' as unknown as 'create_workspace'},
     {...base, roster: [{name: '', last_used_at: 1, running: []}]},
     {...base, roster: [{name: 'blog', last_used_at: -1, running: []}]},
     {...base, roster: [{name: 'blog', last_used_at: 1, running: [{work_id: '', title: 't'}]}]},
@@ -326,6 +329,13 @@ test('Codex approval wire carries only bounded local display detail and relative
     operation_summary: 'Codex 请求执行一条工作区命令。',
     expires_in_seconds: 60,
   })
+  // A head held behind a project confirmation has no running countdown, so the pill gets none.
+  const held = JSON.parse(executorApprovalMessage({
+    pending_approval: true, pending_approval_busy: false, pending_approval_id: 'approval-1', kind: 'command_execution',
+    local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
+    operation_summary: 'Codex 请求执行一条工作区命令。', expires_at: 70, work: null, queued: 0, held: true,
+  }, 100, CODEX)) as {expires_in_seconds: unknown}
+  assert.equal(held.expires_in_seconds, null)
   assert.throws(() => executorApprovalMessage({
     pending_approval: true,
     pending_approval_busy: false,

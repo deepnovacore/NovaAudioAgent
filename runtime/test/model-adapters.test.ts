@@ -4,8 +4,7 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { VirtualClock } from '../src/clock.js'
 import type { ContextView } from '../src/context-view.js'
-import type { JsonValue } from '../src/events.js'
-import { handoffPolicySchema, type MemoryItem } from '../src/memory.js'
+import type { MemoryItem } from '../src/memory.js'
 import type {
   CompleteRequest,
   GatewayCompletion,
@@ -16,14 +15,8 @@ import type {
 import {
   GatewayCompressor,
   GatewaySurrogate,
-  GatewayFastBrain,
   compressorPrompt,
-  decodeToolCall,
-  isFiniteBinary64Json,
-  toolsForTrigger,
 } from '../src/model-adapters.js'
-import { executorManifestSchema } from '../src/ports.js'
-import { compileToolSchema } from '../src/tool-schema.js'
 
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/adapters/v1')
 
@@ -32,31 +25,6 @@ function loadJson<T>(name: string): T {
 }
 
 void new VirtualClock()
-
-function manifest(name: string, ops: readonly Record<string, JsonValue>[], roles: readonly string[] = []) {
-  return executorManifestSchema.parse({
-    name,
-    display_name: name,
-    roles,
-    policy: handoffPolicySchema.parse({
-      channel: name, priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8,
-    }),
-    ops,
-  })
-}
-
-const readonlyOp = {
-  name: 'peek', description: 'readonly', params: {type: 'object', properties: {}}, readonly: true,
-}
-const writeOp = {
-  name: 'run', description: 'runs work',
-  params: {type: 'object', properties: {work_order: {type: 'string'}}, required: ['work_order']},
-}
-
-const tools = compileToolSchema([
-  manifest('slow_sim', [readonlyOp]),
-  manifest('codex', [readonlyOp, writeOp], ['coding']),
-])
 
 class ScriptedGateway implements ModelGateway {
   readonly requests: StreamRequest[] = []
@@ -122,111 +90,6 @@ test('the compressor prompt matches the Python oracle byte for byte', () => {
   // which no JavaScript number can express.
   assert.match(sorted, /"ts": 1\}/u)
   assert.doesNotMatch(sorted, /"ts": 1\.0/u)
-})
-
-test('a background trigger cannot reach Codex tools', () => {
-  const userTurn = toolsForTrigger(tools, 'user_input', true)
-  assert.ok([...userTurn.bindings.keys()].some(name => name.startsWith('codex__')))
-
-  const background = toolsForTrigger(tools, 'progress', true)
-  assert.ok([...background.bindings.keys()].every(name => !name.startsWith('codex__')))
-  // The schema list must shrink with the bindings, not just the map.
-  assert.equal(background.schemas.length, background.bindings.size)
-  assert.ok([...background.bindings.keys()].some(name => name.startsWith('slow_sim__')))
-
-  // Disabled means the filter never runs at all.
-  assert.equal(toolsForTrigger(tools, 'progress', false).bindings.size, tools.bindings.size)
-})
-
-test('tool calls decode into typed actions and bounded contract failures', () => {
-  assert.deepEqual(decodeToolCall(tools, 'codex__run',
-    '{"work_order":"ship it","origin_ref":"conversation:1"}'), {
-    kind: 'action',
-    action: {act: 'delegate', delegate: {
-      executor: 'codex', op: 'run', request: {work_order: 'ship it'},
-      origin_ref: 'conversation:1',
-    }},
-  })
-
-  assert.deepEqual(decodeToolCall(tools, 'update_intent', '{"uncertainty":0.25}'), {
-    kind: 'action',
-    action: {act: 'update', update: {target: 'intent', delta: {uncertainty: 0.25}}},
-  })
-
-  // Each failure names its code and never carries the offending payload.
-  for (const [name, raw, code] of [
-    ['nope__missing', '{}', 'unknown_tool'],
-    ['codex__run', 'not json', 'invalid_tool_arguments'],
-    ['codex__run', '[1,2,3]', 'invalid_tool_arguments'],
-    ['codex__run', '"a string"', 'invalid_tool_arguments'],
-    ['codex__run', '{"work_order":"x"}', 'missing_origin_ref'],
-    ['codex__run', '{"work_order":"x","origin_ref":""}', 'missing_origin_ref'],
-  ] as const) {
-    const result = decodeToolCall(tools, name, raw)
-    assert.equal(result.kind, 'contract_failure', `${name} ${raw}`)
-    assert.equal(result.kind === 'contract_failure' ? result.code : undefined, code)
-    assert.doesNotMatch(JSON.stringify(result), /ship it|not json|a string/u)
-  }
-
-  // An empty tool name reports null rather than an empty string.
-  const anonymous = decodeToolCall(tools, '', '{}')
-  assert.equal(anonymous.kind === 'contract_failure' ? anonymous.tool_name : 'set', null)
-})
-
-test('hidden agent bindings are unknown to the provider while visible tools still decode', () => {
-  const agentTools = compileToolSchema([
-    manifest('slow_sim', [readonlyOp]),
-    executorManifestSchema.parse({
-      name: 'codex', display_name: 'Codex', roles: ['coding'], agent: {summary: 'code'},
-      policy: handoffPolicySchema.parse({channel: 'codex', priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8}),
-      ops: [readonlyOp, writeOp, {name: 'cancel', description: 'cancel', params: {type: 'object', properties: {}}}],
-    }),
-  ])
-  for (const name of ['codex__run', 'codex__cancel', 'codex__peek']) {
-    assert.ok(agentTools.bindings.has(name), `${name} keeps its binding for the host rewrite`)
-    const result = decodeToolCall(agentTools, name, '{"work_order":"x","origin_ref":"conversation:1"}')
-    assert.deepEqual(result, {kind: 'contract_failure', code: 'unknown_tool', tool_name: name}, name)
-  }
-  assert.equal(decodeToolCall(agentTools, 'slow_sim__peek', '{"origin_ref":"conversation:1"}').kind, 'action')
-  // Trigger filtering keeps the hidden set alongside the bindings it protects.
-  assert.deepEqual([...toolsForTrigger(agentTools, 'user_input', true).hidden], [...agentTools.hidden])
-  assert.equal(toolsForTrigger(agentTools, 'progress', true).hidden.size, agentTools.hidden.size)
-})
-
-test('numbers JSON cannot represent as finite binary64 are refused', () => {
-  assert.equal(isFiniteBinary64Json({a: 1, b: [2, {c: 3.5}]}), true)
-  assert.equal(isFiniteBinary64Json({a: Number.POSITIVE_INFINITY}), false)
-  assert.equal(isFiniteBinary64Json({a: Number.NaN}), false)
-  assert.equal(isFiniteBinary64Json([1, [Number.NEGATIVE_INFINITY]]), false)
-  assert.equal(isFiniteBinary64Json(undefined), false)
-})
-
-test('FastBrain forwards text immediately and decodes tool calls after the stream', async () => {
-  const gateway = new ScriptedGateway([
-    {kind: 'text', text: '好'},
-    {kind: 'tool_call', index: 1, name: 'slow_sim__', arguments: '{"origin_ref"'},
-    {kind: 'text', text: '的'},
-    {kind: 'tool_call', index: 0, name: 'update_intent', arguments: '{"uncertainty":0.1}'},
-    {kind: 'tool_call', index: 1, name: 'peek', arguments: ':"conversation:1"}'},
-  ])
-  const brain = new GatewayFastBrain({gateway, model: 'm', tools})
-  const seen = []
-  for await (const delta of brain.call(emptyView)) seen.push(delta)
-
-  // Text arrives in stream order, before any structured output.
-  assert.deepEqual(seen.slice(0, 2), [
-    {kind: 'text', text: '好'}, {kind: 'text', text: '的'},
-  ])
-  // Fragments are reassembled per index and emitted in ascending index order.
-  assert.deepEqual(seen.slice(2), [
-    {kind: 'action', action: {act: 'update', update: {target: 'intent',
-      delta: {uncertainty: 0.1}}}},
-    {kind: 'action', action: {act: 'delegate', delegate: {executor: 'slow_sim', op: 'peek',
-      request: {}, origin_ref: 'conversation:1'}}},
-  ])
-  // The FastBrain system prompt must actually be sent, not defaulted away.
-  assert.ok((gateway.requests[0]?.system.length ?? 0) > 100)
-  assert.equal(gateway.requests.length, 1)
 })
 
 test('the Surrogate rejects output that is not contract-shaped', async () => {

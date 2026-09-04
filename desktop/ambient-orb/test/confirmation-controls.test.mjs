@@ -188,6 +188,9 @@ test('Codex approval renderer schema is strict, bounded, and keeps detail local'
   // Spec 08 §desktop: the pill names the asking work's project and session title when the wire carries it.
   const frame = {...valid, local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'}}
   delete frame.operation
+  // A head parked behind a project confirmation carries no countdown; a negative or oversized one is still refused.
+  assert.equal(parseCodexApprovalMessage({...frame, expires_in_seconds: null})?.expires_in_seconds, null)
+  assert.equal(parseCodexApprovalMessage({...frame, expires_in_seconds: 61}), null)
   const work = {work_id: 'work-1', project: 'blog', title: '暗色模式'}
   assert.equal(parseCodexApprovalMessage({...frame, work})?.operation, 'blog / 暗色模式：执行命令：npm test')
   for (const bad of [

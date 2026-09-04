@@ -170,9 +170,11 @@ export function parseCodexApprovalMessage(message) {
     !validProposalId(message.pending_approval_id)
     || !['command_execution', 'file_change', 'network', 'permissions'].includes(message.kind)
     || !validText(message.operation_summary, 256)
-    || !Number.isFinite(message.expires_in_seconds)
-    || message.expires_in_seconds < 0
-    || message.expires_in_seconds > 60
+    // `null`: the head is parked behind a project confirmation, so no countdown runs.
+    || (message.expires_in_seconds !== null && (
+      !Number.isFinite(message.expires_in_seconds)
+      || message.expires_in_seconds < 0
+      || message.expires_in_seconds > 60))
   ) return null
   const allowed = message.allowed_decisions
   if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length < 1 || allowed.length > 3

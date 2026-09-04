@@ -233,7 +233,7 @@ async function exerciseGateway(gateway: ModelGateway): Promise<void> {
   })
 }
 
-test('Qwen factory builds a realtime-frontbrain core while ordinary assembly keeps fast', () => {
+test('Qwen factory and plain assembly both leave the fast slot to the realtime owner', () => {
   const connector = recordingConnector()
   const realtime = buildQwenRealtimeAssembly(qwenOptions(
     settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
@@ -249,15 +249,17 @@ test('Qwen factory builds a realtime-frontbrain core while ordinary assembly kee
   assert.equal(realtime.runtime.core.slots.inflight.fast, false)
   assert.equal(realtime.workspaceGraph, undefined)
 
+  // There is no second mode left: plain assembly wires no text front brain either, so a
+  // user turn cannot take the fast slot out from under the realtime provider.
   const ordinary = buildAssembly({
     settings: settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
     gateway: new NeverGateway(),
     searchTransport: new NeverSearch(),
   })
-  assert.equal(ordinary.tools.bindings.has('memory__recall'), false)
+  assert.equal(ordinary.tools.bindings.has('memory__recall'), true)
   const ordinaryInput = ordinary.runtime.core.post({kind: 'user_input', payload: {text: 'hello'}}, 0)
   ordinary.runtime.core.apply(ordinaryInput)
-  assert.equal(ordinary.runtime.core.slots.inflight.fast, true)
+  assert.equal(ordinary.runtime.core.slots.inflight.fast, false)
   assert.equal(connector.calls.length, 0)
 })
 

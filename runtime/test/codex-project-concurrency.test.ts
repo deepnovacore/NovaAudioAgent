@@ -306,7 +306,7 @@ test('a new thread is named by the host title and a Codex rename is mirrored int
   }
 })
 
-test('resolveIntakeTarget refuses busy and full deterministically while switch still activates', async () => {
+test('resolveIntakeTarget refuses busy and full deterministically while a confirmed switch still activates', async () => {
   const value = await fixture()
   await withProjects(value, ['beta', 'gamma', 'delta'])
   const gates = gateProjects(value, ['alpha', 'beta', 'gamma'])
@@ -346,12 +346,17 @@ test('resolveIntakeTarget refuses busy and full deterministically while switch s
     )
 
     // Switching to a busy or idle project is allowed while full: it changes focus, not capacity.
-    // Resolution is side-effect-free; only `activateProject` (after the intake staleness re-check) moves focus.
+    // Resolution is side-effect-free; only the user-confirmed `select` commit moves focus (decision 2026-09-04).
     const before = (await value.store.resolveWorkspace(null)).display_name
     const switched = await value.adapter.resolveIntakeTarget({kind: 'switch', project: 'delta', session: 'latest'})
-    assert.equal(switched.action, 'reuse')
+    assert.equal(switched.action, 'select')
     assert.equal((await value.store.resolveWorkspace(null)).display_name, before)
-    await value.adapter.activateProject(switched)
+    const {workspace, ...proposal} = switched
+    void workspace
+    const outcome = value.confirmation.acceptDirectDecision({
+      proposalId: value.confirmation.prepare({...proposal, work_order: null, origin_ref: 'conversation:1'}).proposal_id, confirmed: true,
+    })
+    assert.equal((await value.adapter.commitConfirmed(outcome.operation!, () => { throw new Error('no work order') })).code, 'committed')
     assert.equal((await value.store.resolveWorkspace(null)).display_name, 'delta')
     assert.equal(value.adapter.publicProjectView(false).workspace_display_name, 'delta')
     const focusBusy = await value.adapter.resolveIntakeTarget({kind: 'switch', project: 'alpha', session: 'latest'})

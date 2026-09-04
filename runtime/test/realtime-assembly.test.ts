@@ -515,7 +515,6 @@ test('routine cumulative progress is suppressed end to end while a later milesto
       clock,
       gateway,
       executors: [adapter],
-      realtimeFrontbrain: true,
       searchTransport: new NeverCalledSearch(),
       frameSource: new RecordingFrameSource(),
       telemetry: {
@@ -2002,23 +2001,11 @@ test('workspace graph opens before project initialization, injects only the curr
     item_id: 'provider-user-graph-regression',
     text: 'a relation-shaped transcript must not inject a late Recall Pack',
   })
-  await waitNamed('runtime graph context compilation', () => graphCalls.some(call => (
-    typeof call === 'object'
-    && call !== null
-    && 'utterance' in call
-    && call.utterance === 'a relation-shaped transcript must not inject a late Recall Pack'
+  // The user turn belongs to the realtime provider, so a transcript never compiles a
+  // runtime ContextView; only the Header path, which carries no utterance, reaches the graph.
+  assert.ok(!graphCalls.some(call => (
+    typeof call === 'object' && call !== null && 'utterance' in call && call.utterance !== ''
   )))
-  assert.deepEqual(graphCalls.find(call => (
-    typeof call === 'object'
-    && call !== null
-    && 'utterance' in call
-    && call.utterance === 'a relation-shaped transcript must not inject a late Recall Pack'
-  )), {
-    session_epoch: 1,
-    workspace_instance_id: 'instance-alpha',
-    utterance: 'a relation-shaped transcript must not inject a late Recall Pack',
-    preferences: [],
-  })
   assert.equal(provider.workspaceItems.length, 2,
     'server-VAD transcript final must not inject a late workspace host item')
 
@@ -2271,7 +2258,6 @@ test('real assembly and graph service infer only weak metadata from committed ad
     gateway: new NeverCalledGateway(),
     searchTransport: new NeverCalledSearch(),
     executors: [adapterShape],
-    realtimeFrontbrain: true,
   })
   const realtime = buildRealtimeAssembly({
     core,

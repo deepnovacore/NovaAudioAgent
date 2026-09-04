@@ -1066,7 +1066,6 @@ test('production composition serves compact boards on debug sockets without dist
     }),
     gateway: new NeverGateway(),
     searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
-    realtimeFrontbrain: true,
   })
   for (let index = 0; index < 13; index += 1) {
     core.runtime.memory.append('conversation', {
@@ -1161,7 +1160,6 @@ test('authenticated fake-provider loopback uses one service for duplex audio and
     }),
     gateway: new NeverGateway(),
     searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
-    realtimeFrontbrain: true,
   })
   let serveCalls = 0
   const originalServe = core.runtime.serve.bind(core.runtime)
@@ -1553,7 +1551,6 @@ test('composition posts only audible delivery events into the exact runtime and 
     clock,
     gateway: new NeverGateway(),
     searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
-    realtimeFrontbrain: true,
   })
   type DeliveryCallbacks = DesktopOutputCallbacks & {
     readonly onDelivery?: (completion: PlaybackCompletion) => void
@@ -1631,7 +1628,6 @@ test('captured composition callbacks preserve clear alert Codex project clock an
     clock,
     gateway: new NeverGateway(),
     searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
-    realtimeFrontbrain: true,
   })
   let callbacks: DesktopOutputCallbacks | undefined
   const composition = buildDesktopRealtimeComposition({
@@ -1695,7 +1691,6 @@ test('composition rejects output callbacks fired before the desktop bridge exist
     }),
     gateway: new NeverGateway(),
     searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
-    realtimeFrontbrain: true,
   })
   assert.throws(() => buildDesktopRealtimeComposition({
     token: TOKEN,
@@ -1737,7 +1732,6 @@ test('composition camera transport rejects construction-time use with a fixed no
     }),
     gateway: new NeverGateway(),
     searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
-    realtimeFrontbrain: true,
   })
   let earlyCapture: Promise<CapturedCameraFrame> | undefined
   buildDesktopRealtimeComposition({
@@ -1770,7 +1764,6 @@ test('composition camera transport is one stable proxy to the final desktop serv
     }),
     gateway: new NeverGateway(),
     searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
-    realtimeFrontbrain: true,
   })
   const requests: unknown[] = []
   let capturedTransport: CameraCaptureTransport | undefined

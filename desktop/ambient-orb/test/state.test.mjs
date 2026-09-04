@@ -100,7 +100,19 @@ test('Codex approval can provide a local bounded operation without changing proj
   assert.match(state.confirmationStatus, /12 秒后自动取消/u)
 })
 
-test('describes only a workspace create; a voice-only proposal keeps the generic label', () => {
+test('describes each project action; a proposal without one keeps the generic label', () => {
+  // Every change of the active project is confirmed (decision 2026-09-04): the pill names the action.
+  for (const [pendingAction, label] of [
+    ['select_workspace', '切换到工作区 “timer-app”'],
+    ['reuse_workspace', '使用现有工作区 “timer-app”并开始任务'],
+    ['resume_session', '恢复 “timer-app / Initial”'],
+  ]) {
+    const state = deriveOrbState({
+      ...base, pendingConfirmation: true, pendingAction, pendingWorkspace: 'timer-app', pendingSession: 'Initial', pendingExpiresInSeconds: 360,
+    })
+    assert.equal(state.confirmationOperation, label)
+    assert.equal(state.codexMode, 'confirmation')
+  }
   const creating = deriveOrbState({
     ...base,
     pendingConfirmation: true,

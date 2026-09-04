@@ -2029,6 +2029,41 @@ test('cancel is answered synchronously from the executor run slots', async () =>
   await service.close()
 })
 
+test('a user turn while cancel resolves its target makes the cancel stale: nothing is stopped', async () => {
+  const running = [{work_id: 'w-1', project: 'blog', title: '暗色模式'}, {work_id: 'w-2', project: 'shop', title: '结账'}]
+  const wanted: boolean[] = []
+  let entered!: () => void
+  let release!: () => void
+  const resolving = new Promise<void>(resolve => { entered = resolve })
+  const {service} = pipelineService({agent: true, agentExecutor: {
+    // The adapter's >1 path: a model call resolves the target, then `stillWanted` decides whether to abort it.
+    cancel: async (_instruction, context) => {
+      entered()
+      await new Promise<void>(resolve => { release = resolve })
+      const still = context.stillWanted?.() ?? true
+      wanted.push(still)
+      return still ? {code: 'cancelled', work: running[0]!} : {code: 'ambiguous_work', running}
+    },
+  }})
+  await service.connect()
+  await speak(service, 'user-cancel', '停掉博客那个')
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'cancel'})
+  const pending = service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-cancel', item_id: 'tool-cancel',
+    name: 'cancel', arguments: {executor: 'codex', instruction: '停掉博客那个'}, response_id: 'cancel',
+  })
+  await resolving
+  // The user corrects themselves before the resolver answers: the revision moves, the cancel is stale.
+  await speak(service, 'user-next', '不，别停')
+  release()
+  await pending
+  assert.deepEqual(wanted, [false])
+  const acceptance = service.toolCallAcceptances().at(-1)!.acceptance
+  assert.equal(acceptance.code, 'ambiguous_work')
+  assert.match(acceptance.host_item.content, /code=ambiguous_work/u)
+  await service.close()
+})
+
 test('cancel without a user origin is refused before the executor is asked', async () => {
   const calls: (string | undefined)[] = []
   const {service} = pipelineService({agent: true, agentExecutor: {
@@ -7168,7 +7203,11 @@ test('a later project confirmation parks the Codex approval queue instead of dra
   })
   await new Promise<void>(resolve => { setImmediate(resolve) })
 
-  // Neither approval is declined; the head only loses its voice authority while the proposal holds the floor.
+  // Neither approval is declined; the head only loses its voice authority while the proposal holds the floor,
+  // and its TTL is paused (`held`): well past the 60 s TTL it is still pending, not auto-declined (P1-3).
+  assert.equal(executorApproval.view.held, true)
+  clock.advanceTo(clock.now() + 90)
+  await new Promise<void>(resolve => { setImmediate(resolve) })
   assert.equal(executorApproval.pending, true, 'the head approval keeps waiting')
   assert.equal(executorApproval.view.pending_approval_id, approvalId)
   assert.equal(executorApproval.view.queued, 1, 'the queued approval keeps its place')
@@ -7184,13 +7223,15 @@ test('a later project confirmation parks the Codex approval queue instead of dra
   assert.equal(service.projectConfirmationBlockingForTest, true)
   assert.equal(controller.lifecycleId, proposal.proposal_id)
 
-  // The proposal settles (renderer cancel): the head is re-armed and its spoken fact re-appears.
+  // The proposal settles (renderer cancel): the head is re-armed with a fresh full TTL and its spoken fact re-appears.
   clock.advanceTo(clock.now() + 5)
   await service.projectConfirmationDecision(proposal.proposal_id, false)
   assert.equal(controller.pending, false)
   await service.flushHostItems()
   assert.equal(executorApproval.pending, true)
   assert.equal(executorApproval.view.pending_approval_id, approvalId, 'the same head, never declined')
+  assert.equal(executorApproval.view.held, undefined)
+  assert.equal(executorApproval.view.expires_at, clock.now() + 60, 'a fresh TTL, as if it had just become head')
   assert.equal(injectedFacts(), 2, 're-armed after the proposal settled')
 
   // The renderer pill (controller view) answers it; the queued approval is promoted and armed in turn.
@@ -7202,8 +7243,23 @@ test('a later project confirmation parks the Codex approval queue instead of dra
   assert.ok(secondId !== undefined && secondId !== approvalId)
   await service.flushHostItems()
   assert.equal(actions.filter(action => action === `inject:approval:${secondId}:requested`).length, 1)
-  assert.equal(service.executorApprovalDecision(secondId, false), true)
-  assert.deepEqual(await queued, {decision: 'decline'})
+
+  // Parked again by a later proposal, then released: the fresh TTL runs out normally 60 s later.
+  const later = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1, speech_id: 'later-project-answer', provider_item_id: 'later-project-item',
+  })
+  assert.equal(executorApproval.view.held, true)
+  clock.advanceTo(clock.now() + 90)
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(executorApproval.view.pending_approval_id, secondId, 'held through 90 s')
+  await service.projectConfirmationDecision(later.proposal_id, false)
+  await service.flushHostItems()
+  assert.equal(executorApproval.view.expires_at, clock.now() + 60)
+  clock.advanceTo(clock.now() + 60)
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.deepEqual(await queued, {decision: 'decline'}, 'expired normally once released')
+  assert.equal(executorApproval.pending, false)
 })
 
 async function speak(service: RealtimeService, itemId: string, text: string): Promise<void> {
@@ -9734,7 +9790,7 @@ function intakePorts(
   return {
     settings: {clarification_depth: 'balanced', plan_readback: 'silent'},
     roster: () => [], running: () => [], activeProject: () => 'alpha',
-    resolveTarget: unexpected, activateProject: unexpected,
+    resolveTarget: unexpected,
     models: {assess: unexpected, plan: unexpected, resolveCancelTarget: unexpected},
     dispatch: unexpected, steer: unexpected, cancel: unexpected,
     record: () => undefined,

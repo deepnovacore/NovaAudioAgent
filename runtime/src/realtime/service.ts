@@ -290,7 +290,7 @@ export interface ServiceProvider {
 export interface RealtimeServiceOptions {
   readonly intake?: Pick<
     IntakeOptions,
-    'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'activateProject' | 'dispatch' | 'steer' | 'cancel' | 'record'
+    'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'dispatch' | 'steer' | 'cancel' | 'record'
   >
   /** The coding executor's `cancel` port (spec 08); absent → `cancel` refuses `unsupported_tool`. */
   readonly agentExecutor?: Pick<AgentExecutor, 'cancel'>
@@ -3912,10 +3912,14 @@ export class RealtimeService {
     }
     if (event.name === CANCEL_TOOL) {
       const models = this.#intakeModels
+      // The >1 case awaits a model call; a user turn in that gap (a correction, a new request) makes
+      // the resolved target stale, and a stale cancel must stop nothing (same rule as the intake path).
+      const revision = this.session.userInputRevision
       const result = await this.#agentExecutor!.cancel(instruction ?? undefined, {
         resolveCancelTarget: models === undefined
           ? () => Promise.resolve(null)
           : (target, running) => models.resolveCancelTarget(target, running),
+        stillWanted: () => this.session.sessionEpoch === event.session_epoch && this.session.userInputRevision === revision,
       })
       const acceptance = this.#refusalAcceptance(event, result.code, JSON.stringify({...result, message: renderCancelResult(result)}))
       return {...acceptance, accepted: true, inline_fulfilled: true}
@@ -4015,8 +4019,10 @@ export class RealtimeService {
       || sessionEpoch < 1
     ) return
     // Spec 08: a colliding executor approval waits behind the project confirmation. Its voice authority
-    // is withdrawn (never declined) and re-armed by `#publishProjectView` once this one settles.
+    // is withdrawn and its TTL paused (`hold`, never declined); `#publishProjectView` re-arms both once
+    // this one settles.
     if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
+    this.#executorApproval?.hold()
     const current = this.#projectConfirmationIsolation.authority
     if (current?.authorityId === lifecycleId && current.sessionEpoch === sessionEpoch) return
     const remaining = controller.view.pending_expires_in_seconds
@@ -4180,9 +4186,10 @@ export class RealtimeService {
         expiresAt: view.expires_at,
       }
       if (this.#projectConfirmation?.pending === true || this.#projectConfirmation?.committing === true) {
-        // Spec 08: the approval keeps its queue place and TTL but is not voice-armed while a project
-        // confirmation holds the floor; `#publishProjectView` re-runs this once that one settles.
+        // Spec 08: the approval keeps its queue place, its TTL is paused (`hold`) and it is not voice-armed
+        // while a project confirmation holds the floor; `#publishProjectView` releases it once that settles.
         if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
+        this.#executorApproval?.hold()
         return
       }
       if (
@@ -6031,10 +6038,13 @@ export class RealtimeService {
     } catch {
       // A renderer that cannot accept the view must not prevent the state change that produced it.
     }
-    // Spec 08: an executor approval that waited behind this confirmation is voice-armed once it is over.
-    const approval = this.#executorApproval?.view
-    if (approval?.pending_approval === true && !controller.pending && !controller.committing) {
-      this.#syncExecutorApproval(approval)
+    // Spec 08: an executor approval that waited behind this confirmation gets a fresh TTL and is
+    // voice-armed once it is over. `release` publishes, and the observer runs `#syncExecutorApproval`
+    // with the re-armed view; a head that was never held is synced directly.
+    const approval = this.#executorApproval
+    if (approval?.view.pending_approval === true && !controller.pending && !controller.committing
+      && !approval.release()) {
+      this.#syncExecutorApproval(approval.view)
     }
   }
 

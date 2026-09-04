@@ -10,14 +10,14 @@ import type {ApprovalController} from './approval-port.js'
 import type {ExecutorAdapter, ExecutorHandoff} from './causal-runtime.js'
 import type {JsonValue} from './events.js'
 import type {DelegateRequest, ExecutorManifest} from './ports.js'
-import type {ConfirmedProjectOperation, ProjectConfirmationController} from './project-confirmation.js'
+import type {ConfirmedProjectOperation, ProjectAction, ProjectConfirmationController} from './project-confirmation.js'
 import type {PublicProjectContext, PublicProjectView, WorkspaceRecord} from './project-store.js'
 import type {WakeReason} from './slots.js'
 
-/** Where a work order will run, as resolved by the project adapter for the intake FSM. */
+/** Where a work order will run, as resolved by the project adapter for the intake FSM; `select` is a bare switch. */
 export interface IntakeTarget {
   readonly workspace: string
-  readonly action: 'create' | 'reuse' | 'resume'
+  readonly action: ProjectAction
   readonly workspace_display_name: string
   readonly workspace_id: string | null
   readonly session_title: string | null
@@ -82,10 +82,12 @@ export interface AgentExecutor {
   running(): readonly RunningWork[]
   /** Async: >1 running works with an instruction needs one `resolveCancelTarget` call. */
   cancel(instruction: string | undefined, context: CancelContext): Promise<CancelResult>
-  /** Deterministic and side-effect-free: exact roster-name match only; throws `ProjectResolutionError`. */
+  /**
+   * Deterministic and side-effect-free: exact roster-name match only; throws `ProjectResolutionError`.
+   * Every change of the active project (`switch`, `work` elsewhere, `create`) is then confirmed by the
+   * user through the project-confirmation FSM and committed by `commitConfirmed` (decision 2026-09-04).
+   */
   resolveIntakeTarget(decision: CoordinatorDecision): Promise<IntakeTarget>
-  /** Commit a resolved `switch` (make the project active); called only after the intake re-checks it is still wanted. */
-  activateProject(target: IntakeTarget): Promise<void>
 }
 
 export interface CommittedWorkspaceEvent {

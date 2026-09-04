@@ -41,7 +41,7 @@ import type {GraphContext} from './workspace-graph/context.js'
 import type {Suggestion} from './suggestions.js'
 import type {WakeReason} from './slots.js'
 import {USER_PRIORITY} from './memory.js'
-import type {CoordinatorDecision, IntakeTarget} from './coding-executor.js'
+import type {CoordinatorDecision} from './coding-executor.js'
 
 /** Intake-issued delegate requests carry the user's own priority (the voice model awaited them). */
 const USER_AWAITED_TOOL = {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null} as const
@@ -846,7 +846,6 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       running: () => projectAdapter.running(),
       activeProject: () => projectAdapter.publicProjectView(false).workspace_display_name,
       resolveTarget: (decision: CoordinatorDecision) => projectAdapter.resolveIntakeTarget(decision),
-      activateProject: (target: IntakeTarget) => projectAdapter.activateProject(target),
       cancel: (instruction: string, stillWanted: () => boolean) => projectAdapter.cancel(instruction, {
         resolveCancelTarget: (text, running) => options.intake!.models.resolveCancelTarget(text, running),
         stillWanted,

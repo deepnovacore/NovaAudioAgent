@@ -35,7 +35,6 @@ function harness(options: HarnessOptions = {}) {
   const decisions: CoordinatorDecision[] = []
   const steered: string[] = [], cancelled: string[] = []
   const {models, resolveTarget = () => Promise.resolve(target), ...rest} = options
-  const activated: IntakeTarget[] = []
   const confirmation = new ProjectConfirmationController({clock: new VirtualClock(), idFactory: () => `proposal-${++sequence}`})
   const intake = new IntakeController({
     idFactory: () => `intake-${++sequence}`,
@@ -53,7 +52,6 @@ function harness(options: HarnessOptions = {}) {
     running: () => running,
     activeProject: () => 'Project',
     resolveTarget: decision => { decisions.push(decision); return resolveTarget(decision) },
-    activateProject: switched => { activated.push(switched); return Promise.resolve() },
     prepare: current => confirmation.prepare({...current.target!, intake_id: current.intake_id, plan_revision: current.plan_revision!, origin_ref: current.origin_ref, work_order: current.work_order}),
     dispatch: current => { dispatched.push(current); return {accepted: true, delegate_id: 'd1'} },
     steer: (_current, _project, instruction) => { steered.push(instruction); return {accepted: true, delegate_id: 'd-steer'} },
@@ -64,7 +62,16 @@ function harness(options: HarnessOptions = {}) {
     diagnostic: code => { diagnostics.push(code) },
     ...rest,
   })
-  return {intake, confirmation, facts, records, diagnostics, dispatched, decisions, steered, cancelled, activated, planned: () => planned}
+  return {intake, confirmation, facts, records, diagnostics, dispatched, decisions, steered, cancelled, planned: () => planned}
+}
+
+/** The service's confirmed-commit path: `beginConfirmed` → adapter commit → `settleConfirmed`. */
+function confirmProposal(h: ReturnType<typeof harness>, result = {accepted: true, delegate_id: 'd-confirmed'}) {
+  const operation = h.confirmation.acceptDirectDecision({proposalId: h.intake.view!.proposal_id!, confirmed: true}).operation!
+  assert.equal(h.intake.beginConfirmed(operation), true)
+  assert.equal(h.intake.view?.state, 'committing')
+  h.intake.settleConfirmed(result)
+  return operation
 }
 
 test('intake zero-question fast path compiles once, preserves target/session and closes only on acceptance', async () => {
@@ -272,7 +279,7 @@ test('coordinator: work on the active project resolves without evidence; a non-a
   assert.deepEqual(active.decisions, [{kind: 'work', project: 'Project', session: 'latest'}])
   assert.equal(active.intake.view?.outcome, 'dispatched')
 
-  // The quoted span must occur in the utterance *and* overlap the roster name (either contains the other).
+  // The quoted span must occur in the utterance *and* overlap exactly one roster name (either contains the other).
   const roster = () => [
     {name: 'Project', last_used_at: 1, last_session_title: null, running: []},
     {name: 'blog', last_used_at: 0, last_session_title: null, running: []},
@@ -284,13 +291,38 @@ test('coordinator: work on the active project resolves without evidence; a non-a
     ['博客', '博客', '改一下博客的暗色模式'],
     ['pricing-page', 'pricing', '改 pricing 的按钮'],
   ] as const) {
-    const quoted = harness({roster, models: {assess: input => Promise.resolve(assessment(input, {project, project_evidence: evidence, session: 'new'}))}})
+    const quoted = harness({
+      roster, models: {assess: input => Promise.resolve(assessment(input, {project, project_evidence: evidence, session: 'new'}))},
+      resolveTarget: () => Promise.resolve({...target, workspace_display_name: project}),
+    })
     quoted.intake.open(request, utterance, 'u1', 'e')
     await quoted.intake.settled()
     assert.deepEqual(quoted.decisions, [{kind: 'work', project, session: 'new'}], `${project} quoted as ${evidence}`)
     assert.equal(quoted.intake.view?.kind, 'work')
+    // Work in another project is an implied switch: planned, then confirmed like create (decision 2026-09-04).
+    assert.equal(quoted.intake.view?.state, 'readback')
+    assert.equal(quoted.confirmation.view.pending_action, 'reuse_workspace')
+    assert.match(quoted.facts.at(-1)!, new RegExp(`计划（项目 ${project}）.*id=proposal-\\d+；仅通过 confirm\\(id, accepted\\) 回答`))
+    assert.equal(quoted.dispatched.length, 0)
+    confirmProposal(quoted)
     assert.equal(quoted.intake.view?.outcome, 'dispatched')
+    assert.equal(quoted.intake.view?.delegate_id, 'd-confirmed')
   }
+
+  // A shared prefix names two projects: `pricing` vouches for neither, and the intake asks instead.
+  const twoPricing = () => [...roster(), {name: 'pricing-svc', last_used_at: 0, last_session_title: null, running: []}]
+  for (const project of ['pricing-page', 'pricing-svc']) {
+    const shared = harness({roster: twoPricing, models: {assess: input => Promise.resolve(assessment(input, {project, project_evidence: 'pricing'}))}})
+    shared.intake.open(request, '改 pricing 的按钮', 'u1', 'e')
+    await shared.intake.settled()
+    assert.deepEqual(shared.decisions, [], project)
+    assert.equal(shared.intake.view?.kind, 'unclear', project)
+    assert.ok(shared.facts.some(text => text.includes(`是在 ${project} 里做吗`)), project)
+  }
+  const verbatim = harness({roster: twoPricing, models: {assess: input => Promise.resolve(assessment(input, {project: 'pricing-page', project_evidence: 'pricing-page'}))}})
+  verbatim.intake.open(request, '改 pricing-page 的按钮', 'u1', 'e')
+  await verbatim.intake.settled()
+  assert.deepEqual(verbatim.decisions, [{kind: 'work', project: 'pricing-page', session: 'latest'}])
 
   // Missing, not in the utterance, or a filler ("改") that is in the utterance but does not name the project.
   for (const evidence of [null, '博客', '改']) {
@@ -339,6 +371,10 @@ test('coordinator: unclear asks the model question; a resolution error routes wi
   })
   unknown.intake.open(request, '在 blgo 里修测试', 'u1', 'e')
   await unknown.intake.settled()
+  // A name outside the roster never passes the evidence check; the affirmed host question is the one way in.
+  assert.equal(unknown.intake.view?.kind, 'unclear')
+  unknown.intake.userTurn('对', 'u2', 'e')
+  await unknown.intake.settled()
   assert.equal(unknown.intake.view?.outcome, 'routed')
   assert.ok(unknown.records.includes('intake.resolution_error'))
   assert.match(unknown.facts.at(-1)!, /^code=unknown_project：没有叫“blgo”的项目，相近的有：blog。/)
@@ -380,16 +416,50 @@ test('coordinator: create always confirms — with a goal it plans first, bare c
   assert.ok(unnamed.facts.some(text => text.includes('新项目叫什么名字？')))
 })
 
-test('coordinator: switch, steer and cancel route straight to the adapter without a plan cycle', async () => {
-  const switched = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'switch', project: 'blog', project_evidence: 'blog'}))}})
+const selectTarget: IntakeTarget = {...target, action: 'select', workspace_display_name: 'blog', session_title: null}
+const switchModels = {assess: (input: Readonly<Record<string, unknown>>) => Promise.resolve(assessment(input, {kind: 'switch', project: 'blog', project_evidence: 'blog'}))}
+
+test('coordinator: switch proposes without a plan cycle and activates only through the confirmed commit', async () => {
+  // Decision 2026-09-04: any change of the active project is confirmed by the user before any side effect.
+  const switched = harness({models: switchModels, resolveTarget: () => Promise.resolve(selectTarget)})
   switched.intake.open(request, '切到 blog', 'u1', 'e')
   await switched.intake.settled()
   assert.deepEqual(switched.decisions, [{kind: 'switch', project: 'blog', session: 'latest'}])
-  assert.deepEqual(switched.activated, [target], 'the switch is committed through the port after the staleness re-check')
-  assert.equal(switched.intake.view?.outcome, 'routed')
-  assert.match(switched.facts.at(-1)!, /^code=switched：已切换到项目“Project”，没有开始任务。$/)
   assert.equal(switched.planned(), 0)
+  assert.equal(switched.intake.view?.state, 'readback')
+  assert.equal(switched.intake.view?.work_order, null)
+  assert.equal(switched.confirmation.view.pending_action, 'select_workspace')
+  assert.match(switched.facts.at(-1)!, /^准备切换到工作区blog，请确认或取消。 切换到项目“blog”，不派任务。id=proposal-\d+；仅通过 confirm\(id, accepted\) 回答/)
+  assert.ok(!switched.facts.some(text => text.startsWith('code=switched')))
 
+  // A user turn while the commit runs in `committing` is ignored: no revision bump, no re-assess (P1 race).
+  const operation = switched.confirmation.acceptDirectDecision({proposalId: switched.intake.view.proposal_id!, confirmed: true}).operation!
+  assert.equal(operation.action, 'select')
+  assert.equal(operation.work_order, null)
+  assert.equal(switched.intake.beginConfirmed(operation), true)
+  switched.intake.userTurn('等等，改成 pricing', 'u2', 'e')
+  assert.equal(switched.intake.open(request, '再来一个', 'u3', 'e'), 'intake_in_progress')
+  await switched.intake.settled()
+  assert.equal(switched.intake.view?.state, 'committing')
+  assert.equal(switched.intake.view?.revision, 1)
+  assert.equal(switched.decisions.length, 1, 'no re-assess during the commit')
+  switched.intake.settleConfirmed({accepted: true})
+  assert.equal(switched.intake.view?.outcome, 'dispatched')
+  assert.equal(switched.dispatched.length, 0, 'a switch has no work order to dispatch')
+
+  // Declining cancels the intake and leaves nothing to commit.
+  const declined = harness({models: switchModels, resolveTarget: () => Promise.resolve(selectTarget)})
+  declined.intake.open(request, '切到 blog', 'u1', 'e')
+  await declined.intake.settled()
+  const proposalId = declined.intake.view!.proposal_id!
+  assert.equal(declined.confirmation.acceptDirectDecision({proposalId, confirmed: false}).kind, 'cancelled')
+  declined.intake.decline(proposalId)
+  assert.equal(declined.intake.view?.outcome, 'cancelled')
+  assert.equal(declined.confirmation.pending, false)
+  assert.equal(declined.dispatched.length, 0)
+})
+
+test('coordinator: steer and cancel route straight to the adapter without a plan cycle', async () => {
   const steered = harness({models: {assess: input => Promise.resolve(assessment(input, {kind: 'steer', project: 'blog', project_evidence: 'blog'}))}})
   steered.intake.open(request, 'blog 那个顺便把字体也调大', 'u1', 'e')
   await steered.intake.settled()
@@ -409,7 +479,7 @@ test('coordinator: switch, steer and cancel route straight to the adapter withou
 })
 
 test('coordinator: a revision bump during switch resolution or cancel resolution commits nothing stale', async () => {
-  // Switch: resolve is side-effect-free; the port commits only if the snapshot is still current.
+  // Switch: resolve is side-effect-free; a stale resolution proposes nothing.
   let releaseTarget!: (value: IntakeTarget) => void
   let enteredResolve!: () => void
   const resolving = new Promise<void>(resolve => { enteredResolve = resolve })
@@ -423,10 +493,10 @@ test('coordinator: a revision bump during switch resolution or cancel resolution
   switched.intake.open(request, '切到 blog', 'u1', 'e')
   await resolving
   switched.intake.userTurn('等等，别切', 'u2', 'e')
-  releaseTarget(target)
+  releaseTarget(selectTarget)
   await switched.intake.settled()
-  assert.deepEqual(switched.activated, [], 'a stale switch never reaches activateProject')
-  assert.ok(!switched.facts.some(text => text.startsWith('code=switched')))
+  assert.equal(switched.confirmation.pending, false, 'a stale switch never reaches the confirmation FSM')
+  assert.ok(!switched.facts.some(text => text.includes('切换到')))
   assert.ok(switched.diagnostics.includes('intake_stale_result'))
 
   // Cancel: the adapter asks `stillWanted` after its own (model) target resolution; a bump answers false.

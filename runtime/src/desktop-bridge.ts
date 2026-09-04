@@ -1073,6 +1073,7 @@ function sameApprovalView(
     && left.kind === right.kind
     && left.operation_summary === right.operation_summary
     && left.expires_at === right.expires_at
+    && (left.held ?? false) === (right.held ?? false)
     && JSON.stringify(left.allowed_decisions) === JSON.stringify(right.allowed_decisions)
     && JSON.stringify(left.local_detail) === JSON.stringify(right.local_detail)
 }

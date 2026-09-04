@@ -113,6 +113,35 @@ test('concurrency, invalidation, signal loss, and expiry all settle fail-closed'
   assert.equal(approval.pending, false)
 })
 
+test('a held head outlives its TTL, still takes a click, and release re-arms a full TTL', async () => {
+  const clock = new VirtualClock(5)
+  const views: CodexApprovalView[] = []
+  const approval = controller(clock, views)
+  const first = offerCommand(approval)
+  assert.equal(approval.hold(), true)
+  assert.equal(approval.hold(), false, 'idempotent')
+  assert.equal(approval.view.held, true)
+  clock.advanceTo(clock.now() + CODEX_APPROVAL_TTL_SECONDS + 30)
+  await Promise.resolve()
+  assert.equal(approval.pending, true, 'no expiry while held')
+  assert.equal(approval.release(), true)
+  assert.equal(approval.release(), false)
+  assert.equal(approval.view.held, undefined)
+  assert.equal(approval.view.expires_at, clock.now() + CODEX_APPROVAL_TTL_SECONDS)
+  clock.advanceTo(clock.now() + CODEX_APPROVAL_TTL_SECONDS)
+  await Promise.resolve()
+  assert.equal(approval.consume((await first)!), 'decline', 'expires normally once released')
+
+  // A renderer click is an explicit decision and works while held, even past the stale deadline.
+  const second = offerCommand(approval)
+  approval.hold()
+  clock.advanceTo(clock.now() + CODEX_APPROVAL_TTL_SECONDS + 1)
+  assert.equal(approval.acceptDecision({approvalId: 'nova-approval-2', decision: 'accept'}), true)
+  assert.equal(approval.consume((await second)!), 'accept')
+  assert.equal(approval.hold(), false, 'nothing to hold')
+  assert.equal(approval.release(), false)
+})
+
 test('file display data is snapshotted and observer failures cannot strand authority', async () => {
   const approval = new CodexApprovalController({
     clock: new VirtualClock(),

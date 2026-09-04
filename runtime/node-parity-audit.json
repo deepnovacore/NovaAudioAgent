@@ -979,7 +979,7 @@
       "snippet": "(project ?? '').toLowerCase()",
       "snippet_sha256": "b68e3b886ddbd3e244b19cea66c11c3d61af4091c0f362f1cf971483a88191f5",
       "disposition": "host_only_unicode",
-      "behavior": "resolveIntakeTarget refuses busy and full deterministically while switch still activates",
+      "behavior": "resolveIntakeTarget refuses busy and full deterministically while a confirmed switch still activates",
       "test": "runtime/test/codex-project-concurrency.test.ts"
     },
     {
@@ -990,7 +990,7 @@
       "snippet": "name.toLowerCase()",
       "snippet_sha256": "02fc169e48f5b0780c4ad0ad0ffc3cd6c899749f53a02ae88b4edaf2e9ab18f1",
       "disposition": "host_only_unicode",
-      "behavior": "resolveIntakeTarget refuses busy and full deterministically while switch still activates",
+      "behavior": "resolveIntakeTarget refuses busy and full deterministically while a confirmed switch still activates",
       "test": "runtime/test/codex-project-concurrency.test.ts"
     },
     {
@@ -1001,7 +1001,7 @@
       "snippet": "name.toLowerCase()",
       "snippet_sha256": "02fc169e48f5b0780c4ad0ad0ffc3cd6c899749f53a02ae88b4edaf2e9ab18f1",
       "disposition": "host_only_unicode",
-      "behavior": "resolveIntakeTarget refuses busy and full deterministically while switch still activates",
+      "behavior": "resolveIntakeTarget refuses busy and full deterministically while a confirmed switch still activates",
       "test": "runtime/test/codex-project-concurrency.test.ts"
     },
     {

@@ -820,8 +820,9 @@ async function handleControl(message) {
     const pendingWorkspace = message.pending_workspace_display_name
     const pendingSession = message.pending_session_title
     const pendingExpires = message.pending_expires_in_seconds
-    // Spec 08: only an irreversible create carries a pill action; the roster is accepted but not rendered here.
-    const validAction = pendingAction === null || pendingAction === 'create_workspace'
+    // Every project proposal carries a pill action (decision 2026-09-04); the roster is accepted but not rendered here.
+    const validAction = pendingAction === null
+      || ['create_workspace', 'reuse_workspace', 'select_workspace', 'resume_session'].includes(pendingAction)
     const pendingMetadata = pendingAction !== null
       || pendingWorkspace !== null
       || pendingSession !== null
@@ -868,8 +869,8 @@ async function handleControl(message) {
     if (valid) {
       axes.workspace = workspace || ''
       axes.session = session || ''
-      // A voice-only proposal (switch / plan readback) is pending without a pill.
-      const pillPending = message.pending_confirmation && pendingAction === 'create_workspace'
+      // A proposal without an action (bare store view) is pending without a pill.
+      const pillPending = message.pending_confirmation && pendingAction !== null
       latestProjectConfirmation = pillPending
         ? {
             kind: 'project',

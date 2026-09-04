@@ -19,6 +19,8 @@ import {
 import {codePointLengthLikePython} from './python-text.js'
 
 export type ProjectAction = 'create' | 'reuse' | 'select' | 'resume'
+/** The desktop pill's name for each action; every project proposal surfaces a pill (decision 2026-09-04). */
+export type PublicProjectAction = 'create_workspace' | 'reuse_workspace' | 'select_workspace' | 'resume_session'
 export type ConfirmationKind = 'confirmed' | 'cancelled' | 'invalid' | 'expired' | 'ignored'
 export const PROJECT_CONFIRMATION_TTL_SECONDS = 360
 
@@ -59,8 +61,7 @@ export interface ProjectConfirmationView {
   readonly pending_confirmation_id?: string
   readonly workspace_display_name: string | null
   readonly session_title: string | null
-  /** Only an irreversible create surfaces a desktop pill (spec 08); other proposals confirm by voice alone. */
-  readonly pending_action?: 'create_workspace' | null
+  readonly pending_action?: PublicProjectAction | null
   readonly pending_workspace_display_name?: string | null
   readonly pending_session_title?: string | null
   readonly pending_expires_in_seconds?: number | null
@@ -508,8 +509,11 @@ export class ProjectConfirmationController {
   }
 }
 
-function publicProjectAction(action: ProjectAction): 'create_workspace' | null {
-  return action === 'create' ? 'create_workspace' : null
+function publicProjectAction(action: ProjectAction): PublicProjectAction {
+  if (action === 'create') return 'create_workspace'
+  if (action === 'reuse') return 'reuse_workspace'
+  if (action === 'select') return 'select_workspace'
+  return 'resume_session'
 }
 
 function reservationKey(epoch: number, itemId: string): string {

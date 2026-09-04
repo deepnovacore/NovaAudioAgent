@@ -16,6 +16,7 @@ import {
   CodexApprovalController,
   routeCodexApprovalServerRequest,
 } from '../src/executors/codex/approval.js'
+import {MAX_CONCURRENT_WORK} from '../src/work-tools.js'
 
 function fixture(t: TestContext) {
   const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'nova-codex-approval-route-')))
@@ -463,16 +464,28 @@ test('approval FIFO: the head is the only voice-visible entry, queued TTLs start
   })
   const alpha = controller.forWork({work_id: 'work-a', project: 'alpha', title: '修复登录'})
   const beta = controller.forWork({work_id: 'work-b', project: 'beta', title: '写文档'})
+  const gamma = controller.forWork({work_id: 'work-g', project: 'gamma', title: '加测试'})
   const views: {readonly id: string | undefined; readonly queued: number}[] = []
   controller.observe(view => { views.push({id: view.pending_approval_id, queued: view.queued}) })
 
   const first = alpha.offer(offer('a1'), new AbortController().signal)
   const second = beta.offer(offer('b1'), new AbortController().signal)
-  const third = alpha.offer(offer('a2'), new AbortController().signal)
+  const third = gamma.offer(offer('g1'), new AbortController().signal)
   assert.equal(controller.view.pending_approval_id, 'public-1')
   assert.deepEqual(controller.view.work, {work_id: 'work-a', project: 'alpha', title: '修复登录'})
   assert.equal(controller.view.queued, 2)
   assert.equal(controller.view.expires_at, 100 + 60)
+
+  // Bounds (P2-5): one pending entry per work, and MAX_CONCURRENT_WORK entries in all. Either excess offer
+  // is declined at once without touching the FIFO or publishing a view.
+  assert.equal(MAX_CONCURRENT_WORK, 3)
+  const published = views.length
+  assert.deepEqual(await alpha.offer(offer('a2'), new AbortController().signal), {decision: 'decline'}, 'a second request from a blocked work')
+  const delta = controller.forWork({work_id: 'work-d', project: 'delta', title: '重构'})
+  assert.deepEqual(await delta.offer(offer('d1'), new AbortController().signal), {decision: 'decline'}, 'over the cap')
+  assert.equal(views.length, published)
+  assert.equal(controller.view.queued, 2)
+  assert.equal(nextId, 3, 'declined offers consume no public id')
 
   // Decisions bind to the head id only; queued ids are not voice-visible.
   assert.equal(controller.acceptDecision({approvalId: 'public-2', decision: 'accept'}), false)
@@ -498,7 +511,7 @@ test('approval FIFO: the head is the only voice-visible entry, queued TTLs start
   assert.equal(controller.pending, true, 'the promoted entry did not age while queued')
 
   // A work-scoped invalidation of the head promotes nothing further and declines it.
-  assert.equal(alpha.invalidate('closed'), true)
+  assert.equal(gamma.invalidate('closed'), true)
   assert.deepEqual(await third, {decision: 'decline'})
   assert.equal(controller.view.pending_approval, false)
   assert.equal(controller.view.queued, 0)

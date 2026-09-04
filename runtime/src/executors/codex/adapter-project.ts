@@ -180,7 +180,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   /**
    * Deterministic coordinator sink (spec 08): exact roster-name match, `work` refuses busy/capacity.
    * Resolve only — no directory, session, proposal, dispatch, or active-project change; a `switch`
-   * is committed by `activateProject` after the intake re-checks it is still wanted.
+   * resolves to `select` and, like every other change of the active project, is committed only by
+   * `commitConfirmed` after the user confirmed it.
    */
   async resolveIntakeTarget(decision: CoordinatorDecision): Promise<IntakeTarget> {
     if (decision.kind === 'create') {
@@ -204,19 +205,13 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       }
     }
     await this.#store.revalidateWorkspace(workspace.workspace_id)
-    const session = decision.session === 'latest' ? await this.#latestReadySession(workspace) : null
+    const session = decision.kind === 'work' && decision.session === 'latest' ? await this.#latestReadySession(workspace) : null
     return {
-      workspace: workspace.canonical_path, action: session === null ? 'reuse' : 'resume',
+      workspace: workspace.canonical_path,
+      action: decision.kind === 'switch' ? 'select' : session === null ? 'reuse' : 'resume',
       workspace_display_name: workspace.display_name, workspace_id: workspace.workspace_id,
       session_title: session?.display_title ?? null, session_id: session?.session_id ?? null,
     }
-  }
-
-  /** Commit a resolved `switch`: make the project active and publish the context (spec 08, reversible, no proposal). */
-  async activateProject(target: IntakeTarget): Promise<void> {
-    if (target.workspace_id === null) throw new TypeError('activateProject needs a resolved workspace')
-    await this.#store.selectWorkspaceExact(target.workspace_display_name, target.workspace_id)
-    await this.#refreshProjectContextBarrier()
   }
 
   roster(): readonly RosterEntry[] {

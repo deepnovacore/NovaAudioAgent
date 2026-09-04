@@ -81,10 +81,7 @@ export type ArkCascadedFactory = (input: {
 }) => CascadedLlmFactory
 
 export interface BuildCascadedRealtimeAssemblyOptions
-  extends Omit<
-    AssemblyOptions,
-    'gateway' | 'includeMemoryRecall' | 'realtimeFrontbrain'
-  >, Omit<
+  extends Omit<AssemblyOptions, 'gateway'>, Omit<
     RealtimeAssemblyOptions,
     | 'core'
     | 'provider'
@@ -268,11 +265,8 @@ export function buildCascadedRealtimeAssembly(
     clock,
     ids,
     gateway: support.gateway,
-    realtimeFrontbrain: true,
-    ...(options.sink === undefined ? {} : {sink: options.sink}),
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
-    ...(options.media === undefined ? {} : {media: options.media}),
     ...((options.executors === undefined && options.codexResource === undefined)
       ? {}
       : {executors: [

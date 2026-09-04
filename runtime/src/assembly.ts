@@ -2,13 +2,11 @@
  * Production assembly: settings in, a serving runtime out.
  *
  * This is the piece Stage 1 acceptance was missing. Everything below it was already
- * ported and tested in isolation; this wires the model gateway, the three model ports,
+ * ported and tested in isolation; this wires the model gateway, the support model ports,
  * the executor adapters, and `CausalRuntime` into one object a desktop entry can serve.
  *
- * The FastBrain port is deliberately NOT a plain completion. It streams, and it opens the
- * Floor at its first non-empty text chunk through `CoreRuntime.openFloor`, which is where
- * the oracle arbitrates. Folding the stream first and deciding at completion would consult
- * a Floor that has already moved on -- see `calls.ts` and the runtime's Floor tests.
+ * The `fast` slot is deliberately left unwired: v0.2 has no text front brain, and the
+ * realtime owner supplies that port along with its own Floor arbitration.
  */
 
 import {
@@ -19,19 +17,9 @@ import {
 import { RealClock, type Clock } from './clock.js'
 import { resolveProactivity, type Settings } from './config.js'
 import { MonotonicIdFactory, type IdFactory } from './ids.js'
-import {
-  GatewayCompressor,
-  GatewayFastBrain,
-  GatewaySurrogate,
-  type MediaSelector,
-} from './model-adapters.js'
+import { GatewayCompressor, GatewaySurrogate } from './model-adapters.js'
 import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model-gateway.js'
-import {
-  classifySurrogateVerdict,
-  runFastBrainCall,
-  runSurrogateCall,
-  type SpeechSink,
-} from './calls.js'
+import { classifySurrogateVerdict, runSurrogateCall } from './calls.js'
 import { CamAdapter } from './executors/camera.js'
 import { DisabledFrameSource } from './executors/frame-source.js'
 import {
@@ -62,20 +50,12 @@ export class AssemblyError extends Error {
   }
 }
 
-/** A sink that drops speech, used when no output device is attached yet. */
-export const NULL_SPEECH_SINK: SpeechSink = {
-  emit: () => undefined,
-  end: () => undefined,
-}
-
 export interface AssemblyOptions {
   readonly settings: Settings
   readonly clock?: Clock
   readonly ids?: IdFactory
-  readonly sink?: SpeechSink
   readonly gateway?: ModelGateway
   readonly metrics?: MetricsSink
-  readonly media?: MediaSelector
   /** Extra adapters beyond the simulators, keyed by the manifest name they serve. */
   readonly executors?: readonly ExecutorAdapter[]
   /** Test/host seam below SearchAdapter; production constructs TavilyTransport. */
@@ -83,9 +63,6 @@ export interface AssemblyOptions {
   /** Host capture seam; production is disabled until the desktop capture task wires one. */
   readonly frameSource?: FrameSource
   readonly mediaStore?: MediaStore
-  readonly includeMemoryRecall?: boolean
-  /** Qwen/other provider frontbrains own the user turn, so no competing fast text port is built. */
-  readonly realtimeFrontbrain?: boolean
   readonly telemetry?: RealtimeTelemetry
 }
 
@@ -174,14 +151,13 @@ function isAdmissionGatedFrameSource(source: FrameSource): source is AdmissionGa
 /**
  * Build the runtime the desktop entry serves.
  *
- * The three model ports are wired as `ModelPort`s over one gateway. Only the fast slot
- * streams; the surrogate and compressor are single completions, matching the oracle.
+ * The support model ports are wired as `ModelPort`s over one gateway; the surrogate and
+ * compressor are single completions, matching the oracle.
  */
 export function buildAssembly(options: AssemblyOptions): Assembly {
   const {settings} = options
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
-  const sink = options.sink ?? NULL_SPEECH_SINK
 
   // Preserve Python's validation order: the model credential is checked before
   // Tavily when neither production transport is injected.
@@ -244,11 +220,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const configuredExecutors = resolveExecutors(settings, options.executors ?? [])
   const executors = [search, camera, watch, guard, ...configuredExecutors]
   const manifests = executors.map(adapter => adapter.manifest)
-  const tools = compileToolSchema(manifests, {
-    includeMemoryRecall: options.realtimeFrontbrain === true
-      ? true
-      : (options.includeMemoryRecall ?? false),
-  })
+  const tools = compileToolSchema(manifests, {includeMemoryRecall: true})
 
   const surrogate = new GatewaySurrogate({
     gateway,
@@ -258,14 +230,6 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const compressor = new GatewayCompressor({gateway, model: settings.compressor_model})
 
   const proactivity = resolveProactivity(settings)
-  // The model ports need the runtime that owns them, and the runtime needs the ports to be
-  // constructed. One holder breaks the cycle without exposing a half-built runtime.
-  const holder: {runtime?: CausalRuntime} = {}
-  const requireRuntime = (): CausalRuntime => {
-    if (holder.runtime === undefined) throw new AssemblyError('assembly is not built yet')
-    return holder.runtime
-  }
-
   const models: Partial<Record<Slot, ModelPort>> = {
     'surrogate.watch': {
       complete: async (call: ModelCall, signal: AbortSignal) => {
@@ -301,39 +265,8 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
       },
     },
   }
-  if (options.realtimeFrontbrain !== true) {
-    const fastBrain = new GatewayFastBrain({
-      gateway,
-      model: settings.fast_model,
-      tools,
-      ...(options.media === undefined ? {} : {media: options.media}),
-    })
-    models.fast = {
-      complete: async (call: ModelCall, signal: AbortSignal) => {
-        const view = call.context_view
-        if (view === undefined) throw new AssemblyError('fast slot requires a ContextView')
-        const utteranceId = call.utterance_id
-        if (utteranceId === undefined) {
-          throw new AssemblyError('fast slot requires an utterance id')
-        }
-        const core = requireRuntime().core
-        const record = await runFastBrainCall(fastBrain, {
-          view,
-          reason: call.reason,
-          utteranceId,
-          sink,
-          // Arbitration happens here, at the first chunk, not after the fold.
-          openFloor: (utterance, priority) =>
-            core.openFloor(call.job_id, utterance, priority, clock.now()),
-          closeFloor: utterance => { core.closeFloor(utterance, clock.now()) },
-          signal,
-        })
-        return foldFastBrainRecord(record)
-      },
-    }
-  }
 
-  holder.runtime = new CausalRuntime({
+  const runtime = new CausalRuntime({
     clock,
     ids,
     models,
@@ -350,7 +283,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     return pending
   }
   return {
-    runtime: holder.runtime,
+    runtime,
     gateway,
     tools,
     manifests,
@@ -370,35 +303,6 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
         started = false
       })
     },
-  }
-}
-
-/**
- * Fold one streamed FastBrain call into the single output the reducer validates.
- *
- * The speech axis has already been voiced by the time this runs, so the fold only has to
- * describe what happened. A deferred utterance still reports its text, because the
- * suggestion pool needs it, and the action axis is independent of that verdict. The
- * contract failures and the surplus-action count travel with it because the reducer uses
- * each to suppress the action entirely, exactly as `Runtime._consume` does.
- */
-export function foldFastBrainRecord(record: {
-  readonly spoken_text: string
-  readonly speak_act: 'say' | 'ask'
-  readonly action: {readonly act: string}
-  readonly extra_actions: number
-  readonly contract_failures: readonly {readonly code: string, readonly tool_name: string | null}[]
-}): unknown {
-  return {
-    speak: record.spoken_text === ''
-      ? {act: 'none'}
-      : {act: record.speak_act, text: record.spoken_text},
-    action: record.action,
-    // Both of these suppress the action in the reducer, so dropping them here would
-    // dispatch work the oracle refuses -- an unknown tool alongside a valid delegate, or
-    // two conflicting delegates where only the first would survive.
-    contract_failures: record.contract_failures.map(failure => ({...failure})),
-    extra_actions: record.extra_actions,
   }
 }
 

@@ -23,10 +23,7 @@ import { webSocketQwenConnector } from './realtime/qwen-transport.js'
 import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
 
 export interface BuildQwenRealtimeAssemblyOptions
-  extends Omit<
-    AssemblyOptions,
-    'gateway' | 'includeMemoryRecall' | 'realtimeFrontbrain'
-  >, Omit<
+  extends Omit<AssemblyOptions, 'gateway'>, Omit<
     RealtimeAssemblyOptions,
     | 'core'
     | 'provider'
@@ -108,11 +105,8 @@ export function buildQwenRealtimeAssembly(
     clock,
     ids,
     gateway,
-    realtimeFrontbrain: true,
-    ...(options.sink === undefined ? {} : {sink: options.sink}),
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
-    ...(options.media === undefined ? {} : {media: options.media}),
     ...((options.executors === undefined && options.codexResource === undefined)
       ? {}
       : {executors: [

@@ -55,8 +55,8 @@ export interface PublicProjectView {
   readonly pending_confirmation_busy: boolean
   /** Opaque proposal binding exposed only while the confirmation banner is actionable. */
   readonly pending_confirmation_id?: string
-  /** Only an irreversible create surfaces the pill; switching never does. */
-  readonly pending_action?: 'create_workspace' | null
+  /** Every project proposal (create / reuse / select / resume) surfaces the pill (decision 2026-09-04). */
+  readonly pending_action?: 'create_workspace' | 'reuse_workspace' | 'select_workspace' | 'resume_session' | null
   readonly pending_workspace_display_name?: string | null
   readonly pending_session_title?: string | null
   readonly pending_expires_in_seconds?: number | null
@@ -266,7 +266,10 @@ export function projectStateMessage(view: PublicProjectView): string {
       || codePointLengthLikePython(pendingConfirmationId) > 128
     )
   ) throw new DesktopProtocolError('desktop project view is invalid')
-  if (pendingAction !== null && pendingAction !== 'create_workspace') {
+  if (
+    pendingAction !== null
+    && !['create_workspace', 'reuse_workspace', 'select_workspace', 'resume_session'].includes(pendingAction)
+  ) {
     throw new DesktopProtocolError('desktop project view is invalid')
   }
   const roster: NonNullable<PublicProjectView['roster']> = view.roster ?? []
@@ -301,7 +304,6 @@ export function projectStateMessage(view: PublicProjectView): string {
   if (!view.pending_confirmation && (hasPendingMetadata || pendingConfirmationId !== undefined)) {
     throw new DesktopProtocolError('desktop project view is invalid')
   }
-  // A voice-only proposal (plan readback) has metadata but no pill action; only a create carries one.
   if (
     view.pending_confirmation
     && hasPendingMetadata
@@ -377,7 +379,9 @@ export function executorApprovalMessage(view: ExecutorApprovalView, now: number,
   if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length === 0 || allowed.length > 3
     || allowed.some((value: unknown) => typeof value !== 'string' || !['accept', 'acceptForSession', 'decline'].includes(value))
     || !allowed.includes('decline'))) throw new DesktopProtocolError('desktop executor approval view is invalid')
-  const expiresInSeconds = Math.min(
+  // A held head (parked behind a project confirmation) has no running countdown: the pill shows none
+  // rather than a number that never reaches zero.
+  const expiresInSeconds = view.held === true ? null : Math.min(
     APPROVAL_TTL_SECONDS,
     Math.max(0, view.expires_at - now),
   )

@@ -164,6 +164,14 @@ export const executorManifestSchema = z.object({
   ([08](08-project-and-work.md)). Executors without `agent` (`cam`, `search`,
   `watcher`, `memory`) keep their direct tools. `agent` is orthogonal to
   `roles`: `roles` decides host routing, `agent` decides model visibility.
+- **v0.2 agent contract** = `agent.summary` + a `run` op whose `params`
+  declare a required string `work_order`. The host rewrites a non-coordinated
+  `dispatch(executor, instruction)` into `${executor}__run({work_order})`, so
+  `tool-schema.ts` refuses an agent manifest without that op
+  (`ToolSchemaError('agent manifest … needs run(work_order)')`) instead of
+  assuming every agent is Codex-shaped. `cancel` requires the coding-role
+  `AgentExecutor` port ([08](08-project-and-work.md)); a `cancel` naming any
+  other agent is refused `unsupported_tool` until a cancel contract exists.
 - `approvals: true` tells assembly to attach the host approval surface
   (`host__confirm_approval` tool, `executor.approval` wire, approval FSM). The
   executor exposes its broker through a typed port (below); the FSM never

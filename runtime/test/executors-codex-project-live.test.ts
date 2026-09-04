@@ -27,7 +27,7 @@ import {
   type Fixture,
 } from './fixtures/codex/project-adapter-fixture.js'
 
-/** Host-side proposal + spoken confirmation, as `realtime-assembly` performs them (spec 08: only `create` asks). */
+/** Host-side proposal + spoken confirmation, as `realtime-assembly` performs them (every active-project change asks). */
 function confirmed(
   value: Fixture,
   input: Omit<Parameters<Fixture['confirmation']['prepare']>[0], 'origin_ref'> & {readonly origin_ref?: string},
@@ -998,13 +998,21 @@ test('intake target resolution is canonical and side-effect free for work, creat
       (error: unknown) => error instanceof ProjectResolutionError && error.code === 'unknown_project'
         && error.detail.hint === 'create' && JSON.stringify(error.detail.suggestions) === '["alpha"]',
     )
-    // `switch` resolves without side effects; `activateProject` then activates the named project, unconfirmed.
+    // `switch` resolves to `select` without side effects; like every change of the active project it is
+    // activated only by the user-confirmed commit (decision 2026-09-04).
     const beta = await value.store.createManaged('beta')
     assert.equal((await value.store.resolveWorkspace(null)).workspace_id, beta.workspace_id)
     const switched = await value.adapter.resolveIntakeTarget({kind: 'switch', project: 'alpha', session: 'latest'})
-    assert.equal(switched.action, 'resume')
+    assert.deepEqual(switched, {
+      action: 'select', workspace: workspace.canonical_path, workspace_display_name: 'alpha',
+      workspace_id: workspace.workspace_id, session_title: null, session_id: null,
+    })
     assert.equal((await value.store.resolveWorkspace(null)).workspace_id, beta.workspace_id)
-    await value.adapter.activateProject(switched)
+    const {workspace: switchedPath, ...proposal} = switched
+    void switchedPath
+    const operation = confirmed(value, {...proposal, work_order: null})
+    assert.equal((await value.store.resolveWorkspace(null)).workspace_id, beta.workspace_id, 'confirming alone activates nothing')
+    assert.equal((await value.adapter.commitConfirmed(operation, () => { throw new Error('a switch dispatches no work') })).code, 'committed')
     assert.equal((await value.store.resolveWorkspace(null)).workspace_id, workspace.workspace_id)
     assert.equal(value.adapter.publicProjectView(false).workspace_display_name, 'alpha')
   } finally {

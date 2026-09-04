@@ -201,13 +201,20 @@ test('agent executors fold into the three host tools while keeping their delegat
     channel: 'codex', priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8,
   })
   const statusOp = {name: 'status', description: 'status', params: {type: 'object', properties: {}}, readonly: true}
+  const runOp = {name: 'run', description: 'run', params: {type: 'object', properties: {work_order: {type: 'string'}}, required: ['work_order']}}
   const agent = executorManifestSchema.parse({
-    name: 'codex', display_name: 'Codex', policy, agent: {summary: '写代码、改项目'},
-    ops: [
-      {name: 'run', description: 'run', params: {type: 'object', properties: {work_order: {type: 'string'}}}},
-      statusOp,
-    ],
+    name: 'codex', display_name: 'Codex', policy, agent: {summary: '写代码、改项目'}, ops: [runOp, statusOp],
   })
+  // The v0.2 agent contract (spec 07): `dispatch` is rewritten into `run(work_order)`, so an agent
+  // manifest must declare that op with a required string `work_order`; anything less is refused.
+  for (const ops of [
+    [statusOp],
+    [{...runOp, params: {type: 'object', properties: {}}}, statusOp],
+    [{...runOp, params: {type: 'object', properties: {work_order: {type: 'string'}}}}, statusOp],
+    [{...runOp, params: {type: 'object', properties: {work_order: {type: 'number'}}, required: ['work_order']}}, statusOp],
+  ]) {
+    assert.throws(() => compileToolSchema([executorManifestSchema.parse({...agent, ops})]), /needs run\(work_order\)/u, JSON.stringify(ops))
+  }
   const plain = executorManifestSchema.parse({
     name: 'sim', display_name: 'Sim', policy: handoffPolicySchema.parse({...policy, channel: 'sim'}),
     ops: [{...statusOp, name: 'peek'}],

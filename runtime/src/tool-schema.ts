@@ -151,7 +151,18 @@ export function compileToolSchema(
     // Agent executors (spec 08) are host-routed: the model never sees `${name}__${op}` schemas, but the
     // bindings stay so the service can rewrite `dispatch(executor, …)` into the executor's own `run`.
     const agent = manifest.agent !== undefined
-    if (agent) agents.push({name: manifest.name, summary: manifest.agent!.summary})
+    if (agent) {
+      // The v0.2 agent contract (spec 07 §manifest): that rewrite targets `run({work_order})`, so the
+      // manifest must promise exactly that op rather than the host assuming every agent is Codex-shaped.
+      const run = manifest.ops.find(op => op.name === 'run')
+      const properties = run === undefined ? undefined : run.params.properties
+      const workOrder = isJsonObject(properties) ? properties.work_order : undefined
+      if (!isJsonObject(workOrder) || workOrder.type !== 'string'
+        || !Array.isArray(run!.params.required) || !run!.params.required.includes('work_order')) {
+        throw new ToolSchemaError(`agent manifest '${manifest.name}' needs run(work_order)`)
+      }
+      agents.push({name: manifest.name, summary: manifest.agent!.summary})
+    }
     for (const op of manifest.ops) {
       const compiled = compileOp(manifest, op)
       if (bindings.has(compiled.wireName)) {

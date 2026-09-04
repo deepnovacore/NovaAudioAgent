@@ -43,8 +43,12 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
     verified against the raw utterance, otherwise `unclear`; non-roster names
     are never mapped (`unclear` or explicit `create`); `create` with a goal
     runs clarify → plan → proposal `{action:'create', work_order}`; create-only
-    proposes `work_order: null`; `switch` / `steer` / `cancel` route straight
-    to the adapter and close the intake as `routed`.
+    proposes `work_order: null`. **Any change of the active project confirms**
+    (decision 2026-09-04): `switch` proposes `{action:'select', work_order:
+    null}` and `work` on a non-active project proposes `select` + `work_order`,
+    both through the project-confirmation FSM; only same-project `work`,
+    `steer` and `cancel` route straight to the adapter and close the intake as
+    `routed`.
   - [x] `AgentExecutor` port on `coding-executor.ts` (`roster`, `running`,
     `cancel`, `resolveIntakeTarget(decision)`); deterministic resolver in the
     Codex project adapter (exact roster-name match; `unknown_project` + ≤3
@@ -59,20 +63,32 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
   - [x] Approval FIFO in the Codex approval controller: one voice-visible
     approval at a time, queued items start their TTL when they become head,
     invalidation is scoped per work; `ApprovalView` carries `work` (project +
-    session title) and `queued`.
+    session title), `queued` and `held`. Bounded: total pending ≤
+    `MAX_CONCURRENT_WORK`, one pending per `work_id`, overflow declines
+    immediately. `hold()` / `release()` pause the head's TTL while a project
+    confirmation hides it (`expires_in_seconds: null` on the wire).
   - [x] Internal Codex contract collapsed to `run / steer / status / cancel`;
     the six `project` actions and two `confirm_*` ops are gone from the
     model-facing manifest.
   - [x] Desktop `project.state` gains `roster[{name, last_used_at,
-    running[{work_id, title}]}]`; `pending_action` is only `create_workspace`
-    and the renderer pill shows only for create. The renderer validates and
-    forwards `roster` but does not draw it yet.
+    running[{work_id, title}]}]`; `pending_action` is `create_workspace |
+    select_workspace | reuse_workspace | resume_session` with a distinct pill
+    per action. The renderer validates and forwards `roster` but does not draw
+    it yet.
+  - [x] Agent manifest contract checked at compile time (`tool-schema.ts`): an
+    `agent.summary` executor must declare `run` with a required string
+    `work_order`, else `ToolSchemaError`. `cancel` needs the coding-role
+    `AgentExecutor`; other agents answer `unsupported_tool` (spec 07 §manifest).
   - [ ] Live acceptance (below). Exercised 2026-09-04: coordinator `assess` +
-    `resolveCancelTarget` on DashScope `qwen-flash` (10/10), real Codex 0.152.0
-    `thread/name/set` round-trip, `cancelled` handoff with one `turn/interrupt`.
+    `resolveCancelTarget` on DashScope `qwen-flash` (dev set 10/10 after
+    tuning; frozen holdout 7–9/10 over five runs, threshold ≥7), real Codex
+    0.152.0 `thread/name/set` round-trip, `cancelled` handoff with one
+    `turn/interrupt`.
     Not yet exercised: parallel Codex children per workspace, approval queueing
     against a real app-server, and DashScope calling `dispatch` / `cancel` /
     `confirm` from the rewritten instructions (needs a voice session).
+  - [x] Text front brain (GatewayFastBrain) removed 2026-09-04: v0.2 coding
+    capability is realtime-only.
 - [ ] Live acceptance for 08 recorded below with DashScope + Codex 0.152.0
   evidence (transcript, tool calls, `thread/list`). Partial as of 2026-09-04:
   coordinator eval and adapter-level Codex smoke recorded; voice transcript,
@@ -89,8 +105,9 @@ The 08 implementation (`172fa28`) had one independent review (GPT 5.6-sol;
 Grok was rate-limited). Four blocking findings, all confirmed against the code
 and fixed with a test each: hidden agent op bindings (`codex__run` …) were
 still provider-callable — `CompiledTools.hidden` now refuses them as
-`unknown_tool` at both provider entry points while the `dispatch` rewrite
-still passes; `cancel` lacked the user-origin gate `dispatch` has; `switch`
+`unknown_tool` at the provider entry point (the realtime service; the text
+front brain's second entry point was deleted the same day) while the
+`dispatch` rewrite still passes; `cancel` lacked the user-origin gate `dispatch` has; `switch`
 activated the project and `cancel` aborted the slot before the intake
 revision re-check (`resolveIntakeTarget` is now pure, `activateProject` and
 `stillWanted` commit after the check); a project confirmation overlapping an
@@ -103,12 +120,34 @@ matching nothing is `unknown_confirmation`; the desktop approval wire carries
 `work {work_id, project, title}`. Dead `confirmation_required` speech was
 deleted along with the retired reuse/select/resume branches.
 
-## Validation (2026-09-04, 08 deterministic, after review fixes)
+A second review (colleague, 2026-09-04 morning, against `f88989c`) found three
+P1 and three P2, all confirmed. P1: the `switch` commit window still raced a
+user correction between the revision re-check and `activateProject`; the
+explicit `cancel` tool path did not pass `stillWanted`; `evidenceOccurs` used
+bidirectional `includes`, so `pricing` "verified" against both `pricing-page`
+and `pricing-svc`. P2: a Codex approval parked behind a project confirmation
+kept its 60 s timer and auto-declined; the approval queue had no bound; the
+agent contract (`run(work_order)`) was an unverified Codex special case; the
+non-realtime text front brain decoded the new host tools as `unknown_tool`.
+Disposition: `switch` and cross-project `work` now go through the
+project-confirmation FSM (product decision: any change of the active project
+confirms), which also closes the race because the commit runs inside the
+blocking `committing` state and `activateProject` is gone; `cancel` carries
+`stillWanted`; evidence must overlap exactly one roster name (the affirmed
+host question `是在 X 里做吗？` is the only bypass); `hold()` / `release()`
+on the approval controller; queue bounded (≤3 total, 1 per work); manifest
+contract validated in `tool-schema.ts`; the text front brain was deleted
+rather than taught the tools. Each item has a test; the previous claim that
+"all 08 blocking items are closed" is withdrawn in `STATUS.zh-CN.md` — the
+known ones are fixed and tested, the voice path and concurrent approvals are
+still unverified live, so 08 stays unchecked.
+
+## Validation (2026-09-04, 08 deterministic, after second-review fixes)
 
 | Check | Evidence |
 |---|---|
 | `npm run check` | Typecheck, lint, env contract, Node parity audit (187 files / 277 reviewed occurrences), executor boundary (15 allowlisted) passed |
-| `npm run test:runtime` | 2070 tests, 2068 passed, 2 platform skips, 0 failures (DashScope key set, so both live evals ran inside the suite) |
+| `npm run test:runtime` | 2054 tests, 2052 passed, 2 platform skips, 0 failures (DashScope key set, so the live evals incl. the holdout ran inside the suite; count dropped from 2070 with the text-front-brain tests) |
 | `npm run test:desktop` | 810 tests, 807 passed, 3 platform skips, 0 failures |
 | `npm run test:cli` | 18 passed |
 
@@ -161,6 +200,24 @@ evidence span picks exactly one roster name → 9/10, the remaining miss being
 `steer` for an idle project whose `last_session_title` matched the topic
 (case 2). Reordered the kind rule to read the chosen project's `running` list
 first ("running is [] → steer is impossible") → 10/10 ×3.
+
+The 10/10 above is the **dev set** the prompt was tuned on, not an independent
+number. A **holdout** of 10 cases was written after the prompt was frozen and
+is not used for tuning (same roster; spoken fillers, ASR spacing `pricing
+page`, an in-utterance correction, prefix collision `pricing`, a status
+question, `session: new` without a project, English `create`). Threshold ≥7/10
+exact `kind`; model-level safety misses are counted as failed cases and
+reported by name rather than asserted, because the host re-checks each of
+them deterministically (`coding-intake.test.ts`) — the eval measures how often
+that second layer is needed. Five runs: **8 / timeout (DashScope latency) / 7
+/ 9 / 7**. Two systematic misses: `博客那个跑完了吗？` comes back as `steer`
+(a question would be injected into the running Codex turn; the voice model
+should answer it from context without a tool call), and `pricing 那边的测试跑一下`
+picks `pricing-page` or `pricing-svc` instead of `unclear`. Twice the model
+fabricated evidence (`重新开个会话，把测试补齐` paired with `博客`); both are
+caught by the host evidence check, which is why evidence verification and
+project confirmation are host logic rather than prompt constraints. Next
+prompt revision targets those two classes and must ship with a fresh holdout.
 
 ### Codex config smoke / diagnose
 

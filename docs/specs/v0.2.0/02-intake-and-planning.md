@@ -302,8 +302,10 @@ takes).
 The management actions that used to bypass intake (`list_workspaces`,
 `list_sessions`, `select_workspace`, `create_workspace` without a work order)
 no longer exist on the voice surface: listing is gone, switching and creating
-are coordinator decisions (`switch` / `create`). Workspace maintenance is a
-desktop surface.
+are coordinator decisions (`switch` / `create`), and every decision that changes
+the active project — `switch`, `create`, or `work` on a non-active project — is
+confirmed by the user through the project-confirmation FSM before any side
+effect (decision 2026-09-04). Workspace maintenance is a desktop surface.
 
 While an intake is open for the same realtime session:
 

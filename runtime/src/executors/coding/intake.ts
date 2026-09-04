@@ -33,7 +33,7 @@ export interface IntakeSession {
   session_id: string
   origin_ref: string
   state: 'open' | 'clarifying' | 'ready_to_plan' | 'planning' | 'readback' | 'committing' | 'closed'
-  /** `routed`: switch / steer / cancel / resolution error went straight to the adapter, no plan cycle. */
+  /** `routed`: steer / cancel / resolution error went straight to the adapter, no plan cycle. */
   outcome: 'dispatched' | 'admission_refused' | 'cancelled' | 'abandoned' | 'routed' | null
   delegate_id: string | null
   request: Readonly<Record<string, JsonValue>>
@@ -63,8 +63,7 @@ export interface IntakeOptions {
   readonly running: () => readonly RunningWork[]
   readonly activeProject: () => string | null
   readonly resolveTarget: (decision: CoordinatorDecision) => Promise<IntakeTarget>
-  /** Commit a resolved `switch`; called only after the intake re-checked the revision is still current. */
-  readonly activateProject: (target: IntakeTarget) => Promise<void>
+  /** Open the project-confirmation proposal for `session.target`; the confirmed commit is the only side effect. */
   readonly prepare: (session: Readonly<IntakeSession>) => ProjectProposal
   readonly dispatch: (session: Readonly<IntakeSession>) => IntakeAdmission
   readonly steer: (session: Readonly<IntakeSession>, project: string | null, instruction: string) => IntakeAdmission
@@ -89,16 +88,17 @@ export function isPurePlanDecision(text: string): boolean {
 }
 
 /**
- * The quoted span must occur in an utterance *and* overlap the selected name (one contains the other), so
- * a filler like "改" cannot vouch for a project. Every utterance counts: binding to the latest turn alone
- * would loop on multi-turn clarifications. Whitespace- and case-insensitive, the same normalisation both sides.
+ * The quoted span must occur in an utterance *and* overlap (one contains the other) exactly one roster
+ * name, which must be the selected one: a filler like "改" vouches for nothing, and a shared prefix like
+ * "pricing" for `pricing-page` / `pricing-svc` vouches for neither. Every utterance counts: binding to
+ * the latest turn alone would loop on multi-turn clarifications. Whitespace- and case-insensitive.
  */
-function evidenceOccurs(evidence: string, project: string, utterances: readonly string[]): boolean {
+function evidenceOccurs(evidence: string, project: string, utterances: readonly string[], roster: readonly string[]): boolean {
   const normalize = (value: string): string => collapsePythonWhitespace(stripLikePython(value)).toLowerCase()
   const span = normalize(evidence)
-  const name = normalize(project)
-  return span !== '' && (span.includes(name) || name.includes(span))
-    && utterances.some(text => normalize(text).includes(span))
+  if (span === '' || !utterances.some(text => normalize(text).includes(span))) return false
+  const named = roster.map(normalize).filter(name => span.includes(name) || name.includes(span))
+  return named.length === 1 && named[0] === normalize(project)
 }
 
 /** Spoken rendering of a resolution error / cancel result: code first, then what the model needs to offer. */
@@ -282,14 +282,15 @@ export class IntakeController {
       const active = this.#options.activeProject()
       const project = result.project ?? (kind === 'create' ? null : active)
       // Wrong-project protection: a non-active selection must be quoted from the utterance, never inferred.
-      // The one host-authored source is our own `是在 X 里做吗？` once the user has just affirmed it (an alias
-      // like 博客→blog never contains the roster name, and a bare 对 cannot; without this the question loops).
+      // The one host-authored exception is our own `是在 X 里做吗？` once the user has just affirmed it (an alias
+      // like 博客→blog never contains the roster name, a bare 对 cannot, and `blog` next to `blog-v2` would
+      // never pass the exactly-one check; without this the question loops).
       const latest = current.turns.at(-1)
-      const affirmedQuestion = latest?.question !== null && latest?.question !== undefined
-        && /^(是|对|嗯|好|可以|是的|对的|没错|yes|ok|okay)[。！!,.，\s]*$/iu.test(latest.answer.trim()) ? [latest.question] : []
-      if (kind !== 'create' && kind !== 'unclear' && project !== null && project !== active
+      const affirmed = latest?.question === `是在 ${project} 里做吗？`
+        && /^(是|对|嗯|好|可以|是的|对的|没错|yes|ok|okay)[。！!,.，\s]*$/iu.test(latest.answer.trim())
+      if (kind !== 'create' && kind !== 'unclear' && project !== null && project !== active && !affirmed
         && !evidenceOccurs(result.project_evidence ?? '', project,
-          [current.opening, ...current.turns.map(turn => turn.answer), ...affirmedQuestion])) {
+          [current.opening, ...current.turns.map(turn => turn.answer)], this.#options.roster().map(entry => entry.name))) {
         this.#options.diagnostic('intake_project_evidence_missing')
         kind = 'unclear'
         question = `是在 ${project} 里做吗？`
@@ -333,24 +334,17 @@ export class IntakeController {
       current.decision = decision
       current.target = target
       current.workspace = target.workspace
-      if (kind === 'switch') {
-        // Resolution had no side effects; the switch itself is committed only now, past the staleness re-check.
-        await this.#options.activateProject(target)
-        current = this.#current(snapshot.intake_id, snapshot.revision)
-        if (current === null) return
-        this.#route(current, `code=switched：已切换到项目“${target.workspace_display_name}”，没有开始任务。`)
-        return
-      }
       // The host computes readiness; a model cannot open the gate by inflating its score.
       const readiness = Object.values(result.slots).filter(value => value.state !== 'missing').length / 4
       current.stop_asking ||= result.early_exit || current.questions_asked >= this.#budget()
         || readiness >= (this.#options.settings.clarification_depth === 'thorough' ? 1 : .75)
-      if (kind === 'create' && current.slots.goal.state === 'missing' && question === null) {
-        // Create-only: no plan cycle, still confirmed (creating a workspace is irreversible).
+      if (kind === 'switch' || (kind === 'create' && current.slots.goal.state === 'missing' && question === null)) {
+        // No plan cycle, still confirmed: every change of the active project is confirmed by the user
+        // before any side effect (decision 2026-09-04), and creating a workspace is irreversible.
         current.plan_revision = current.revision
         current.work_order = null
         current.title = null
-        this.#propose(current, `新建项目“${target.workspace_display_name}”，不派任务`)
+        this.#propose(current, `${kind === 'switch' ? '切换到' : '新建'}项目“${target.workspace_display_name}”，不派任务`)
         return
       }
       if (!current.stop_asking && question !== null) {
@@ -411,8 +405,9 @@ export class IntakeController {
       // A spoken amendment may still be awaiting ASR. Never execute the old plan in that gap.
       if (this.#userInputPending) return
       const project = current.target?.workspace_display_name ?? ''
-      // The readback line always names the project, so even a verified cross-project pick is audible.
-      if (this.#options.settings.plan_readback === 'confirm' || current.target?.action === 'create') {
+      // The readback line always names the project. A plan that changes the active project (create, or
+      // work quoted into another project) is confirmed under every `plan_readback` (decision 2026-09-04).
+      if (this.#options.settings.plan_readback === 'confirm' || project !== this.#options.activeProject()) {
         this.#propose(current, `计划（项目 ${project}）：${limit(order.objective, 200)}`)
         return
       }
