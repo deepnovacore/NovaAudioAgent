@@ -45,10 +45,12 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
     runs clarify → plan → proposal `{action:'create', work_order}`; create-only
     proposes `work_order: null`. **Any change of the active project confirms**
     (decision 2026-09-04): `switch` proposes `{action:'select', work_order:
-    null}` and `work` on a non-active project proposes `select` + `work_order`,
-    both through the project-confirmation FSM; only same-project `work`,
-    `steer` and `cancel` route straight to the adapter and close the intake as
-    `routed`.
+    null}` and `work` on a non-active project proposes `reuse | resume` +
+    `work_order`, both through the project-confirmation FSM; only same-project
+    `work`, `steer` and `cancel` route straight to the adapter and close the
+    intake as `routed`. Every effectful branch first requires
+    `intent_to_proceed`; a status question misclassified as `steer` / `cancel`
+    is therefore refused by the host rather than reaching the adapter.
   - [x] `AgentExecutor` port on `coding-executor.ts` (`roster`, `running`,
     `cancel`, `resolveIntakeTarget(decision)`); deterministic resolver in the
     Codex project adapter (exact roster-name match; `unknown_project` + ≤3
@@ -66,7 +68,8 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
     session title), `queued` and `held`. Bounded: total pending ≤
     `MAX_CONCURRENT_WORK`, one pending per `work_id`, overflow declines
     immediately. `hold()` / `release()` pause the head's TTL while a project
-    confirmation hides it (`expires_in_seconds: null` on the wire).
+    confirmation hides it (`expires_in_seconds: null` on the wire); an
+    already-expired head is dropped rather than revived by `hold()`.
   - [x] Internal Codex contract collapsed to `run / steer / status / cancel`;
     the six `project` actions and two `confirm_*` ops are gone from the
     model-facing manifest.
@@ -77,8 +80,9 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
     it yet.
   - [x] Agent manifest contract checked at compile time (`tool-schema.ts`): an
     `agent.summary` executor must declare `run` with a required string
-    `work_order`, else `ToolSchemaError`. `cancel` needs the coding-role
-    `AgentExecutor`; other agents answer `unsupported_tool` (spec 07 §manifest).
+    `work_order` and no other required parameter, else `ToolSchemaError`.
+    `cancel` needs the coding-role `AgentExecutor`; other agents answer
+    `unsupported_tool` (spec 07 §manifest).
   - [ ] Live acceptance (below). Exercised 2026-09-04: coordinator `assess` +
     `resolveCancelTarget` on DashScope `qwen-flash` (dev set 10/10 after
     tuning; frozen holdout 7–9/10 over five runs, threshold ≥7), real Codex
@@ -142,12 +146,26 @@ rather than taught the tools. Each item has a test; the previous claim that
 known ones are fixed and tested, the voice path and concurrent approvals are
 still unverified live, so 08 stays unchecked.
 
-## Validation (2026-09-04, 08 deterministic, after second-review fixes)
+A third review (2026-09-04, against `1ec5e66`) confirmed two P1 and two P2.
+The explicit `cancel` stale check watched only provider events, but the serial
+receive loop cannot process a new provider event while target resolution is
+awaited; it now also watches the desktop's independently delivered
+`local_speech_onset`, with a test that drives the real receive loop. A
+same-project status question misclassified as `steer` / `cancel` bypassed the
+late planning-only intent gate; the existing gate now precedes every
+effectful branch. Agent manifests could add an unsupplied required parameter
+beside `work_order`; compile-time validation now rejects that shape. Finally,
+`hold()` could win the exact-deadline timer race and revive an expired Codex
+approval; it now drops the expired head through the normal fail-closed path.
+All four were reproduced red before the minimal fixes and have regression
+coverage.
+
+## Validation (2026-09-04, 08 deterministic, after third-review fixes)
 
 | Check | Evidence |
 |---|---|
 | `npm run check` | Typecheck, lint, env contract, Node parity audit (187 files / 277 reviewed occurrences), executor boundary (15 allowlisted) passed |
-| `npm run test:runtime` | 2054 tests, 2052 passed, 2 platform skips, 0 failures (DashScope key set, so the live evals incl. the holdout ran inside the suite; count dropped from 2070 with the text-front-brain tests) |
+| `npm run test:runtime` | 2057 tests, 2052 passed, 5 skips, 0 failures (2 platform skips + 3 live evals skipped because this verification process had no DashScope key; prior keyed live evidence remains recorded below) |
 | `npm run test:desktop` | 810 tests, 807 passed, 3 platform skips, 0 failures |
 | `npm run test:cli` | 18 passed |
 
@@ -211,13 +229,13 @@ reported by name rather than asserted, because the host re-checks each of
 them deterministically (`coding-intake.test.ts`) — the eval measures how often
 that second layer is needed. Five runs: **8 / timeout (DashScope latency) / 7
 / 9 / 7**. Two systematic misses: `博客那个跑完了吗？` comes back as `steer`
-(a question would be injected into the running Codex turn; the voice model
-should answer it from context without a tool call), and `pricing 那边的测试跑一下`
+(the host now blocks it on `intent_to_proceed: false`; the voice model should
+still answer it from context without a tool call), and `pricing 那边的测试跑一下`
 picks `pricing-page` or `pricing-svc` instead of `unclear`. Twice the model
 fabricated evidence (`重新开个会话，把测试补齐` paired with `博客`); both are
-caught by the host evidence check, which is why evidence verification and
-project confirmation are host logic rather than prompt constraints. Next
-prompt revision targets those two classes and must ship with a fresh holdout.
+caught by the host evidence check. These deterministic checks are why safety
+does not depend on prompt accuracy. Next prompt revision targets the two
+model-quality classes and must ship with a fresh holdout.
 
 ### Codex config smoke / diagnose
 

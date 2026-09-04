@@ -478,6 +478,21 @@ test('coordinator: steer and cancel route straight to the adapter without a plan
   assert.equal(cancelled.dispatched.length, 0)
 })
 
+test('coordinator: no effectful route runs when the assessor says the user did not ask to proceed', async () => {
+  for (const kind of ['steer', 'cancel'] as const) {
+    const h = harness({models: {assess: input => Promise.resolve(assessment(input, {
+      kind, project: null, project_evidence: null, intent_to_proceed: false,
+    }))}})
+    h.intake.open(request, '那个任务跑完了吗？', 'u1', 'e')
+    await h.intake.settled()
+    assert.deepEqual(h.steered, [], kind)
+    assert.deepEqual(h.cancelled, [], kind)
+    assert.equal(h.intake.view?.outcome, null, kind)
+    assert.equal(h.intake.view?.state, 'clarifying', kind)
+    assert.match(h.facts.at(-1)!, /等待用户明确要求开始/u, kind)
+  }
+})
+
 test('coordinator: a revision bump during switch resolution or cancel resolution commits nothing stale', async () => {
   // Switch: resolve is side-effect-free; a stale resolution proposes nothing.
   let releaseTarget!: (value: IntakeTarget) => void

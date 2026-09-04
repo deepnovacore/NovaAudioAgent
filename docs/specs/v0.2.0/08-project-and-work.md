@@ -176,10 +176,12 @@ through `dispatch` (see Coordinator); it is not a tool the model can name.
    the commit is ignored rather than re-assessed. Only `work` on the active
    project, `steer` and `cancel` stay unconfirmed.
 6. For `steer | cancel`, coordinator resolves the target work and routes
-   directly to the adapter; intake closes without a plan cycle. `kind:
-   'cancel'` is deliberately redundant with the explicit `cancel` tool: a voice
-   model that routes "取消" through `dispatch` still lands on the same resolver
-   instead of starting new work.
+   directly to the adapter only when `intent_to_proceed` is true; intake closes
+   without a plan cycle. A status question misclassified as either kind is
+   stopped by that host gate before any effect. `kind: 'cancel'` is deliberately
+   redundant with the explicit `cancel` tool: a voice model that routes "取消"
+   through `dispatch` still lands on the same resolver instead of starting new
+   work.
 
 ### `cancel`
 
@@ -213,6 +215,11 @@ must be one of the `running` ids, otherwise it is treated as `null`. A `null`
 (or malformed / failed call) yields `ambiguous_work` with
 `[{work_id, project, title}]` so the voice model can ask which one — the host
 never guesses a target.
+
+While that model call is pending, a new desktop `local_speech_onset` invalidates
+the request independently of the serial provider event loop. The adapter
+re-checks the captured onset and provider-input revisions before aborting any
+run, so a spoken correction cannot stop the previously resolved target.
 
 On a resolved target the adapter aborts the slot, sends `turn/interrupt`, and
 returns handoff `{outcome: 'cancelled', …}`. Session and history survive.

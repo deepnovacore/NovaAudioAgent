@@ -642,6 +642,7 @@ function pipelineService(options: {
   readonly projectTool?: boolean
   readonly retireFailure?: boolean
   readonly parkProviderEvents?: boolean
+  readonly providerEvents?: ServiceProvider['events']
   readonly beforeInjectConfirmation?: (item: HostContextItem) => Promise<void>
   readonly beforeCancelResponse?: () => Promise<void>
   readonly withExecutorApproval?: boolean
@@ -767,7 +768,8 @@ function pipelineService(options: {
       await options.beforeCancelResponse?.()
     },
     sendAudio: () => Promise.resolve(),
-    events: signal => options.parkProviderEvents === true ? parkedStream(signal) : emptyStream(),
+    events: signal => options.providerEvents?.(signal)
+      ?? (options.parkProviderEvents === true ? parkedStream(signal) : emptyStream()),
     close: () => {
       actions.push('close')
       return Promise.resolve()
@@ -2061,6 +2063,48 @@ test('a user turn while cancel resolves its target makes the cancel stale: nothi
   const acceptance = service.toolCallAcceptances().at(-1)!.acceptance
   assert.equal(acceptance.code, 'ambiguous_work')
   assert.match(acceptance.host_item.content, /code=ambiguous_work/u)
+  await service.close()
+})
+
+test('desktop speech onset makes a cancel stale while the serial provider loop waits for target resolution', async () => {
+  const wanted: boolean[] = []
+  let entered!: () => void
+  let release!: () => void
+  let completed!: () => void
+  let stillWanted!: () => boolean
+  const resolving = new Promise<void>(resolve => { entered = resolve })
+  const cancelled = new Promise<void>(resolve => { completed = resolve })
+  const providerEvents: ServiceProvider['events'] = async function* (signal) {
+    yield {kind: 'user_speech_started', session_epoch: 1, speech_id: 'speech-cancel', provider_item_id: 'user-cancel'}
+    yield {kind: 'user_speech_ended', session_epoch: 1, speech_id: 'speech-cancel', provider_item_id: 'user-cancel'}
+    yield {kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-cancel', text: '停掉博客那个'}
+    yield {kind: 'response_started', session_epoch: 1, response_id: 'cancel'}
+    yield {
+      kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-cancel', item_id: 'tool-cancel',
+      name: 'cancel', arguments: {executor: 'codex', instruction: '停掉博客那个'}, response_id: 'cancel',
+    }
+    yield* parkedStream(signal)
+  }
+  const {service} = pipelineService({agent: true, providerEvents, agentExecutor: {
+    cancel: async (_instruction, context) => {
+      stillWanted = context.stillWanted!
+      entered()
+      await new Promise<void>(resolve => { release = resolve })
+      wanted.push(stillWanted())
+      completed()
+      return {code: 'ambiguous_work', running: []}
+    },
+  }})
+  await service.connect()
+  await service.localSpeechOnset('speech-cancel')
+  await service.start()
+  await resolving
+  await service.localSpeechOnset('speech-cancel')
+  assert.equal(stillWanted(), true, 'a refresh of the same local utterance is not a correction')
+  await service.localSpeechOnset('speech-correction')
+  release()
+  await cancelled
+  assert.deepEqual(wanted, [false])
   await service.close()
 })
 

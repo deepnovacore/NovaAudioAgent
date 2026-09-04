@@ -165,9 +165,10 @@ export const executorManifestSchema = z.object({
   `watcher`, `memory`) keep their direct tools. `agent` is orthogonal to
   `roles`: `roles` decides host routing, `agent` decides model visibility.
 - **v0.2 agent contract** = `agent.summary` + a `run` op whose `params`
-  declare a required string `work_order`. The host rewrites a non-coordinated
-  `dispatch(executor, instruction)` into `${executor}__run({work_order})`, so
-  `tool-schema.ts` refuses an agent manifest without that op
+  declare a required string `work_order` and no other required parameter. The
+  host rewrites a non-coordinated `dispatch(executor, instruction)` into
+  `${executor}__run({work_order})`, so `tool-schema.ts` refuses an agent
+  manifest the host cannot fully construct
   (`ToolSchemaError('agent manifest … needs run(work_order)')`) instead of
   assuming every agent is Codex-shaped. `cancel` requires the coding-role
   `AgentExecutor` port ([08](08-project-and-work.md)); a `cancel` naming any

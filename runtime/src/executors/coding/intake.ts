@@ -300,6 +300,11 @@ export class IntakeController {
         this.#ask(current, kind === 'create' ? '新项目叫什么名字？' : question ?? '请说明要在哪个项目里做什么。')
         return
       }
+      if (!current.intent_to_proceed) {
+        current.state = 'clarifying'
+        this.#options.fact(current, '需求已记录，等待用户明确要求开始；不要继续追问或声称已执行。')
+        return
+      }
       const userText = current.turns.at(-1)?.answer ?? current.opening
       if (kind === 'cancel') {
         const outcome = await this.#options.cancel(userText, () => this.#live(snapshot.intake_id, snapshot.revision) !== null)
@@ -360,11 +365,6 @@ export class IntakeController {
         current.missing_goal_grace ??= current.revision
         current.state = 'clarifying'
         this.#options.fact(current, '还缺少要完成的具体目标，请说明希望实现或修复什么。暂不规划或执行。')
-        return
-      }
-      if (!current.intent_to_proceed) {
-        current.state = 'clarifying'
-        this.#options.fact(current, '需求已记录，等待用户明确要求开始；不要继续追问或声称已执行。')
         return
       }
       current.state = 'ready_to_plan'

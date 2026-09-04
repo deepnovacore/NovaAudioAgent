@@ -145,7 +145,9 @@ question (“这个能不能…”) does not until the user says to proceed. `ea
 (“直接做 / just do it”) sets `intent_to_proceed` and closes the stop-asking
 gate; it still requires `goal`. `intent_to_proceed` is **enough to plan**; it
 is **not** enough to execute when `planReadback=confirm` — that still needs
-proposal acceptance.
+proposal acceptance. Since 08, it is also a host gate before every effectful
+coordinator branch (`steer`, `cancel`, `switch`, `create`, and `work`), so a
+question misclassified as an action cannot reach an adapter.
 
 ### Rubric slots
 

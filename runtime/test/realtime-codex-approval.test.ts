@@ -142,6 +142,16 @@ test('a held head outlives its TTL, still takes a click, and release re-arms a f
   assert.equal(approval.release(), false)
 })
 
+test('hold cannot revive an approval whose deadline has already arrived', async () => {
+  const clock = new VirtualClock(5)
+  const approval = controller(clock)
+  const waiting = offerCommand(approval)
+  clock.advanceTo(clock.now() + CODEX_APPROVAL_TTL_SECONDS)
+  assert.equal(approval.hold(), false)
+  assert.equal(approval.consume((await waiting)!), 'decline')
+  assert.equal(approval.pending, false)
+})
+
 test('file display data is snapshotted and observer failures cannot strand authority', async () => {
   const approval = new CodexApprovalController({
     clock: new VirtualClock(),

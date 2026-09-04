@@ -212,6 +212,10 @@ test('agent executors fold into the three host tools while keeping their delegat
     [{...runOp, params: {type: 'object', properties: {}}}, statusOp],
     [{...runOp, params: {type: 'object', properties: {work_order: {type: 'string'}}}}, statusOp],
     [{...runOp, params: {type: 'object', properties: {work_order: {type: 'number'}}, required: ['work_order']}}, statusOp],
+    [{...runOp, params: {
+      type: 'object', properties: {work_order: {type: 'string'}, mode: {type: 'string'}},
+      required: ['work_order', 'mode'],
+    }}, statusOp],
   ]) {
     assert.throws(() => compileToolSchema([executorManifestSchema.parse({...agent, ops})]), /needs run\(work_order\)/u, JSON.stringify(ops))
   }

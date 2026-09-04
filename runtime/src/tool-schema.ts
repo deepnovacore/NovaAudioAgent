@@ -157,8 +157,9 @@ export function compileToolSchema(
       const run = manifest.ops.find(op => op.name === 'run')
       const properties = run === undefined ? undefined : run.params.properties
       const workOrder = isJsonObject(properties) ? properties.work_order : undefined
+      const required = run?.params.required
       if (!isJsonObject(workOrder) || workOrder.type !== 'string'
-        || !Array.isArray(run!.params.required) || !run!.params.required.includes('work_order')) {
+        || !Array.isArray(required) || required.length !== 1 || required[0] !== 'work_order') {
         throw new ToolSchemaError(`agent manifest '${manifest.name}' needs run(work_order)`)
       }
       agents.push({name: manifest.name, summary: manifest.agent!.summary})

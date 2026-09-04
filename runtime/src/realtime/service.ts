@@ -347,6 +347,8 @@ export class RealtimeService {
   readonly #intake: IntakeController | undefined
   #intakeUser: {text: string; origin_ref: string; epoch: number} | null = null
   #intakeWorkspaceId: string | null | undefined = undefined
+  #localSpeechOnsetRevision = 0
+  #lastLocalSpeechOnsetId: string | null = null
 
   readonly #provider: ServiceProvider
   readonly #runtime: ServiceRuntime
@@ -785,6 +787,10 @@ export class RealtimeService {
   }
 
   async localSpeechOnset(speechId: string): Promise<void> {
+    if (speechId !== this.#lastLocalSpeechOnsetId) {
+      this.#lastLocalSpeechOnsetId = speechId
+      this.#localSpeechOnsetRevision += 1
+    }
     this.#intake?.userInputStarted()
     this.#noteExecutorApprovalOnsetBeforeContext()
     const generation = this.session.currentGeneration
@@ -3915,11 +3921,14 @@ export class RealtimeService {
       // The >1 case awaits a model call; a user turn in that gap (a correction, a new request) makes
       // the resolved target stale, and a stale cancel must stop nothing (same rule as the intake path).
       const revision = this.session.userInputRevision
+      const localOnsetRevision = this.#localSpeechOnsetRevision
       const result = await this.#agentExecutor!.cancel(instruction ?? undefined, {
         resolveCancelTarget: models === undefined
           ? () => Promise.resolve(null)
           : (target, running) => models.resolveCancelTarget(target, running),
-        stillWanted: () => this.session.sessionEpoch === event.session_epoch && this.session.userInputRevision === revision,
+        stillWanted: () => this.session.sessionEpoch === event.session_epoch
+          && this.session.userInputRevision === revision
+          && this.#localSpeechOnsetRevision === localOnsetRevision,
       })
       const acceptance = this.#refusalAcceptance(event, result.code, JSON.stringify({...result, message: renderCancelResult(result)}))
       return {...acceptance, accepted: true, inline_fulfilled: true}

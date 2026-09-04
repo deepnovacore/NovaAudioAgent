@@ -173,6 +173,10 @@ export class CodexApprovalController {
   hold(): boolean {
     const current = this.#current
     if (current?.state !== 'pending' || current.held) return false
+    if (this.#clock.now() >= current.expiresAt) {
+      this.#drop(current)
+      return false
+    }
     current.held = true
     current.expiryAbort.abort()
     this.#publish()
