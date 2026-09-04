@@ -41,6 +41,64 @@ test('strict vision schema accepts the exact assess shape', () => {
   assert.equal(visionAssessSchema.safeParse(raw()).success, true)
 })
 
+test('monitor with null urgency is unclear and cannot become actionable', () => {
+  const result = assessVision(raw({urgency: null, urgency_evidence: null}), context())
+  assert.equal(result.code, 'unclear')
+})
+
+test('throwing getters are rejected without being invoked', () => {
+  let invoked = false
+  const hostile = raw()
+  Object.defineProperty(hostile, 'condition', {
+    enumerable: true,
+    get() {
+      invoked = true
+      throw new Error('getter must not run')
+    },
+  })
+  let result: ReturnType<typeof assessVision> | undefined
+  assert.doesNotThrow(() => { result = assessVision(hostile, context()) })
+  assert.equal(result?.code, 'no_action')
+  assert.equal(invoked, false)
+})
+
+test('custom prototypes, symbols, and non-enumerable keys fail closed', () => {
+  const custom = Object.assign(Object.create({inherited: true}), raw()) as Record<string, unknown>
+  assert.equal(assessVision(custom, context()).code, 'no_action')
+
+  const withSymbol = raw()
+  Object.defineProperty(withSymbol, Symbol('hidden'), {value: true, enumerable: true})
+  assert.equal(assessVision(withSymbol, context()).code, 'no_action')
+
+  const withHidden = raw()
+  Object.defineProperty(withHidden, 'hidden', {value: true, enumerable: false})
+  assert.equal(assessVision(withHidden, context()).code, 'no_action')
+})
+
+test('oversized strings, excess shape, arrays, and nested values fail closed', () => {
+  assert.equal(assessVision(raw({request_id: 'x'.repeat(129)}), context()).code, 'no_action')
+  assert.equal(assessVision({...raw(), extra: true}, context()).code, 'no_action')
+  assert.equal(assessVision([raw()], context()).code, 'no_action')
+  assert.equal(assessVision(raw({condition: {nested: true}}), context()).code, 'no_action')
+  const cyclic: Record<string, unknown> = {}
+  cyclic.self = cyclic
+  assert.equal(assessVision(raw({condition: cyclic}), context()).code, 'no_action')
+})
+
+test('proxy traps at the parser boundary never escape as exceptions', () => {
+  const hostile = new Proxy(raw(), {
+    ownKeys() {
+      throw new Error('ownKeys trap')
+    },
+    getPrototypeOf() {
+      throw new Error('prototype trap')
+    },
+  })
+  let result: ReturnType<typeof assessVision> | undefined
+  assert.doesNotThrow(() => { result = assessVision(hostile, context()) })
+  assert.equal(result?.code, 'no_action')
+})
+
 test('assesses Chinese urgent monitoring only with exact source evidence', () => {
   const result = assessVision(raw(), context())
   assert.equal(result.code, 'monitor')
@@ -88,7 +146,7 @@ test('explicit interval and duration are accepted only inside bounded ranges', (
 
 test('condition must be nonempty and bounded', () => {
   assert.equal(assessVision(raw({condition: '   '}), context()).code, 'unclear')
-  assert.equal(assessVision(raw({condition: 'x'.repeat(301)}), context()).code, 'unclear')
+  assert.equal(assessVision(raw({condition: 'x'.repeat(301)}), context()).code, 'no_action')
 })
 
 test('stop is a recheckable decision and unclear has exactly one bounded question', () => {

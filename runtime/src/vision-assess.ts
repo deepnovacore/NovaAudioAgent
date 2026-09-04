@@ -40,6 +40,16 @@ Set urgency to urgent only when urgency_evidence is a non-empty substring copied
 
 const DEFAULT_QUESTION = 'Please clarify the vision request.'
 const NEGATIVE_SILENCE = /不要提醒|不要告警|保持静默|不用喊我|别提醒|无需提醒|不要通知|别通知/u
+const VISION_KEYS = new Set([
+  'request_id', 'revision', 'kind', 'condition', 'urgency', 'urgency_evidence',
+  'interval_s', 'duration_s', 'question',
+])
+const VISION_STRING_LIMITS: Readonly<Record<string, number>> = {
+  request_id: 128,
+  condition: 300,
+  urgency_evidence: 300,
+  question: 300,
+}
 
 export type VisionDecisionCode = 'monitor' | 'stop' | 'unclear' | 'superseded' | 'no_action'
 
@@ -118,6 +128,40 @@ function validContext(context: VisionAssessContext): boolean {
     && typeof context.stillWanted === 'function'
 }
 
+/**
+ * Copy only bounded, enumerable data properties before Zod sees model output.
+ * Descriptor reads do not invoke accessors; a proxy trap or any other boundary
+ * failure is caught by this gate and treated as malformed model output.
+ */
+function plainVisionInput(input: unknown): Record<string, unknown> | null {
+  try {
+    if (input === null || typeof input !== 'object' || Array.isArray(input)) return null
+    const prototype: object | null = Object.getPrototypeOf(input) as object | null
+    if (prototype !== Object.prototype && prototype !== null) return null
+    const descriptors = Object.getOwnPropertyDescriptors(input)
+    const keys = Reflect.ownKeys(descriptors)
+    if (keys.length !== VISION_KEYS.size || keys.length > 16) return null
+
+    const copy = Object.create(null) as Record<string, unknown>
+    for (const key of keys) {
+      if (typeof key !== 'string' || !VISION_KEYS.has(key)) return null
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !descriptor.enumerable || descriptor.get !== undefined || descriptor.set !== undefined) {
+        return null
+      }
+      const value: unknown = descriptor.value as unknown
+      if (value !== null && typeof value !== 'string' && typeof value !== 'number') return null
+      const limit = VISION_STRING_LIMITS[key]
+      if (typeof value === 'string' && limit !== undefined && value.length > limit) return null
+      if (typeof value === 'number' && !Number.isFinite(value)) return null
+      Object.defineProperty(copy, key, {value, enumerable: true, writable: true, configurable: true})
+    }
+    return copy
+  } catch {
+    return null
+  }
+}
+
 function noAction(
   identity: VisionIdentity,
   reason: VisionNoActionDecision['reason'],
@@ -168,14 +212,18 @@ function invalidSemantic(
 
 /** Parse a model result and bind any actionable decision to the captured host context. */
 export function assessVision(input: unknown, context: VisionAssessContext): VisionDecision {
-  const identity: VisionIdentity = {
-    request_id: context.request_id,
-    revision: context.revision,
-    session_epoch: context.session_epoch,
-  }
-  if (!validContext(context)) return noAction(identity, 'invalid_schema')
-  const parsed = visionAssessSchema.safeParse(input)
-  if (!parsed.success) return noAction(identity, 'invalid_schema')
+  let identity: VisionIdentity = {request_id: '', revision: -1, session_epoch: -1}
+  try {
+    identity = {
+      request_id: context.request_id,
+      revision: context.revision,
+      session_epoch: context.session_epoch,
+    }
+    if (!validContext(context)) return noAction(identity, 'invalid_schema')
+    const safeInput = plainVisionInput(input)
+    if (safeInput === null) return noAction(identity, 'invalid_schema')
+    const parsed = visionAssessSchema.safeParse(safeInput)
+    if (!parsed.success) return noAction(identity, 'invalid_schema')
   const source = parsed.data
   const sourceIdentity: VisionIdentity = {...identity, request_id: source.request_id, revision: source.revision}
   if (!contextIsCurrent(identity, context) || source.request_id !== identity.request_id || source.revision !== identity.revision) {
@@ -194,6 +242,10 @@ export function assessVision(input: unknown, context: VisionAssessContext): Visi
       code: 'stop', identity, assessment: source,
       recheck: () => contextIsCurrent(identity, context),
     }
+  }
+
+  if (source.urgency !== 'routine' && source.urgency !== 'urgent') {
+    return invalidSemantic(identity, context, source, 'invalid_kind_fields')
   }
 
   const condition = source.condition?.trim() ?? ''
@@ -235,6 +287,9 @@ export function assessVision(input: unknown, context: VisionAssessContext): Visi
   return {
     code: 'monitor', identity, assessment,
     recheck: () => contextIsCurrent(identity, context),
+  }
+  } catch {
+    return noAction(identity ?? {request_id: '', revision: -1, session_epoch: -1}, 'invalid_schema')
   }
 }
 
