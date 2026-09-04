@@ -139,6 +139,11 @@ export async function projectCameraMcpResult(
     // Snapshot all evidence facts before the asynchronous gateway call. A custom store must not
     // be able to mutate the returned entry object and thereby mutate the facts we later compare.
     const expectedPayload = new Uint8Array(entry.payload)
+    const expectedPayloadDigest = payloadDigest(expectedPayload)
+    if (typeof entry.ref !== 'string' || !/^media:[^\s]+$/u.test(entry.ref)
+      || entry.digest !== expectedPayloadDigest || entry.media_type !== parsed.image.mimeType
+      || entry.width !== metadata.width || entry.height !== metadata.height
+      || entry.captured_at !== metadata.captured_at) return failure('media_unavailable')
     expected = {
       ref: entry.ref,
       digest: entry.digest,
@@ -147,7 +152,7 @@ export async function projectCameraMcpResult(
       height: entry.height,
       captured_at: entry.captured_at,
       payload: expectedPayload,
-      payload_digest: payloadDigest(expectedPayload),
+      payload_digest: expectedPayloadDigest,
     }
   } catch {
     return failure('media_unavailable')

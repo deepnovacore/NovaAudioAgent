@@ -288,3 +288,28 @@ test('entry metadata mutation during gateway completion fails closed', async () 
   const projected = await projectCameraMcpResult(result(), options(gateway, store))
   assert.equal(contentOf(projected).error, 'media_unavailable')
 })
+
+test('corrupt MediaStore entries are rejected before invoking the gateway', async () => {
+  for (const corruption of ['digest', 'ref', 'media_type', 'width', 'captured_at'] as const) {
+    class CorruptStore extends MediaStore {
+      override put(...args: Parameters<MediaStore['put']>) {
+        const entry = super.put(...args)
+        const mutable = entry as unknown as {
+          digest: string; ref: string; media_type: string; width: number; captured_at: number
+        }
+        if (corruption === 'digest') mutable.digest = '0'.repeat(64)
+        if (corruption === 'ref') mutable.ref = ''
+        if (corruption === 'media_type') mutable.media_type = 'image/png'
+        if (corruption === 'width') mutable.width = 1
+        if (corruption === 'captured_at') mutable.captured_at = CAPTURED_AT + 1
+        return entry
+      }
+    }
+    const gateway = new ScriptedGateway()
+    const projected = await projectCameraMcpResult(
+      result(), options(gateway, new CorruptStore()),
+    )
+    assert.equal(contentOf(projected).error, 'media_unavailable', corruption)
+    assert.equal(gateway.calls.length, 0, corruption)
+  }
+})
