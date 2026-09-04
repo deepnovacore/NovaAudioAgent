@@ -20,6 +20,12 @@ import type {
 } from '../src/model-gateway.js'
 import { delegateSchema } from '../src/ports.js'
 
+function record(value: unknown): Record<string, unknown> {
+  assert.equal(typeof value, 'object')
+  assert.ok(value !== null && !Array.isArray(value))
+  return value as Record<string, unknown>
+}
+
 function settings(overrides: Partial<Settings> = {}): Settings {
   return settingsSchema.parse({
     executors: ['fast_sim'],
@@ -238,6 +244,24 @@ test('camera module off removes MCP camera, watch, and guard without affecting s
   assert.ok(names.includes('memory__recall'))
   assert.ok(names.includes('fast_sim__set_light'))
   assert.ok(!names.some(name => name.startsWith('mcp__nova_camera__') || name.startsWith('watch__') || name.startsWith('guard__')))
+})
+
+test('camera assembly hides Watch and Guard behind the owned Vision controller', () => {
+  const assembly = buildAssembly({
+    settings: settings(), gateway: new ScriptedGateway([]),
+  })
+  const names = assembly.tools.schemas.map(schema => String(record(record(schema).function).name))
+  assert.ok(names.includes('mcp__nova_camera__snapshot'))
+  assert.ok(names.includes('dispatch') && names.includes('cancel') && names.includes('confirm'))
+  assert.deepEqual(assembly.tools.agent_descriptors.map(descriptor => descriptor.name), ['vision'])
+  assert.deepEqual(assembly.visionController?.descriptor.ownedChannels, ['watch', 'guard'])
+  assert.ok(!assembly.tools.schemas.some(schema => /^(watch|guard)__/u.test(String(record(record(schema).function).name))))
+
+  const disabled = buildAssembly({
+    settings: settings(), gateway: new ScriptedGateway([]), cameraModuleEnabled: false,
+  })
+  assert.ok(!disabled.tools.schemas.some(schema => /^(mcp__nova_camera|watch|guard)__/u.test(String(record(record(schema).function).name))))
+  assert.equal(disabled.visionController, undefined)
 })
 
 test('camera module off does not acquire the camera source lifecycle', async () => {

@@ -851,6 +851,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
         }, USER_AWAITED_TOOL)
       },
     },
+    ...(core.visionController === undefined ? {} : {agentControllers: [core.visionController]}),
     ...(options.intake === undefined || projectAdapter === undefined ? {} : {intake: {
       ...options.intake,
       roster: () => projectAdapter.roster(),

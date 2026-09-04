@@ -38,7 +38,8 @@ import {
   type AgentControllerRegistry,
   type AgentRuntimeDispatchPort,
 } from '../agent-controller.js'
-import {CodexAgentController} from '../executors/codex/controller.js'
+import {CodexAgentController} from '../executors/index.js'
+import type {AgentExecutor} from '../coding-executor.js'
 import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
 import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { Clock } from '../clock.js'
@@ -126,8 +127,7 @@ function sameAgentDescriptors(
 ): boolean {
   return left.length === right.length && left.every((descriptor, index) => {
     const other = right[index]
-    return other !== undefined
-      && descriptor.name === other.name
+    return other?.name === descriptor.name
       && descriptor.summary === other.summary
       && descriptor.ownedChannels.length === other.ownedChannels.length
       && descriptor.ownedChannels.every((channel, channelIndex) => channel === other.ownedChannels[channelIndex])
@@ -313,7 +313,7 @@ export interface RealtimeServiceOptions {
     'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'dispatch' | 'steer' | 'cancel' | 'record'
   >
   /** The coding executor's private cancellation port; CodexAgentController owns its use. */
-  readonly agentExecutor?: Pick<import('../coding-executor.js').AgentExecutor, 'cancel'>
+  readonly agentExecutor?: Pick<AgentExecutor, 'cancel'>
   /** The only runtime effect a no-intake controller may request. */
   readonly agentDispatchPort?: AgentRuntimeDispatchPort
   /** Additional host-owned controllers. Codex is installed automatically for a hidden Codex manifest. */
@@ -648,11 +648,12 @@ export class RealtimeService {
       options.runtime.executors.get('codex')?.manifest.model_visibility === 'hidden'
       && !controllers.some(controller => controller.descriptor.name === 'codex')
     ) {
-      controllers.push(new CodexAgentController({
+      controllers.unshift(new CodexAgentController({
         ...(this.#intake === undefined ? {} : {intake: this.#intake}),
         ...(options.agentExecutor === undefined ? {} : {executor: options.agentExecutor}),
         ...(options.agentDispatchPort === undefined ? {} : {dispatchPort: options.agentDispatchPort}),
-        resolveCancelTarget: options.intake?.models.resolveCancelTarget ?? (() => Promise.resolve(null)),
+        resolveCancelTarget: (text, running) => options.intake?.models.resolveCancelTarget(text, running)
+          ?? Promise.resolve(null),
       }))
     }
     this.#agentRegistry = createAgentControllerRegistry({
@@ -3962,6 +3963,10 @@ export class RealtimeService {
       }
       return this.#controllerDelegationAcceptance(event, result, instruction!)
     }
+    if (result.code === 'monitor_stop_requested'
+      && !controller.descriptor.ownedChannels.includes(result.detail.channel)) {
+      return this.#refusalAcceptance(event, 'controller_result_invalid', canonicalJson({code: 'controller_result_invalid'}))
+    }
     const acceptance = this.#refusalAcceptance(event, result.code, this.#agentActionContent(result))
     return result.accepted ? {...acceptance, accepted: true, inline_fulfilled: true} : acceptance
   }
@@ -3987,6 +3992,14 @@ export class RealtimeService {
         })
       case 'not_running':
         return canonicalJson({code: result.code, message: 'code=not_running：当前没有正在执行的任务。'})
+      case 'busy':
+        return canonicalJson({code: result.code, message: '当前已有一个监控任务在运行。'})
+      case 'clarification_required':
+        return canonicalJson({code: result.code, message: '请说明需要监控的画面条件和时长。'})
+      case 'assessment_unavailable':
+        return canonicalJson({code: result.code, message: '暂时无法判断监控请求。'})
+      case 'monitor_stop_requested':
+        return canonicalJson({code: result.code, message: '已请求停止监控。'})
       case 'accepted':
       case 'delegated':
       case 'unsupported_tool':

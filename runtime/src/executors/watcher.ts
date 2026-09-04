@@ -71,6 +71,7 @@ const STATUS = opSpecSchema.parse({
 export const WATCH_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   name: 'watch',
   display_name: 'Watch',
+  model_visibility: 'hidden',
   ops: [START, STOP, STATUS],
   policy: handoffPolicySchema.parse({
     channel: 'watch', priority: 40, wake: 'surrogate', typical_latency: 300,
@@ -81,6 +82,7 @@ export const WATCH_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
 export const GUARD_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   name: 'guard',
   display_name: 'Guard',
+  model_visibility: 'hidden',
   ops: [START, STOP, STATUS],
   policy: handoffPolicySchema.parse({
     channel: 'guard', priority: 90, wake: 'fast', typical_latency: 300,
@@ -189,6 +191,11 @@ export class WatchAdapter implements ExecutorAdapter {
     status: ObservationAdmission,
     executor: 'watch' | 'guard',
   ) => void) | undefined
+  readonly #onMonitorLifecycle: {
+    readonly admission: (delegateId: string, status: ObservationAdmission) => void
+    readonly hit: (delegateId: string) => boolean
+    readonly terminal: (delegateId: string) => void
+  } | undefined
   #source: FrameSource
   #gateway: ModelGateway
   #admissionPending = false
@@ -209,6 +216,11 @@ export class WatchAdapter implements ExecutorAdapter {
       status: ObservationAdmission,
       executor: 'watch' | 'guard',
     ) => void
+    readonly onMonitorLifecycle?: {
+      readonly admission: (delegateId: string, status: ObservationAdmission) => void
+      readonly hit: (delegateId: string) => boolean
+      readonly terminal: (delegateId: string) => void
+    }
   }) {
     if (options.manifest.name !== 'watch' && options.manifest.name !== 'guard') {
       throw new TypeError('watch adapter manifest 必须是 watch 或 guard')
@@ -222,6 +234,7 @@ export class WatchAdapter implements ExecutorAdapter {
     this.#prepareObservation = options.prepareObservation
     this.#admitObservation = options.admitObservation
     this.#onObservationAdmission = options.onObservationAdmission
+    this.#onMonitorLifecycle = options.onMonitorLifecycle
   }
 
   get status(): WatchStatus {
@@ -266,7 +279,10 @@ export class WatchAdapter implements ExecutorAdapter {
 
     const normalized = normalizeStart(request)
     if (normalized === null) return failure('invalid_params', op)
-    if (!this.#captureEnabled) return unknown('capture_unavailable')
+    if (!this.#captureEnabled) {
+      this.#notifyTerminal(ctx)
+      return unknown('capture_unavailable')
+    }
     // One window at a time: two would compete for the camera and each would see half the frames.
     if (this.#running || this.#admissionPending) return failure('busy', op)
     // Without an observation channel a hit has nowhere to go, so the window would run blind.
@@ -285,16 +301,20 @@ export class WatchAdapter implements ExecutorAdapter {
         // Stop and runtime cancellation may race while the OS prompt is open. Cancellation wins,
         // but its abandoned stop must not poison the next admission attempt.
         this.#stopRequested = false
+        this.#notifyTerminal(ctx)
         ctx.signal.throwIfAborted()
       }
       if (this.#stopRequested) {
         this.#stopRequested = false
+        this.#notifyTerminal(ctx)
         return this.#terminal('stopped')
       }
       try {
         this.#onObservationAdmission?.(admission, this.manifest.name as 'watch' | 'guard')
+        this.#onMonitorLifecycle?.admission(ctx.delegate.delegate_id, admission)
       } catch { /* telemetry is advisory */ }
       if (admission === 'denied' || admission === 'restricted') {
+        this.#notifyTerminal(ctx)
         const task = this.manifest.display_name
         return {
           outcome: 'refused',
@@ -306,7 +326,10 @@ export class WatchAdapter implements ExecutorAdapter {
           },
         }
       }
-      if (admission !== 'granted') return unknown('capture_unavailable')
+      if (admission !== 'granted') {
+        this.#notifyTerminal(ctx)
+        return unknown('capture_unavailable')
+      }
     }
 
     this.#running = true
@@ -336,6 +359,7 @@ export class WatchAdapter implements ExecutorAdapter {
       }
       return await this.#runWindow(normalized, ctx)
     } finally {
+      this.#notifyTerminal(ctx)
       this.#running = false
       this.#stopRequested = false
       this.#status = idleStatus()
@@ -475,6 +499,7 @@ export class WatchAdapter implements ExecutorAdapter {
           hit_count: this.#status.hit_count,
         },
       })
+      if (this.#onMonitorLifecycle?.hit(ctx.delegate.delegate_id) === true) return this.#terminal('stopped')
       this.#transition(ctx, 'cooling', 0)
     } else if (verdict.hit && this.#status.state === 'waiting_reset') {
       this.#transition(ctx, 'cooling', 0)
@@ -585,6 +610,10 @@ export class WatchAdapter implements ExecutorAdapter {
         samples: this.#status.samples,
       },
     }
+  }
+
+  #notifyTerminal(ctx: ExecutorDispatchContext): void {
+    try { this.#onMonitorLifecycle?.terminal(ctx.delegate.delegate_id) } catch { /* cleanup cannot alter monitoring */ }
   }
 
   /**

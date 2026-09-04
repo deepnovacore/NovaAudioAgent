@@ -21,7 +21,13 @@ import { GatewayCompressor, GatewaySurrogate } from './model-adapters.js'
 import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model-gateway.js'
 import { classifySurrogateVerdict, runSurrogateCall } from './calls.js'
 import { CameraMcpAdapter, MCP_CAMERA_EXECUTOR } from './executors/mcp-camera.js'
-import {CODEX_AGENT_DESCRIPTOR} from './executors/index.js'
+import {
+  CODEX_AGENT_DESCRIPTOR,
+  VisionAgentController,
+  VisionAgentControllerCore,
+  VisionLifecycleBridge,
+  VISION_AGENT_DESCRIPTOR,
+} from './executors/index.js'
 import { DisabledFrameSource } from './executors/frame-source.js'
 import {
   SearchAdapter,
@@ -44,6 +50,7 @@ import { compileToolSchema, type CompiledTools } from './tool-schema.js'
 import type { ModelCall } from './runtime.js'
 import type { Slot } from './slots.js'
 import type {RealtimeTelemetry} from './realtime/telemetry.js'
+import {USER_PRIORITY} from './memory.js'
 
 export class AssemblyError extends Error {
   constructor(message: string) {
@@ -79,6 +86,7 @@ export interface Assembly {
   readonly manifests: readonly ExecutorManifest[]
   readonly mediaStore: MediaStore
   readonly frameSource: FrameSource
+  readonly visionController: VisionAgentController | undefined
   start(): Promise<void>
   stop(): Promise<void>
 }
@@ -182,6 +190,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     throw new AssemblyError(`built-in executor cannot be overridden: ${MCP_CAMERA_EXECUTOR}`)
   }
   const watchModel = stripLikePython(settings.watch_model ?? '') || settings.fast_model
+  const visionLifecycle = cameraModuleEnabled ? new VisionLifecycleBridge() : undefined
 
   const search = new SearchAdapter(searchTransport)
   const camera = cameraModuleEnabled ? new CameraMcpAdapter({
@@ -211,11 +220,21 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const watch = cameraModuleEnabled ? new WatchAdapter({
     manifest: WATCH_MANIFEST, source: frameSource, gateway, mediaStore, model: watchModel,
     captureEnabled, ...admissionOptions,
+    ...(visionLifecycle === undefined ? {} : {onMonitorLifecycle: {
+      admission: (delegateId, status) => visionLifecycle.admission(delegateId, status),
+      hit: delegateId => visionLifecycle.hit(delegateId),
+      terminal: delegateId => visionLifecycle.terminal(delegateId),
+    }}),
   }) : undefined
   const guard = cameraModuleEnabled ? new WatchAdapter({
     manifest: GUARD_MANIFEST, source: frameSource, gateway, mediaStore, model: watchModel,
     captureEnabled, ...admissionOptions,
     ...(isFileBackedFrameSource(frameSource) ? {prepareObservation: () => frameSource.restart()} : {}),
+    ...(visionLifecycle === undefined ? {} : {onMonitorLifecycle: {
+      admission: (delegateId, status) => visionLifecycle.admission(delegateId, status),
+      hit: delegateId => visionLifecycle.hit(delegateId),
+      terminal: delegateId => visionLifecycle.terminal(delegateId),
+    }}),
   }) : undefined
   const configuredExecutors = resolveExecutors(settings, options.executors ?? [])
   const executors = [
@@ -226,6 +245,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const manifests = executors.map(adapter => adapter.manifest)
   const agentDescriptors = [
     ...(manifests.some(manifest => manifest.name === 'codex') ? [CODEX_AGENT_DESCRIPTOR] : []),
+    ...(cameraModuleEnabled ? [VISION_AGENT_DESCRIPTOR] : []),
     ...(options.agentDescriptors ?? []),
   ]
   const tools = compileToolSchema(manifests, {includeMemoryRecall: true, agentDescriptors})
@@ -282,6 +302,22 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     suggestionCooldown: proactivity.cooldown,
     freshWindow: proactivity.fresh_window,
   })
+  const visionController = visionLifecycle === undefined ? undefined : (() => {
+    const vision = new VisionAgentControllerCore({
+      gateway, watchModel, requestIdFactory: () => ids.next('vision'), lifecycleSink: visionLifecycle,
+      runtimePort: {dispatch: request => {
+        if (!request.stillWanted()) return {accepted: false, delegate_id: null}
+        return runtime.dispatchExternal({
+          executor: request.channel, op: request.op, request: request.request, origin_ref: request.origin_ref,
+        }, {
+          kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited',
+          origin: null, selected_suggestion: null,
+        })
+      }},
+    })
+    visionLifecycle.attach(vision)
+    return new VisionAgentController({core: vision})
+  })()
 
   let started = false
   let lifecycle = Promise.resolve()
@@ -297,6 +333,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     manifests,
     mediaStore,
     frameSource,
+    visionController,
     start(): Promise<void> {
       return serializeLifecycle(async () => {
         if (started) return

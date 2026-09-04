@@ -5,3 +5,6 @@
  * roots reach a concrete executor package. Adding an executor means adding one line here.
  */
 export * from './codex/index.js'
+export * from './vision/controller.js'
+export * from './vision/controller-core.js'
+export * from './vision/lifecycle.js'

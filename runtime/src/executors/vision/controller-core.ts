@@ -31,6 +31,11 @@ export interface VisionRuntimeOpPort {
   }): {readonly accepted: boolean; readonly delegate_id: string | null}
 }
 
+/** Host-private correlation between a runtime delegate and this controller's monitor identity. */
+export interface VisionLifecycleSink {
+  bind(delegateId: string, identity: VisionIdentity): void
+}
+
 export interface VisionControllerDispatchRequest {
   readonly instruction: string
   readonly originalUserText: string
@@ -189,6 +194,7 @@ export class VisionAgentControllerCore {
   readonly #requestIdFactory: () => string
   readonly #runtimePort: VisionRuntimeOpPort
   readonly #assessmentTimeoutMs: number
+  readonly #lifecycleSink: VisionLifecycleSink | undefined
   readonly #machine = new VisionMonitorMachine()
   #active: ActiveVisionReservation | null = null
 
@@ -200,6 +206,7 @@ export class VisionAgentControllerCore {
     readonly idFactory?: () => string
     readonly runtimePort?: VisionRuntimeOpPort
     readonly runtime?: VisionRuntimeOpPort
+    readonly lifecycleSink?: VisionLifecycleSink
     readonly assessmentTimeoutMs?: number
   }) {
     const model = options.watchModel ?? options.model
@@ -213,6 +220,7 @@ export class VisionAgentControllerCore {
     this.#requestIdFactory = requestIdFactory
     this.#runtimePort = runtimePort
     this.#assessmentTimeoutMs = options.assessmentTimeoutMs ?? DEFAULT_ASSESSMENT_TIMEOUT_MS
+    this.#lifecycleSink = options.lifecycleSink
   }
 
   get state(): 'idle' | 'permission-pending' | 'active' | 'terminal' { return this.#machine.state }
@@ -298,6 +306,7 @@ export class VisionAgentControllerCore {
     // A reentrant terminal callback may have fenced and cleaned the reservation before dispatch
     // returned. Its accepted result must not resurrect the monitor slot.
     reservation.delegate_id = admission.delegate_id
+    this.#lifecycleSink?.bind(admission.delegate_id, decision.identity)
     const stateAfterAdmission: string = this.#machine.state
     const stillReserved = (stateAfterAdmission === 'permission-pending' || stateAfterAdmission === 'active')
       && this.#machine.identity !== null && sameIdentity(this.#machine.identity, decision.identity)

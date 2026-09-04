@@ -7,6 +7,7 @@ import {
   type VisionControllerDispatchRequest,
   type VisionRuntimeOpPort,
 } from '../src/executors/vision/controller-core.js'
+import {VisionLifecycleBridge} from '../src/executors/vision/lifecycle.js'
 
 const identity = {request_id: 'vision-1', revision: 7, session_epoch: 3}
 
@@ -104,6 +105,22 @@ test('routine and urgent assessments map to hidden watch and guard starts with e
   assert.deepEqual(urgentCalls[0]?.request, {
     condition: 'a person enters the room', interval_s: 2.5, duration_s: 1800,
   })
+})
+
+test('a Vision-owned hit keeps the reservation busy until its exact terminal', async () => {
+  const calls: Record<string, unknown>[] = []
+  const lifecycle = new VisionLifecycleBridge()
+  let next = 0
+  const value = new VisionAgentControllerCore({
+    gateway: new ScriptedGateway(sent => assessment({request_id: requestIdFromPrompt(sent.prompt)})), watchModel: 'vision-model',
+    requestIdFactory: () => `vision-${++next}`, runtimePort: port(calls), lifecycleSink: lifecycle,
+  })
+  lifecycle.attach(value)
+  assert.equal((await value.dispatch(request())).code, 'delegated')
+  assert.equal(lifecycle.hit('watch-delegate'), true)
+  assert.equal((await value.dispatch(request())).code, 'busy')
+  lifecycle.terminal('watch-delegate')
+  assert.equal((await value.dispatch(request())).code, 'delegated')
 })
 
 test('assessment sends the fixed system prompt, exact schema, and bounded identity prompt', async () => {
