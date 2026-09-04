@@ -704,8 +704,8 @@ test('cascaded credentials validate before composition-only resource mismatches'
   )
 })
 
-test('cascaded realtime composition rejects a live Codex fallback', () => {
-  const configured = settings({NOVA_AUDIO_AGENT_EXECUTOR: 'codex'})
+test('cascaded realtime composition rejects a matching live coding resource by project mode', () => {
+  const configured = settings({NOVA_AUDIO_AGENT_EXECUTORS: 'fast_sim'})
   const resource: CodexAssemblyResource = {
     adapter: modelProbeAdapter,
     mode: 'live',
@@ -719,7 +719,7 @@ test('cascaded realtime composition rejects a live Codex fallback', () => {
   assert.throws(
     () => buildCascadedRealtimeAssembly(assemblyOptions(configured, {codexResource: resource})),
     error => error instanceof AssemblyError
-      && error.message === 'realtime coding resource selection mismatch',
+      && error.message === 'realtime coding resource project mode mismatch',
   )
 })
 
@@ -772,6 +772,7 @@ test('cascaded composition forwards an explicit generic controller for a renamed
     mode: 'project', projectView: null, approvalPolicy: 'never', approvalController: null,
     start: () => Promise.resolve(), close: () => Promise.resolve(),
   }
+  const gatewayRequests: Readonly<Record<string, unknown>>[] = []
   const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings({
     NOVA_AUDIO_AGENT_EXECUTORS: 'workspace_coder',
   }), {
@@ -779,14 +780,22 @@ test('cascaded composition forwards an explicit generic controller for a renamed
     agentDescriptors: [codexAgentDescriptor('workspace_coder')],
     codingAgentControllerFactory: factory,
     supportGateway: {
-      complete: () => Promise.resolve({text: '{"target_work_id":null}'}),
+      complete: (input: Readonly<Record<string, unknown>>) => {
+        gatewayRequests.push(input)
+        return Promise.resolve({text: '{"target_work_id":"work-two"}'})
+      },
     } as never,
   }))
   try {
     assert.equal(contexts.length, 1)
     assert.equal(contexts[0]?.channel, 'workspace_coder')
     assert.notEqual(contexts[0]?.intake, undefined)
-    assert.equal(await contexts[0]?.resolveCancelTarget('stop it', []), null)
+    assert.equal(await contexts[0]?.resolveCancelTarget('stop the second task', [
+      {work_id: 'work-one', project: 'alpha', title: 'first task'},
+      {work_id: 'work-two', project: 'beta', title: 'second task'},
+    ]), 'work-two')
+    assert.equal(gatewayRequests.length, 1)
+    assert.match(String(gatewayRequests[0]?.prompt), /work-two/u)
   } finally {
     await realtime.stop()
   }

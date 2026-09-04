@@ -2,10 +2,19 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 
 import {ConfigurationError, loadSettings, type Settings} from '../src/config.js'
+import {VirtualClock} from '../src/clock.js'
+import {CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
+import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
+import {ProjectConfirmationController} from '../src/project-confirmation.js'
+import {
+  buildIntegratedRealtimeAssembly,
+  type IntegratedProviderRegistry,
+} from '../src/integrated-realtime-assembly.js'
 import {
   buildProductionRealtimeAssembly,
   type BuildProductionRealtimeAssemblyOptions,
 } from '../src/production-realtime-assembly.js'
+import {QwenAudioRealtimeAdapter} from '../src/realtime/qwen.js'
 import type {RealtimeAssembly} from '../src/realtime-assembly.js'
 
 type SelectedCodingComposition = Pick<
@@ -15,6 +24,46 @@ type SelectedCodingComposition = Pick<
 
 function options(settings: Settings): BuildProductionRealtimeAssemblyOptions {
   return {settings}
+}
+
+function projectResource(): CodexAssemblyResource {
+  const confirmationController = new ProjectConfirmationController({
+    clock: new VirtualClock(), idFactory: () => 'production-coding-confirmation',
+  })
+  const adapter = {
+    manifest: CODEX_PROJECT_MANIFEST,
+    dispatch: () => Promise.resolve({outcome: 'ok', trust: 'trusted_system', content: {}, refs: []}),
+    confirmationController,
+    initialize: () => Promise.resolve(),
+    commitConfirmed: () => Promise.resolve({accepted: false, code: 'unused'}),
+    publicProjectView: () => ({workspace_display_name: null, session_title: null, pending_confirmation: false}),
+    publicProjectContext: () => ({
+      workspace_id: null,
+      view: {workspace_display_name: null, session_title: null, pending_confirmation: false},
+    }),
+    activeCommittedWorkspace: () => Promise.resolve(null),
+    observeProjectView: () => () => undefined,
+    observeProjectContext: () => () => undefined,
+    observeCommittedWorkspace: () => () => undefined,
+    observeTerminalWorkOrder: () => () => undefined,
+  } as never
+  return {
+    adapter,
+    mode: 'project', projectView: null, approvalPolicy: 'never', approvalController: null,
+    start: () => Promise.resolve(), close: () => Promise.resolve(),
+  }
+}
+
+function integratedRegistry(): IntegratedProviderRegistry {
+  return {
+    qwen: input => new QwenAudioRealtimeAdapter({
+      ...input.config,
+      connector: () => Promise.reject(new Error('network was not expected')),
+      idFactory: input.idFactory,
+      now: input.now,
+      executorApproval: input.executorApproval,
+    }),
+  }
 }
 
 test('production selector constructs only the integrated branch', () => {
@@ -56,6 +105,51 @@ test('production selector supplies the paired coding factory and descriptor only
       name: 'codex', summary: '在已配置的项目工作区里执行编码任务（改代码、修 bug、写测试、重构）',
       ownedChannels: ['workspace_coder'],
     }])
+  }
+})
+
+test('production integrated composition registers the default coding controller with its paired descriptor', async () => {
+  const realtime = buildProductionRealtimeAssembly({
+    settings: loadSettings({
+      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: 'wss://qwen.example/realtime',
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: 'qwen-audio-test',
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: 'voice-test',
+      DASHSCOPE_API_KEY: 'dash-secret', TAVILY_API_KEY: 'search-secret',
+    }),
+    codexResource: projectResource(),
+  }, {
+    integrated: composition => buildIntegratedRealtimeAssembly(composition, integratedRegistry()),
+    cascaded: () => { throw new Error('unselected') },
+  })
+  try {
+    assert.deepEqual(realtime.tools.agent_descriptors.find(descriptor => descriptor.name === 'codex'), {
+      name: 'codex',
+      summary: '在已配置的项目工作区里执行编码任务（改代码、修 bug、写测试、重构）',
+      ownedChannels: ['codex'],
+    })
+    assert.equal(realtime.service.agentNameForChannel('codex'), 'codex')
+  } finally {
+    await realtime.stop()
+  }
+})
+
+test('production composition rejects descriptors that collide with the coding controller', () => {
+  const base: BuildProductionRealtimeAssemblyOptions = {
+    ...options(loadSettings({NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated'})),
+    codexResource: {adapter: {manifest: {name: 'workspace_coder'}}} as never,
+  }
+  for (const descriptor of [
+    {name: 'codex', summary: 'duplicate public name', ownedChannels: ['other']},
+    {name: 'other', summary: 'duplicate owned channel', ownedChannels: ['workspace_coder']},
+  ]) {
+    assert.throws(
+      () => buildProductionRealtimeAssembly({...base, agentDescriptors: [descriptor]}),
+      error => error instanceof ConfigurationError
+        && error.code === 'invalid_configuration'
+        && error.message === 'production coding descriptor cannot be overridden',
+    )
   }
 })
 
