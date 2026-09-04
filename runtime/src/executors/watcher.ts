@@ -192,7 +192,8 @@ export class WatchAdapter implements ExecutorAdapter {
     executor: 'watch' | 'guard',
   ) => void) | undefined
   readonly #onMonitorLifecycle: {
-    readonly admission: (delegateId: string, status: ObservationAdmission) => void
+    /** A granted OS permission may cross into armed only when its Vision identity is still current. */
+    readonly admission: (delegateId: string, status: ObservationAdmission) => boolean
     readonly hit: (delegateId: string) => boolean
     readonly terminal: (delegateId: string) => void
   } | undefined
@@ -217,7 +218,7 @@ export class WatchAdapter implements ExecutorAdapter {
       executor: 'watch' | 'guard',
     ) => void
     readonly onMonitorLifecycle?: {
-      readonly admission: (delegateId: string, status: ObservationAdmission) => void
+      readonly admission: (delegateId: string, status: ObservationAdmission) => boolean
       readonly hit: (delegateId: string) => boolean
       readonly terminal: (delegateId: string) => void
     }
@@ -311,7 +312,6 @@ export class WatchAdapter implements ExecutorAdapter {
       }
       try {
         this.#onObservationAdmission?.(admission, this.manifest.name as 'watch' | 'guard')
-        this.#onMonitorLifecycle?.admission(ctx.delegate.delegate_id, admission)
       } catch { /* telemetry is advisory */ }
       if (admission === 'denied' || admission === 'restricted') {
         this.#notifyTerminal(ctx)
@@ -329,6 +329,14 @@ export class WatchAdapter implements ExecutorAdapter {
       if (admission !== 'granted') {
         this.#notifyTerminal(ctx)
         return unknown('capture_unavailable')
+      }
+      // `stop` can only be queued through CausalRuntime. The identity fence is synchronous so a
+      // permission grant that lost its request/session/revision cannot arm or take one frame first.
+      let proceed = false
+      try { proceed = this.#onMonitorLifecycle?.admission(ctx.delegate.delegate_id, admission) ?? true } catch { /* deny */ }
+      if (!proceed) {
+        this.#notifyTerminal(ctx)
+        return this.#terminal('stopped')
       }
     }
 

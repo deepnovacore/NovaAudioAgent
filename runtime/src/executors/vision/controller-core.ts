@@ -333,19 +333,20 @@ export class VisionAgentControllerCore {
   }
 
   /** Host callback after camera permission admission. A stale identity is fenced, never granted. */
-  permissionGranted(identity: VisionIdentity): void {
+  permissionGranted(identity: VisionIdentity): boolean {
     const active = this.#active
-    if (active === null || !sameIdentity(active.identity, identity)) return
+    if (active === null || !sameIdentity(active.identity, identity)) return false
     if (!safeWanted(active.stillWanted) || !safeWanted(active.fence)) {
       if (this.#machine.state === 'permission-pending' || this.#machine.state === 'active') {
         this.#machine.cancel(active.identity)
         this.#compensatingStop(active)
       }
-      return
+      return false
     }
-    this.#machine.grant({...identity})
+    const granted = this.#machine.grant({...identity})
+    return granted.code === 'active' || granted.code === 'already_active'
   }
-  onPermissionGranted(identity: VisionIdentity): void { this.permissionGranted(identity) }
+  onPermissionGranted(identity: VisionIdentity): boolean { return this.permissionGranted(identity) }
 
   /** Host callback for an executor terminal. Cleanup is exact-identity and idempotent. */
   terminal(identity: VisionIdentity): void { this.#cleanupTerminal({...identity}) }

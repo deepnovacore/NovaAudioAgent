@@ -259,7 +259,7 @@ test('a stale permission grant is fenced and compensated without activating the 
   currentRevision += 1
   currentSessionEpoch += 1
   wanted = false
-  assert.equal(value.permissionGranted(identity), undefined)
+  assert.equal(value.permissionGranted(identity), false)
   assert.deepEqual(calls.map(call => [call.channel, call.op]), [['watch', 'start'], ['watch', 'stop']])
   assert.equal(value.state, 'terminal')
   value.terminal(identity)

@@ -43,7 +43,7 @@ import type {
   RealtimeWorkspaceGraph,
 } from '../src/realtime-assembly.js'
 import type { Frame, FrameSource } from '../src/executors/watcher.js'
-import type { JsonValue } from '../src/events.js'
+import type { EventRecord, JsonValue } from '../src/events.js'
 import {consumeHostExecutorCapability} from '../src/host-executor-capability.js'
 import type {
   CompleteRequest,
@@ -209,6 +209,25 @@ class RecordingFrameSource implements FrameSource {
   }
 }
 
+/** A local camera whose OS-permission result is deliberately released by the test. */
+class DeferredPermissionFrameSource extends RecordingFrameSource {
+  readonly admissions: Deferred<'granted'>[] = []
+
+  admitObservation(): Promise<'granted'> {
+    const gate = deferred<'granted'>()
+    this.admissions.push(gate)
+    return gate.promise
+  }
+
+  override snapshot(): Promise<Frame | null> {
+    this.snapshots += 1
+    return Promise.resolve({
+      payload: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+      media_type: 'image/jpeg', width: 1, height: 1, captured_at: 0,
+    })
+  }
+}
+
 class NeverCalledGateway implements ModelGateway {
   async *stream(request: StreamRequest): AsyncIterable<GatewayDelta> {
     void request
@@ -252,6 +271,33 @@ class VisionAssessGateway implements ModelGateway {
 
   complete(request: CompleteRequest): Promise<GatewayCompletion> {
     this.requests.push(structuredClone(request))
+    const prompt = JSON.parse(request.prompt) as {readonly request_id: string; readonly revision: number}
+    return Promise.resolve({text: JSON.stringify({
+      request_id: prompt.request_id, revision: prompt.revision,
+      kind: 'monitor', condition: 'the door opens', urgency: 'routine', urgency_evidence: null,
+      interval_s: 2, duration_s: 30, question: null,
+    })})
+  }
+}
+
+class VisionLateGrantGateway implements ModelGateway {
+  readonly requests: CompleteRequest[] = []
+  assessments = 0
+  vlmCalls = 0
+
+  async *stream(request: StreamRequest): AsyncIterable<GatewayDelta> {
+    void request
+    await Promise.resolve()
+    throw new Error('streaming model call was not expected')
+  }
+
+  complete(request: CompleteRequest): Promise<GatewayCompletion> {
+    this.requests.push(structuredClone(request))
+    if (request.images !== undefined) {
+      this.vlmCalls += 1
+      return Promise.resolve({text: '{"hit":true,"observation":"the door opened"}'})
+    }
+    this.assessments += 1
     const prompt = JSON.parse(request.prompt) as {readonly request_id: string; readonly revision: number}
     return Promise.resolve({text: JSON.stringify({
       request_id: prompt.request_id, revision: prompt.revision,
@@ -711,6 +757,110 @@ test('production Vision dispatch owns hidden Watch admission and fences stale pr
     ids.assertExhausted()
   } finally {
     unsubscribeRuntime()
+    await realtime.stop()
+  }
+})
+
+test('a late camera grant cannot arm stale Vision work and a fresh request still proceeds', async () => {
+  // Mutation caught: make Vision's permission-grant callback fire-and-forget again. The stale
+  // Watch will arm and reach this source's snapshot/VLM before its queued compensating stop runs.
+  const clock = new VirtualClock(0)
+  const ids = new ScriptedIdFactory({
+    vision: ['vision-stale', 'vision-fresh'],
+    delegate: ['watch-stale', 'watch-stale-stop', 'watch-fresh'],
+  })
+  const source = new DeferredPermissionFrameSource()
+  const gateway = new VisionLateGrantGateway()
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: []}),
+    clock, ids, gateway, frameSource: source, searchTransport: new NeverCalledSearch(),
+  })
+  const provider = new RecordingProgressProvider()
+  const realtime = buildRealtimeAssembly({
+    core, provider, onDiagnostic: () => undefined,
+  })
+  const events: EventRecord[] = []
+  const unsubscribe = core.runtime.observe(event => events.push(event))
+  const user = async (turn: string, text: string): Promise<void> => {
+    await realtime.service.handleEvent({
+      kind: 'user_speech_started', session_epoch: 1, speech_id: `speech-${turn}`, provider_item_id: `user-${turn}`,
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_speech_ended', session_epoch: 1, speech_id: `speech-${turn}`, provider_item_id: `user-${turn}`,
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1, item_id: `user-${turn}`, text,
+    })
+  }
+  const dispatch = async (turn: string): Promise<void> => {
+    await realtime.service.handleEvent({
+      kind: 'response_started', session_epoch: 1, response_id: `response-${turn}`,
+    })
+    await realtime.service.handleEvent({
+      kind: 'tool_call_ready', session_epoch: 1, call_id: `call-${turn}`, item_id: `tool-${turn}`,
+      name: 'dispatch',
+      arguments: {executor: 'vision', instruction: 'Watch the door.'},
+      response_id: `response-${turn}`,
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1, response_id: `response-${turn}`, status: 'completed', reason: '',
+    })
+  }
+
+  await realtime.start()
+  try {
+    await user('stale', 'Watch the door.')
+    await dispatch('stale')
+    await waitNamed('stale camera permission request', () => source.admissions.length === 1)
+    await waitNamed('stale host continuation', () => provider.responses.length === 1)
+    await realtime.service.handleEvent({
+      kind: 'response_started', session_epoch: 1, response_id: 'host-stale',
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_audio_delta', session_epoch: 1, response_id: 'host-stale', pcm: new Uint8Array([0, 1]),
+    })
+    const acknowledgement = realtime.session.currentGeneration
+    assert.ok(acknowledgement)
+    assert.equal(realtime.service.playbackStarted(acknowledgement.utterance_id, acknowledgement.generation_epoch), true)
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1, response_id: 'host-stale', status: 'completed', reason: '',
+    })
+    assert.equal(realtime.service.playbackDone(acknowledgement.utterance_id, acknowledgement.generation_epoch, 0), true)
+
+    // A newer user turn invalidates the revision-bound host controller fence while the OS prompt is open.
+    await user('fresh', 'Watch the door now.')
+    source.admissions[0]?.resolve('granted')
+    await waitNamed('stale Watch termination', () => core.runtime.ownedTaskCount === 0)
+
+    const staleEvents = events.filter((event): event is Extract<EventRecord, {kind: 'observation'}> => (
+      event.kind === 'observation' && event.payload.delegate_id === 'watch-stale'
+    ))
+    assert.equal(staleEvents.some(event => event.payload.content.state === 'armed'), false)
+    assert.equal(staleEvents.some(event => event.payload.content.state === 'hit'), false)
+    assert.equal(source.snapshots, 0)
+    assert.equal(gateway.vlmCalls, 0)
+
+    // The terminal from the fenced identity must release the single-active reservation. The current
+    // user request has a distinct request id and revision, and a normal grant must proceed unchanged.
+    await dispatch('fresh')
+    const freshAdmission = realtime.service.toolCallAcceptances().find(item => item.call_id === 'call-fresh')?.acceptance
+    assert.ok(freshAdmission, JSON.stringify(realtime.service.toolCallAcceptances()))
+    assert.equal(freshAdmission.accepted, true)
+    assert.equal(freshAdmission?.delegate_id, 'watch-fresh')
+    await waitNamed('fresh camera permission request', () => source.admissions.length === 2)
+    source.admissions[1]?.resolve('granted')
+    await waitNamed('fresh Watch hit', () => gateway.vlmCalls === 1 && core.runtime.ownedTaskCount === 0)
+
+    const freshEvents = events.filter((event): event is Extract<EventRecord, {kind: 'observation'}> => (
+      event.kind === 'observation' && event.payload.delegate_id === 'watch-fresh'
+    ))
+    assert.equal(freshEvents.some(event => event.payload.content.state === 'armed'), true)
+    assert.equal(freshEvents.some(event => event.payload.content.state === 'hit'), true)
+    assert.equal(source.snapshots, 1)
+    assert.equal(gateway.assessments, 2)
+    ids.assertExhausted()
+  } finally {
+    unsubscribe()
     await realtime.stop()
   }
 })
