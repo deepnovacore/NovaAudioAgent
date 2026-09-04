@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {
   VISION_ASSESS_SYSTEM,
+  VISION_MONITOR_TOMBSTONE_LIMIT,
   VisionMonitorMachine,
   assessVision,
   visionAssessSchema,
@@ -222,6 +223,22 @@ test('permission grant activates the exact reservation and terminal cleanup rele
   assert.equal(machine.cleanup(identity).code, 'cleaned')
   assert.equal(machine.state, 'idle')
   assert.equal(machine.reserve({...identity, revision: 5}).code, 'reserved')
+})
+
+test('bounded tombstones do not let an old identity affect a newer active reservation', () => {
+  const machine = new VisionMonitorMachine()
+  const first = {...identity, request_id: 'oldest'}
+  for (let index = 0; index < VISION_MONITOR_TOMBSTONE_LIMIT + 16; index += 1) {
+    const item = {...identity, request_id: `vision-${index}`}
+    machine.reserve(item)
+    machine.grant(item)
+    machine.cancel(item)
+    machine.cleanup(item)
+  }
+  const current = {...identity, request_id: 'current'}
+  assert.equal(machine.reserve(current).code, 'reserved')
+  assert.equal(machine.grant(current).code, 'active')
+  assert.equal(machine.grant(first).code, 'stale')
 })
 
 test('the system prompt defines exact evidence and silence safety', () => {

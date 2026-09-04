@@ -25,15 +25,23 @@ function assessment(overrides: Record<string, unknown> = {}): string {
   })
 }
 
+function requestIdFromPrompt(prompt: string): string {
+  const parsed = JSON.parse(prompt) as {readonly request_id: string}
+  return parsed.request_id
+}
+
 class ScriptedGateway implements ModelGateway {
   readonly requests: CompleteRequest[] = []
-  constructor(private readonly text: string | Error, private readonly onComplete?: () => void) {}
+  constructor(
+    private readonly text: string | Error | ((request: CompleteRequest) => string),
+    private readonly onComplete?: () => void,
+  ) {}
   stream(): AsyncIterable<never> { return {async *[Symbol.asyncIterator]() { /* no-op */ }} }
   complete(request: CompleteRequest): Promise<{readonly text: string}> {
     this.requests.push(request)
     this.onComplete?.()
     if (this.text instanceof Error) return Promise.reject(this.text)
-    return Promise.resolve({text: this.text})
+    return Promise.resolve({text: typeof this.text === 'function' ? this.text(request) : this.text})
   }
 }
 
@@ -165,49 +173,171 @@ test('valid-schema semantic mistakes become stable unclear without an effect', a
 
 test('permission-pending reservation is busy and rejected starts release the fenced slot', async () => {
   const calls: Record<string, unknown>[] = []
-  const value = core(new ScriptedGateway(assessment()), calls)
+  const value = new VisionAgentControllerCore({
+    gateway: new ScriptedGateway(request => assessment({request_id: requestIdFromPrompt(request.prompt)})),
+    watchModel: 'vision-model', requestIdFactory: (() => {
+      let next = 0
+      return () => `vision-${++next}`
+    })(), runtimePort: port(calls), assessmentTimeoutMs: 50,
+  })
   assert.equal((await value.dispatch(request())).code, 'delegated')
   assert.equal((await value.dispatch(request({originalUserText: 'second'}))).code, 'busy')
   value.permissionGranted(identity)
   value.terminal(identity)
-  const restarted = core(new ScriptedGateway(assessment()))
-  assert.equal((await restarted.dispatch(request({originalUserText: 'third'}))).code, 'delegated')
+  assert.equal((await value.dispatch(request({originalUserText: 'third'}))).code, 'delegated')
 
   const rejectedCalls: Record<string, unknown>[] = []
-  const rejected = core(new ScriptedGateway(assessment()), rejectedCalls, false)
+  let rejectedStart = true
+  let rejectedNext = 0
+  const rejected = new VisionAgentControllerCore({
+    gateway: new ScriptedGateway(input => assessment({request_id: requestIdFromPrompt(input.prompt)})),
+    watchModel: 'vision-model', requestIdFactory: () => `rejected-${++rejectedNext}`,
+    runtimePort: {
+      dispatch(input) {
+        rejectedCalls.push({...input, request: {...input.request}})
+        if (input.op === 'start' && rejectedStart) {
+          rejectedStart = false
+          return {accepted: false, delegate_id: null}
+        }
+        return {accepted: true, delegate_id: `${input.channel}-delegate`}
+      },
+    }, assessmentTimeoutMs: 50,
+  })
   assert.equal((await rejected.dispatch(request())).code, 'runtime_rejected')
-  const retry = core(new ScriptedGateway(assessment()))
-  assert.equal((await retry.dispatch(request({originalUserText: 'retry'}))).code, 'delegated')
+  assert.equal((await rejected.dispatch(request({originalUserText: 'retry'}))).code, 'delegated')
 })
 
-test('cancel can fence an asynchronous permission-pending admission before it settles', async () => {
+test('post-admission staleness issues an exact compensating stop and remains terminal', async () => {
+  let wanted = true
   const calls: Record<string, unknown>[] = []
-  let resolveStart!: (value: {readonly accepted: boolean; readonly delegate_id: string | null}) => void
-  const startAdmission = new Promise<{readonly accepted: boolean; readonly delegate_id: string | null}>(resolve => {
-    resolveStart = resolve
-  })
   const runtimePort: VisionRuntimeOpPort = {
     dispatch(input) {
       calls.push({...input, request: {...input.request}})
-      return input.op === 'start'
-        ? startAdmission
-        : Promise.resolve({accepted: true, delegate_id: null})
+      if (input.op === 'start') wanted = false
+      return {accepted: true, delegate_id: `${input.channel}-delegate`}
     },
   }
   const value = new VisionAgentControllerCore({
     gateway: new ScriptedGateway(assessment()), watchModel: 'vision-model',
     requestIdFactory: () => identity.request_id, runtimePort, assessmentTimeoutMs: 50,
   })
-  const starting = value.dispatch(request())
-  await new Promise<void>(resolve => setImmediate(resolve))
-  assert.equal(value.state, 'permission-pending')
-  assert.equal((await value.cancel({stillWanted: () => true})).code, 'cancelled')
-  value.permissionGranted(identity)
-  resolveStart({accepted: true, delegate_id: 'late-start'})
-  assert.equal((await starting).code, 'superseded')
+  assert.equal((await value.dispatch(request({stillWanted: () => wanted}))).code, 'superseded')
+  assert.deepEqual(calls.map(call => [call.channel, call.op]), [['watch', 'start'], ['watch', 'stop']])
   assert.equal(value.state, 'terminal')
   value.terminal(identity)
+  assert.equal(value.state, 'idle')
+})
+
+test('a stale permission grant is fenced and compensated without activating the reservation', async () => {
+  let wanted = true
+  let currentRevision = identity.revision
+  let currentSessionEpoch = identity.session_epoch
+  const calls: Record<string, unknown>[] = []
+  const value = core(new ScriptedGateway(assessment()), calls)
+  assert.equal((await value.dispatch(request({
+    stillWanted: () => wanted,
+    currentRevision: () => currentRevision,
+    currentSessionEpoch: () => currentSessionEpoch,
+  }))).code, 'delegated')
+  currentRevision += 1
+  currentSessionEpoch += 1
+  wanted = false
+  assert.equal(value.permissionGranted(identity), undefined)
   assert.deepEqual(calls.map(call => [call.channel, call.op]), [['watch', 'start'], ['watch', 'stop']])
+  assert.equal(value.state, 'terminal')
+  value.terminal(identity)
+})
+
+test('a rejected explicit stop keeps the original monitor terminal until exact terminal recovery', async () => {
+  const calls: Record<string, unknown>[] = []
+  let stopAttempts = 0
+  const runtimePort: VisionRuntimeOpPort = {
+    dispatch(input) {
+      calls.push({...input, request: {...input.request}})
+      if (input.op === 'stop') {
+        stopAttempts += 1
+        return stopAttempts > 1
+          ? {accepted: true, delegate_id: `${input.channel}-stop-retry`}
+          : {accepted: false, delegate_id: null}
+      }
+      return {accepted: true, delegate_id: `${input.channel}-delegate`}
+    },
+  }
+  let next = 0
+  const value = new VisionAgentControllerCore({
+    gateway: new ScriptedGateway(input => assessment({request_id: requestIdFromPrompt(input.prompt)})),
+    watchModel: 'vision-model', requestIdFactory: () => `vision-${++next}`,
+    runtimePort, assessmentTimeoutMs: 50,
+  })
+  assert.equal((await value.dispatch(request())).code, 'delegated')
+  assert.equal((await value.cancel({stillWanted: () => true})).code, 'runtime_rejected')
+  assert.equal(value.state, 'terminal')
+  assert.equal((await value.dispatch(request())).code, 'busy')
+  assert.equal((await value.cancel({stillWanted: () => true})).code, 'requested_stop')
+  assert.equal(stopAttempts, 2)
+  value.terminal({request_id: 'vision-1', revision: 7, session_epoch: 3})
+  assert.equal((await value.dispatch(request())).code, 'delegated')
+})
+
+test('runtime admission must be an exact bounded data result before delegation', async () => {
+  const hostileResults: unknown[] = [
+    {accepted: true, delegate_id: 'x'.repeat(129)},
+    {accepted: 'yes', delegate_id: 'delegate'},
+    {accepted: true, delegate_id: 'delegate', extra: true},
+    Object.create({accepted: true, delegate_id: 'delegate'}),
+    {accepted: true, get delegate_id() { throw new Error('accessor') }},
+    {accepted: false, delegate_id: null, extra: true},
+  ]
+  for (const hostile of hostileResults) {
+    const runtimePort: VisionRuntimeOpPort = {
+      dispatch: () => hostile as {readonly accepted: boolean; readonly delegate_id: string | null},
+    }
+    const candidate = new VisionAgentControllerCore({
+      gateway: new ScriptedGateway(assessment()), watchModel: 'vision-model',
+      requestIdFactory: () => identity.request_id, runtimePort, assessmentTimeoutMs: 50,
+    })
+    assert.equal((await candidate.dispatch(request())).code, 'runtime_rejected')
+  }
+})
+
+test('runtime admission is synchronous in the public port contract', async () => {
+  const invalidPort: VisionRuntimeOpPort = {
+    // @ts-expect-error Runtime delegate admission must not be represented as a Promise.
+    dispatch: () => Promise.resolve({accepted: true, delegate_id: 'promise-result'}),
+  }
+  void invalidPort
+
+  const promisePort = {
+    dispatch: () => Promise.resolve({accepted: true, delegate_id: 'promise-result'}),
+  } as unknown as VisionRuntimeOpPort
+  const value = new VisionAgentControllerCore({
+    gateway: new ScriptedGateway(assessment()), watchModel: 'vision-model',
+    requestIdFactory: () => identity.request_id, runtimePort: promisePort, assessmentTimeoutMs: 50,
+  })
+  assert.equal((await value.dispatch(request())).code, 'runtime_rejected')
+  assert.equal(value.state, 'idle')
+})
+
+test('a reentrant terminal during synchronous start admission is compensated exactly', async () => {
+  const calls: Record<string, unknown>[] = []
+  let value: VisionAgentControllerCore | null = null
+  const runtimePort: VisionRuntimeOpPort = {
+    dispatch(input) {
+      calls.push({...input, request: {...input.request}})
+      if (input.op === 'start') value?.terminal(identity)
+      return {accepted: true, delegate_id: `${input.channel}-delegate`}
+    },
+  }
+  value = new VisionAgentControllerCore({
+    gateway: new ScriptedGateway(assessment()),
+    watchModel: 'vision-model', requestIdFactory: () => identity.request_id,
+    runtimePort, assessmentTimeoutMs: 50,
+  })
+  assert.equal((await value.dispatch(request())).code, 'superseded')
+  assert.deepEqual(calls.map(call => [call.origin_ref, call.op]), [
+    ['user-item-1', 'start'], ['user-item-1', 'stop'],
+  ])
+  assert.equal(value.state, 'idle')
 })
 
 test('stale identity before and after assessment, and immediately before runtime, emits no operation', async () => {
@@ -242,7 +372,8 @@ test('dispatch stop and public cancel target the sole channel, fence late callba
     code: 'cancelled', accepted: true, detail: {channel: 'watch', op: 'stop'},
   })
   assert.deepEqual(calls[1]?.request, {})
-  assert.equal(value.permissionGranted(identity), undefined)
+  assert.equal(calls[1]?.origin_ref, 'user-item-1')
+  value.permissionGranted(identity)
   assert.equal((await value.cancel({origin_ref: 'user-item-2', stillWanted: () => true})).code, 'requested_stop')
   value.terminal(identity)
   value.hit(identity)
@@ -256,11 +387,16 @@ test('dispatch stop and public cancel target the sole channel, fence late callba
 
 test('successful terminal and hit callbacks clean up only for exact identity', async () => {
   const calls: Record<string, unknown>[] = []
-  const value = core(new ScriptedGateway(assessment()), calls)
+  let next = 0
+  const value = new VisionAgentControllerCore({
+    gateway: new ScriptedGateway(input => assessment({request_id: requestIdFromPrompt(input.prompt)})),
+    watchModel: 'vision-model', requestIdFactory: () => `vision-${++next}`,
+    runtimePort: port(calls), assessmentTimeoutMs: 50,
+  })
   assert.equal((await value.dispatch(request())).code, 'delegated')
   value.terminal({...identity, revision: identity.revision + 1})
   assert.equal((await value.dispatch(request({originalUserText: 'still busy'}))).code, 'busy')
+  value.permissionGranted(identity)
   value.hit(identity)
-  const free = core(new ScriptedGateway(assessment()))
-  assert.equal((await free.dispatch(request({originalUserText: 'free'}))).code, 'delegated')
+  assert.equal((await value.dispatch(request({originalUserText: 'free'}))).code, 'delegated')
 })

@@ -304,6 +304,9 @@ export interface VisionMonitorOperation {
   readonly identity: VisionIdentity | null
 }
 
+/** Maximum number of completed identities retained to reject late callbacks. */
+export const VISION_MONITOR_TOMBSTONE_LIMIT = 128
+
 function identityKey(identity: VisionIdentity): string {
   return `${identity.request_id}\u0000${identity.revision}\u0000${identity.session_epoch}`
 }
@@ -317,6 +320,7 @@ export class VisionMonitorMachine {
   #state: VisionMonitorState = 'idle'
   #identity: VisionIdentity | null = null
   readonly #fenced = new Set<string>()
+  readonly #fencedOrder: string[] = []
 
   get state(): VisionMonitorState {
     return this.#state
@@ -357,7 +361,7 @@ export class VisionMonitorMachine {
   cancel(identity: VisionIdentity): VisionMonitorOperation {
     if (this.matches(identity) && (this.#state === 'permission-pending' || this.#state === 'active')) {
       this.#state = 'terminal'
-      this.#fenced.add(identityKey(identity))
+      this.fence(identityKey(identity))
       return {code: 'cancelled', state: this.#state, identity: this.identity}
     }
     if (this.matches(identity) && this.#state === 'terminal') {
@@ -383,6 +387,16 @@ export class VisionMonitorMachine {
 
   private matches(identity: VisionIdentity): boolean {
     return this.#identity !== null && sameIdentity(this.#identity, identity)
+  }
+
+  private fence(key: string): void {
+    if (this.#fenced.has(key)) return
+    this.#fenced.add(key)
+    this.#fencedOrder.push(key)
+    if (this.#fencedOrder.length > VISION_MONITOR_TOMBSTONE_LIMIT) {
+      const oldest = this.#fencedOrder.shift()
+      if (oldest !== undefined) this.#fenced.delete(oldest)
+    }
   }
 }
 
