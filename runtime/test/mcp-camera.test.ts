@@ -142,6 +142,17 @@ test('malformed source frames never become base64 MCP output or gateway input', 
   }
 })
 
+test('MCP result parser accepts canonical four and five MiB image payloads', () => {
+  for (const bytes of [4 * 1024 * 1024, CAMERA_MAX_IMAGE_BYTES]) {
+    const parsed = parseMcpToolResult({
+      content: [{
+        type: 'image', data: Buffer.alloc(bytes, 0x5a).toString('base64'), mimeType: 'image/jpeg',
+      }],
+    })
+    assert.equal(parsed.kind, 'image')
+  }
+})
+
 test('MCP foundation accepts bounded plain text or one image only and fails closed for other shapes', () => {
   assert.deepEqual(parseMcpToolResult({content: [{type: 'text', text: 'ok'}]}), {kind: 'text', text: 'ok'})
   assert.equal(parseMcpToolResult({content: []}).kind, 'invalid')
@@ -175,5 +186,8 @@ test('MCP foundation accepts bounded plain text or one image only and fails clos
   assert.equal(metadataGets, 0)
   assert.equal(parseMcpToolResult({
     content: [{type: 'image', data: 'A'.repeat(Math.ceil(CAMERA_MAX_IMAGE_BYTES / 3) * 4 + 4), mimeType: 'image/jpeg'}],
+  }).kind, 'invalid')
+  assert.equal(parseMcpToolResult({
+    content: [{type: 'image', data: Buffer.alloc(CAMERA_MAX_IMAGE_BYTES + 1).toString('base64'), mimeType: 'image/jpeg'}],
   }).kind, 'invalid')
 })

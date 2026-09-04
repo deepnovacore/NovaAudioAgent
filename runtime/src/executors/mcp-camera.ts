@@ -101,8 +101,19 @@ function canonicalImage(data: string, mimeType: string): boolean {
 }
 
 function canonicalBase64(value: string): boolean {
-  return value.length % 4 === 0
-    && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
+  if (value.length % 4 !== 0) return false
+  let padding = 0
+  if (value.endsWith('=')) padding += 1
+  if (value.endsWith('==')) padding += 1
+  const bodyLength = value.length - padding
+  if (padding > 2 || (padding === 1 && bodyLength % 4 !== 3)
+    || (padding === 2 && bodyLength % 4 !== 2)) return false
+  for (let index = 0; index < bodyLength; index += 1) {
+    const code = value.charCodeAt(index)
+    if (!((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)
+      || (code >= 0x30 && code <= 0x39) || code === 0x2b || code === 0x2f)) return false
+  }
+  return true
 }
 
 interface AdmissionGatedFrameSource extends FrameSource {
