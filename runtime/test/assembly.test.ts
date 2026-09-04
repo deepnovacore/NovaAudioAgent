@@ -9,7 +9,13 @@ import { CameraMcpAdapter, MCP_CAMERA_EXECUTOR } from '../src/executors/mcp-came
 import { ChromiumFrameSource } from '../src/executors/chromium-frame-source.js'
 import { DisabledFrameSource } from '../src/executors/frame-source.js'
 import type { SearchTransport } from '../src/executors/search.js'
-import { WatchAdapter, type Frame, type FrameSource } from '../src/executors/watcher.js'
+import {
+  GUARD_MANIFEST,
+  WATCH_MANIFEST,
+  WatchAdapter,
+  type Frame,
+  type FrameSource,
+} from '../src/executors/watcher.js'
 import { MediaStore } from '../src/media-store.js'
 import type {
   CompleteRequest,
@@ -569,6 +575,8 @@ test('assembly telemetry does not call a non-progress class a host suppression',
 })
 
 test('Watch keeps the Chromium file epoch while Guard resets it before observation', async () => {
+  // Source epoch is a WatchAdapter concern. It deliberately bypasses the production Assembly,
+  // where raw hidden Watch/Guard dispatches are now fail-closed unless Vision binds an identity.
   const clock = new VirtualClock()
   const captures: unknown[] = []
   const source = new ChromiumFrameSource({
@@ -591,6 +599,55 @@ test('Watch keeps the Chromium file epoch while Guard resets it before observati
     {'fast-model': '{"hit": false, "observation": "clear"}'},
     () => { setImmediate(() => clock.advanceTo(clock.now() + 31)) },
   )
+  const watch = new WatchAdapter({
+    manifest: WATCH_MANIFEST,
+    source,
+    gateway,
+    mediaStore: new MediaStore(),
+    model: 'fast-model',
+    captureEnabled: true,
+  })
+  const guard = new WatchAdapter({
+    manifest: GUARD_MANIFEST,
+    source,
+    gateway,
+    mediaStore: new MediaStore(),
+    model: 'fast-model',
+    captureEnabled: true,
+    prepareObservation: () => source.restart(),
+  })
+  await source.start()
+  try {
+    await source.restart()
+    clock.advanceTo(10)
+    await watch.dispatch('start', {condition: 'motion', duration_s: 30}, watchContext('watch', clock))
+    await guard.dispatch('start', {condition: 'motion', duration_s: 30}, watchContext('guard', clock))
+    assert.deepEqual(captures, [
+      {source: 'file', positionMs: 10_000},
+      {source: 'file', positionMs: 0},
+    ])
+  } finally {
+    await source.stop()
+  }
+})
+
+test('an unbound raw hidden Watch start in production Assembly fails closed after a grant', async () => {
+  const clock = new VirtualClock()
+  const captures: unknown[] = []
+  const source = new ChromiumFrameSource({
+    source: 'file',
+    clock,
+    transport: {
+      captureCamera: request => {
+        captures.push(request)
+        return Promise.resolve({
+          payload: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+          media_type: 'image/jpeg', width: 1280, height: 720,
+        })
+      },
+    },
+  })
+  const gateway = new ScriptedGateway([], {'fast-model': '{"hit":true,"observation":"motion"}'})
   const assembly = buildAssembly({
     settings: settings({fast_model: 'fast-model'}),
     gateway,
@@ -598,20 +655,24 @@ test('Watch keeps the Chromium file epoch while Guard resets it before observati
     frameSource: source,
     clock,
   })
+  const watch = assembly.runtime.executors.get('watch')
+  assert.ok(watch instanceof WatchAdapter)
+  const observations: Parameters<NonNullable<ExecutorDispatchContext['observe']>>[0][] = []
+  const context: ExecutorDispatchContext = {
+    ...watchContext('watch', clock),
+    observe: observation => observations.push(observation),
+  }
+
   await assembly.start()
   try {
-    await source.restart()
-    clock.advanceTo(10)
-    const watch = assembly.runtime.executors.get('watch')
-    const guard = assembly.runtime.executors.get('guard')
-    assert.ok(watch instanceof WatchAdapter)
-    assert.ok(guard instanceof WatchAdapter)
-    await watch.dispatch('start', {condition: 'motion', duration_s: 30}, watchContext('watch', clock))
-    await guard.dispatch('start', {condition: 'motion', duration_s: 30}, watchContext('guard', clock))
-    assert.deepEqual(captures, [
-      {source: 'file', positionMs: 10_000},
-      {source: 'file', positionMs: 0},
-    ])
+    const handoff = await watch.dispatch('start', {condition: 'motion', duration_s: 30}, context)
+    assert.equal(handoff.outcome, 'ok')
+    assert.equal(handoff.content.reason, 'stopped')
+    assert.equal(watch.status.state, 'idle')
+    assert.equal(observations.some(observation => observation.content.state === 'armed'), false)
+    assert.equal(observations.some(observation => observation.content.state === 'hit'), false)
+    assert.deepEqual(captures, [])
+    assert.equal(gateway.completed.length, 0)
   } finally {
     await assembly.stop()
   }
