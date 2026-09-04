@@ -22,7 +22,6 @@ import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model
 import { classifySurrogateVerdict, runSurrogateCall } from './calls.js'
 import { CameraMcpAdapter, MCP_CAMERA_EXECUTOR } from './executors/mcp-camera.js'
 import {
-  codexAgentDescriptor,
   VisionAgentController,
   VisionAgentControllerCore,
   VisionLifecycleBridge,
@@ -250,9 +249,8 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   ]
   const manifests = executors.map(adapter => adapter.manifest)
   const agentDescriptors = [
-    ...codingAgentDescriptors(manifests),
-    ...(cameraModuleEnabled ? [VISION_AGENT_DESCRIPTOR] : []),
     ...(options.agentDescriptors ?? []),
+    ...(cameraModuleEnabled ? [VISION_AGENT_DESCRIPTOR] : []),
   ]
   const tools = compileToolSchema(manifests, {includeMemoryRecall: true, agentDescriptors})
 
@@ -372,17 +370,6 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
       })
     },
   }
-}
-
-function codingAgentDescriptors(manifests: readonly ExecutorManifest[]): readonly AgentDescriptor[] {
-  const coding = manifests.filter(manifest => manifest.roles.includes('coding'))
-  if (coding.length > 1) throw new AssemblyError('multiple coding executors are not supported')
-  const manifest = coding[0]
-  if (manifest === undefined) return []
-  if (manifest.model_visibility !== 'hidden') {
-    throw new AssemblyError(`coding executor '${manifest.name}' must be hidden`)
-  }
-  return [codexAgentDescriptor(manifest.name)]
 }
 
 export { simManifestRegistry }

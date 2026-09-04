@@ -5,6 +5,7 @@ import {join, resolve} from 'node:path'
 import { test } from 'node:test'
 import {AssemblyError, buildAssembly} from '../src/assembly.js'
 import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
+import {codexAgentDescriptor, CodexAgentController} from '../src/executors/index.js'
 import {
   CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
@@ -34,6 +35,7 @@ import {
   buildQwenRealtimeAssembly,
   type BuildQwenRealtimeAssemblyOptions,
 } from '../src/qwen-realtime-assembly.js'
+import type {CodingAgentControllerFactory} from '../src/realtime-assembly.js'
 import {
   QwenAudioRealtimeAdapter,
   QwenSocketClosedError,
@@ -209,6 +211,16 @@ function qwenOptions(
     onDiagnostic: () => undefined,
     ...overrides,
   }
+}
+
+const testCodingAgentControllerFactory: CodingAgentControllerFactory = {
+  create: context => new CodexAgentController({
+    channel: context.channel,
+    ...(context.intake === undefined ? {} : {intake: context.intake}),
+    ...(context.executor === undefined ? {} : {executor: context.executor}),
+    dispatchPort: context.dispatchPort,
+    resolveCancelTarget: context.resolveCancelTarget,
+  }),
 }
 
 function installRecordingFetch(authorizations: string[]): () => void {
@@ -418,6 +430,8 @@ test('Qwen composition exposes approval only for the exact controller-bearing re
       NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
     }), connector.connector),
     codexResource: resource,
+    codingAgentControllerFactory: testCodingAgentControllerFactory,
+    agentDescriptors: [codexAgentDescriptor(resource.adapter.manifest.name)],
   }
   const realtime = buildQwenRealtimeAssembly(input)
   assert.equal(realtime.runtime.executors.get('codex'), adapter)
@@ -450,6 +464,8 @@ test('Qwen composition exposes approval only for the exact controller-bearing re
       NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
     }), neverConnector.connector),
     codexResource: neverResource,
+    codingAgentControllerFactory: testCodingAgentControllerFactory,
+    agentDescriptors: [codexAgentDescriptor(neverResource.adapter.manifest.name)],
   })
   await settleNamed('Qwen never-approval composition start', neverRealtime.start())
   assert.equal(neverRealtime.tools.bindings.get('confirm')?.kind, 'host')

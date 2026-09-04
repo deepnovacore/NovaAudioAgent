@@ -122,6 +122,7 @@ export function buildQwenRealtimeAssembly(
     ...(options.cameraModuleEnabled === undefined
       ? {}
       : {cameraModuleEnabled: options.cameraModuleEnabled}),
+    ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
   })
   const provider = options.qwenProvider ?? buildQwenRealtimeAssembly({
     config: qwen,
@@ -174,5 +175,8 @@ export function buildQwenRealtimeAssembly(
       ? {}
       : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
+    ...(options.codingAgentControllerFactory === undefined
+      ? {}
+      : {codingAgentControllerFactory: options.codingAgentControllerFactory}),
   })
 }

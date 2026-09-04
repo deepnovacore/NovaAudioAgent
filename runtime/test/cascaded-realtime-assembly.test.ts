@@ -7,6 +7,7 @@ import {AssemblyError} from '../src/assembly.js'
 import type {ExecutorAdapter, ExecutorDispatchContext} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
 import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
+import {codexAgentDescriptor, CodexAgentController} from '../src/executors/codex/controller.js'
 import {
   ConfigurationError,
   loadSettings,
@@ -14,6 +15,7 @@ import {
   type Settings,
   type VolcengineRealtimeConfig,
 } from '../src/config.js'
+import {ProjectConfirmationController} from '../src/project-confirmation.js'
 import type {Frame, FrameSource} from '../src/executors/watcher.js'
 import {WatchAdapter} from '../src/executors/watcher.js'
 import type {IdFactory} from '../src/ids.js'
@@ -47,6 +49,7 @@ import {
   type BuildCascadedRealtimeAssemblyOptions,
   type CascadedProviderRegistries,
 } from '../src/cascaded-realtime-assembly.js'
+import type {CodingAgentControllerFactory} from '../src/realtime-assembly.js'
 
 function settings(environment: NodeJS.ProcessEnv = {}): Settings {
   return loadSettings({
@@ -718,6 +721,75 @@ test('cascaded realtime composition rejects a live Codex fallback', () => {
     error => error instanceof AssemblyError
       && error.message === 'realtime coding resource selection mismatch',
   )
+})
+
+test('cascaded composition forwards an explicit generic controller for a renamed hidden coding executor', async () => {
+  const coding = {
+    ...modelProbeAdapter,
+    manifest: executorManifestSchema.parse({
+      name: 'workspace_coder', display_name: 'Workspace coder', model_visibility: 'hidden', roles: ['coding'],
+      policy: {channel: 'workspace_coder', priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8},
+      ops: [
+        {name: 'run', description: 'run', params: {type: 'object', properties: {work_order: {type: 'string'}}, required: ['work_order'], additionalProperties: false}},
+        {name: 'status', description: 'status', readonly: true, params: {type: 'object', properties: {}, additionalProperties: false}},
+      ],
+    }),
+  }
+  const contexts: Parameters<CodingAgentControllerFactory['create']>[0][] = []
+  const factory: CodingAgentControllerFactory = {
+    create: context => {
+      contexts.push(context)
+      return new CodexAgentController({
+        channel: context.channel,
+        ...(context.intake === undefined ? {} : {intake: context.intake}),
+        ...(context.executor === undefined ? {} : {executor: context.executor}),
+        dispatchPort: context.dispatchPort,
+        resolveCancelTarget: context.resolveCancelTarget,
+      })
+    },
+  }
+  const confirmationController = new ProjectConfirmationController({
+    clock: new VirtualClock(), idFactory: () => 'cascaded-coding-confirmation',
+  })
+  const adapter = {
+    ...coding,
+    confirmationController,
+    initialize: () => Promise.resolve(),
+    commitConfirmed: () => Promise.resolve({accepted: false, code: 'unused'}),
+    publicProjectView: () => ({workspace_display_name: null, session_title: null, pending_confirmation: false}),
+    publicProjectContext: () => ({
+      workspace_id: null,
+      view: {workspace_display_name: null, session_title: null, pending_confirmation: false},
+    }),
+    activeCommittedWorkspace: () => Promise.resolve(null),
+    observeProjectView: () => () => undefined,
+    observeProjectContext: () => () => undefined,
+    observeCommittedWorkspace: () => () => undefined,
+    observeTerminalWorkOrder: () => () => undefined,
+  }
+  const resource: CodexAssemblyResource = {
+    adapter,
+    mode: 'project', projectView: null, approvalPolicy: 'never', approvalController: null,
+    start: () => Promise.resolve(), close: () => Promise.resolve(),
+  }
+  const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings({
+    NOVA_AUDIO_AGENT_EXECUTORS: 'workspace_coder',
+  }), {
+    codexResource: resource,
+    agentDescriptors: [codexAgentDescriptor('workspace_coder')],
+    codingAgentControllerFactory: factory,
+    supportGateway: {
+      complete: () => Promise.resolve({text: '{"target_work_id":null}'}),
+    } as never,
+  }))
+  try {
+    assert.equal(contexts.length, 1)
+    assert.equal(contexts[0]?.channel, 'workspace_coder')
+    assert.notEqual(contexts[0]?.intake, undefined)
+    assert.equal(await contexts[0]?.resolveCancelTarget('stop it', []), null)
+  } finally {
+    await realtime.stop()
+  }
 })
 
 test('core gateway preserves generic models or applies all Ark support overrides immutably',

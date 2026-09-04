@@ -267,7 +267,7 @@ test('camera assembly hides Watch and Guard behind the owned Vision controller',
   assert.equal(disabled.visionController, undefined)
 })
 
-test('a hidden coding role owns its actual channel while retaining the public codex agent name', () => {
+test('a hidden coding role requires its public descriptor from composition', () => {
   const coding = {
     manifest: executorManifestSchema.parse({
       name: 'workspace_coder', display_name: 'Workspace coder', model_visibility: 'hidden', roles: ['coding'],
@@ -279,13 +279,23 @@ test('a hidden coding role owns its actual channel while retaining the public co
     }),
     dispatch: () => Promise.resolve({outcome: 'ok' as const, trust: 'trusted_system' as const, content: {}}),
   }
+  const descriptor = {
+    name: 'codex',
+    summary: 'explicit test coding controller',
+    ownedChannels: ['workspace_coder'],
+  }
   const assembly = buildAssembly({
     settings: settings({executors: ['workspace_coder']}), gateway: new ScriptedGateway([]), executors: [coding],
+    agentDescriptors: [descriptor],
   })
-  assert.deepEqual(assembly.tools.agent_descriptors.find(descriptor => descriptor.name === 'codex')?.ownedChannels,
-    ['workspace_coder'])
+  assert.deepEqual(assembly.tools.agent_descriptors.find(value => value.name === 'codex'), descriptor)
   assert.equal(assembly.tools.bindings.get('workspace_coder__run')?.kind, 'delegate')
   assert.equal(assembly.tools.schemas.some(schema => String(record(record(schema).function).name).startsWith('workspace_coder__')), false)
+
+  const unowned = buildAssembly({
+    settings: settings({executors: ['workspace_coder']}), gateway: new ScriptedGateway([]), executors: [coding],
+  })
+  assert.equal(unowned.tools.agent_descriptors.some(value => value.ownedChannels.includes('workspace_coder')), false)
 })
 
 test('camera module off does not acquire the camera source lifecycle', async () => {

@@ -6,16 +6,18 @@ import { setImmediate as yieldImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
 import {
   AssemblyError,
-  buildAssembly,
+  buildAssembly as buildAssemblyRaw,
   type Assembly,
 } from '../src/assembly.js'
 import {
   REALTIME_ASSEMBLY_SHUTDOWN_GRACE_MS,
-  buildRealtimeAssembly,
+  buildRealtimeAssembly as buildRealtimeAssemblyRaw,
+  type CodingAgentControllerFactory,
 } from '../src/realtime-assembly.js'
 import { VirtualClock } from '../src/clock.js'
 import { ScriptedIdFactory } from '../src/ids.js'
 import {CodexApprovalController} from '../src/executors/codex/approval.js'
+import {codexAgentDescriptor, CodexAgentController} from '../src/executors/codex/controller.js'
 import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/executors/codex/contract.js'
 import type {CodexAssemblyResource} from '../src/executors/codex/factory.js'
 import {
@@ -79,6 +81,38 @@ import {
   WorkspaceGraphService,
   type TaskCompletionInput,
 } from '../src/workspace-graph/service.js'
+
+const testCodingAgentControllerFactory: CodingAgentControllerFactory = {
+  create: context => new CodexAgentController({
+    channel: context.channel,
+    ...(context.intake === undefined ? {} : {intake: context.intake}),
+    ...(context.executor === undefined ? {} : {executor: context.executor}),
+    dispatchPort: context.dispatchPort,
+    resolveCancelTarget: context.resolveCancelTarget,
+  }),
+}
+
+function buildAssembly(options: Parameters<typeof buildAssemblyRaw>[0]): Assembly {
+  const coding = options.executors?.map(adapter => adapter.manifest)
+    .find(manifest => manifest.roles.includes('coding'))
+  return buildAssemblyRaw({
+    ...options,
+    ...(coding === undefined ? {} : {agentDescriptors: [
+      ...(options.agentDescriptors ?? []), codexAgentDescriptor(coding.name),
+    ]}),
+  })
+}
+
+function buildRealtimeAssembly(options: Parameters<typeof buildRealtimeAssemblyRaw>[0]) {
+  const coding = [...options.core.runtime.executors.values()]
+    .some(adapter => adapter.manifest.roles.includes('coding'))
+  return buildRealtimeAssemblyRaw({
+    ...options,
+    ...(coding && options.codingAgentControllerFactory === undefined
+      ? {codingAgentControllerFactory: testCodingAgentControllerFactory}
+      : {}),
+  })
+}
 
 interface Deferred<T> {
   readonly promise: Promise<T>
@@ -520,7 +554,7 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
   unbindSuggestion()
 })
 
-test('realtime assembly supplies the coding controller for an arbitrary hidden coding channel', async () => {
+test('realtime assembly refuses a hidden coding role without an injected controller factory', () => {
   const coding: ExecutorAdapter = {
     manifest: executorManifestSchema.parse({
       name: 'workspace_coder', display_name: 'Workspace coder', model_visibility: 'hidden', roles: ['coding'],
@@ -539,12 +573,21 @@ test('realtime assembly supplies the coding controller for an arbitrary hidden c
     searchTransport: new NeverCalledSearch(),
     executors: [coding],
   })
-  const realtime = buildRealtimeAssembly({core, provider: new AbortAwareProvider(), onDiagnostic: () => undefined})
+  assert.throws(
+    () => buildRealtimeAssemblyRaw({core, provider: new AbortAwareProvider(), onDiagnostic: () => undefined}),
+    error => error instanceof AssemblyError && error.message === 'coding agent controller factory required',
+  )
+})
 
-  assert.deepEqual(core.tools.agent_descriptors.find(descriptor => descriptor.name === 'codex')?.ownedChannels,
-    ['workspace_coder'])
-  await realtime.start()
-  await realtime.stop()
+test('realtime assembly refuses an injected coding controller factory without a coding role', () => {
+  const core = realCore()
+  assert.throws(
+    () => buildRealtimeAssemblyRaw({
+      core, provider: new AbortAwareProvider(), onDiagnostic: () => undefined,
+      codingAgentControllerFactory: {create: () => { throw new Error('must stay inert') }},
+    }),
+    error => error instanceof AssemblyError && error.message === 'coding agent controller factory requires a coding executor',
+  )
 })
 
 test('production Vision dispatch owns hidden Watch admission and fences stale provider calls', async () => {

@@ -8,19 +8,55 @@ import {
 } from '../src/production-realtime-assembly.js'
 import type {RealtimeAssembly} from '../src/realtime-assembly.js'
 
+type SelectedCodingComposition = Pick<
+  BuildProductionRealtimeAssemblyOptions,
+  'codingAgentControllerFactory' | 'agentDescriptors'
+>
+
 function options(settings: Settings): BuildProductionRealtimeAssemblyOptions {
   return {settings}
 }
 
 test('production selector constructs only the integrated branch', () => {
   const expected = {kind: 'integrated'} as unknown as RealtimeAssembly
+  let selected: SelectedCodingComposition | undefined
   const actual = buildProductionRealtimeAssembly(options(loadSettings({
     NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
   })), {
-    integrated: () => expected,
+    integrated: input => { selected = input; return expected },
     cascaded: () => { throw new Error('unselected') },
   })
   assert.equal(actual, expected)
+  assert.equal(selected?.codingAgentControllerFactory, undefined)
+  assert.equal(selected?.agentDescriptors, undefined)
+})
+
+test('production selector supplies the paired coding factory and descriptor only with a Codex resource', () => {
+  for (const mode of ['integrated', 'cascaded'] as const) {
+    const expected = {kind: mode} as unknown as RealtimeAssembly
+    let selected: SelectedCodingComposition | undefined
+    const actual = buildProductionRealtimeAssembly({
+      ...options(loadSettings({NOVA_AUDIO_AGENT_PIPELINE_MODE: mode})),
+      codexResource: {adapter: {manifest: {name: 'workspace_coder'}}},
+    } as never, {
+      integrated: input => {
+        if (mode !== 'integrated') throw new Error('unselected')
+        selected = input
+        return expected
+      },
+      cascaded: input => {
+        if (mode !== 'cascaded') throw new Error('unselected')
+        selected = input
+        return expected
+      },
+    })
+    assert.equal(actual, expected)
+    assert.equal(typeof (selected?.codingAgentControllerFactory as {readonly create?: unknown} | undefined)?.create, 'function')
+    assert.deepEqual(selected?.agentDescriptors, [{
+      name: 'codex', summary: '在已配置的项目工作区里执行编码任务（改代码、修 bug、写测试、重构）',
+      ownedChannels: ['workspace_coder'],
+    }])
+  }
 })
 
 test('production selector constructs only the cascaded branch', () => {

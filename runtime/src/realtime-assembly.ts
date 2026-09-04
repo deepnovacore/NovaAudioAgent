@@ -5,6 +5,8 @@ import type {PublicProjectContext} from './project-store.js'
 import type { JsonValue } from './events.js'
 import {
   executorWithRole,
+  type AgentExecutor,
+  type CancelContext,
   type CodingExecutorResource,
   type CommittedWorkspaceEvent,
   type ProjectExecutorAdapter,
@@ -42,13 +44,24 @@ import type {Suggestion} from './suggestions.js'
 import type {WakeReason} from './slots.js'
 import {USER_PRIORITY} from './memory.js'
 import type {CoordinatorDecision} from './coding-executor.js'
+import type {AgentController, AgentRuntimeDispatchPort} from './agent-controller.js'
 
 /** Intake-issued delegate requests carry the user's own priority (the voice model awaited them). */
 const USER_AWAITED_TOOL = {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null} as const
 import {intakeModels, type IntakeModels} from './executors/coding/intake-model.js'
 import type {IntakeController, IntakeSettings, IntakeSession} from './executors/coding/intake.js'
 import type {ModelGateway} from './model-gateway.js'
-import {CodexAgentController} from './executors/index.js'
+
+/** Composition-supplied constructor for the controller behind the sole coding role. */
+export interface CodingAgentControllerFactory {
+  create(context: {
+    readonly channel: string
+    readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined
+    readonly dispatchPort: AgentRuntimeDispatchPort
+    readonly executor: Pick<AgentExecutor, 'cancel'> | undefined
+    readonly resolveCancelTarget: CancelContext['resolveCancelTarget']
+  }): AgentController
+}
 
 /** Production compositions derive intake from settings only when an executor carries `coding`; an explicit `intake` without one still fails assembly. */
 export function defaultIntake(
@@ -119,6 +132,8 @@ export interface RealtimeAssemblyOptions {
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly projectExpiryStepTimeoutMs?: number
   readonly codexResource?: CodingExecutorResource
+  /** Required only when the resolved runtime has a coding role. */
+  readonly codingAgentControllerFactory?: CodingAgentControllerFactory
   readonly workspaceGraph?: RealtimeWorkspaceGraph
 }
 
@@ -839,6 +854,19 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   if (options.intake !== undefined && projectAdapter === undefined) {
     throw new AssemblyError('no executor with role coding')
   }
+  if (codingManifest !== null && options.codingAgentControllerFactory === undefined) {
+    throw new AssemblyError('coding agent controller factory required')
+  }
+  if (codingManifest === null && options.codingAgentControllerFactory !== undefined) {
+    throw new AssemblyError('coding agent controller factory requires a coding executor')
+  }
+  // Qwen/Cascaded resolve their default intake before entering this assembly. Preserve that
+  // exact resolver for the composed controller; a direct no-intake test seam remains safely
+  // unable to guess an ambiguous running-work target.
+  const resolvedIntakeModels = options.intake?.models
+  const resolveCancelTarget: CancelContext['resolveCancelTarget'] = resolvedIntakeModels === undefined
+    ? () => Promise.resolve(null)
+    : (instruction, running) => resolvedIntakeModels.resolveCancelTarget(instruction, running)
   const agentDispatchPort = {
     dispatch: (request: {
       readonly channel: string
@@ -857,13 +885,12 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   }
   const agentControllerFactory = codingManifest === null ? undefined : {
     create: ({intake}: {readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined}) =>
-      new CodexAgentController({
+      options.codingAgentControllerFactory!.create({
         channel: codingManifest.name,
-        ...(intake === undefined ? {} : {intake}),
-        ...(projectAdapter === undefined ? {} : {executor: projectAdapter}),
+        intake,
+        executor: projectAdapter,
         dispatchPort: agentDispatchPort,
-        resolveCancelTarget: (text, running) => options.intake?.models.resolveCancelTarget(text, running)
-          ?? Promise.resolve(null),
+        resolveCancelTarget,
       }),
   }
   const agentControllers = core.visionController === undefined ? [] : [core.visionController]
