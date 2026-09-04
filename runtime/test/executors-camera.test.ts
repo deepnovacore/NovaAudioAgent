@@ -59,6 +59,7 @@ test('camera is a registry adapter with the Python snapshot manifest', () => {
     }],
     policy: {
       channel: 'cam', priority: 40, wake: 'surrogate', typical_latency: 0.05, compress_watermark: 20,
+      operation_class: 'task', alert_delivery: 'none',
       suggest: false, progress_via_surrogate: false,
     },
     roles: [],

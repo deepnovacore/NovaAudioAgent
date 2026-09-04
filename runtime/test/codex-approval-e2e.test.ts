@@ -6,7 +6,7 @@ import {WebSocket, type RawData} from 'ws'
 
 import {VirtualClock, type Clock} from '../src/clock.js'
 import {CODEX_PROJECT_APPROVAL_MANIFEST} from '../src/executors/codex/contract.js'
-import {CODEX_AGENT_DESCRIPTOR} from '../src/executors/codex/controller.js'
+import {CODEX_AGENT_DESCRIPTOR, CodexAgentController} from '../src/executors/codex/controller.js'
 import {OwnedCodexAppServerTransport} from '../src/executors/codex/app-server-transport.js'
 import {DesktopRealtime} from '../src/desktop-realtime.js'
 import {
@@ -183,6 +183,10 @@ function realtimeHarness(
     tools,
     session,
     bridge,
+    agentControllers: [new CodexAgentController({
+      channel: CODEX_PROJECT_APPROVAL_MANIFEST.name,
+      resolveCancelTarget: () => Promise.resolve(null),
+    })],
     executorApproval: controller,
     idFactory,
     onDiagnostic: () => undefined,

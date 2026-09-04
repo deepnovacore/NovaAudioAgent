@@ -31,7 +31,7 @@ test('current docs state the Node release truth and do not advertise retired cap
   }
   const gettingStarted = documents.find(item => item.file === 'docs/getting-started.md')!.text
   assert.match(gettingStarted, /Node\.js and TypeScript[^\n]*only product runtime/iu)
-  assert.match(gettingStarted, /pending external evidence/iu)
+  assert.match(gettingStarted, /M1\.5c\/live\/Windows acceptance remains pending/iu)
 })
 
 test('audio pipeline docs distinguish the selectable topology, credentials, and deferred settings effects', async () => {

@@ -14,6 +14,7 @@ import {RealClock} from '../src/clock.js'
 import {settingsSchema} from '../src/config.js'
 import {CodexAdapter} from '../src/executors/codex/adapter.js'
 import {ProjectCodexAdapter} from '../src/executors/codex/adapter-project.js'
+import {CODEX_AGENT_DESCRIPTOR, CodexAgentController} from '../src/executors/codex/controller.js'
 import type {EventRecord} from '../src/events.js'
 import type {SearchTransport} from '../src/executors/search.js'
 import type {
@@ -23,7 +24,7 @@ import type {
   ModelGateway,
   StreamRequest,
 } from '../src/model-gateway.js'
-import {buildRealtimeAssembly} from '../src/realtime-assembly.js'
+import {buildRealtimeAssembly, type CodingAgentControllerFactory} from '../src/realtime-assembly.js'
 import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL} from '../src/work-tools.js'
 import type {
   HostContextItem,
@@ -37,6 +38,16 @@ const PREFLIGHT: SafePreflightReport = Object.freeze({
   credential: {present: true, identity: 'chatgpt', policy: 'saved_login'},
   limits: {cpu: 'finite'},
 })
+
+const codingAgentControllerFactory: CodingAgentControllerFactory = {
+  create: context => new CodexAgentController({
+    channel: context.channel,
+    ...(context.intake === undefined ? {} : {intake: context.intake}),
+    ...(context.executor === undefined ? {} : {executor: context.executor}),
+    dispatchPort: context.dispatchPort,
+    resolveCancelTarget: context.resolveCancelTarget,
+  }),
+}
 
 class IntegrationTransport implements CodexAppServerTransport {
   readonly calls: string[] = []
@@ -171,9 +182,13 @@ test('connected realtime provider reaches the project Codex controller only thro
     gateway: new NeverCalledGateway(),
     searchTransport: new NeverCalledSearch(),
     executors: [adapter],
+    agentDescriptors: [CODEX_AGENT_DESCRIPTOR],
   })
   const provider = new IdleProvider()
-  const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+  const realtime = buildRealtimeAssembly({
+    core, provider, onDiagnostic: () => undefined,
+    codingAgentControllerFactory,
+  })
   await realtime.start()
   try {
     const names = (provider.connectedTools[0] ?? []).map(schema => {
@@ -211,6 +226,7 @@ function createCore(transport: IntegrationTransport, adapter: CodexAdapter) {
     gateway: new NeverCalledGateway(),
     searchTransport: new NeverCalledSearch(),
     executors: [adapter],
+    agentDescriptors: [CODEX_AGENT_DESCRIPTOR],
   })
 }
 
@@ -273,6 +289,7 @@ test('RealtimeService alone publishes selected Codex idle-running-idle with no d
     provider: new IdleProvider(),
     onExecutorState: state => { states.push(state) },
     onDiagnostic: () => undefined,
+    codingAgentControllerFactory,
     idFactory: (() => {
       let next = 0
       return () => `integration-${++next}`
@@ -314,6 +331,7 @@ test('RealtimeService suppresses duplicate running state for busy and unselected
     provider: new IdleProvider(),
     onExecutorState: state => { states.push(state) },
     onDiagnostic: () => undefined,
+    codingAgentControllerFactory,
   })
   await realtime.start()
   try {

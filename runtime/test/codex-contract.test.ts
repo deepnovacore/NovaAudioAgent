@@ -84,6 +84,8 @@ test('base, live, and project manifests pin exact immutable public operations an
       wake: 'fast',
       typical_latency: 180,
       compress_watermark: 5,
+      operation_class: 'task',
+      alert_delivery: 'none',
       suggest: false,
       progress_via_surrogate: true,
     })
