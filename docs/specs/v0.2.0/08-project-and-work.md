@@ -1,10 +1,14 @@
 # 08. Project, Session and Work
 
-> 摘要：语音模型不再操作 workspace/session 状态机，也不再看见项目清单。今天的 `codex__project` 六个 action 加两个独立确认工具，换成三个通用宿主工具：`dispatch(executor, instruction)`、`cancel(executor, instruction?)`、`confirm(id, accepted)`；非 agent 执行器保持直接工具：`memory__recall`、`search__search`、外部用户 allowlist 的 MCP 工具，以及内置 Camera MCP 的 `mcp__nova_camera__snapshot`。项目/会话编排下沉到 **coding 执行器侧**的 intake coordinator：`assess` 一步兼任 kind / project / session 决策（`latest | new` 仅二选一）；roster 只作为 coordinator 输入，不进 ContextView。**任何改变当前项目的决定都要用户确认**（明说切换、派到非当前项目的隐含切换、新建；产品决定 2026-09-04），只有当前项目内派单、steer、cancel 不确认。适配器锁从全局单飞改为**每项目一把**（`Map<workspace_id, RunSlot>`，跨项目全局 cap 3）；取消的是正在跑的 **work**，session 与历史保留。多个 work 并发时审批按 `{work_id, approval_id}` FIFO 排队，一次只对语音暴露一条。session 标题由宿主从 work order 生成，经 `RunInput.threadName` 由 transport 写回 Codex。里程碑 **M1.5b**，依赖 07。
+> 摘要：语音模型不再操作 workspace/session 状态机，也不再看见项目清单。当前薄前端使用三个通用宿主工具：`dispatch(executor, instruction)`、`cancel(executor, instruction?)`、`confirm(id, accepted)`；非 agent 执行器保持直接工具：`memory__recall`、`search__search`、外部用户 allowlist 的 MCP 工具，以及内置 Camera MCP 的 `mcp__nova_camera__snapshot`。项目/会话编排下沉到 **coding 执行器侧**的 intake coordinator：`assess` 一步兼任 kind / project / session 决策（`latest | new` 仅二选一）；roster 只作为 coordinator 输入，不进 ContextView。**任何改变当前项目的决定都要用户确认**（明说切换、派到非当前项目的隐含切换、新建；产品决定 2026-09-04），只有当前项目内派单、steer、cancel 不确认。适配器锁从全局单飞改为**每项目一把**（`Map<workspace_id, RunSlot>`，跨项目全局 cap 3）；取消的是正在跑的 **work**，session 与历史保留。多个 work 并发时审批按 `{work_id, approval_id}` FIFO 排队，一次只对语音暴露一条。session 标题由宿主从 work order 生成，经 `RunInput.threadName` 由 transport 写回 Codex。里程碑 **M1.5b**，依赖 07。
 >
 > 修订（2026-09-03）：吸收对本卷改版稿的独立评审 12 条——审批 FIFO 队列、`cancel` 目标解析定型、`create` 仍走规划、跨项目选择必须给 `project_evidence`、并发改为每项目一槽、`dispatch` / `cancel` 为全局宿主工具绑定、`cancelDelegate` 论证更正。
 
-## Baseline (today)
+## Historical baseline (superseded)
+
+The following section preserves the pre-M1.5b review evidence only; the target
+contract and current routing are defined by the controller registry and tools
+below.
 
 - Voice never calls `codex__run`. Coding work enters through
   `codex__project` with `work_order` (`codex-contract.ts:128–138`):
@@ -150,8 +154,9 @@ enum, with summary lines in the tool descriptions. Direct manifests retain
 their `${name}__${op}` tools.
 
 `dispatch` and `cancel` are **one global binding each**, not one binding per
-agent controller. `tool-schema.ts` gains a binding kind `host` (today's kinds are
-`delegate | update | query`) whose `executor` / `op` are null; the service
+agent controller. `tool-schema.ts` uses the binding kinds
+`host | delegate | query` (there is no `update` kind); host bindings have
+`executor` / `op` set to null; the service
 router reads the call's `executor` argument and resolves the controller by name
 at call time. The enum values are collected from the controller registry; the
 summaries go into the **tool description** as one line per controller

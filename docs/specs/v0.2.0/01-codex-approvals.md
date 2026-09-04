@@ -32,7 +32,11 @@ Relevant facts from the pinned schema (these correct the previous draft):
 | `item/permissions/requestApproval` response | `{permissions: GrantedPermissionProfile, scope?: 'turn' \| 'session', strictAutoReview?: boolean}` — **not** `{decision}`. Params carry the requested `permissions: RequestPermissionProfile`, `reason`, `cwd`, ids. |
 | `config/read` effective config | Includes `approval_policy`, `sandbox_mode`, `approvals_reviewer`, `web_search`, `default_permissions`, `permissions.<id>`, `mcp_servers`, `features`, `shell_environment_policy`. |
 
-## Baseline (today)
+## Historical baseline (superseded)
+
+The following section preserves pre-v0.2 approval review evidence only; the
+host FSM and unified `confirm(id, accepted)` boundary above and below are the
+target contract.
 
 - `codexApprovalPolicyForTransport` in
   [`runtime/src/codex-factory.ts`](../../../runtime/src/codex-factory.ts)
@@ -79,13 +83,24 @@ Relevant facts from the pinned schema (these correct the previous draft):
 
 - Auto-accepting escalations under the sandbox and calling that “YOLO”.
 - Session-scoped decisions by voice in v0.2.0 (renderer only).
-- Merging project confirmation and Codex approval into one public tool.
+- Collapsing project confirmation and Codex approval into one internal FSM. They
+  remain separate host FSMs, while the public voice route is the unified
+  `confirm(id, accepted)` tool from [08](08-project-and-work.md).
 - Offering persistent host rules (`acceptWithExecpolicyAmendment`,
   `applyNetworkPolicyAmendment`) in v0.2.0. Same stance as qwen-audio-agent’s
   `respond_permission`: `always` is a frontend-session grant, never a persistent
   backend rule.
 - Using `approvalsReviewer: 'auto_review'` (a Codex subagent deciding for the
   user). Nova pins `user`.
+
+## Authorization boundary
+
+Authorization is host-owned state only. The Codex approval FSM and the separate
+project-confirmation FSM are the only authorities, and both are reached through
+the host's unified `confirm(id, accepted)` route. FrontBrain and Codex may
+propose or report facts, but neither model can write authorization state,
+approve an operation, or widen a permission profile. Intake and planning never
+own authorization; an effectful call requires the matching host FSM decision.
 
 ## Wording correction: what `on-request` means
 
@@ -184,13 +199,12 @@ Rules:
 - Nova never returns a partial permission grant. Voice and banner both grant
   the full requested profile or nothing.
 - `strictAutoReview` is never set.
-- The voice tool `codex__confirm_codex_approval` keeps its
-  `{approval_id, approved: boolean}` schema (renamed `host__confirm_approval` in
-  [07](07-executor-boundary.md), then folded into the unified
-  `confirm(id, accepted)` in [08](08-project-and-work.md); the decision shape is
-  unchanged throughout). `approved:true` maps to the
-  “Accept” row for the kind the controller is holding; the tool never produces a
-  session grant.
+- Historical review evidence: the former voice tools
+  `codex__confirm_codex_approval` and `host__confirm_approval` used an
+  `{approval_id, approved: boolean}` shape. Those names are superseded by the
+  unified `confirm(id, accepted)` route in [08](08-project-and-work.md).
+  `accepted:true` maps to the “Accept” row for the kind the host controller is
+  holding; the voice route never produces a session grant.
 
 ### Voice path (unchanged authority model)
 
@@ -246,7 +260,7 @@ flowchart LR
   Router --> Ctl[CodexApprovalController]
   Ctl --> Wire[codex.approval frame]
   Wire --> Banner[Orb accept / session / decline]
-  Ctl --> Voice[codex__confirm_codex_approval]
+  Ctl --> Voice[confirm(id, accepted)]
   Banner --> Ctl
   Voice --> Ctl
   Ctl -->|kind-specific result| Codex

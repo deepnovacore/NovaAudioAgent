@@ -1,19 +1,25 @@
 # 02. Intake and Planning
 
-> 摘要：用宿主拥有的 IntakeSession 替代「问一轮就 dispatch」的提示词策略。目标不是多问，而是**少犯错**：只问会改变实现或验收的、属于用户的偏好；技术栈、入口、测试命令等仓库事实交给 Codex 自己探索。廉价槽 `intake.assess` 判断「还要不要问」，并在 [08](08-project-and-work.md) 后兼任 coordinator（选项目 / 选会话 / 定 kind）；「允许规划」与「允许执行」分开；`confirm` 读回绑定既有 proposal，纯确认不 bump revision。拦截的是宿主工具 `dispatch`，且只对暴露 intake 端口的 agent 执行器生效；非 agent 执行器的直接 ops 保持原路径。派单经现有 `dispatchExternal` / `dispatchConfirmedExternal`，accepted 后才标记 dispatched。
+> 摘要：用宿主拥有的 IntakeSession 替代「问一轮就 dispatch」的提示词策略。目标不是多问，而是**少犯错**：只问会改变实现或验收的、属于用户的偏好；技术栈、入口、测试命令等仓库事实交给 Codex 自己探索。廉价槽 `intake.assess` 判断「还要不要问」，并在 [08](08-project-and-work.md) 后兼任 coordinator（选项目 / 选会话 / 定 kind）；「允许规划」与「允许执行」分开；`confirm` 读回绑定既有 proposal，纯确认不 bump revision。拦截的是宿主工具 `dispatch`，由 AgentController registry 决定是否进入 coding intake；非 agent 的直接工具保持原路径。派单经现有 `dispatchExternal` / `dispatchConfirmedExternal`，accepted 后才标记 dispatched。
 >
-> 修订（2026-09-03）：回应评审 P1-3；再修订回应 P1（confirm 循环依赖、全量拦截 `codex__project`）与 P2（admission 拒绝仍标 dispatched、入口 API 名）。
+> 历史修订（2026-09-03，已取代）：回应评审 P1-3；再修订回应 P1（confirm 循环依赖、全量拦截 `codex__project`）与 P2（admission 拒绝仍标 dispatched、入口 API 名）。
 >
-> 修订（2026-09-03，coordinator 下沉）：拦截入口从 `codex__project` 的六个 action 换成宿主工具 `dispatch`；intake 代码搬到 `runtime/src/executors/coding/`；`assess` 输出增加 `kind` / `project` / `session`，输入增加 roster 与当前 active 项目；确认工具统一为 `confirm(id, accepted)`。边界见 [08](08-project-and-work.md)。
+> 历史修订（2026-09-03，已取代）：拦截入口从 `codex__project` 的六个 action 换成宿主工具 `dispatch`；intake 代码搬到 `runtime/src/executors/coding/`；`assess` 输出增加 `kind` / `project` / `session`，输入增加 roster 与当前 active 项目；确认工具统一为 `confirm(id, accepted)`。边界见 [08](08-project-and-work.md)。
 >
 > 修订（2026-09-03，08 评审回应）：intake 归执行器所有，宿主只提供 fact / prepare / dispatch / record 回调；workspace 改为 assess 解析出项目后才绑定；`assess` 增加 `project_evidence`（选非 active 项目必须给出用户原话片段并由宿主校验）；`kind: 'create'` 不再短路，继续澄清与规划且一律确认；非 roster 名只有明确新建意图才 `create`，否则 `unclear`。
 
-## Baseline (today)
+## Historical baseline (superseded)
+
+The following section preserves pre-controller-registry review evidence only;
+the revision-bound intake and AgentController routing below are the target
+contract.
 
 - Clarification is **prompt policy only** inside `FRONTEND_INSTRUCTIONS`
   ([`runtime/src/realtime/qwen.ts`](../../../runtime/src/realtime/qwen.ts)):
   ask one short question, then on the next user turn merge into `work_order` and
-  call `codex__project`. There is no round counter and no host readiness check.
+  call the retired `codex__project`. There is no round counter and no host
+  readiness check. This is historical review evidence, superseded by the
+  revision-bound IntakeSession below.
 - Dispatch payload is the model-authored `work_order` string sent as
   `turn/start` input text
   ([`runtime/src/codex-app-server-transport.ts`](../../../runtime/src/codex-app-server-transport.ts)).
@@ -25,8 +31,8 @@
   bypass them or invent a parallel admit API.
 - Eval labels `clarify | dispatch | respond` live in
   `fixtures/realtime/qwen/v1/codex-clarification.json`.
-- `update_intent` / `update_goal` exist; invariant 4: only FastBrain / FrontBrain
-  may write those structures.
+- The retired structured-intent/update surface is not part of this contract;
+  revision-bound intake slots below are the sole planning state.
 
 ## Goals
 
@@ -48,7 +54,7 @@
 - A second conversational agent that speaks to the user (Surrogate remains
   attention-only; FrontBrain speaks the question).
 - Multi-step workflow graphs or subagent orchestration in the Gateway.
-- Letting the planner mutate Memory channels, speak, or write `intent`/`goal`.
+- Letting the planner mutate Memory channels or speak.
 - Asking the user for repository facts Codex can discover itself.
 - Replacing project confirmation; `planReadback=confirm` reuses that mechanism.
 
@@ -69,7 +75,8 @@ Env mirrors: `NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH`,
 
 `IntakeSession` is a bounded structure owned by the **coding executor** and
 living in `runtime/src/executors/coding/` ([08](08-project-and-work.md) moved
-it out of `realtime/`). It is not `intent` or `goal`.
+it out of `realtime/`). Revision-bound intake slots are the sole planning state;
+the intake owns no authorization or approval state.
 
 Ownership after 08: the executor owns the state machine, the gates, the slot
 calls, and the revision binding. The host provides only callbacks — inject a
@@ -77,7 +84,8 @@ bounded **fact** for FrontBrain to speak, **prepare** a proposal on the
 project-confirmation controller, **dispatch** through `dispatchExternal` /
 `dispatchConfirmedExternal`, and **record** the outcome in Memory. The realtime
 service does not read or mutate intake state; it forwards the intercepted
-`dispatch` call and the callbacks' results.
+`dispatch` call and the callbacks' results. Authorization remains in the host
+approval/project-confirmation FSMs and is reached only through `confirm`.
 
 | Field | Meaning |
 |---|---|
@@ -287,19 +295,21 @@ idle
 
 Since [08](08-project-and-work.md) the intercepted call is the host tool
 `dispatch(executor, instruction)`. The host resolves `executor` against the
-registered **agent executors** (manifest carries `agent: {summary}`, see
-[07](07-executor-boundary.md)); if that executor exposes an intake port
-(`AgentExecutor.openDispatch`) the call opens or amends an intake, otherwise it
-goes straight to the executor's `run` op (the path a future non-intake agent
-takes).
+registered `AgentController` descriptors (`name`, `summary`, and exact
+`ownedChannels`) from [07](07-executor-boundary.md); an agent descriptor is not
+a manifest field. The coding controller opens or amends its revision-bound
+intake, while another controller owns its own dispatch contract. If the
+registry has zero controllers, `dispatch` and `cancel` are not compiled;
+direct tools remain available.
 
 | Call | Intake? | Notes |
 |---|---|---|
-| `dispatch` to an agent executor with `openDispatch` | **yes** | Open / amend intake; coordinator decides `kind` / `project` / `session` in the same `assess` call |
-| `dispatch` to an agent executor without an intake port | no | Direct `{op:'run'}` dispatch |
+| `dispatch` to the registered coding `AgentController` | **yes** | Open / amend the revision-bound intake; coordinator decides `kind` / `project` / `session` in the same `assess` call |
+| `dispatch` to another registered controller | no | The controller's own typed dispatch contract; it does not become coding intake |
 | `cancel` | no | Resolved in the executor ([08](08-project-and-work.md)); async, and with more than one running work it may make one tiny `resolveCancelTarget` call — never `intake.assess`, never an intake |
 | `confirm` | no | The `id` selects which FSM handles the call (approval or project confirmation); that FSM's own isolation still gates the decision |
-| Non-agent `${name}__${op}` ops (`search__query`, `cam__capture`, …) | no | Unchanged |
+| Direct `${name}__${op}` tools (`search__search`, built-in `mcp__nova_camera__snapshot`, or user-allowlisted MCP) | no | Direct operation; never agent dispatch or coding intake |
+| Vision hidden `watch` / `guard` channels | no | Vision controller owns them; voice reaches them only as `dispatch` / `cancel(executor:'vision', …)`, never as direct tools |
 
 The management actions that used to bypass intake (`list_workspaces`,
 `list_sessions`, `select_workspace`, `create_workspace` without a work order)
@@ -395,7 +405,7 @@ sequenceDiagram
 
   User->>FrontBrain: coding request
   FrontBrain->>Intake: dispatch(executor, instruction)
-  Note over Intake: non-agent ops, cancel and confirm bypass intake
+  Note over Intake: direct tools, Vision monitor controller, cancel and confirm bypass coding intake
   loop stop-asking gate open
     Intake->>Assess: assess(rev n) — kind/project/session + slots
     Assess-->>Intake: result(rev n) — dropped if n ≠ current
@@ -421,7 +431,8 @@ sequenceDiagram
 
 Rules:
 
-- `cancel`, `confirm`, and non-agent executor ops never enter this diagram.
+- `cancel`, `confirm`, direct tools, and the Vision monitor controller never
+  enter this coding-intake diagram.
   `switch` / `steer` / `cancel` leave it after `assess` and are resolved by the
   executor's adapter. `create` stays in the diagram: it runs the same loop and
   ends in a `{action:'create', …}` proposal, always through
@@ -478,7 +489,7 @@ Rules:
 | Intake state + gates | `runtime/src/executors/coding/intake.ts` (moved from `realtime/` by [08](08-project-and-work.md)), with `intake-model.ts` and `work-order.ts` alongside |
 | Prompts | `runtime/src/realtime/qwen.ts` FRONTEND_INSTRUCTIONS; assess / planner prompts |
 | WorkOrder | new schema + template module; `codex-app-server-transport.ts` consumes the rendered string unchanged |
-| Tool semantics | Intercept `dispatch` for agent executors with an intake port; result codes `intake_opened`, `intake_in_progress`; non-agent ops unchanged |
+| Tool semantics | Intercept `dispatch` for the registered coding `AgentController`; result codes `intake_opened`, `intake_in_progress`; direct tools and other controllers stay on their own paths |
 | Dispatch | `dispatchExternal` / `dispatchConfirmedExternal`; `committing` → `dispatched` \| `admission_refused` |
 | Settings | see [06](06-settings-and-config.md) |
 | Fixtures | `fixtures/realtime/qwen/v1/`, planner and binding fixtures |
@@ -494,10 +505,10 @@ Rules:
       before proposal accept; proposal accept does not recompile.
 - [ ] Pure “确认” against a pending `proposal_id` does not bump `revision`;
       amend does; stale `(intake_id, revision)` results are dropped.
-- [ ] `cancel` / `confirm` / non-agent `${name}__${op}` ops never open intake;
-      `dispatch` to an agent executor without an intake port goes straight to
-      `{op:'run'}`.
-- [ ] `dispatch` to an agent executor with an intake port opens intake and
+- [ ] `cancel` / `confirm` / direct `${name}__${op}` tools / Vision monitor
+      calls never open coding intake; dispatch to another registered controller
+      stays on that controller's typed contract.
+- [ ] `dispatch` to the registered coding controller opens intake and
       preserves the coordinator's `project` + `session` through dispatch;
       `create` confirmation still required.
 - [ ] `workspace` is null until a current-revision `assess` resolves `project`;
@@ -521,7 +532,8 @@ Rules:
       `admission_refused` keeps a recovery path; no parallel admit API.
 - [ ] WorkOrder ≤ 4000 chars with deterministic truncation order; goldens
       stable; inferred slots render only under `assumptions`.
-- [ ] Intake does not write `intent`/`goal` (invariant 4).
+- [ ] Revision-bound intake slots are the sole planning state; no parallel
+      planning state or intake-owned authorization state exists.
 - [ ] Well-specified single request → zero questions → plan → dispatch
       (regression for today’s fast path).
 
