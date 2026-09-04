@@ -657,8 +657,10 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
   assert.equal(telemetryCloses, 0)
 })
 
-test('cascaded composition propagates cameraModuleEnabled without changing search or memory', () => {
-  const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings(), {cameraModuleEnabled: false}))
+test('cascaded production composition derives cameraModuleEnabled from Settings', () => {
+  const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings({
+    NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED: 'false',
+  })))
   const names = [...realtime.core.runtime.executors.keys()]
   assert.deepEqual(names, ['search'])
   assert.ok(!names.some(name => name === 'cam' || name === 'mcp__nova_camera' || name === 'watch' || name === 'guard'))

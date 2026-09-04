@@ -55,6 +55,7 @@ export const settingsSchema = z.object({
   cascade_llm_provider: cascadedLlmProviderNameSchema.default('qwen'),
   cascade_llm_model: z.string().nullable().default(null),
   cascade_tts_provider: cascadedTtsProviderNameSchema.default('volcengine'),
+  camera_module_enabled: z.boolean().default(true),
   qwen_realtime_url: z.string().default('wss://dashscope.aliyuncs.com/api-ws/v1/realtime'),
   qwen_realtime_model: z.string().default('qwen-audio-3.0-realtime-plus'),
   qwen_realtime_voice: z.string().default('longanqian'),
@@ -247,6 +248,9 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     surrogate_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_SURROGATE_MODEL),
     compressor_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_COMPRESSOR_MODEL),
     pipeline_mode: pipelineMode,
+    camera_module_enabled: optionalBoolean(
+      environment.NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED,
+    ),
     ...(pipelineMode === 'integrated' ? {
       integrated_provider: integratedProvider,
       qwen_realtime_url: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL),

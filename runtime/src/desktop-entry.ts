@@ -96,6 +96,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
           onDiagnostic,
           clock,
           frameSource,
+          cameraModuleEnabled: settings.camera_module_enabled,
           ...(codexResource === null ? {} : {codexResource}),
           ...callbacks,
         }

@@ -37,6 +37,7 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_SURROGATE_MODEL', 'core', false, true, 'never', 'qwen-flash', 'Surrogate model.', 'Surrogate 模型。'],
   ['NOVA_AUDIO_AGENT_COMPRESSOR_MODEL', 'core', false, true, 'never', 'qwen-flash', 'Memory compressor model.', '记忆压缩模型。'],
   ['NOVA_AUDIO_AGENT_PIPELINE_MODE', 'core', false, true, 'never', 'integrated', 'Product pipeline shape: integrated or cascaded.', '产品管线形态：集成或级联。'],
+  ['NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED', 'camera', false, true, 'never', 'true', 'Enable the built-in Camera MCP and Vision monitoring module.', '启用内置 Camera MCP 与 Vision 监控模块。'],
   ['NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER', 'core', false, true, 'never', 'qwen', 'Integrated realtime provider.', '集成实时提供方。'],
   ['NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER', 'core', false, true, 'never', 'auto', 'Cascaded endpointing provider.', '级联端点检测提供方。'],
   ['NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER', 'core', false, true, 'never', 'volcengine', 'Cascaded ASR provider.', '级联 ASR 提供方。'],

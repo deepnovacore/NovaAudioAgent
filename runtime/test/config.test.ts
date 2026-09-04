@@ -15,6 +15,7 @@ import {
 test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash', () => {
   const settings = loadSettings({})
   assert.equal(settings.pipeline_mode, 'integrated')
+  assert.equal(settings.camera_module_enabled, true)
   assert.equal('realtime_provider' in settings, false)
   assert.deepEqual(resolveCascadedSelection(settings), {
     endpointingProvider: 'auto',
@@ -44,6 +45,18 @@ test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash'
     capabilitiesConfigPath: '~/.nova-audio-agent/capabilities.json',
     knowledgePath: '~/.nova-audio-agent/knowledge.sqlite',
   })
+})
+
+test('camera module env mapping is strict and supports disabling the production module', () => {
+  assert.equal(loadSettings({
+    NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED: 'false',
+  }).camera_module_enabled, false)
+  assert.throws(
+    () => loadSettings({NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED: 'maybe'}),
+    error => error instanceof ConfigurationError
+      && error.code === 'invalid_configuration'
+      && error.message === 'invalid configuration: NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED',
+  )
 })
 
 test('v4 settings env selectors and paths load with the documented names', () => {

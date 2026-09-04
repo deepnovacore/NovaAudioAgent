@@ -290,11 +290,13 @@ test('Qwen reports no validated original-image injection capability', () => {
   assert.deepEqual(qwen.mediaCapability, {originalImageInput: false})
 })
 
-test('Qwen composition propagates cameraModuleEnabled to the core assembly', () => {
+test('Qwen production composition derives cameraModuleEnabled from Settings', () => {
   const connector = recordingConnector()
   const realtime = buildQwenRealtimeAssembly(qwenOptions(
-    settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}), connector.connector,
-    {cameraModuleEnabled: false},
+    settings({
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+      NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED: 'false',
+    }), connector.connector,
   ))
   const names = [...realtime.core.runtime.executors.keys()]
   assert.deepEqual(names, ['search'])
@@ -505,6 +507,11 @@ test('desktop entry leaves Codex prewarm to the realtime owner instead of blocki
   const entry = await readFile(resolve(import.meta.dirname, '../../src/desktop-entry.ts'), 'utf8')
   assert.match(entry, /ownership\.own\(\(\) => codexResource\.close\(\)\)/u)
   assert.doesNotMatch(entry, /await codexResource\.start\(\)/u)
+})
+
+test('desktop entry forwards the Settings camera module gate to production assembly', async () => {
+  const entry = await readFile(resolve(import.meta.dirname, '../../src/desktop-entry.ts'), 'utf8')
+  assert.match(entry, /cameraModuleEnabled: settings\.camera_module_enabled/u)
 })
 
 test('Qwen factory preserves resource identity, explicit Guard settings, and one start path', async () => {

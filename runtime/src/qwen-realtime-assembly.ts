@@ -119,9 +119,7 @@ export function buildQwenRealtimeAssembly(
     ...(options.searchTransport === undefined ? {} : {searchTransport: options.searchTransport}),
     ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
-    ...(options.cameraModuleEnabled === undefined
-      ? {}
-      : {cameraModuleEnabled: options.cameraModuleEnabled}),
+    cameraModuleEnabled: options.cameraModuleEnabled ?? options.settings.camera_module_enabled,
     ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
   })
   const provider = options.qwenProvider ?? buildQwenRealtimeAssembly({
