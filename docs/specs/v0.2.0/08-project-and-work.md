@@ -1,6 +1,6 @@
 # 08. Project, Session and Work
 
-> 摘要：语音模型不再操作 workspace/session 状态机，也不再看见项目清单。今天的 `codex__project` 六个 action 加两个独立确认工具，换成三个通用宿主工具：`dispatch(executor, instruction)`、`cancel(executor, instruction?)`、`confirm(id, accepted)`；非 agent 执行器（`cam` / `search` / `watcher` / `memory`）保持 `${name}__${op}` 直接工具不变。项目/会话编排下沉到 **coding 执行器侧**的 intake coordinator：`assess` 一步兼任 kind / project / session 决策（`latest | new` 仅二选一）；roster 只作为 coordinator 输入，不进 ContextView。**任何改变当前项目的决定都要用户确认**（明说切换、派到非当前项目的隐含切换、新建；产品决定 2026-09-04），只有当前项目内派单、steer、cancel 不确认。适配器锁从全局单飞改为**每项目一把**（`Map<workspace_id, RunSlot>`，跨项目全局 cap 3）；取消的是正在跑的 **work**，session 与历史保留。多个 work 并发时审批按 `{work_id, approval_id}` FIFO 排队，一次只对语音暴露一条。session 标题由宿主从 work order 生成，经 `RunInput.threadName` 由 transport 写回 Codex。里程碑 **M1.5b**，依赖 07。
+> 摘要：语音模型不再操作 workspace/session 状态机，也不再看见项目清单。今天的 `codex__project` 六个 action 加两个独立确认工具，换成三个通用宿主工具：`dispatch(executor, instruction)`、`cancel(executor, instruction?)`、`confirm(id, accepted)`；非 agent 执行器保持直接工具：`memory__recall`、`search__search`、外部用户 allowlist 的 MCP 工具，以及内置 Camera MCP 的 `mcp__nova_camera__snapshot`。项目/会话编排下沉到 **coding 执行器侧**的 intake coordinator：`assess` 一步兼任 kind / project / session 决策（`latest | new` 仅二选一）；roster 只作为 coordinator 输入，不进 ContextView。**任何改变当前项目的决定都要用户确认**（明说切换、派到非当前项目的隐含切换、新建；产品决定 2026-09-04），只有当前项目内派单、steer、cancel 不确认。适配器锁从全局单飞改为**每项目一把**（`Map<workspace_id, RunSlot>`，跨项目全局 cap 3）；取消的是正在跑的 **work**，session 与历史保留。多个 work 并发时审批按 `{work_id, approval_id}` FIFO 排队，一次只对语音暴露一条。session 标题由宿主从 work order 生成，经 `RunInput.threadName` 由 transport 写回 Codex。里程碑 **M1.5b**，依赖 07。
 >
 > 修订（2026-09-03）：吸收对本卷改版稿的独立评审 12 条——审批 FIFO 队列、`cancel` 目标解析定型、`create` 仍走规划、跨项目选择必须给 `project_evidence`、并发改为每项目一槽、`dispatch` / `cancel` 为全局宿主工具绑定、`cancelDelegate` 论证更正。
 
@@ -49,12 +49,18 @@
 ## Goals
 
 1. **One round-trip for the common case.** "改博客的暗色模式" with `blog`
-   existing and not active = one `dispatch(executor:'codex', instruction:…)`
-   call; coordinator picks the project, no confirmation, no list.
-2. **Minimal model tool surface.** Agent executors expose only `dispatch` /
-   `cancel` / `confirm` on the voice side; non-agent executors keep direct ops.
-   The voice model sees executor names **only** as the `dispatch.executor`
-   enum (from manifests; see 07).
+   existing and active = one `dispatch(executor:'codex', instruction:…)`
+   call; coordinator picks the project without exposing a roster. A
+   non-active project still requires the project-confirmation FSM before any
+   activation or dispatch side effect.
+2. **Minimal model tool surface.** The host exposes only `dispatch` / `cancel`
+   for agent work plus the unified `confirm` tool for host confirmations.
+   Direct tools are limited by the
+   FrontBrain budget in [03](03-capability-registry-and-mcp.md): the stable
+   Nova surface includes `memory__recall`, `search__search`, and built-in
+   `mcp__nova_camera__snapshot`; user-selected external MCP tools consume
+   explicit additional budget. The voice model sees agent names **only** as
+   the `dispatch.executor` enum from the controller registry (see 07).
 3. **Session invisible by default.** Coordinator chooses `latest` or `new`;
    users never say "线程三"; no `<session_id>` in the model tool table.
 4. **Concurrent projects.** Work in A keeps running while B is dispatched;
@@ -95,50 +101,70 @@ flowchart LR
   Voice[Voice model Qwen realtime] -->|"dispatch(executor, instruction)"| Host[Host realtime/service]
   Voice -->|"cancel(executor, instruction?)"| Host
   Voice -->|"confirm(id, accepted)"| Host
-  Host -->|"AgentExecutor port"| Intake[executors/coding/intake coordinator]
+  Host -->|"AgentController port"| Intake[executors/coding/intake coordinator]
   Intake -->|"assess: kind/project/session + slots"| LLM[DashScope surrogate_model, default qwen-flash]
   Intake -->|"fact / proposal back"| Host
   Intake -->|"run{work_order, project, session}"| Adapter[executors/codex/adapter-project]
   Adapter -->|"per-workspace slot, global cap 3"| Codex[codex app-server]
-  Host -->|"direct ops unchanged"| Others[cam / search / watcher / memory]
+  Host -->|"direct ops, registry-filtered"| Others[memory / search / Camera MCP / user MCP]
 ```
 
-- **Agent executors** (manifest has `agent: {summary}`; today `codex` with
-  `roles: ['coding']`, later `autoglm`): voice model calls `dispatch` /
-  `cancel`; host routes through the `AgentExecutor` port to
-  `executors/coding/intake`.
-- **Non-agent executors** (no `agent`: `cam`, `search`, `watcher`, `memory`): unchanged
-  `${name}__${op}` tools compiled from manifests; no coordinator.
+- **Agent controllers** publish `AgentDescriptor{name, summary, ownedChannels}`
+  through the registry in [07](07-executor-boundary.md). The current coding
+  controller owns the hidden `codex` channel; a future Vision controller may
+  own hidden `watch` and `guard` channels. The voice model calls `dispatch` /
+  `cancel`; the host routes through the controller port to
+  `executors/coding/intake` (or the controller's equivalent).
+- **Direct tools** are non-agent operations compiled from `model_visibility:
+  'direct'` manifests: stable `memory__recall` and `search__search`, the
+  built-in Camera MCP `mcp__nova_camera__snapshot`, and explicitly
+  user-selected external MCP tools. They have no coordinator and never enter
+  coding intake. Hidden `watch` / `guard` remain runtime channels owned by the
+  Vision controller, not direct model tools.
+
+### Controller registry contract
+
+The host constructs one closed `AgentControllerRegistry` before compiling the
+voice surface. Each `AgentDescriptor` has a public `name`, bounded `summary`,
+and exact `ownedChannels`; each `AgentController` implements `dispatch` and
+`cancel`. Names and owned channels are unique, every owned channel names a
+registered manifest, and every `model_visibility: 'hidden'` manifest has one
+controller owner. The registry exposes descriptors for tool projection and
+maps a runtime channel back to its controller, while `delegate.executor`
+retains the exact channel identity. This is an M1.5c requirement, not a claim
+that every controller or Vision path is already shipped.
 
 ## Model-facing tools (host-owned)
 
-All compiled by `tool-schema.ts` as host tools (alongside `update_*`,
-`memory__recall`). An executor with `agent: {summary}` on its manifest
-([07](07-executor-boundary.md)) is an **agent executor**: its ops
-(`run / steer / status / cancel`; project bookkeeping is applied by the coordinator through
-adapter methods, not through a model-facing op) are **not** compiled as `${name}__${op}`;
-the name appears only as a value of the `dispatch.executor` enum, and the host
-routes to the ops internally. Executors without `agent` keep their direct tools.
+All host bindings are compiled by `tool-schema.ts` alongside direct tools. An
+agent controller descriptor from [07](07-executor-boundary.md) is an **agent
+surface**: its owned hidden executor ops (`run / steer / status / cancel`; project
+bookkeeping is applied by the coordinator through adapter methods, not through
+a model-facing op) are **not** compiled as `${name}__${op}`. The controller
+name appears only as a value of the `dispatch.executor` / `cancel.executor`
+enum, with summary lines in the tool descriptions. Direct manifests retain
+their `${name}__${op}` tools.
 
 `dispatch` and `cancel` are **one global binding each**, not one binding per
-agent executor. `tool-schema.ts` gains a binding kind `host` (today's kinds are
+agent controller. `tool-schema.ts` gains a binding kind `host` (today's kinds are
 `delegate | update | query`) whose `executor` / `op` are null; the service
-router reads the call's `executor` argument and resolves the agent executor by
-name at call time. The enum values are collected from every manifest carrying
-`agent`; the per-executor summaries go into the **tool description** as one
-line per executor (`<name>: <agent.summary>`), because a realtime function
-schema cannot be assumed to support `oneOf` / `const` branches with a
-per-enum-value description. Zero agent executors registered → neither tool is
-compiled.
+router reads the call's `executor` argument and resolves the controller by name
+at call time. The enum values are collected from the controller registry; the
+summaries go into the **tool description** as one line per controller
+(`<name>: <summary>`), because a realtime function schema cannot be assumed to
+support `oneOf` / `const` branches with a per-enum-value description. Zero
+controllers registered → neither tool is compiled.
 
 | Tool | Kind | Params | Notes |
 |---|---|---|---|
-| `dispatch` | write (`host` binding) | `executor` (enum of agent-executor names from manifests), `instruction` (1–4000) | Description lists `<name>: <agent.summary>` per executor; host resolves the agent executor by name, then opens the intake coordinator or a direct `run` for future non-intake agents |
-| `cancel` | write (`host` binding) | `executor` (enum), `instruction?` (1–4000) | Same description convention; target resolution in the executor (below); `async` |
+| `dispatch` | write (`host` binding) | `executor` (enum of agent-controller names from registry), `instruction` (1–4000) | Description lists `<name>: <summary>` per controller; host resolves the controller, then opens the coding intake or its direct dispatch contract |
+| `cancel` | write (`host` binding) | `executor` (enum), `instruction?` (1–4000) | Same description convention; target resolution in the controller (below); `async` |
 | `confirm` | write | `id`, `accepted` (bool) | Unified yes/no for project proposals and executor approvals (below) |
 
-Non-agent executors: `${name}__${op}` direct tools unchanged (e.g.
-`search__query`, `cam__capture`).
+Direct tools: `${name}__${op}` operations selected by registry and allowlist
+(including `search__search` and `mcp__nova_camera__snapshot`). External MCP
+tools are user-selected and consume the FrontBrain budget; they never appear
+in the agent enum or enter intake.
 
 **Removed:** `codex__project` (all six actions), `codex__confirm_project_action`,
 `codex__confirm_codex_approval` / `host__confirm_approval`,
@@ -156,10 +182,12 @@ through `dispatch` (see Coordinator); it is not a tool the model can name.
 
 ### `dispatch`
 
-1. Host resolves `executor` against registered agent manifests; unknown →
-   structured tool error.
-2. Host calls `AgentExecutor.openDispatch(draft, userText, originRef,
-   sessionEpoch)`.
+1. Host resolves `executor` against registered controller descriptors; unknown
+   → structured tool error.
+2. Host calls `AgentController.dispatch({instruction, originalUserText,
+   origin_ref, sessionEpoch, acceptedUserInputRevision, stillWanted})`; the
+   controller owns the intake/coordinator decision and may dispatch only on its
+   exact owned runtime channels.
 3. Intake coordinator runs `assess` (see Coordinator) → branches on `kind`.
 4. For `kind: 'work'` on the **active** project, existing intake flow: clarify
    → plan → dispatch through `dispatchExternal`; `plan_readback` gate
@@ -186,8 +214,8 @@ through `dispatch` (see Coordinator); it is not a tool the model can name.
 ### `cancel`
 
 Cancel is an explicit tool (safety action, not classified from speech). Target
-resolution lives in the executor and is **asynchronous**:
-`AgentExecutor.cancel(instruction: string | undefined, context): Promise<CancelResult>`.
+resolution lives in the coding controller and is **asynchronous**:
+`AgentController.cancel(AgentCancelRequest): Promise<AgentActionResult>`.
 It is async because the >1 case may need one model call; the 0 and 1 cases
 resolve without any model.
 
@@ -452,12 +480,22 @@ stable codes:
   admit a second child for a workspace that already has one.
 - Floor is unaffected: each running work is an active-executor channel entry
   at priority 50; two concurrent works do not raise priority.
+- Approval state, including the concurrent-work FIFO and its `hold` / `release`
+  transitions, must live in one dedicated host module alongside the existing
+  project-confirmation host module. This is an architectural requirement for
+  one ownership point and race-free TTL/epoch handling, not a claim that the
+  current implementation has already been refactored that way.
+- Codex stdio MCP multiplies child processes: the v0.2 caps permit up to
+  `3 projects × 8 external servers = 24` stdio MCP children. The settings UI
+  should warn about this multiplier and recommend `streamable-http` for
+  servers that can support it; the Codex projection remains outside the
+  Qwen realtime tool budget.
 
 ## Cancellation
 
 Cancellation is deliberately **adapter-level**, not runtime-level:
 
-- `cancel(executor, instruction?)` → host → `AgentExecutor.cancel` → adapter
+- `cancel(executor, instruction?)` → host → `AgentController.cancel` → adapter
   finds the slot → aborts the **run slot's own `AbortController`**, the one the
   adapter created for that work. The delegate's task controller inside
   `CausalRuntime` is not touched.
@@ -522,22 +560,22 @@ Cancellation is deliberately **adapter-level**, not runtime-level:
   the asking work's project and session title, and only ever shows the queue
   head — queued approvals from other works are not rendered until their turn.
 
-## AgentExecutor port (`coding-executor.ts`)
+## AgentController port (`agent-controller.ts`)
 
 ```ts
-interface AgentExecutor {
-  openDispatch(draft, userText, originRef, sessionEpoch): IntakeHandle
-  /** Async: >1 running works with an instruction needs one `resolveCancelTarget` call. */
-  cancel(instruction: string | undefined, context): Promise<CancelResult>
-  roster(): RosterEntry[]                      // for coordinator input
+interface AgentController {
+  readonly descriptor: AgentDescriptor
+  dispatch(request: AgentDispatchRequest): Promise<AgentActionResult>
+  cancel(request: AgentCancelRequest): Promise<AgentActionResult>
 }
 ```
 
 Host `service.ts` routes the single `dispatch` / `cancel` host bindings by the
-call's `executor` argument; finds the agent adapter implementing
-`AgentExecutor`. Assembly wires intake's
-dispatch callback as `{op:'run', request:{work_order, project, session}}`;
-roster comes from the project adapter.
+call's controller name; it finds the registered `AgentController`. The coding
+controller owns the intake coordinator and its roster/resolution seam, then
+dispatches through the exact `{channel, op, request, origin_ref, stillWanted}`
+runtime port. Assembly wires the coding controller's run callback as
+`{op:'run', request:{work_order, project, session}}`.
 
 ## Implementation touchpoints
 
@@ -546,7 +584,7 @@ roster comes from the project adapter.
 | Tools | `tool-schema.ts` (`host` binding kind, `dispatch.executor` enum + per-executor description lines), `work-tools.ts` (`dispatch`/`cancel`/`confirm` constants + `deriveSessionTitle`), `realtime/bridge.ts` routing |
 | Intake move | `realtime/intake.ts` → `executors/coding/intake.ts`, `intake-model.ts`, `work-order.ts`; tests follow |
 | Coordinator | `executors/coding/intake-model.ts` assess schema (+ `project_evidence`) + roster input, `resolveCancelTarget`; `intake.ts` kind routing and evidence verification; `executors/codex/adapter-project.ts` `resolveIntakeTarget` |
-| Port | `executors/coding-executor.ts` `AgentExecutor`; `realtime/service.ts` `dispatch`/`cancel` routing by `executor` argument, unified `confirm` routing |
+| Port | `agent-controller.ts` `AgentController`; `realtime/service.ts` `dispatch`/`cancel` routing by controller name, unified `confirm` routing |
 | Store | `project-store.ts` (title derivation, per-workspace running state, roster query) |
 | Context | `realtime-assembly.ts` `#injectCurrentProjectContext` (no roster), `realtime/session-state.ts` `host_state.project` / `.title`, `realtime/qwen.ts` render + policy text |
 | Approvals | `approval-port.ts` + `executors/codex/approval.ts` FIFO queue keyed `{work_id, approval_id}`; `realtime/service.ts` approval fact naming project + title |
@@ -555,18 +593,19 @@ roster comes from the project adapter.
 | Titles | `executors/codex/transport/app-server-schema.ts`, `-transport.ts`, adapter mirror |
 | Prompt | `realtime/qwen.ts` FRONTEND_INSTRUCTIONS, `intake.ts` fact text |
 | Desktop | `desktop-wire.ts`, `desktop-bridge.ts`, renderer `index.mjs` / `confirmation-controls.mjs` / `bubbles.mjs` |
-| Tests | `tool-schema`, `realtime-intake`, coordinator eval, `adapter-project`, `realtime-service`, `project-store`, `realtime-qwen`, assembly, desktop wire; the 07 fixture executor gains `agent: {summary}` and ops `run / steer / status / cancel` so `executor-boundary-fixture.test.ts` drives the `dispatch` path |
+| Tests | `tool-schema`, `realtime-intake`, coordinator eval, `adapter-project`, `realtime-service`, `project-store`, `realtime-qwen`, assembly, desktop wire; the 07 fixture executor gains a registered `AgentDescriptor` and ops `run / steer / status / cancel` so `executor-boundary-fixture.test.ts` drives the `dispatch` path |
 
 ## Verification checklist
 
 Deterministic:
 
-- [ ] Compiled realtime tool table: agent executors expose `dispatch` /
-      `cancel` / `confirm` only (no `codex__*`, no `work__*` / `project__*`);
-      non-agent direct ops unchanged; exactly one `dispatch` and one `cancel`
+- [ ] Compiled realtime tool table: registered agent controllers expose
+      `dispatch` / `cancel`, with one shared `confirm` (no `codex__*`, no
+      `work__*` / `project__*`); registry-filtered direct operations retained;
+      exactly one `dispatch` and one `cancel`
       binding of kind `host` with null `executor`/`op` for two registered agent
-      manifests; `dispatch.executor` enum generated from manifests with one
-      `<name>: <agent.summary>` line per executor in the tool description and
+      controllers; `dispatch.executor` enum generated from the controller
+      registry with one `<name>: <summary>` line per controller in the tool description and
       no per-enum-value schema branch; no status tool anywhere in the table
       (`tool-schema.test.ts`, `qwen-realtime-assembly.test.ts`).
 - [ ] Coordinator assess: six kinds route correctly; roster verbatim enforced;
@@ -678,7 +717,7 @@ first, Windows second). Each row records transcript, tool calls, and Codex
 | Decision | Chosen boundary | Rejected alternative |
 |---|---|---|
 | Project selection | Executor-side coordinator (`assess` + roster input); voice sends natural language via `dispatch`; every change of the active project confirms (switch, cross-project work, create — decision 2026-09-04), create still plans; a non-active project must be quoted in `project_evidence` and verified against the raw utterance | Voice model picks roster from ContextView; six `work__`/`project__` tools; model-driven list/select/start state machine; trusting an unquoted project name; `create` short-circuiting intake |
-| Voice tool surface | Three host tools (`dispatch`, `cancel`, `confirm`) + non-agent direct ops; `dispatch` / `cancel` are one `host` binding each, routed by the `executor` argument; executor names only in the `dispatch.executor` enum, summaries as description lines | Per-executor prefixed tools; one binding per agent executor; per-enum-value schema descriptions (`oneOf` / `const`); separate confirm tools per FSM |
+| Voice tool surface | Three host tools (`dispatch`, `cancel`, `confirm`) plus registry-filtered direct tools; `dispatch` / `cancel` are one `host` binding each, routed by controller name; names only in the `*.executor` enum, summaries as description lines | Per-executor prefixed tools; one binding per controller; per-enum-value schema descriptions (`oneOf` / `const`); separate confirm tools per FSM |
 | Session surface | `latest` / `new` only; coordinator decides; titles derived by host, sent by the transport via `thread/name/set`, owned by Codex afterwards | `<session_id>` parameter; `project__sessions`; model-authored session titles; adapter-sent naming calls; `任务 N` |
 | Roster visibility | Coordinator input + desktop UI; not in ContextView; running works identified in `active_executor_context` by host-authored project + title | Roster in versioned `workspace_context` for the voice model; a status tool |
 | Cancellation | Explicit async `cancel` tool; 0/1 running resolved without a model; >1 with an instruction resolved by a validated `resolveCancelTarget` call, else `ambiguous_work`; abort the adapter's own run-slot controller so the `cancelled` handoff returns through `postExecutorResult`; session survives | Speech-inferred cancel; optimistic cancel; a `work_id` field on the assess schema; overloading `refused`; a `CoreRuntime.cancelDelegate` API (buys nothing: `#ownTask` already posts a resolved handoff after abort) |

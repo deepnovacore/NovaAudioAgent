@@ -1,15 +1,15 @@
 # 03. Capability Registry and MCP
 
-> 摘要：用 `capabilities.json` + 设置「能力」页统一管理内置模块（search / camera / codex / knowledge）与外部 MCP。内置仍是原生 executor，不做 in-process MCP 包装。搜索新增 MCP Provider（百炼 / DashScope WebSearch 预设）；**默认值在真实接入验证通过之前保持 Tavily**。外部 MCP 的工具白名单是唯一真相：前台按白名单装配，Codex 侧通过私有 `CODEX_HOME` 的 `enabled_tools` 投射同一份白名单，并在线程启动后用 `mcpServerStatus/list` 核对实际可见工具。MCP manifest 通过一层显式的适配规则进入现有工具编译器：不伪造只读属性，不兼容的服务器单独失效。
+> 摘要：用 `capabilities.json` + 设置「能力」页统一管理内置模块（search / camera / coding / knowledge）与外部 MCP。内置 search / coding 仍是原生 executor；内置 Camera MCP 是明确的直接工具例外。搜索新增 MCP Provider（百炼 / DashScope WebSearch 预设）；**默认值在真实接入验证通过之前保持 Tavily**。外部 MCP 的工具白名单是唯一真相：前台按白名单装配，Codex 侧通过私有 `CODEX_HOME` 的 `enabled_tools` 投射同一份白名单，并在线程启动后用 `mcpServerStatus/list` 核对实际可见工具。MCP manifest 通过一层显式的适配规则进入现有工具编译器：不伪造只读属性，不兼容的服务器单独失效。
 >
 > 修订（2026-09-03）：回应评审 P1-4（白名单未在 Codex 侧闭环）、P2-5（manifest 规则与编译器不兼容）及产品建议「先验证再切默认」；再修订回应 P2（别名在 32 字符 server 下可达 66 → 按 server 长度动态预算）。
 
 ## Baseline (today)
 
-- Always-on adapters in `buildAssembly`: search, cam, watch, guard. Configurable
-  executors are only `fast_sim | slow_sim | codex`
-  ([`docs/archs/05-executors.md`](../../archs/05-executors.md),
-  [`docs/archs/10-executor-onboarding.md`](../../archs/10-executor-onboarding.md)).
+- Executor names are arbitrary manifest keys and host routing is by declared
+  roles; this spec has no fixed executor-name enum. A configured coding role is
+  selected by `roles: ['coding']`, while direct native/MCP tools retain their
+  exact manifest channel names.
 - Search is Tavily-only
   ([`runtime/src/executors/search.ts`](../../../runtime/src/executors/search.ts));
   `TAVILY_API_KEY` is required for production assembly.
@@ -27,25 +27,68 @@
   [01 protocol pin](01-codex-approvals.md#protocol-pin)).
 - Invariant 11: only configured manifests become model-facing tools.
 
+## Relation to 07 and 08
+
+MCP adapters are **non-agent executors**. Their manifests always use
+`roles: []`, `approvals: false`, `model_visibility: 'direct'`, and
+`probe_policy: 'none'`; they have no manifest `agent` field. Each allowlisted
+operation is compiled as a direct `${name}__${op}` tool. It never appears in
+`dispatch.executor`, never enters the coding intake, and is not an agent
+controller. The full shape is:
+
+```ts
+{
+  name: 'mcp__<server>',
+  display_name: string,
+  roles: [],
+  approvals: false,
+  model_visibility: 'direct',
+  probe_policy: 'none',
+  ops: OpSpec[],
+  policy: HandoffPolicy,
+}
+```
+
+The `agent` descriptor is deliberately not a manifest field. Agent names,
+summaries, and owned runtime channels come from the `AgentDescriptor` /
+`AgentController` registry described in [07](07-executor-boundary.md); hidden
+executor projection is likewise defined there. In particular, an MCP server
+cannot become a hidden agent merely by changing its manifest.
+
+The built-in Camera MCP is the explicit exception to the earlier native-only
+boundary: `mcp__nova_camera__snapshot` is a Nova-owned direct tool, not an
+external server, not an agent, and not a dispatch/intake route. Search keeps
+the stable `SearchAdapter` contract; MCP is only a transport behind it, and
+the public tool remains `search__search`.
+
 ## Goals
 
 1. One registry that enables / disables built-in modules and user MCP servers.
 2. Search gains an MCP web-search provider (qwen-audio-agent pattern) while
    `SearchAdapter` evidence canonicalisation stays Nova-owned.
-3. User MCP tools callable by FrontBrain as `mcp__<server>__<tool>` executors.
-4. Optional exposure of the **same allowlisted tools** into Codex’s private
-   `CODEX_HOME`; a tool hidden from FrontBrain is hidden from Codex too.
+3. User MCP tools callable by FrontBrain as direct tools named
+   `mcp__<server>__<tool>`; they are not agent executors.
+4. Optional exposure of the **same registry allowlist** into Codex’s private
+   `CODEX_HOME`, with independent consumer gates: `exposeTo.frontbrain` and
+   `exposeTo.codex` may differ, but neither consumer may see a tool omitted from
+   the allowlist.
 5. Fail-closed per server; secrets via env interpolation; reload through the
    coordinated settings commit ([06](06-settings-and-config.md)).
 
 ## Non-goals
 
-- Rewriting cam / watch / guard / Codex as MCP servers.
+- Rewriting native search / coding executors as external MCP servers. The
+  built-in Camera MCP (`mcp__nova_camera__snapshot`) is the explicit direct
+  tool exception documented above.
 - Editing Codex’s own `~/.codex/config.toml` (Nova manages the per-workspace
   private home only).
 - Routing MCP tool approvals from Codex through the Nova broker in v0.2.0.
-- A per-tool approval broker for FrontBrain MCP calls (results stay
-  `untrusted_external`; annotations are metadata, not Gateway policy).
+- A per-tool approval broker for FrontBrain MCP calls in v0.2.0. Non-readonly
+  direct calls reuse the same user-origin/current-turn gate primitive as
+  `dispatch`, but they do not route through `dispatch` / intake and do not
+  create an approval FSM. This gate preserves provenance, not ASR meaning:
+  it cannot repair semantic mishearing. Per-tool confirmation through the
+  existing `confirm(id, accepted)` is a v0.2.x follow-up/non-goal.
 - Switching the search default before the Bailian MCP path has passed a live
   verification recorded in Getting Started.
 
@@ -69,7 +112,7 @@ Path: `~/.nova-audio-agent/capabilities.json` (override:
       "tavily": { "apiKeyEnv": "TAVILY_API_KEY" }
     },
     "camera": { "enabled": true },
-    "codex": { "enabled": true },
+    "coding": { "enabled": true },
     "knowledge": { "enabled": false, "exposeToCodex": false }
   },
   "mcpServers": {
@@ -86,7 +129,7 @@ Path: `~/.nova-audio-agent/capabilities.json` (override:
           "maxCallsPerTurn": 2
         }
       },
-      "exposeTo": { "frontbrain": true, "codex": false }
+      "exposeTo": { "frontbrain": false, "codex": true }
     }
   }
 }
@@ -99,12 +142,23 @@ Constraints (v1):
   key and inside wire names, so hyphens are excluded).
 - Tools omitted from `tools` or not `enabled: true` are never exposed to any
   consumer (explicit allowlist; one source of truth).
+- A newly added external server defaults to
+  `exposeTo: { frontbrain: false, codex: true }`. The 能力 panel must warn that
+  Codex exposure is enabled while FrontBrain is not; adding a server to the
+  FrontBrain surface requires an explicit user action and an allowlist of its
+  tools. This default does not make an MCP server an agent.
 - `${VAR}` interpolation for URLs / headers / env values; a missing required var
   is a configuration error (no secret echo).
 - Remote HTTP requires HTTPS; loopback HTTP allowed only without auth headers.
 
-`camera` gates cam + watch + guard together. The hardware-camera privacy toggle
-in the orb is orthogonal.
+`camera` gates the built-in Camera MCP snapshot and the Vision controller's
+hidden monitoring channels together. The hardware-camera privacy toggle in the
+orb is orthogonal.
+
+The built-in Camera MCP is registered by assembly when the camera module is
+enabled; `modules.camera.enabled = false` disables it, but it is not an entry
+under user `mcpServers` and cannot be separately reconfigured as an external
+server.
 
 ### Precedence
 
@@ -125,12 +179,35 @@ the registry (see [06](06-settings-and-config.md) for the coordinated commit).
    server mark that server `failed` with a bounded reason and do not fail the
    assembly. Errors in `modules` or the document envelope fail the assembly
    (fail closed).
-2. `buildAssembly` constructs built-in adapters only when their module is
-   enabled. Codex remains behind `settings.executors` **and**
-   `modules.codex.enabled`.
+2. `buildAssembly` constructs adapters only when their module or server is
+   enabled. The coding intake is gated by the role-level
+   `modules.coding.enabled` (or the equivalent generic
+   `executors.<name>.enabled` setting) and the one configured adapter whose
+   manifest has `roles: ['coding']`.
 3. `compileToolSchema` / Qwen session tools include only assembled manifests.
    Instruction sections describing a disabled capability are omitted.
 4. Disabled search requires neither Tavily nor MCP credentials.
+
+Disabling the unique coding-role adapter is a supported configuration, not an
+assembly error: coding intake is absent, and `dispatch` / `cancel` are not
+compiled. Other direct tools, including allowlisted MCP tools, remain available.
+An enabled coding role with duplicate coding-role adapters remains an
+`AssemblyError`; role identity is never guessed from an executor name.
+
+### FrontBrain visible-tool budget
+
+After registry filtering and manifest compilation, assembly counts every tool
+schema visible to the Qwen realtime FrontBrain — host/native tools, the
+built-in Camera MCP, and user-selected direct MCP tools — as `N` against the
+configured budget `B`. If `N > B`, assembly fails closed with
+`frontbrain_tool_budget_exceeded`; the 能力 panel must show the exact `N/B`
+count and the over-budget selection. It must never silently truncate a user's
+allowlist or compile a partial surface.
+
+The default `B = 24` is a candidate pending Qwen realtime live validation, not
+a proven constant. The Codex projection is not subject to this realtime
+budget: large user-selected MCP toolsets should be guided toward Codex, with
+the separate Codex-side allowlist and visibility checks below.
 
 ## Search provider
 
@@ -170,7 +247,9 @@ refs, and `trust: untrusted_external` are unchanged. Wire tool name stays
 
 ## External MCP → FrontBrain
 
-`McpExecutorAdapter` per enabled server with `exposeTo.frontbrain`.
+`McpExecutorAdapter` per enabled server with `exposeTo.frontbrain`. Each
+allowlisted tool is a direct model-facing operation; it is not an agent
+controller and never enters coding intake.
 
 | Concern | Rule |
 |---|---|
@@ -181,6 +260,14 @@ refs, and `trust: untrusted_external` are unchanged. Wire tool name stays
 | Priority / wake | 40 / surrogate (same band as search) |
 | Sync | `sync_result: true` when `timeoutMs ≤ 10000`; otherwise async handoff with progress |
 | Bounds | per-tool `timeoutMs`, `maxResultBytes`, `maxCallsPerTurn` enforced by the adapter |
+
+For a non-readonly direct operation, the host reuses the same
+user-origin/current-turn gate primitive as `dispatch` (captured origin,
+session epoch, accepted user-input revision, and the final `stillWanted`
+check immediately before the call). This is an origin/provenance guard only;
+it does not route the call through `dispatch` or create a project/approval FSM,
+and it cannot correct an ASR semantic mishearing. Per-tool `confirm(id,
+accepted)` remains a v0.2.x follow-up/non-goal.
 
 Transports for user servers: `streamable-http` (URL + headers) and `stdio`
 (command, args, env) spawned by Nova with the env allowlist and interpolated
@@ -256,7 +343,7 @@ workspace-private `CODEX_HOME` is Nova-owned and otherwise empty.
 
 Settings tab **能力**:
 
-- Toggles for search / camera / Codex / knowledge.
+- Toggles for search / camera / coding / knowledge.
 - Search sub-panel: provider radio (`tavily` / `mcp`), MCP URL / tool, live
   status, and the verification note for the preset.
 - MCP server list: add / edit / enable / delete; transport fields; tool
@@ -286,7 +373,7 @@ No MCP SDK in the sandboxed renderer.
 
 - [ ] Registry schema rejects oversize / bad keys / missing `${VAR}`.
 - [ ] Per-server failure isolates: one bad server → `failed`, others assembled.
-- [ ] Disabled search / camera / codex / knowledge → tools absent from compiled
+- [ ] Disabled search / camera / coding / knowledge → tools absent from compiled
       schema and Qwen instructions.
 - [ ] Fake MCP search server → `SearchAdapter` digests match golden URL rules;
       Tavily path unchanged; assembly succeeds with neither when disabled.

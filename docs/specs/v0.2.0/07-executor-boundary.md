@@ -11,8 +11,9 @@ What is already clean:
 - `runtime/src/ports.ts`, `causal-runtime.ts`, `assembly.ts`,
   `production-realtime-assembly.ts` contain **zero** `codex` references.
 - `assembly.ts` `resolveExecutors` (110–134) already looks adapters up by
-  `manifest.name`; the only literal union is `config.ts:14`
-  `z.enum(['fast_sim','slow_sim','codex'])`.
+  `manifest.name`; executor names are configuration keys, not a protocol enum.
+  Host routing is by declared role (`roles: ['coding']`), never by a
+  fixed executor-name union.
 - `search.ts` and `camera.ts` are clean adapters: contract + their own
   transport, no `realtime/` or Codex imports.
 - `environment-contract.ts:5` already has an `owner` axis
@@ -66,9 +67,10 @@ validation (`codex-host-config`, `codex-launch-profile`, `codex-version`,
    `runtime/src/executors/codex/` and is reachable only through
    `executors/codex/index.ts`. Core never imports it; composition roots do.
 2. **Role, not name.** The host dispatches coding work to "the configured
-   executor with role `coding`", never to the string `'codex'`. On the voice
-   surface ([08](08-project-and-work.md)), the model sees executor names only
-   via the `dispatch.executor` enum compiled from manifests.
+   executor with role `coding`", never to the string `'codex'`. Agent names
+   exposed on the voice surface come from the controller registry; the model
+   sees them only via the `dispatch.executor` enum compiled from registered
+   `AgentDescriptor`s.
 3. **Host-owned confirmations.** Approval and project confirmation become
    executor-agnostic host capabilities. An executor *declares* that it needs
    an approval surface; it does not own the tool or the FSM.
@@ -144,43 +146,74 @@ export const executorManifestSchema = z.object({
   display_name: z.string().min(1).max(40),          // new; wire + bubble label
   roles: z.array(z.enum(['coding'])).default([]),    // new; host routes by role
   approvals: z.boolean().default(false),             // new; needs approval surface
-  agent: z.object({ summary: z.string().min(1).max(200) }).optional(),  // new; agent executor
+  model_visibility: z.enum(['direct', 'hidden']).default('direct'), // raw ops projection
+  probe_policy: z.enum(['readonly_ops', 'none']).default('readonly_ops'), // probe affordance
   ops: z.array(opSpecSchema),
   policy: handoffPolicySchema,
-  confirm_ttl: z.number().finite().nonnegative().default(0),
 }).strict()
 ```
 
-- `roles` is the only way the host finds a coding executor. Assembly fails
-  with `AssemblyError('no executor with role coding')` when intake is enabled
-  and none is registered, and with `'multiple executors with role coding'`
-  when more than one is (v0.2.0 admits exactly one).
-- `agent` present makes the executor an **agent executor**: `tool-schema.ts`
-  does *not* compile its ops as `${name}__${op}`; the executor appears to the
-  model only as a value of the `dispatch.executor` enum, and `agent.summary`
-  reaches the model as one `<name>: <summary>` line inside the `dispatch` /
-  `cancel` tool **description** — a realtime function schema cannot be assumed
-  to attach a description to an individual enum value
-  ([08](08-project-and-work.md)). Executors without `agent` (`cam`, `search`,
-  `watcher`, `memory`) keep their direct tools. `agent` is orthogonal to
-  `roles`: `roles` decides host routing, `agent` decides model visibility.
-- **v0.2 agent contract** = `agent.summary` + a `run` op whose `params`
-  declare a required string `work_order` and no other required parameter. The
-  host rewrites a non-coordinated `dispatch(executor, instruction)` into
-  `${executor}__run({work_order})`, so `tool-schema.ts` refuses an agent
-  manifest the host cannot fully construct
-  (`ToolSchemaError('agent manifest … needs run(work_order)')`) instead of
-  assuming every agent is Codex-shaped. `cancel` requires the coding-role
-  `AgentExecutor` port ([08](08-project-and-work.md)); a `cancel` naming any
-  other agent is refused `unsupported_tool` until a cancel contract exists.
+- `roles` is the only way the host finds a coding executor. At most one
+  manifest may claim `coding`; more than one is an `AssemblyError`. Disabling
+  the unique coding-role module is supported: coding intake is absent and the
+  host does not compile `dispatch` / `cancel`; this is not an assembly error,
+  and direct tools from other manifests remain available. An enabled coding
+  intake with no matching role is an assembly error only when the host has
+  explicitly requested that intake.
+- `model_visibility: 'hidden'` keeps the executor's runtime bindings but omits
+  every raw `${name}__${op}` operation from model projection. The public agent
+  name and summary do not live in this manifest; they are supplied by an
+  `AgentDescriptor` in the controller registry below. A `direct` manifest
+  retains its compiled `${name}__${op}` tools.
+- `probe_policy: 'none'` is reserved for MCP manifests whose remote metadata
+  cannot honestly provide a readonly probe; native manifests use the default
+  `readonly_ops`. The adapter/compiler consequences are specified in
+  [03](03-capability-registry-and-mcp.md).
+- **v0.2 agent contract** = an `AgentDescriptor` (`name`, `summary`, exact
+  `ownedChannels`) plus an `AgentController` implementing `dispatch` and
+  `cancel`. The controller decides how a user-authorized host call becomes
+  work on its owned channels; the host never assumes every hidden executor is
+  Codex-shaped. The coding controller may route through
+  `executors/coding/intake`; non-agent direct operations never enter it.
 - `approvals: true` tells assembly to attach the host approval surface
-  (`host__confirm_approval` tool, `executor.approval` wire, approval FSM). The
-  executor exposes its broker through a typed port (below); the FSM never
-  imports the broker's concrete class.
-- `confirm_ttl` was never read anywhere (`ports.ts:132`); delete it.
+  (`confirm` in the unified voice surface, `executor.approval` wire, approval
+  FSM). The executor exposes its broker through a typed port (below); the FSM
+  never imports the broker's concrete class.
 - `OpSpec.confirm` is never consulted by dispatch (`causal-runtime.ts`); keep
   it but document that host confirmations are a separate mechanism, or delete
   it in 08 when the project op goes away. Decision deferred to 08.
+
+### Agent controller registry (M1.5c requirement)
+
+Agent publication is a separate host registry, not a manifest `agent` field:
+
+```ts
+interface AgentDescriptor {
+  readonly name: string
+  readonly summary: string
+  readonly ownedChannels: readonly string[]
+}
+
+interface AgentController {
+  readonly descriptor: AgentDescriptor
+  dispatch(request: AgentDispatchRequest): Promise<AgentActionResult>
+  cancel(request: AgentCancelRequest): Promise<AgentActionResult>
+}
+
+interface AgentControllerRegistry {
+  readonly controllers: ReadonlyMap<string, AgentController>
+  readonly descriptors: readonly AgentDescriptor[]
+  agentNameForChannel(channel: string): string | null
+}
+```
+
+The registry is closed at assembly: agent names and owned channels are unique;
+every `ownedChannels` entry names one registered executor manifest; every hidden
+(`model_visibility: 'hidden'`) executor has exactly one owning controller; and
+each controller implements both `dispatch` and `cancel`. Public tool projection
+uses `descriptors` for the `dispatch.executor` / `cancel.executor` enum and
+summary lines. Runtime dispatch retains the exact executor/channel identity in
+`delegate.executor`; the controller name is not substituted for the channel.
 
 ### Approval port
 
@@ -301,9 +334,10 @@ Golden-tested transcripts must be identical for the Codex case.
 
 `runtime/src/executors/fixture/` ships a deterministic executor registered
 through the same `executors/index.ts` path as Codex, with
-`roles: ['coding']`, `approvals: true`, `agent: {summary}`, ops `run`, `steer`,
-`status`, `cancel` mirroring the Codex manifest shapes (08), and a scripted
-`ApprovalBroker`. It is selectable only when `NODE_ENV !== 'production'` or
+`roles: ['coding']`, `approvals: true`, `model_visibility: 'hidden'`, ops `run`,
+`steer`, `status`, `cancel` mirroring the Codex manifest shapes (08), and a
+registered `AgentDescriptor`, plus a scripted `ApprovalBroker`. It is
+selectable only when `NODE_ENV !== 'production'` or
 via `NOVA_AUDIO_AGENT_EXECUTORS=fixture` in tests. A single test
 (`runtime/test/executor-boundary-fixture.test.ts`) drives: assembly by role,
 intake dispatch through `dispatch`, progress, an approval round-trip through `confirm`,
@@ -354,10 +388,15 @@ Deterministic:
       `executors/codex` import and executor → `realtime` import (negative
       tests in `runtime/test/eslint-boundary.test.ts` using ESLint's API).
 - [ ] Fixture executor test passes with no Codex module in the module registry.
-- [ ] Assembly by role: zero coding executors with intake enabled →
-      `AssemblyError`; two → `AssemblyError`; one → dispatch reaches it.
-- [ ] Manifest schema: `roles`, `display_name`, `approvals`, optional `agent`
-      validated; `confirm_ttl` removed; existing manifests updated.
+- [ ] Assembly by role: disabled unique coding role → intake absent and no
+      `dispatch` / `cancel` compilation without `AssemblyError`; two enabled
+      coding roles → `AssemblyError`; one → dispatch reaches it.
+- [ ] Manifest schema: `roles`, `display_name`, `approvals`, and
+      `model_visibility` validated; no manifest `agent` field; `confirm_ttl`
+      removed; existing manifests updated.
+- [ ] Agent controller registry: unique descriptors and owned channels,
+      hidden manifests have exactly one owner, direct manifests remain direct,
+      and `delegate.executor` preserves the exact runtime channel identity.
 - [ ] Approval FSM tests pass unchanged against a fake `ApprovalBroker`.
 - [ ] Wire schema tests for `executor.state` / `project.state` /
       `executor.approval` / `executor.approval_decision`; old type names

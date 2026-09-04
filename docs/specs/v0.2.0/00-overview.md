@@ -37,9 +37,9 @@ rewrite those volumes.
    that change implementation or acceptance), delegates repository facts to
    Codex, then compiles a structured WorkOrder bound to the request revision
    before Codex runs. Not a second conversational agent.
-3. **Modular capabilities.** Built-in search, camera, Codex, and knowledge, plus
-   user-configured MCP servers, sit in one registry the desktop can enable or
-   disable. Search gains an MCP provider (Bailian / DashScope); the default
+3. **Modular capabilities.** Built-in search, Camera MCP, coding, and knowledge,
+   plus user-configured MCP servers, sit in one registry the desktop can enable
+   or disable. Search gains an MCP provider (Bailian / DashScope); the default
    flips from Tavily only after live verification.
 4. **Private knowledge.** Users can ingest documents into a local SQLite store
    with hybrid retrieval. Retrieved chunks are evidence, never instructions.
@@ -51,8 +51,11 @@ rewrite those volumes.
 - Shipping a package version bump or release cut from this branch until the
   features are ready; `package.json` stays at the current release version until
   an explicit release chore.
-- Wrapping built-in search / camera / Codex as in-process MCP servers. Built-ins
-  remain native executors; only their enablement shares the registry UI with MCP.
+- Rewriting native search / coding adapters as in-process MCP servers. The
+  built-in Camera MCP is the explicit direct-tool exception: it is exposed as
+  `mcp__nova_camera__snapshot`, remains host-owned, and is not an external
+  user-server or an agent/intake route. Only enablement shares the registry UI
+  with external MCP.
 - A universal workflow / graph language, unrestricted long-term memory search
   auto-injected into every ContextView, or multiple speaking personas
   ([deferred](../../archs/08-deferred.md)).
@@ -139,12 +142,14 @@ merges — not as part of this documentation phase.
 | Codex approval default | Cross-platform `on-request` with the named workspace-write profile (network off); YOLO is a separate launch profile (`never` + `danger-full-access`) validated end-to-end | Windows-only broker; silent auto-accept under sandbox; patching individual argv flags per mode |
 | Clarification ownership | Host-owned IntakeSession + cheap assess slot; only user-owned questions are asked; repo facts become `discovery`; stop-asking and execution gates are separate | Prompt-only “ask once then dispatch”; second general conversational agent; asking for facts Codex can find |
 | Work-order authorship | Host is the only dispatcher for coding tasks; deterministic WorkOrder v2 bound to `(intake_id, revision)` / `plan_revision`; admitted once through `dispatchExternal` / `dispatchConfirmedExternal` | Passing raw conversation history into Codex; FrontBrain dispatching coding tasks directly; unbound async planner results; inventing a parallel admit API |
-| Capability extension | Registry filters manifests before tools reach the model; the tool allowlist is projected to Codex via `enabled_tools` and verified at runtime; built-ins stay native adapters | Capability branches inside Runtime; wrapping every built-in as MCP; server-level-only projection to Codex |
+| Capability extension | Registry filters manifests before tools reach the model; user-selected external MCP tools are direct tools with an explicit allowlist; the built-in Camera MCP is the one direct MCP exception; the Codex allowlist is projected via `enabled_tools` and verified at runtime | Capability branches inside Runtime; silently trimming a user's MCP allowlist; forcing MCP through `dispatch` / intake; server-level-only projection to Codex |
+| Realtime tool-surface budget | Keep the stable Nova-provided surface to five host/native tools — `dispatch`, `cancel`, `confirm`, `memory__recall`, `search__search` — plus built-in direct MCP `mcp__nova_camera__snapshot`; external MCP direct tools are an explicit user-selected cost. Assembly fails closed with a visible `N/B` count when the FrontBrain budget is exceeded; it never silently truncates tools. The default `B = 24` is a candidate pending Qwen realtime live validation, not a proven constant. Codex projection is outside this realtime budget, so large toolsets belong there. | Silently dropping user-selected tools to fit a guessed budget; routing every MCP operation through `dispatch` / intake; treating the candidate default as a measured limit |
 | Search transport | MCP provider available with Bailian preset; default flips from Tavily only after recorded live verification; evidence still `untrusted_external` via SearchAdapter | Hard-coded Tavily as the only transport; flipping the default before the endpoint is proven |
 | Knowledge | Separate layer K (user-curated) with hybrid retrieval; evidence-only; references reach Codex only in a form it can resolve (`get_chunk` with digest pin, or in-workspace paths); no auto ContextView injection by default | Stuffing document bodies into system prompt; merging knowledge into L1 graph; emitting `knowledge://` URIs Codex cannot open |
 | Progress UX | Optional orb bubbles as reminders + a persistent last-result entry; main process reserves window bounds; speech remains Floor-gated | Speaking every Codex working update; OS toasts for in-session progress; bubbles as the audit trail |
 | Executor identity | Core sees `manifest.name / roles / display_name` only; coding work routed by role; boundary enforced by lint + script; approvals and project confirmation are host capabilities behind an `ApprovalBroker` port | Branching on `'codex'` in core; executor-owned confirmation tools; boundary by convention |
 | Project selection | Executor-side coordinator in `executors/coding/` intake; FastBrain sends natural language through `dispatch(executor, instruction)`; roster is coordinator input and desktop UI only; session is `latest \| new`; every change of the active project confirms (switch, cross-project work, create — decision 2026-09-04); cancel is an explicit tool resolved in the executor | Voice model picking a roster name from a versioned `workspace_context` item; six `work__` / `project__` tools; model-driven list/select/start state machine; `<session_id>` on the voice surface; optimistic cancel; `任务 N` titles |
+| Concurrency | v0.2 supports simultaneous work across projects/repos because that is a real user workflow; per-workspace slots and global cap 3 bound process cost, while one host-owned approval FSM module provides FIFO hold/release and preserves confirmation safety | Global single-flight that makes independent projects wait; unbounded app-server children; separate approval queue implementations that can race the project-confirmation path |
 
 ### Deferred items that stay deferred
 
