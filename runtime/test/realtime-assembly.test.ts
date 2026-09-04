@@ -26,6 +26,7 @@ import {
 } from '../src/project-store.js'
 import { settingsSchema } from '../src/config.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
+import { executorManifestSchema } from '../src/ports.js'
 import {
   ProjectCodexAdapter,
   type ProjectTransportBinding,
@@ -149,6 +150,7 @@ async function assertPending(name: string, promise: Promise<unknown>): Promise<v
 class RecordingFrameSource implements FrameSource {
   starts = 0
   stops = 0
+  snapshots = 0
   readonly startSteps: (() => Promise<void>)[] = []
   readonly stopSteps: (() => Promise<void>)[] = []
 
@@ -167,6 +169,7 @@ class RecordingFrameSource implements FrameSource {
   }
 
   snapshot(): Promise<Frame | null> {
+    this.snapshots += 1
     return Promise.resolve(null)
   }
 }
@@ -200,6 +203,26 @@ class SequencedSurrogateGateway implements ModelGateway {
     const text = this.answers.shift()
     if (text === undefined) return Promise.reject(new Error('surrogate answer script exhausted'))
     return Promise.resolve({text})
+  }
+}
+
+class VisionAssessGateway implements ModelGateway {
+  readonly requests: CompleteRequest[] = []
+
+  async *stream(request: StreamRequest): AsyncIterable<GatewayDelta> {
+    void request
+    await Promise.resolve()
+    throw new Error('streaming model call was not expected')
+  }
+
+  complete(request: CompleteRequest): Promise<GatewayCompletion> {
+    this.requests.push(structuredClone(request))
+    const prompt = JSON.parse(request.prompt) as {readonly request_id: string; readonly revision: number}
+    return Promise.resolve({text: JSON.stringify({
+      request_id: prompt.request_id, revision: prompt.revision,
+      kind: 'monitor', condition: 'the door opens', urgency: 'routine', urgency_evidence: null,
+      interval_s: 2, duration_s: 30, question: null,
+    })})
   }
 }
 
@@ -494,6 +517,121 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
   assert.equal(realtime.providerSession.state, 'closed')
   const unbindSuggestion = core.runtime.bindSuggestionSelected(() => undefined)
   unbindSuggestion()
+})
+
+test('realtime assembly supplies the coding controller for an arbitrary hidden coding channel', async () => {
+  const coding: ExecutorAdapter = {
+    manifest: executorManifestSchema.parse({
+      name: 'workspace_coder', display_name: 'Workspace coder', model_visibility: 'hidden', roles: ['coding'],
+      policy: {channel: 'workspace_coder', priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8},
+      ops: [
+        {name: 'run', description: 'run', params: {type: 'object', properties: {work_order: {type: 'string'}}, required: ['work_order'], additionalProperties: false}},
+        {name: 'status', description: 'status', readonly: true, params: {type: 'object', properties: {}, additionalProperties: false}},
+      ],
+    }),
+    dispatch: () => Promise.resolve({outcome: 'ok', trust: 'trusted_system', content: {}, refs: []}),
+  }
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['workspace_coder']}),
+    clock: new VirtualClock(0),
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    executors: [coding],
+  })
+  const realtime = buildRealtimeAssembly({core, provider: new AbortAwareProvider(), onDiagnostic: () => undefined})
+
+  assert.deepEqual(core.tools.agent_descriptors.find(descriptor => descriptor.name === 'codex')?.ownedChannels,
+    ['workspace_coder'])
+  await realtime.start()
+  await realtime.stop()
+})
+
+test('production Vision dispatch owns hidden Watch admission and fences stale provider calls', async () => {
+  const clock = new VirtualClock(0)
+  const gateway = new VisionAssessGateway()
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: [], fresh_window: 1}),
+    clock,
+    gateway,
+    searchTransport: new NeverCalledSearch(),
+    frameSource: new RecordingFrameSource(),
+  })
+  const provider = new RecordingProgressProvider()
+  const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+  const submit = async (
+    turn: string,
+    text: string,
+    name: 'dispatch' | 'cancel',
+    arguments_: Readonly<Record<string, JsonValue>>,
+  ): Promise<void> => {
+    await realtime.service.handleEvent({
+      kind: 'user_speech_started', session_epoch: 1, speech_id: `speech-${turn}`, provider_item_id: `user-${turn}`,
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_speech_ended', session_epoch: 1, speech_id: `speech-${turn}`, provider_item_id: `user-${turn}`,
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1, item_id: `user-${turn}`, text,
+    })
+    await realtime.service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: `response-${turn}`})
+    await realtime.service.handleEvent({
+      kind: 'tool_call_ready', session_epoch: 1, call_id: `call-${turn}`, item_id: `tool-${turn}`,
+      name, arguments: arguments_, response_id: `response-${turn}`,
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1, response_id: `response-${turn}`, status: 'completed', reason: '',
+    })
+  }
+
+  await realtime.start()
+  try {
+    const rawHidden = realtime.bridge.acceptToolCall({
+      kind: 'tool_call_ready', session_epoch: 1, call_id: 'raw-watch', item_id: 'raw-watch-item',
+      name: 'watch__start', arguments: {condition: 'the door opens'}, response_id: null,
+    })
+    assert.equal(rawHidden.accepted, false)
+    assert.equal(rawHidden.code, 'hidden_executor')
+
+    await submit('start', 'Watch the door.', 'dispatch', {
+      executor: 'vision', instruction: 'Watch the door.', origin_ref: 'forged:0',
+    })
+    const start = realtime.service.toolCallAcceptances().find(item => item.call_id === 'call-start')?.acceptance
+    assert.equal(start?.accepted, true)
+    assert.equal(start?.code, 'accepted')
+    assert.equal(start?.executor, 'watch')
+    assert.equal(start?.op, 'start')
+    assert.ok(start?.delegate_id)
+    await waitNamed('admitted Watch runtime work', () => core.frameSource instanceof RecordingFrameSource
+      && core.frameSource.snapshots > 0)
+    assert.equal(gateway.requests.length, 1)
+    const startOrigin = 'conversation:1'
+    // External admission checks the ContextView's five recent items, not wall-clock age alone.
+    for (let index = 0; index < 5; index += 1) {
+      core.runtime.memory.append('conversation', {
+        ts: clock.now(), trust: 'trusted_system', priority: 0, content: {filler: index},
+      })
+    }
+    const currentRef = await core.runtime.ingestUserInput({text: 'Stop monitoring.'})
+    const recentRefs = core.runtime.memory.channels.get('conversation')!.items.slice(-5)
+      .map(item => `${item.channel}:${item.seq}`)
+    assert.equal(recentRefs.includes(startOrigin), false)
+    assert.equal(recentRefs.includes(currentRef), true)
+    const stop = await core.visionController!.cancel({
+      originalUserText: 'Stop monitoring.', origin_ref: currentRef, sessionEpoch: 1,
+      acceptedUserInputRevision: 2, stillWanted: () => true,
+    })
+    assert.equal(stop.code, 'monitor_stop_requested')
+    assert.equal(stop.accepted, true)
+    const stale = core.runtime.dispatchExternal({
+      executor: 'watch', op: 'status', request: {}, origin_ref: startOrigin,
+    }, {
+      kind: 'realtime_tool', priority: 100, routing_class: 'user_awaited', origin: null, selected_suggestion: null,
+    })
+    assert.equal(stale.accepted, false)
+    assert.equal(stale.problem, 'origin_not_visible')
+  } finally {
+    await realtime.stop()
+  }
 })
 
 test('routine cumulative progress is suppressed end to end while a later milestone is delivered once',

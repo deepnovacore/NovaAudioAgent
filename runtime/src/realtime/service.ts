@@ -36,10 +36,7 @@ import {
   type AgentActionResult,
   type AgentController,
   type AgentControllerRegistry,
-  type AgentRuntimeDispatchPort,
 } from '../agent-controller.js'
-import {CodexAgentController} from '../executors/index.js'
-import type {AgentExecutor} from '../coding-executor.js'
 import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
 import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { Clock } from '../clock.js'
@@ -312,11 +309,9 @@ export interface RealtimeServiceOptions {
     IntakeOptions,
     'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'dispatch' | 'steer' | 'cancel' | 'record'
   >
-  /** The coding executor's private cancellation port; CodexAgentController owns its use. */
-  readonly agentExecutor?: Pick<AgentExecutor, 'cancel'>
-  /** The only runtime effect a no-intake controller may request. */
-  readonly agentDispatchPort?: AgentRuntimeDispatchPort
-  /** Additional host-owned controllers. Codex is installed automatically for a hidden Codex manifest. */
+  /** Composition-owned late binding for a controller that needs the service's private intake port. */
+  readonly agentControllerFactory?: AgentControllerFactory
+  /** Additional host-owned controllers. */
   readonly agentControllers?: readonly AgentController[]
   readonly provider: ServiceProvider
   readonly runtime: ServiceRuntime
@@ -356,6 +351,12 @@ export interface RealtimeServiceOptions {
   readonly projectExpiryStepTimeoutMs?: number
   /** Where a diagnostic goes. Defaults to stdout, which is what the oracle captures. */
   readonly onDiagnostic?: (line: string) => void
+}
+
+export interface AgentControllerFactory {
+  create(context: {
+    readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined
+  }): AgentController
 }
 
 /**
@@ -644,17 +645,9 @@ export class RealtimeService {
       }
     }
     const controllers = [...(options.agentControllers ?? [])]
-    const codingManifest = [...options.runtime.executors.values()]
-      .map(adapter => adapter.manifest)
-      .find(manifest => manifest.roles.includes('coding') && manifest.model_visibility === 'hidden')
-    if (codingManifest !== undefined && !controllers.some(controller => controller.descriptor.name === 'codex')) {
-      controllers.unshift(new CodexAgentController({
-        channel: codingManifest.name,
-        ...(this.#intake === undefined ? {} : {intake: this.#intake}),
-        ...(options.agentExecutor === undefined ? {} : {executor: options.agentExecutor}),
-        ...(options.agentDispatchPort === undefined ? {} : {dispatchPort: options.agentDispatchPort}),
-        resolveCancelTarget: (text, running) => options.intake?.models.resolveCancelTarget(text, running)
-          ?? Promise.resolve(null),
+    if (options.agentControllerFactory !== undefined) {
+      controllers.unshift(options.agentControllerFactory.create({
+        intake: this.#intake,
       }))
     }
     this.#agentRegistry = createAgentControllerRegistry({

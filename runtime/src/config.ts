@@ -85,7 +85,7 @@ export const settingsSchema = z.object({
   qwen_controlled_guard_reconnect: z.boolean().default(false),
   qwen_guard_history_recovery: qwenGuardHistoryRecoverySchema.default('none'),
   qwen_guard_history_pairs: qwenGuardHistoryPairsSchema.default(4),
-  executor: executorNameSchema.default('fast_sim'),
+  executor: executorNameSchema.nullable().default(null),
   executors: z.array(executorNameSchema),
   codex_workspace: z.string().nullable().default(null),
   codex_bin: z.string().default('codex'),
@@ -235,7 +235,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     : undefined
   const configuredExecutor = optionalString(environment.NOVA_AUDIO_AGENT_EXECUTOR)
   const executor = configuredExecutor === undefined || configuredExecutor === ''
-    ? 'fast_sim'
+    ? null
     : configuredExecutor
   const executors = parseExecutors(environment.NOVA_AUDIO_AGENT_EXECUTORS, configuredExecutor ?? '')
   const candidate = {

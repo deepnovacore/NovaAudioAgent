@@ -217,8 +217,8 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER` | `core` | No | qwen | Cascaded LLM provider. |
 | `NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL` | `core` | No | provider default | Cascaded LLM model override. |
 | `NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER` | `core` | No | volcengine | Cascaded TTS provider. |
-| `NOVA_AUDIO_AGENT_EXECUTOR` | `core` | No | fast_sim | Single executor selector for compatibility. |
-| `NOVA_AUDIO_AGENT_EXECUTORS` | `core` | No | selected executor | Ordered executor list. |
+| `NOVA_AUDIO_AGENT_EXECUTOR` | `core` | No | None | Optional single executor selector; unset selects none. |
+| `NOVA_AUDIO_AGENT_EXECUTORS` | `core` | No | None | Optional ordered executor list; unset selects none. |
 | `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | No | balanced | Proactivity preset. |
 | `NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN` | `core` | No | preset | Suggestion cooldown override in seconds. |
 | `NOVA_AUDIO_AGENT_FRESH_WINDOW` | `core` | No | preset | Fresh-context window override in seconds. |

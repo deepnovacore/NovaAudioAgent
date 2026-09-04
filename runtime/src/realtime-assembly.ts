@@ -46,7 +46,7 @@ import type {CoordinatorDecision} from './coding-executor.js'
 /** Intake-issued delegate requests carry the user's own priority (the voice model awaited them). */
 const USER_AWAITED_TOOL = {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null} as const
 import {intakeModels, type IntakeModels} from './executors/coding/intake-model.js'
-import type {IntakeSettings, IntakeSession} from './executors/coding/intake.js'
+import type {IntakeController, IntakeSettings, IntakeSession} from './executors/coding/intake.js'
 import type {ModelGateway} from './model-gateway.js'
 import {CodexAgentController} from './executors/index.js'
 
@@ -851,16 +851,18 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       }, USER_AWAITED_TOOL)
     },
   }
-  const agentControllers = [
-    ...(codingManifest === null || (options.intake !== undefined && projectAdapter !== undefined) ? [] : [new CodexAgentController({
-      channel: codingManifest.name,
-      ...(projectAdapter === undefined ? {} : {executor: projectAdapter}),
-      dispatchPort: agentDispatchPort,
-      resolveCancelTarget: (text, running) => options.intake?.models.resolveCancelTarget(text, running)
-        ?? Promise.resolve(null),
-    })]),
-    ...(core.visionController === undefined ? [] : [core.visionController]),
-  ]
+  const agentControllerFactory = codingManifest === null ? undefined : {
+    create: ({intake}: {readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined}) =>
+      new CodexAgentController({
+        channel: codingManifest.name,
+        ...(intake === undefined ? {} : {intake}),
+        ...(projectAdapter === undefined ? {} : {executor: projectAdapter}),
+        dispatchPort: agentDispatchPort,
+        resolveCancelTarget: (text, running) => options.intake?.models.resolveCancelTarget(text, running)
+          ?? Promise.resolve(null),
+      }),
+  }
+  const agentControllers = core.visionController === undefined ? [] : [core.visionController]
   const service = new RealtimeService({
     provider: providerSession,
     runtime: core.runtime,
@@ -868,7 +870,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     providerSchemas,
     session,
     bridge,
-    agentDispatchPort,
+    ...(agentControllerFactory === undefined ? {} : {agentControllerFactory}),
     ...(agentControllers.length === 0 ? {} : {agentControllers}),
     ...(options.intake === undefined || projectAdapter === undefined ? {} : {intake: {
       ...options.intake,
@@ -929,7 +931,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       : {commitProjectOperation}),
     ...(projectAdapter === undefined
       ? {}
-      : {projectViewProvider: (pending: boolean) => projectAdapter.publicProjectView(pending), agentExecutor: projectAdapter}),
+      : {projectViewProvider: (pending: boolean) => projectAdapter.publicProjectView(pending)}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.projectExpiryStepTimeoutMs === undefined
       ? {}

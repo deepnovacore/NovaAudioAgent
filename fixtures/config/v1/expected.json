@@ -80,10 +80,8 @@
         "doubao_tts_output_sample_rate": 24000,
         "doubao_tts_resource_id": "seed-tts-2.0",
         "doubao_tts_voice": "zh_female_vv_uranus_bigtts",
-        "executor": "fast_sim",
-        "executors": [
-          "fast_sim"
-        ],
+        "executor": null,
+        "executors": [],
         "fast_model": "﻿fast﻿",
         "fresh_window": null,
         "model_api_key_present": false,
@@ -137,10 +135,8 @@
         "doubao_tts_output_sample_rate": 24000,
         "doubao_tts_resource_id": "seed-tts-2.0",
         "doubao_tts_voice": "zh_female_vv_uranus_bigtts",
-        "executor": "fast_sim",
-        "executors": [
-          "fast_sim"
-        ],
+        "executor": null,
+        "executors": [],
         "fast_model": "qwen3-vl-plus",
         "fresh_window": null,
         "model_api_key_present": false,
@@ -202,7 +198,7 @@
         "doubao_tts_output_sample_rate": 24000,
         "doubao_tts_resource_id": "seed-tts-2.0",
         "doubao_tts_voice": "zh_female_vv_uranus_bigtts",
-        "executor": "fast_sim",
+        "executor": null,
         "executors": [
           "fast_sim",
           "codex"
@@ -266,7 +262,7 @@
         "doubao_tts_output_sample_rate": 24000,
         "doubao_tts_resource_id": "seed-tts-2.0",
         "doubao_tts_voice": "zh_female_vv_uranus_bigtts",
-        "executor": "fast_sim",
+        "executor": null,
         "executors": [
           "slow_sim",
           "fast_sim"
@@ -344,10 +340,8 @@
         "doubao_tts_output_sample_rate": 24000,
         "doubao_tts_resource_id": "seed-tts-2.0",
         "doubao_tts_voice": "zh_female_vv_uranus_bigtts",
-        "executor": "fast_sim",
-        "executors": [
-          "fast_sim"
-        ],
+        "executor": null,
+        "executors": [],
         "fast_model": "qwen3-vl-plus",
         "fresh_window": null,
         "model_api_key_present": true,
@@ -429,10 +423,8 @@
         "doubao_tts_output_sample_rate": 24000,
         "doubao_tts_resource_id": "seed-tts-2.0",
         "doubao_tts_voice": "zh_female_vv_uranus_bigtts",
-        "executor": "fast_sim",
-        "executors": [
-          "fast_sim"
-        ],
+        "executor": null,
+        "executors": [],
         "fast_model": "qwen3-vl-plus",
         "fresh_window": null,
         "model_api_key_present": false,

@@ -530,6 +530,7 @@ test('a non-Codex configuration never reads the Codex credential environment slo
 
 test('the production default config does not install a simulator executor', () => {
   assert.deepEqual(loadSettings({}).executors, [])
+  assert.equal(loadSettings({}).executor, null)
 })
 
 test('the unprefixed Tavily credential is preserved for production assembly', () => {

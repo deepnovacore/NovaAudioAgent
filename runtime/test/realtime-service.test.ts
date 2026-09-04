@@ -45,6 +45,9 @@ import {
   type ProjectConfirmationView,
 } from '../src/project-confirmation.js'
 import {CodexApprovalController, type CodexApprovalResolution} from '../src/executors/codex/approval.js'
+import {CodexAgentController} from '../src/executors/codex/controller.js'
+import type {AgentExecutor} from '../src/coding-executor.js'
+import type {IntakeController} from '../src/executors/coding/intake.js'
 import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
 
@@ -649,7 +652,7 @@ function pipelineService(options: {
   readonly withExecutorApproval?: boolean
   readonly ensureResponseFailure?: boolean
   readonly failReconnect?: boolean
-  readonly agentExecutor?: ConstructorParameters<typeof RealtimeService>[0]['agentExecutor']
+  readonly agentExecutor?: Pick<AgentExecutor, 'cancel'>
   readonly agentControllers?: readonly AgentController[]
   readonly beforeAgentRuntimeDispatch?: () => void
   /** Fold the ops into the spec 08 host tools; a raw `codex__*` from the provider is then refused. */
@@ -841,16 +844,22 @@ function pipelineService(options: {
       idFactory: nextId,
     }),
     ...(options.intake === undefined ? {} : {intake: options.intake}),
-    ...(options.agentExecutor === undefined ? {} : {agentExecutor: options.agentExecutor}),
+    ...(manifest.model_visibility === 'hidden' && options.agentControllers === undefined ? {agentControllerFactory: {
+      create: ({intake}: {readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined}) => new CodexAgentController({
+        ...(intake === undefined ? {} : {intake}),
+        ...(options.agentExecutor === undefined ? {} : {executor: options.agentExecutor}),
+        dispatchPort: {
+          dispatch: request => {
+            options.beforeAgentRuntimeDispatch?.()
+            if (!request.stillWanted()) return {accepted: false, delegate_id: null}
+            runtimeDispatches += 1
+            return {accepted: scripted.accepted, delegate_id: scripted.delegateId}
+          },
+        },
+        resolveCancelTarget: () => Promise.resolve(null),
+      }),
+    }} : {}),
     ...(options.agentControllers === undefined ? {} : {agentControllers: options.agentControllers}),
-    agentDispatchPort: {
-      dispatch: request => {
-        options.beforeAgentRuntimeDispatch?.()
-        if (!request.stillWanted()) return {accepted: false, delegate_id: null}
-        runtimeDispatches += 1
-        return {accepted: scripted.accepted, delegate_id: scripted.delegateId}
-      },
-    },
     ...(executorApproval === null ? {} : {executorApproval}),
     idFactory: nextId,
     // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
@@ -1978,12 +1987,13 @@ test('no-intake dispatch stays controller-owned while preserving the delegated a
 })
 
 test('a local supersession before no-intake controller dispatch starts no runtime delegate', async () => {
-  let service!: RealtimeService
+  const serviceRef: {current: RealtimeService | undefined} = {current: undefined}
   const fixture = pipelineService({
     agent: true,
-    beforeAgentRuntimeDispatch: () => { void service.localSpeechOnset('supersede-no-intake') },
+    beforeAgentRuntimeDispatch: () => { void serviceRef.current?.localSpeechOnset('supersede-no-intake') },
   })
-  service = fixture.service
+  const service = fixture.service
+  serviceRef.current = service
   await service.connect()
   const acceptance = await dispatchTurn(service, 'dispatch', {
     executor: 'codex', instruction: 'build timer', origin_ref: 'conversation:1',
@@ -1997,10 +2007,10 @@ test('a local supersession before no-intake controller dispatch starts no runtim
 test('an invalid controller result is refused without serializing hostile detail', async () => {
   const hostile: AgentController = {
     descriptor: {name: 'codex', summary: CODEX_AGENT_SUMMARY, ownedChannels: ['codex']},
-    dispatch: async () => ({
+    dispatch: () => Promise.resolve({
       code: 'intake_opened', accepted: true, detail: {state: 'open', message: 'do not expose'},
     } as never),
-    cancel: async () => ({code: 'unsupported_tool', accepted: false, detail: {}}),
+    cancel: () => Promise.resolve({code: 'unsupported_tool', accepted: false, detail: {}}),
   }
   const {service, runtimeDispatches} = pipelineService({agent: true, agentControllers: [hostile]})
   await service.connect()
@@ -2034,8 +2044,8 @@ test('valid controller result details never reach provider-facing tool output', 
   for (const [index, result] of results.entries()) {
     const controller: AgentController = {
       descriptor: {name: 'codex', summary: CODEX_AGENT_SUMMARY, ownedChannels: ['codex']},
-      dispatch: async () => result,
-      cancel: async () => ({code: 'not_running', accepted: true, detail: {}}),
+      dispatch: () => Promise.resolve(result),
+      cancel: () => Promise.resolve({code: 'not_running', accepted: true, detail: {}}),
     }
     const {service} = pipelineService({agent: true, agentControllers: [controller]})
     await service.connect()
