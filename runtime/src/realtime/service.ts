@@ -2483,7 +2483,12 @@ export class RealtimeService {
     // CP1: a settled delegate leaves no dedup residue behind.
     this.#lastProgressSummary.delete(payload.delegate_id)
     this.#publishExecutorState()
-    if (isMonitorPolicy(manifest.policy) && monitorAlertDelivery(manifest.policy) === 'none') return
+    if (
+      isMonitorPolicy(manifest.policy)
+      && monitorAlertDelivery(manifest.policy) === 'none'
+      && payload.outcome === 'ok'
+      && payload.content.hit === true
+    ) return
     if (suppressUnselectedSuggestion) return
 
     const successfulMonitorStop = isMonitorPolicy(manifest.policy)
@@ -6726,7 +6731,7 @@ export class RealtimeService {
             reason: diagnosticName(failure),
           })
           this.#onDiagnostic(
-            `[realtime-diagnostic] guard_reconnect_failure type=${diagnosticName(failure)}`,
+            `[realtime-diagnostic] preemptive_alert_reconnect_failure type=${diagnosticName(failure)}`,
           )
           // A failed reconnect leaves no working provider and no way to speak the alert. Stopping is
           // the only honest outcome.
@@ -6948,7 +6953,7 @@ export class RealtimeService {
       this.#deliveryReady.set()
     } catch (failure) {
       if (isAbort(failure)) return
-      this.#onDiagnostic(`[realtime-diagnostic] guard_alert_failure type=${diagnosticName(failure)}`)
+      this.#onDiagnostic(`[realtime-diagnostic] preemptive_alert_failure type=${diagnosticName(failure)}`)
     }
   }
 

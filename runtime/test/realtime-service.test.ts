@@ -2728,6 +2728,33 @@ test('a terminal none monitor hit stays recorded without becoming host speech', 
   assert.equal(service.session.delegateState('d-1'), 'completed', 'terminal state still publishes')
 })
 
+test('a terminal none monitor failure remains a host-visible result', () => {
+  // Only a successful hit is intentionally silent. Dropping this terminal would hide the real
+  // failure from the user even though the monitor's normal alert delivery is none.
+  for (const [outcome, content, state] of [
+    ['failed', {code: 'capture_unavailable'}, 'failed'],
+    ['refused', {code: 'permission_denied'}, 'refused'],
+  ] as const) {
+    const {service, queued} = projectionService({
+      delegate: {executor: 'sensor-silent', op: 'start', routing_class: 'user_awaited'},
+      operationClass: 'monitor',
+      alertDelivery: 'none',
+    })
+    service.projectRuntimeEvent({
+      kind: 'handoff',
+      seq: 1,
+      ts: 1,
+      payload: {
+        channel: 'sensor-silent', delegate_id: 'd-1', origin_ref: 'conversation:1',
+        outcome, trust: 'trusted_system', content, refs: [],
+      },
+    })
+
+    assert.equal(queued().length, 1, `${outcome} remains a user-visible terminal fact`)
+    assert.equal(service.session.delegateState('d-1'), state)
+  }
+})
+
 test('silencing monitor heartbeats does not silence ordinary executor progress', () => {
   const {service, queued} = projectionService({
     delegate: {executor: 'codex', op: 'start', routing_class: 'user_awaited'},
