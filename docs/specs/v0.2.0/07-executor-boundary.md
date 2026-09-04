@@ -452,8 +452,9 @@ Live (behaviour must be identical to the M1 validation table in
 
 - [ ] Codex 0.152.0 config smoke: real app-server, isolated homes, all three
       launch profiles, no model turns.
-- [ ] macOS headset: one coding task through `codex__project` with a
-      `file_change` approval accepted by voice and one declined via the banner.
+- [ ] macOS headset: start one coding task through the current host entry
+      `dispatch(executor: 'codex', instruction: ...)`, with one `file_change`
+      approval accepted by voice and one declined via the banner.
 - [ ] Desktop renderer smoke (`renderer-progress-smoke.mjs`) at 100/125/150%
       with the new frame types; state label shows `Codex` from `display_name`.
 - [ ] Windows: approval path with `ask` profile; ACL / job-object tests
