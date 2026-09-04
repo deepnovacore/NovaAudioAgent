@@ -51,7 +51,15 @@ export class CodexAgentController implements AgentController {
     this.#resolveCancelTarget = options.resolveCancelTarget
   }
 
-  async dispatch(request: AgentDispatchRequest): Promise<AgentActionResult> {
+  dispatch(request: AgentDispatchRequest): Promise<AgentActionResult> {
+    try {
+      return Promise.resolve(this.#dispatch(request))
+    } catch (error) {
+      return Promise.resolve().then(() => { throw error })
+    }
+  }
+
+  #dispatch(request: AgentDispatchRequest): AgentActionResult {
     if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
     const intake = this.#intake
     if (intake === undefined) {
