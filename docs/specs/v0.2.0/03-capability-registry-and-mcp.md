@@ -155,10 +155,16 @@ Constraints (v1):
 hidden monitoring channels together. The hardware-camera privacy toggle in the
 orb is orthogonal.
 
-The built-in Camera MCP is registered by assembly when the camera module is
-enabled; `modules.camera.enabled = false` disables it, but it is not an entry
-under user `mcpServers` and cannot be separately reconfigured as an external
-server.
+For the current M1.5c production implementation, the sole camera-module source
+is `NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED` → strict
+`Settings.camera_module_enabled` → assembly, defaulting to `true`. The
+capabilities registry does not yet control this gate. The built-in Camera MCP
+is not an entry under user `mcpServers` and cannot be separately reconfigured
+as an external server.
+
+The later M3 registry will make `modules.camera.enabled` the persisted source;
+at that point the explicit CLI/CI env override will take precedence (`env >
+registry > true`). M3 is not implemented by the current M1.5c runtime.
 
 ### M1.5c Vision and Camera contract
 
@@ -166,9 +172,11 @@ The current M1.5c Vision controller owns the hidden `watch` and `guard`
 channels. Its only voice entry points are `dispatch(executor: 'vision', ...)`
 and `cancel(executor: 'vision', ...)`; `watch` and `guard` are never direct
 model tools, and Vision does not add a separate confirmation tool. The camera
-module is one assembly gate: when `modules.camera.enabled = false`, assembly
-removes `mcp__nova_camera__snapshot`, the Vision controller, and its hidden
-`watch` / `guard` channels together.
+module is one assembly gate: in current M1.5c production, when
+`NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED=false` resolves to
+`Settings.camera_module_enabled=false`, assembly removes
+`mcp__nova_camera__snapshot`, the Vision controller, and its hidden `watch` /
+`guard` channels together.
 
 Monitoring is policy-driven: the host owns sampling cadence, wake priority,
 side-VLM invocation policy, and delivery mode. Watch/guard cannot alter those
@@ -201,8 +209,17 @@ implicit image input.
 
 ### Precedence
 
-The registry is the only place module enablement, MCP servers, and the search
-provider live. Precedence for the search provider is:
+The registry is the source for MCP servers and the planned persisted module
+enablement; current M1.5c camera enablement is sourced from the runtime env
+mapping described above. Precedence for the current camera gate is simply:
+
+1. `NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED` when set (explicit CLI / CI
+   override);
+2. built-in default (`true`).
+
+When the M3 registry is implemented, camera precedence will become `env >
+registry > true`, with `modules.camera.enabled` as the persisted registry
+value. Precedence for the search provider is:
 
 1. `NOVA_AUDIO_AGENT_SEARCH_PROVIDER` env, if set (CLI / CI override, logged as
    an override);
