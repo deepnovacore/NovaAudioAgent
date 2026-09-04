@@ -98,6 +98,24 @@ test('agent registration closes controller names, owned channels, manifests, and
   )
 })
 
+test('agent registry rejects blank public descriptor labels', () => {
+  const direct = manifest('direct')
+  assert.throws(
+    () => createAgentControllerRegistry({
+      controllers: [controller({name: ' \t', summary: 'valid', ownedChannels: ['direct']})],
+      manifests: [direct],
+    }),
+    /agent name must not be blank/iu,
+  )
+  assert.throws(
+    () => createAgentControllerRegistry({
+      controllers: [controller({name: 'valid', summary: ' \t', ownedChannels: ['direct']})],
+      manifests: [direct],
+    }),
+    /agent summary must not be blank.*valid/iu,
+  )
+})
+
 test('the Codex controller preserves intake dispatch and forwards the revision fence to cancellation', async () => {
   const opened: unknown[][] = []
   const intake = {

@@ -47,6 +47,7 @@
     "desktop/ambient-orb/src/renderer/state.mjs",
     "desktop/ambient-orb/src/renderer/voice-choice.mjs",
     "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+    "runtime/src/agent-controller.ts",
     "runtime/src/approval-port.ts",
     "runtime/src/assembly.ts",
     "runtime/src/calls.ts",
@@ -84,6 +85,7 @@
     "runtime/src/executors/codex/approval.ts",
     "runtime/src/executors/codex/common.ts",
     "runtime/src/executors/codex/contract.ts",
+    "runtime/src/executors/codex/controller.ts",
     "runtime/src/executors/codex/credential-snapshot.ts",
     "runtime/src/executors/codex/factory.ts",
     "runtime/src/executors/codex/host-config.ts",
@@ -631,6 +633,28 @@
       "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs"
     },
     {
+      "file": "runtime/src/agent-controller.ts",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "line": 101,
+      "snippet": "descriptor.name.trim()",
+      "snippet_sha256": "9fbec73bdad52426ba2e56beb1e9b7e4ba080d97265d9363fc6b2f8818a2152e",
+      "disposition": "host_only_unicode",
+      "behavior": "agent registry rejects blank public descriptor labels",
+      "test": "runtime/test/agent-controller.test.ts"
+    },
+    {
+      "file": "runtime/src/agent-controller.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "line": 102,
+      "snippet": "descriptor.summary.trim()",
+      "snippet_sha256": "de31d793a2b70c7f1b1f7b4a2a9c9c82ecc175a64a858ff2824c6401859741a8",
+      "disposition": "host_only_unicode",
+      "behavior": "agent registry rejects blank public descriptor labels",
+      "test": "runtime/test/agent-controller.test.ts"
+    },
+    {
       "file": "runtime/src/causal-runtime.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
@@ -1124,6 +1148,17 @@
       "disposition": "host_only_unicode",
       "behavior": "approval command and file displays redact common credential forms",
       "test": "runtime/test/codex-approval-transport.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/codex/controller.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 0,
+      "line": 48,
+      "snippet": "String(request.sessionEpoch)",
+      "snippet_sha256": "7b5dd3ce19ce7c42472e6866be4c3a699ac8243cb65662b92c07708543790710",
+      "disposition": "wire_json",
+      "behavior": "the Codex controller preserves intake dispatch and forwards the revision fence to cancellation",
+      "test": "runtime/test/agent-controller.test.ts"
     },
     {
       "file": "runtime/src/executors/codex/credential-snapshot.ts",
@@ -2282,19 +2317,8 @@
     },
     {
       "file": "runtime/src/realtime/service.ts",
-      "kind": "numeric_string",
-      "occurrence_index": 9,
-      "line": 3941,
-      "snippet": "String(event.session_epoch)",
-      "snippet_sha256": "c12e5e2af8c77a9316ec6d995d4700725fc0b12ae58d2514060261f8ce410791",
-      "disposition": "wire_json",
-      "behavior": "dispatch on the coordinated coding executor opens the intake; a committed workspace change cancels it",
-      "test": "runtime/test/realtime-service.test.ts"
-    },
-    {
-      "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 10,
+      "occurrence_index": 9,
       "line": 5289,
       "snippet": "event.session_epoch",
       "snippet_sha256": "eb3fbfa4708d87bc9491f0ebd0b0d38c17351623f235745480d5d5024aa88379",
@@ -2305,7 +2329,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 11,
+      "occurrence_index": 10,
       "line": 5862,
       "snippet": "this.session.sessionEpoch",
       "snippet_sha256": "73f3d5bff15a17e3969ea80c5dd3718c21c6aea00d5d3791deed51ed23dbcc91",
@@ -2316,7 +2340,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "string_length",
-      "occurrence_index": 12,
+      "occurrence_index": 11,
       "line": 6113,
       "snippet": "'suggestion:'.length",
       "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
@@ -2327,7 +2351,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "string_length",
-      "occurrence_index": 13,
+      "occurrence_index": 12,
       "line": 6158,
       "snippet": "'suggestion:'.length",
       "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
@@ -2338,7 +2362,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 14,
+      "occurrence_index": 13,
       "line": 6852,
       "snippet": "generation.generation_epoch",
       "snippet_sha256": "312a76f17befeed056da4dbb995c9d86554a275b67fb89f365088c0a6039e0d9",
@@ -2349,7 +2373,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 15,
+      "occurrence_index": 14,
       "line": 6889,
       "snippet": "generationEpoch",
       "snippet_sha256": "88c621c35cd74d7f42af02c856f028ef45106d5181cd15e91d678c69d7019eb6",
@@ -2360,7 +2384,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 16,
+      "occurrence_index": 15,
       "line": 7499,
       "snippet": "floor + 1",
       "snippet_sha256": "a947109c5fb07fd3b221a2f220031120b6f5a79089dad0ff6ce5cbe7f27cc781",
@@ -2371,7 +2395,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 17,
+      "occurrence_index": 16,
       "line": 7500,
       "snippet": "floor",
       "snippet_sha256": "a3e1f4935b0919b346c2caf4da18078a1ebaf6451eb7f7b5dc79c11629b6368c",
@@ -2382,7 +2406,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 18,
+      "occurrence_index": 17,
       "line": 7501,
       "snippet": "floor % 2 === 0 ? floor : floor + 1",
       "snippet_sha256": "a540ffd17090437f8d94ce8c1d341ca870696286623dee8d4e18cfdcfa78af6a",
