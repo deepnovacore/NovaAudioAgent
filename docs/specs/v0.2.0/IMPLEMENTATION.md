@@ -98,6 +98,46 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
   coordinator eval and adapter-level Codex smoke recorded; voice transcript,
   concurrency and approval rows still open.
 
+## M1.5c — thin frontend ledger
+
+- [x] The current default Nova surface is exactly six tools:
+  `dispatch`, `cancel`, `confirm`, `memory__recall`, `search__search`, and
+  `mcp__nova_camera__snapshot`. Explicitly user-selected external MCP tools are
+  additional direct tools and are not counted in this six-tool surface.
+- [x] The old frontend state/update surface is retired: `StructuredState`,
+  `update_intent`, `update_goal`, `update_authorization`, and the legacy
+  `cam__*`, `watch__*`, and `guard__*` bindings do not form model-facing tools.
+  WorkOrder/revision-bound intake, the host FSM, and the approval controller
+  own those decisions instead.
+- [x] The Vision agent is registered through `AgentController`: its public
+  entry points are `dispatch(executor: 'vision', ...)` and
+  `cancel(executor: 'vision', ...)`; the controller owns hidden `watch` and
+  `guard` channels. Monitoring is policy-driven by the host (cadence, wake
+  priority, side-VLM policy, and delivery mode), not by model output.
+- [x] The in-process Camera MCP is one assembly gate with Vision. It exposes
+  one canonical image result, stores validated bytes in `MediaStore`, and
+  projects only bounded side-VLM observation plus capture metadata and
+  `evidence_ref` to Qwen. Disabling camera removes the Camera MCP, Vision
+  controller, and hidden channels together.
+- [x] Desktop package/release inspection admits the pinned MCP SDK and its
+  lock-resolved transitive production closure as an explicit required set;
+  closure checks remain exact and the forbidden media/camera dependency
+  surfaces remain rejected.
+
+Deterministic M1.5c coverage is recorded in targeted tests: `assembly.test.ts`,
+`cascaded-realtime-assembly.test.ts`, `realtime-assembly.test.ts`,
+`structured-state-retirement.test.ts`, `vision-controller.test.ts`,
+`vision-controller-core.test.ts`, and the policy cases in
+`realtime-service.test.ts` cover the runtime boundaries; desktop
+`package-inspection.test.mjs` and `release-targets.test.mjs` cover the exact
+MCP SDK closure and release target contract. This is the covered deterministic
+scope, not a claim that full runtime/desktop suites, real voice, macOS camera,
+Windows, or live acceptance have completed.
+
+M1.5c live acceptance is still open: rerun the applicable 08 voice rows after
+the surface change, including real voice `dispatch` / `cancel` / `confirm`,
+headset and concurrent approval checks, plus macOS camera and Windows gates.
+
 M2–M4 follow M1.5; no MCP default switch or release cut without their recorded gates.
 
 Implementation and independent reviews used Terra and Luna for launch profiles,
@@ -251,6 +291,9 @@ Manifest: `codex` roles `["coding"]`, `display_name` Codex, `agent.summary`
 "在已配置的项目工作区里执行编码任务（改代码、修 bug、写测试、重构）", ops
 `run, steer, status, cancel`. Compiled tool table for a project-mode assembly
 (search + camera + watch + guard + codex approval manifest, memory recall on):
+
+> Historical pre-M1.5c evidence from the 08 validation run. This table is not
+> the current model-facing Nova surface; see the M1.5c ledger above.
 
 ```
 update_intent update_goal update_authorization memory__recall search__search

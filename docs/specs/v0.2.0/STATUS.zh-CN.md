@@ -16,7 +16,8 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 |---|---|---|
 | **M1** 一条完整的编码体验 | 提任务 → 只问必要的问题 → 工作单 → 审批 → 执行 → 看到结果；三平台统一审批策略，可选 YOLO | ✅ 代码 + 单测完成；真人语音/耳机、Windows 验收仍待做 |
 | **M1.5a** 执行器边界（spec 07） | Codex 变成一个真正的"插件"，核心代码不再认识 "codex" 这个词，只认角色（coding）；用 lint + 脚本强制 | ✅ 完成并经独立 review |
-| **M1.5b** 项目 / 会话 / 任务（spec 08） | 语音侧只剩三个工具；"在哪个项目、开不开新会话、停哪个任务"由编码执行器自己判断；支持多项目并发；显式取消；会话有可读标题 | 🟡 代码与测试完成，三轮 review 的已知阻断项均已修并带测试；语音端到端与并发审批真机未验，**不勾**（见第四、五节） |
+| **M1.5b** 项目 / 会话 / 任务（spec 08） | 阶段性三工具前台；"在哪个项目、开不开新会话、停哪个任务"由编码执行器自己判断；支持多项目并发；显式取消；会话有可读标题（阶段性 surface 已被 M1.5c 取代） | 🟡 代码与测试完成，三轮 review 的已知阻断项均已修并带测试；语音端到端与并发审批真机未验，**不勾**（见第四、五节） |
+| **M1.5c** 前台变薄（spec 03 / 07） | 默认六工具面；Camera MCP + side-VLM 投影；Vision controller 持有隐藏 `watch` / `guard`；监控由宿主策略驱动；桌面发布依赖闭包包含 MCP SDK 及其传递依赖 | 🟡 代码与定向确定性覆盖已完成；旧 08 live 行、真人语音、macOS camera、Windows 与完整发布验收仍待做 |
 | **M2** 能力注册表（spec 03a） | `capabilities.json`、模块开关、MCP 搜索可选接入 | ⬜ 未开始 |
 | **M3** 外部 MCP（spec 03b） | 用户自配 MCP 服务器接入，并投影到 Codex | ⬜ 未开始 |
 | **M4** 知识库（spec 04） | 本地 SQLite 私人知识库 + 混合检索 | ⬜ 未开始，是否随 v0.2.0 发布待定 |
@@ -35,13 +36,40 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 ### 3.2 现在的样子
 
-**语音模型只看到三个工具**（以及摄像头、搜索这些非 agent 的直接工具）：
+**当前默认 Nova 前台工具面固定为六个**（外部用户白名单 MCP 是额外的直接工具，不计入这六个，只有显式选择后才加入）：
 
 | 工具 | 什么时候用 | 例子 |
 |---|---|---|
 | `dispatch(executor, instruction)` | 用户要某个 agent 干活 | `dispatch("codex", "改一下博客的暗色模式")` |
 | `cancel(executor, instruction?)` | 用户要停 | `cancel("codex", "取消博客那个")` |
 | `confirm(id, accepted)` | 用户对宿主提的是/否问题作答 | 建项目确认、Codex 权限审批都走这一个 |
+| `memory__recall` | 查找已有记忆或历史进度 | 回忆上次关于某项目的结论 |
+| `search__search` | 直接执行当前启用的搜索 | 搜索一个外部资料 |
+| `mcp__nova_camera__snapshot` | 请求一张当前摄像头快照 | 看看桌面上是什么 |
+
+隐藏的 `watch` / `guard` 不在前台工具表里，只能由 Vision controller 通过
+`dispatch(executor: "vision", ...)` / `cancel(executor: "vision", ...)` 路由。
+
+### 3.3 M1.5c：前台变薄后的真实边界
+
+- `StructuredState` 及其 `update_intent` / `update_goal` /
+  `update_authorization` 更新工具已从前台退役；旧的 `updateExternal` /
+  `ContextView.structured` 也不再是模型状态写入口。编排事实由 WorkOrder、
+  intake revision、宿主 FSM 和 approval controller 分别持有。
+- Camera、watch、guard 不再各自占用前台工具名。Camera MCP 是内置、进程内的
+  直接工具；Vision controller 统一拥有隐藏 `watch` / `guard`，并且 camera
+  模块关闭时三者一起从 assembly 消失。
+- 监控是 policy-driven：采样节奏、唤醒优先级、side-VLM 调用策略和投递方式
+  由宿主决定，模型输出不能修改这些策略。side-VLM 只得到一张已存储图片和
+  有界目标，Qwen 只得到 observation、时间、尺寸和 `evidence_ref`。
+- AgentController registry 在编译前闭合，公开 agent descriptor，映射到唯一的
+  隐藏 channel owner；不存在让语音模型直接调用 `watch` / `guard` 的路径。
+- 桌面 package contract 已按 MCP SDK 的固定版本和锁文件解析出的传递闭包登记；
+  这是精确 allowlist，不是放宽成任意依赖，原有 forbidden media/camera 规则仍然有效。
+
+本节的“完成”仅指代码和已通过的确定性定向覆盖（工具面、camera gate、Vision
+隐藏 channel、monitor policy、state retirement、package/release closure）。不把
+它冒充成全量套件、真人语音、macOS camera、Windows 或 live 完成。
 
 **编码执行器内部的 intake（跑在便宜的文本模型 `qwen-flash` 上）负责决定**：
 
@@ -67,7 +95,7 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 ## 四、我们是怎么验的
 
-**确定性测试（每次都跑，串行）**
+**确定性测试（M1.5b/08 基线；每次都跑，串行）**
 
 | 套件 | 结果 |
 |---|---|
@@ -76,7 +104,7 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 | desktop 单测 | 810 个，807 通过，3 平台跳过，0 失败 |
 | cli 单测 | 18 通过 |
 
-**Live 验收（真实模型 / 真实 Codex，证据在 `IMPLEMENTATION.md` "Live acceptance"）**
+**Live 验收（M1.5b/08 历史证据；M1.5c 尚未重跑，证据在 `IMPLEMENTATION.md` "Live acceptance"）**
 
 - coordinator 决策 eval（真实 `qwen-flash`，已写成测试，有 key 时随套件一起跑）分两组：
   - **开发集** 10 条（接着做 / 切项目 / 重开会话 / 新建 / 名单外名字 / 追加 / 取消 / 歧义 / 纯提问 / 只切换）。prompt 就是照着这 10 条调的，所以它的 **10/10** 只说明"调好了"，不是独立证据。
@@ -95,6 +123,7 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 | 缺口 | 说明 | 影响 |
 |---|---|---|
 | **语音端到端** | DashScope 实时语音真的按新说明调 `dispatch / cancel / confirm`，还没在真人语音会话里验过 | 08 验收的关键一行；需要人戴耳机跑脚本 |
+| **M1.5c surface rerun** | 六工具和 Camera/Vision 的确定性覆盖已有；08 中适用的真人语音行尚未按新 surface 重跑 | M1.5c 发布验收仍未闭合 |
 | 并发审批 | 两个任务同时向真 app-server 要审批、排队顺序 | 只有单测覆盖 |
 | 新建项目全流程 | 语音说"新建 X" → 确认 → 目录真的建出来 | 只有单测覆盖 |
 | Electron 桌面 smoke | 无头环境下 `app.whenReady()` 挂起，跑不了 | 需要在有桌面的机器上跑 |
@@ -106,7 +135,10 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 ## 六、下一步计划
 
-**第一步：08 收尾（建议 1～2 天，需要真人）**
+**第一步：M1.5c / 08 收尾（建议 1～2 天，需要真人）**
+
+先按新六工具面重跑适用的 08 真人语音行，再补 headset、并发审批、macOS
+camera、Windows 和完整发布验收；当前定向确定性测试通过不替代这些 live gate。
 
 真人语音验收脚本（每条记录转写、工具调用、结果）：
 
@@ -127,7 +159,7 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 - `capabilities.json` + 桌面模块开关（搜索 / 摄像头 / Codex / 知识库）；
 - MCP 搜索提供方（百炼 / DashScope）作为可选接入，Tavily 保留；
-- 默认搜索切到 MCP 这件事，**先 live 验证再翻**（03a-flip 是单独一步）。
+- 03a/search 默认切到 MCP 以及后续删除 Tavily，仍是后续步骤；**先 live 验证再翻**（03a-flip 是单独一步）。
 
 **第三步：M3 外部 MCP（spec 03b）**，然后 **M4 知识库（spec 04）**。
 
