@@ -49,7 +49,9 @@ export const GUARD_CLEAR_ACK_DEADLINE_S = 0.5
 export const HIT_ALERT_MIN_PRIORITY = 55
 
 export type ExecutorState = 'idle' | 'running'
-export type GuardHistoryRecovery = 'none' | 'packed'
+export type PreemptiveAlertHistoryRecovery = 'none' | 'packed'
+/** @deprecated Compatibility type for the legacy environment keys. */
+export type GuardHistoryRecovery = PreemptiveAlertHistoryRecovery
 
 /** What the service will say when a confirmed project operation could not be carried out. */
 const PROJECT_COMMIT_FAILURE_TEXT: ReadonlyMap<string, string> = new Map([
@@ -233,10 +235,12 @@ export interface QueuedHostResponse {
   readonly intent: HostResponseIntent
   readonly priority: number
   readonly preemptive: boolean
+  /** A monitor policy may authorize preemption below the generic priority band. */
+  readonly preemptive_alert: boolean
   readonly seq: number
   readonly queued_at: number
   readonly semantic_event_id: string | null
-  readonly guard_activation: GuardActivationAuthority | null
+  readonly preemptive_alert_activation: PreemptiveAlertActivationAuthority | null
   readonly owner: HostItemOwner | null
   readonly expires_at: number | null
 }
@@ -257,7 +261,7 @@ export function compareQueuedHostResponses(
     || left.sortKey[2] - right.sortKey[2]
 }
 
-export interface GuardActivationAuthority {
+export interface PreemptiveAlertActivationAuthority {
   readonly delegate_id: string
   readonly event_id: string
   readonly source_epoch: number
@@ -272,7 +276,7 @@ export interface UrgentHostResponseOwner {
   readonly generation: PlaybackGeneration | null
 }
 
-export interface GuardPreemption {
+export interface PreemptiveAlert {
   readonly token: number
   readonly session_epoch: number
   readonly event_id: string
@@ -286,6 +290,9 @@ export interface GuardPreemption {
   readonly reconnect_disallowed: boolean
   readonly reconnect_aborted: boolean
 }
+
+/** @deprecated Internal compatibility name; new orchestration uses PreemptiveAlert. */
+export type GuardPreemption = PreemptiveAlert
 
 /**
  * A key for the `(session_epoch, id)` ledgers.

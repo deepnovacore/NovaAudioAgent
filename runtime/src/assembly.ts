@@ -42,6 +42,7 @@ import {
   type ObservationAdmission,
 } from './executors/watcher.js'
 import { MediaStore } from './media-store.js'
+import { isPreemptiveMonitorAlert } from './memory.js'
 import type { ExecutorManifest } from './ports.js'
 import type {AgentDescriptor} from './agent-controller.js'
 import { stripLikePython } from './python-text.js'
@@ -232,7 +233,9 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const guard = cameraModuleEnabled ? new WatchAdapter({
     manifest: GUARD_MANIFEST, source: frameSource, gateway, mediaStore, model: watchModel,
     captureEnabled, ...admissionOptions,
-    ...(isFileBackedFrameSource(frameSource) ? {prepareObservation: () => frameSource.restart()} : {}),
+    ...(isFileBackedFrameSource(frameSource) && isPreemptiveMonitorAlert(GUARD_MANIFEST.policy)
+      ? {prepareObservation: () => frameSource.restart()}
+      : {}),
     ...(visionLifecycle === undefined ? {} : {onMonitorLifecycle: {
       admission: (delegateId, status) => visionLifecycle.admission(delegateId, status),
       hit: delegateId => visionLifecycle.hit(delegateId),

@@ -25,7 +25,7 @@ import type {
 import type { RealtimeProvider } from './realtime/protocol.js'
 import { RealtimeProviderSession } from './realtime/provider-session.js'
 import { RealtimeService } from './realtime/service.js'
-import type { ExecutorState, GuardHistoryRecovery } from './realtime/service-state.js'
+import type { ExecutorState, PreemptiveAlertHistoryRecovery } from './realtime/service-state.js'
 import { RealtimeSession } from './realtime/session.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
@@ -105,8 +105,12 @@ export interface RealtimeAssemblyOptions {
   readonly onProjectView?: (view: ProjectConfirmationView) => void
   readonly telemetry?: RealtimeTelemetry
   readonly onDiagnostic?: (line: string) => void
+  readonly controlledPreemptiveAlertReconnect?: boolean
+  readonly preemptiveAlertHistoryRecovery?: PreemptiveAlertHistoryRecovery
+  readonly preemptiveAlertHistoryPairs?: number
+  /** @deprecated Compatibility options for existing environment/configuration keys. */
   readonly controlledGuardReconnect?: boolean
-  readonly guardHistoryRecovery?: GuardHistoryRecovery
+  readonly guardHistoryRecovery?: PreemptiveAlertHistoryRecovery
   readonly guardHistoryPairs?: number
   readonly projectConfirmation?: ProjectConfirmationController
   readonly projectAdapter?: ProjectExecutorAdapter
@@ -912,13 +916,17 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     },
     ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
-    ...(options.controlledGuardReconnect === undefined
+    ...(options.controlledPreemptiveAlertReconnect === undefined && options.controlledGuardReconnect === undefined
       ? {}
-      : {controlledGuardReconnect: options.controlledGuardReconnect}),
-    ...(options.guardHistoryRecovery === undefined
+      : {controlledPreemptiveAlertReconnect: options.controlledPreemptiveAlertReconnect
+        ?? options.controlledGuardReconnect}),
+    ...(options.preemptiveAlertHistoryRecovery === undefined && options.guardHistoryRecovery === undefined
       ? {}
-      : {guardHistoryRecovery: options.guardHistoryRecovery}),
-    ...(options.guardHistoryPairs === undefined ? {} : {guardHistoryPairs: options.guardHistoryPairs}),
+      : {preemptiveAlertHistoryRecovery: options.preemptiveAlertHistoryRecovery
+        ?? options.guardHistoryRecovery}),
+    ...(options.preemptiveAlertHistoryPairs === undefined && options.guardHistoryPairs === undefined
+      ? {}
+      : {preemptiveAlertHistoryPairs: options.preemptiveAlertHistoryPairs ?? options.guardHistoryPairs}),
     ...(projectConfirmation === undefined
       ? {}
       : {projectConfirmation}),

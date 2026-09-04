@@ -69,15 +69,29 @@ export const handoffPolicySchema = z.object({
 export type HandoffPolicy = z.infer<typeof handoffPolicySchema>
 
 /** A policy, not a channel name, owns monitoring semantics. */
-export function isMonitorPolicy(policy: Pick<HandoffPolicy, 'operation_class'> | null | undefined): boolean {
+export function isMonitorPolicy(policy: Pick<Partial<HandoffPolicy>, 'operation_class'> | null | undefined): boolean {
   return policy?.operation_class === 'monitor'
+}
+
+/** A monitor alerts only when its policy explicitly assigns a delivery mode. */
+export function monitorAlertDelivery(
+  policy: Pick<Partial<HandoffPolicy>, 'operation_class' | 'alert_delivery'> | null | undefined,
+): 'none' | 'deferred' | 'preemptive' {
+  return policy?.operation_class === 'monitor' ? policy.alert_delivery ?? 'none' : 'none'
+}
+
+/** Preemption is an alert-delivery policy, never a channel name or priority band. */
+export function isPreemptiveMonitorAlert(
+  policy: Pick<Partial<HandoffPolicy>, 'operation_class' | 'alert_delivery'> | null | undefined,
+): boolean {
+  return monitorAlertDelivery(policy) === 'preemptive'
 }
 
 /** A preemptive monitor hit is prominent; deferred and non-alerting hits remain detail. */
 export function monitorHitProgressLevel(
-  policy: Pick<HandoffPolicy, 'operation_class' | 'alert_delivery'> | null | undefined,
+  policy: Pick<Partial<HandoffPolicy>, 'operation_class' | 'alert_delivery'> | null | undefined,
 ): 'milestone' | 'detail' {
-  return policy?.operation_class === 'monitor' && policy.alert_delivery === 'preemptive'
+  return isPreemptiveMonitorAlert(policy)
     ? 'milestone'
     : 'detail'
 }

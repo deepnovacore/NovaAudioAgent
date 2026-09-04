@@ -111,8 +111,8 @@ export class RealtimeSession {
   #hostPreemptResponseId: string | null = null
   #hostPreemptPending = false
   #providerTranscript = ''
-  #guardHandoffGeneration: PlaybackGeneration | null = null
-  /** The generation a Guard handoff may retain: only the most recent one can be handed off. */
+  #preemptiveAlertHandoffGeneration: PlaybackGeneration | null = null
+  /** The generation a preemptive-alert handoff may retain: only the most recent one can be handed off. */
   #lastOpenedGeneration: PlaybackGeneration | null = null
   readonly #responseItems = new Map<string, readonly HostContextItem[]>()
 
@@ -305,7 +305,7 @@ export class RealtimeSession {
    * answerable again -- whereas one that completed stays answered, since the user heard it.
    */
   async reconnect(options: {readonly tools: readonly Record<string, unknown>[]}): Promise<void> {
-    this.#guardHandoffGeneration = null
+    this.#preemptiveAlertHandoffGeneration = null
     const interruptedResponseIds: string[] = []
     const generation = this.#playback.fenceCurrent()
     if (generation !== null && generation.session_epoch === this.sessionEpoch) {
@@ -338,11 +338,11 @@ export class RealtimeSession {
   /**
    * Replace provider authority while retaining one exact renderer generation.
    *
-   * This is the Guard handoff: the provider session underneath the user is replaced while the
+   * This is the preemptive-alert handoff: the provider session underneath the user is replaced while the
    * audio they are hearing keeps playing, so there is no gap. The retained generation is the one
    * thing that survives, which is why it is validated three ways before anything is given up.
    */
-  async reconnectForGuard(options: {
+  async reconnectForPreemptiveAlert(options: {
     readonly tools: readonly Record<string, unknown>[]
     readonly oldGeneration: PlaybackGeneration
     readonly confirmationTimeout?: number | null
@@ -356,20 +356,20 @@ export class RealtimeSession {
     // whose input is malformed must get an error rather than an irreversible handoff. The type
     // annotation is not enough -- a value reaching here from JSON is unchecked at runtime.
     if (historyMode !== 'none' && historyMode !== 'packed') {
-      throw new TypeError(`unknown Guard history recovery arm: ${String(historyMode)}`)
+      throw new TypeError(`unknown preemptive-alert history recovery arm: ${String(historyMode)}`)
     }
     if (oldGeneration.session_epoch !== this.sessionEpoch) {
-      throw new TypeError('guard handoff generation must belong to the current session')
+      throw new TypeError('preemptive-alert handoff generation must belong to the current session')
     }
     if (
       this.#lastOpenedGeneration === null
       || !sameGeneration(oldGeneration, this.#lastOpenedGeneration)
     ) {
-      throw new TypeError('guard handoff requires a known playback generation')
+      throw new TypeError('preemptive-alert handoff requires a known playback generation')
     }
     const current = this.#playback.current
     if (current !== null && !sameGeneration(current, oldGeneration)) {
-      throw new TypeError('guard handoff generation must be current')
+      throw new TypeError('preemptive-alert handoff generation must be current')
     }
 
     const oldEpoch = this.sessionEpoch
@@ -411,7 +411,7 @@ export class RealtimeSession {
       this.#floor = new Floor()
     }
     this.#userHoldSince = null
-    this.#guardHandoffGeneration = oldGeneration
+    this.#preemptiveAlertHandoffGeneration = oldGeneration
 
     const identity = await this.#replaceProviderSession(options.tools)
     this.#state.beginEpoch(identity.epoch)
@@ -448,6 +448,20 @@ export class RealtimeSession {
     await this.#injectRecoveryItem(confirmationTimeout)
     this.#state.advanceSnapshot()
     return outcome
+  }
+
+  /** @deprecated Compatibility alias for callers still using the legacy environment terminology. */
+  reconnectForGuard(options: {
+    readonly tools: readonly Record<string, unknown>[]
+    readonly oldGeneration: PlaybackGeneration
+    readonly confirmationTimeout?: number | null
+    readonly history?: readonly RecoveryTurn[]
+    readonly historyMode?: 'none' | 'packed'
+  }): Promise<'none' | 'empty' | 'packed' | 'degraded' | 'uncertain'> {
+    if (options.historyMode !== undefined && options.historyMode !== 'none' && options.historyMode !== 'packed') {
+      return Promise.reject(new TypeError(`unknown Guard history recovery arm: ${String(options.historyMode)}`))
+    }
+    return this.reconnectForPreemptiveAlert(options)
   }
 
   async #replaceProviderSession(
@@ -1201,7 +1215,7 @@ export class RealtimeSession {
    * Fence a response before it owns a playback generation.
    *
    * The fenced response keeps the provider slot until its own terminal: releasing it early would
-   * let a Guard open a second inference while this cancellation is still in flight.
+   * let a preemptive alert open a second inference while this cancellation is still in flight.
    */
   async #fencePendingResponse(responseId: string): Promise<void> {
     const armed = this.#fenceNextResponse
@@ -1282,14 +1296,14 @@ export class RealtimeSession {
     return true
   }
 
-  /** Alert-fence the exact renderer generation retained for a Guard handoff. */
-  alertGuardHandoff(generation: PlaybackGeneration): boolean {
+  /** Alert-fence the exact renderer generation retained for a preemptive-alert handoff. */
+  alertPreemptiveAlertHandoff(generation: PlaybackGeneration): boolean {
     // Reached with nothing current once the retained audio finishes: the generation is retired
     // while the handoff is still recorded, so a mismatched one would otherwise take the
     // nothing-is-playing branch and consume a handoff it does not name.
     if (
-      this.#guardHandoffGeneration === null
-      || !sameGeneration(this.#guardHandoffGeneration, generation)
+      this.#preemptiveAlertHandoffGeneration === null
+      || !sameGeneration(this.#preemptiveAlertHandoffGeneration, generation)
     ) {
       return false
     }
@@ -1302,10 +1316,15 @@ export class RealtimeSession {
       // Something else is playing, so this generation is no longer the one to alert about.
       return false
     }
-    this.#guardHandoffGeneration = null
+    this.#preemptiveAlertHandoffGeneration = null
     this.#floor = this.#floor.onSpeakEnd(generation.utterance_id)
     this.#state.advanceSnapshot()
     return true
+  }
+
+  /** @deprecated Compatibility alias for callers still using the legacy environment terminology. */
+  alertGuardHandoff(generation: PlaybackGeneration): boolean {
+    return this.alertPreemptiveAlertHandoff(generation)
   }
 
   /**
@@ -1318,10 +1337,10 @@ export class RealtimeSession {
   retirePlaybackClearUnknown(generation: PlaybackGeneration): boolean {
     if (!this.#playback.retireClearUnknown(generation)) return false
     if (
-      this.#guardHandoffGeneration !== null
-      && sameGeneration(this.#guardHandoffGeneration, generation)
+      this.#preemptiveAlertHandoffGeneration !== null
+      && sameGeneration(this.#preemptiveAlertHandoffGeneration, generation)
     ) {
-      this.#guardHandoffGeneration = null
+      this.#preemptiveAlertHandoffGeneration = null
     }
     this.#floor = this.#floor.onSpeakEnd(generation.utterance_id)
     this.#state.advanceSnapshot()
@@ -1725,7 +1744,7 @@ export class RealtimeSession {
       return false
     }
     let current = this.#playback.current
-    const handoff = this.#guardHandoffGeneration
+    const handoff = this.#preemptiveAlertHandoffGeneration
     if (handoff !== null) {
       if (current !== null && sameGeneration(current, handoff)) {
         // The Guard's retained generation becomes this response's, so the user hears no seam.
@@ -1734,7 +1753,7 @@ export class RealtimeSession {
       } else if (current !== null) {
         return false
       }
-      this.#guardHandoffGeneration = null
+      this.#preemptiveAlertHandoffGeneration = null
       current = null
     }
     if (

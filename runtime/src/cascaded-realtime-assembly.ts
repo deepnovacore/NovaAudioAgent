@@ -86,6 +86,9 @@ export interface BuildCascadedRealtimeAssemblyOptions
     | 'core'
     | 'provider'
     | 'idFactory'
+    | 'controlledPreemptiveAlertReconnect'
+    | 'preemptiveAlertHistoryRecovery'
+    | 'preemptiveAlertHistoryPairs'
     | 'controlledGuardReconnect'
     | 'guardHistoryRecovery'
     | 'guardHistoryPairs'
@@ -302,9 +305,9 @@ export function buildCascadedRealtimeAssembly(
     ...(intake === undefined ? {} : {intake}),
     ...(options.onExecutorSuggestion === undefined ? {} : {onExecutorSuggestion: options.onExecutorSuggestion}),
     idFactory: () => ids.next('realtime'),
-    controlledGuardReconnect: false,
-    guardHistoryRecovery: 'none',
-    guardHistoryPairs: 4,
+    controlledPreemptiveAlertReconnect: false,
+    preemptiveAlertHistoryRecovery: 'none',
+    preemptiveAlertHistoryPairs: 4,
     ...(workspaceGraph === undefined ? {} : {workspaceGraph}),
     ...(options.providerToolView === undefined ? {} : {providerToolView: options.providerToolView}),
     ...(options.onAudioFrame === undefined ? {} : {onAudioFrame: options.onAudioFrame}),

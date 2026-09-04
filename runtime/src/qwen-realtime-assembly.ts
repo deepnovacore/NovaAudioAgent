@@ -28,6 +28,9 @@ export interface BuildQwenRealtimeAssemblyOptions
     | 'core'
     | 'provider'
     | 'idFactory'
+    | 'controlledPreemptiveAlertReconnect'
+    | 'preemptiveAlertHistoryRecovery'
+    | 'preemptiveAlertHistoryPairs'
     | 'controlledGuardReconnect'
     | 'guardHistoryRecovery'
     | 'guardHistoryPairs'
@@ -143,9 +146,9 @@ export function buildQwenRealtimeAssembly(
     ...(intake === undefined ? {} : {intake}),
     ...(options.onExecutorSuggestion === undefined ? {} : {onExecutorSuggestion: options.onExecutorSuggestion}),
     idFactory: () => ids.next('realtime'),
-    controlledGuardReconnect: options.settings.qwen_controlled_guard_reconnect,
-    guardHistoryRecovery: options.settings.qwen_guard_history_recovery,
-    guardHistoryPairs: options.settings.qwen_guard_history_pairs,
+    controlledPreemptiveAlertReconnect: options.settings.qwen_controlled_guard_reconnect,
+    preemptiveAlertHistoryRecovery: options.settings.qwen_guard_history_recovery,
+    preemptiveAlertHistoryPairs: options.settings.qwen_guard_history_pairs,
     ...(workspaceGraph === undefined ? {} : {workspaceGraph}),
     ...(options.providerToolView === undefined
       ? {}

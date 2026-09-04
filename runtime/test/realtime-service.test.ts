@@ -115,7 +115,7 @@ function runScenario(scenario: Scenario): Record<string, unknown> {
         priority,
         preemptive: step.preemptive ?? false,
         semanticEventId: step.semantic_event_id ?? null,
-        guardDelegateId: step.guard_delegate_id ?? null,
+        preemptiveAlertDelegateId: step.guard_delegate_id ?? null,
       })
       result = {
         seq,
@@ -1310,9 +1310,19 @@ const projectionGolden = JSON.parse(
 function runProjection(spec: Projection): Record<string, unknown> {
   const channel = spec.display_name === 'Codex' ? 'codex' : spec.display_name
   const priority = spec.manifest_priority ?? 50
+  // The exported parity matrix predates monitor policy; keep those priority-only vectors on the
+  // legacy task branch while the monitor-specific regressions below cover policy delivery.
+  const monitor = (spec.display_name === 'watch' || spec.display_name === 'guard')
+    && spec.kind !== 'hit_priority'
   const {service, queuedItems} = projectionService({
     delegate: {executor: channel, op: 'start', routing_class: 'user_awaited'},
     priority,
+    ...(spec.display_name === 'watch' ? {displayName: '观察'}
+      : spec.display_name === 'guard' ? {displayName: '监控'} : {}),
+    ...(monitor ? {
+      operationClass: 'monitor' as const,
+      alertDelivery: spec.display_name === 'guard' ? 'preemptive' as const : 'deferred' as const,
+    } : {}),
   })
   switch (spec.kind) {
     case 'deadline':
@@ -1455,6 +1465,10 @@ function projectionService(options: {
   readonly delegate?: {readonly executor: string; readonly op: string; readonly routing_class: string}
   readonly suggest?: boolean
   readonly priority?: number
+  readonly displayName?: string
+  readonly operationClass?: 'task' | 'monitor'
+  readonly alertDelivery?: 'none' | 'deferred' | 'preemptive'
+  readonly agentName?: string
   readonly progressViaSurrogate?: boolean
   readonly syncResultOps?: boolean
   readonly onActiveWorkChanged?: () => void
@@ -1482,7 +1496,8 @@ function projectionService(options: {
   }
   const manifest = executorManifestSchema.parse({
     name: delegate.executor,
-    display_name: delegate.executor === 'codex' ? 'Codex' : delegate.executor,
+    display_name: options.displayName ?? (delegate.executor === 'codex' ? 'Codex' : delegate.executor),
+    ...(options.agentName === undefined ? {} : {model_visibility: 'hidden' as const}),
     ...(delegate.executor === 'codex' ? {roles: ['coding']} : {}),
     policy: {
       channel: delegate.executor,
@@ -1490,6 +1505,8 @@ function projectionService(options: {
       wake: 'fast',
       typical_latency: 5,
       compress_watermark: 8,
+      operation_class: options.operationClass ?? 'task',
+      alert_delivery: options.alertDelivery ?? 'none',
       suggest: options.suggest ?? false,
       progress_via_surrogate: options.progressViaSurrogate ?? false,
     },
@@ -1528,6 +1545,14 @@ function projectionService(options: {
   const clock = new VirtualClock()
   const memory = new Memory({policies: [manifest.policy]})
   const executors = new Map([[manifest.name, {manifest}]])
+  const agentControllers: readonly AgentController[] = options.agentName === undefined ? [] : [{
+    descriptor: {name: options.agentName, summary: 'public monitor agent', ownedChannels: [manifest.name]},
+    dispatch: () => Promise.resolve({code: 'unsupported_tool', accepted: false, detail: {}}),
+    cancel: () => Promise.resolve({code: 'unsupported_tool', accepted: false, detail: {}}),
+  }]
+  const tools = compileToolSchema([manifest], {
+    agentDescriptors: agentControllers.map(controller => controller.descriptor),
+  })
   let ids = 0
   const nextId = (): string => `id-${++ids}`
   const service = new RealtimeService({
@@ -1547,7 +1572,7 @@ function projectionService(options: {
       inFlightDelegate: () => (options.inFlight ?? true) ? full : undefined,
       memory,
     },
-    tools: compileToolSchema([manifest]),
+    tools,
     session: new RealtimeSession({
       provider: {
         connect: () => Promise.resolve({epoch: 1}),
@@ -1576,10 +1601,11 @@ function projectionService(options: {
         ingestUserInput: () => Promise.reject(new Error('unused')),
         dispatchExternal: () => ({accepted: true, delegate_id: 'd-1'}),
       },
-      tools: compileToolSchema([manifest]),
+      tools,
       idFactory: nextId,
     }),
     idFactory: nextId,
+    ...(agentControllers.length === 0 ? {} : {agentControllers}),
     onDiagnostic: () => undefined,
     ...(options.onActiveWorkChanged === undefined
       ? {}
@@ -1766,6 +1792,8 @@ test('a successful monitor stop is not announced twice', () => {
   // three lines.
   const {service, queued} = projectionService({
     delegate: {executor: 'watch', op: 'stop', routing_class: 'user_awaited'},
+    operationClass: 'monitor',
+    alertDelivery: 'deferred',
   })
   service.projectRuntimeEvent({
     kind: 'handoff',
@@ -1802,6 +1830,30 @@ test('a successful monitor stop is not announced twice', () => {
     },
   })
   assert.equal(failed.queued().length, 1)
+})
+
+test('a renamed monitor policy keeps a successful stop silent', () => {
+  // Renaming a monitor channel must not turn its own stop acknowledgement into a second spoken turn.
+  const {service, queued} = projectionService({
+    delegate: {executor: 'sensor-alpha', op: 'stop', routing_class: 'user_awaited'},
+    operationClass: 'monitor',
+    alertDelivery: 'deferred',
+  })
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'sensor-alpha',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {stopped: true},
+      refs: [],
+    },
+  })
+  assert.deepEqual(queued(), [])
 })
 
 test('a handoff that claimed nothing is not projected against an earlier claim', () => {
@@ -2480,6 +2532,8 @@ test('Guard working heartbeats update state without creating another spoken turn
   const {service, queued} = projectionService({
     delegate: {executor: 'guard', op: 'start', routing_class: 'user_awaited'},
     priority: 90,
+    operationClass: 'monitor',
+    alertDelivery: 'preemptive',
   })
   service.projectRuntimeEvent({
     kind: 'progress',
@@ -2504,6 +2558,8 @@ test('monitor heartbeats stay in state without creating spoken turns', () => {
   for (const executor of ['watch', 'guard']) {
     const {service, queued} = projectionService({
       delegate: {executor, op: 'start', routing_class: 'user_awaited'},
+      operationClass: 'monitor',
+      alertDelivery: executor === 'guard' ? 'preemptive' : 'deferred',
     })
     service.projectRuntimeEvent({
       kind: 'progress',
@@ -2525,11 +2581,56 @@ test('monitor heartbeats stay in state without creating spoken turns', () => {
   }
 })
 
+test('a renamed monitor heartbeat stays operational rather than speaking', () => {
+  const {service, queued} = projectionService({
+    delegate: {executor: 'sensor-alpha', op: 'start', routing_class: 'user_awaited'},
+    operationClass: 'monitor',
+    alertDelivery: 'deferred',
+  })
+  service.projectRuntimeEvent({
+    kind: 'progress',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'sensor-alpha',
+      delegate_id: 'd-1',
+      op: 'start',
+      phase: 'working',
+      internal_activity: 1,
+      elapsed: 30,
+      summary: 'still monitoring',
+    },
+  })
+  assert.deepEqual(queued(), [])
+  assert.equal(service.session.delegateState('d-1'), 'running')
+})
+
+test('a monitor projects through its owning public agent rather than its channel', () => {
+  const {service, queued} = projectionService({
+    delegate: {executor: 'sensor-alpha', op: 'start', routing_class: 'user_awaited'},
+    operationClass: 'monitor',
+    alertDelivery: 'deferred',
+    agentName: 'vision',
+  })
+  service.projectRuntimeEvent({
+    kind: 'progress',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'sensor-alpha', delegate_id: 'd-1', op: 'start', phase: 'started',
+      internal_activity: 0, elapsed: 0, summary: null,
+    },
+  })
+  assert.deepEqual(queued(), ['vision 已开始处理这个任务。'])
+})
+
 test('monitor hits speak the current visual evidence instead of executor jargon', () => {
   for (const [executor, priority] of [['watch', 40], ['guard', 90]] as const) {
     const {service, queued, queuedItems} = projectionService({
       delegate: {executor, op: 'start', routing_class: 'user_awaited'},
       priority,
+      operationClass: 'monitor',
+      alertDelivery: executor === 'guard' ? 'preemptive' : 'deferred',
     })
     service.projectRuntimeEvent({
       kind: 'observation',
@@ -2554,6 +2655,40 @@ test('monitor hits speak the current visual evidence instead of executor jargon'
     assert.equal(queuedItems()[0]?.priority, executor === 'watch' ? 55 : 90)
     assert.equal(queuedItems()[0]?.preemptive, executor === 'guard')
   }
+})
+
+test('monitor hit delivery follows policy after its channel is renamed', () => {
+  const hit = (channel: string): EventRecord => ({
+    kind: 'observation',
+    seq: 2,
+    ts: 2,
+    payload: {
+      channel,
+      delegate_id: 'd-1',
+      op: 'start',
+      origin_ref: 'conversation:1',
+      trust: 'untrusted_external',
+      content: {hit: true, observation: 'the kettle is boiling'},
+      refs: [],
+    },
+  })
+  const deferred = projectionService({
+    delegate: {executor: 'sensor-deferred', op: 'start', routing_class: 'user_awaited'},
+    priority: 90,
+    operationClass: 'monitor',
+    alertDelivery: 'deferred',
+  })
+  deferred.service.projectRuntimeEvent(hit('sensor-deferred'))
+  assert.deepEqual(deferred.queued(), ['检测到了：the kettle is boiling'])
+  assert.equal(deferred.queuedItems()[0]?.preemptive, false, 'deferred alert does not interrupt')
+
+  const silent = projectionService({
+    delegate: {executor: 'sensor-silent', op: 'start', routing_class: 'user_awaited'},
+    operationClass: 'monitor',
+    alertDelivery: 'none',
+  })
+  silent.service.projectRuntimeEvent(hit('sensor-silent'))
+  assert.deepEqual(silent.queued(), [], 'none does not create a user-facing alert')
 })
 
 test('silencing monitor heartbeats does not silence ordinary executor progress', () => {
@@ -2760,6 +2895,8 @@ test('built-in monitoring executors use stable Chinese display names', () => {
   ] as const) {
     const {service, queued} = projectionService({
       delegate: {executor: channel, op: 'start', routing_class: 'user_awaited'},
+      operationClass: 'monitor',
+      alertDelivery: channel === 'guard' ? 'preemptive' : 'deferred',
     })
 
     service.projectRuntimeEvent({
@@ -4498,22 +4635,28 @@ test('a completed continuation that renderer never played is reopened by a recon
 function guardService(options: {
   readonly controlledReconnect?: boolean
   readonly recoveryTexts?: readonly [string, string]
+  readonly channel?: string
+  readonly priority?: number
+  readonly operationClass?: 'task' | 'monitor'
+  readonly alertDelivery?: 'none' | 'deferred' | 'preemptive'
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
   readonly clock: VirtualClock
   readonly telemetry: {readonly kind: string; readonly payload: Readonly<Record<string, JsonValue>>}[]
 } {
-  // Priority 90 is inside the preemption band, which is what makes a queued item preemptive at all.
+  const channel = options.channel ?? 'guard'
   const manifest = executorManifestSchema.parse({
-    name: 'guard',
+    name: channel,
     display_name: 'Guard',
     policy: {
-      channel: 'guard',
-      priority: 90,
+      channel,
+      priority: options.priority ?? 90,
       wake: 'fast',
       typical_latency: 2,
       compress_watermark: 8,
+      operation_class: options.operationClass ?? 'task',
+      alert_delivery: options.alertDelivery ?? 'none',
       suggest: false,
     },
     ops: [
@@ -4549,6 +4692,10 @@ function guardService(options: {
     })
   }
   const executors = new Map([[manifest.name, {manifest}]])
+  const alertDelegate = {
+    delegate_id: 'd-alert', executor: channel, op: 'start', request: {},
+    origin_ref: 'conversation:1', deadline: 30, routing_class: 'user_awaited' as const, dispatched_at: 0,
+  }
   const actions: string[] = []
   const telemetry: {kind: string; payload: Readonly<Record<string, JsonValue>>}[] = []
   let ids = 0
@@ -4604,7 +4751,7 @@ function guardService(options: {
       claimedHandoff: () => undefined,
       terminatedByDeadline: () => false,
       delegateFor: () => undefined,
-      inFlightDelegate: () => undefined,
+      inFlightDelegate: delegateId => delegateId === alertDelegate.delegate_id ? alertDelegate : undefined,
     },
     tools: compileToolSchema([manifest]),
     session,
@@ -4708,6 +4855,34 @@ test('the alert deadline stops waiting for a provider that will not confirm', as
     true,
     'the host stopped waiting',
   )
+})
+
+test('a preemptive monitor policy keeps the 350ms alert deadline after a channel rename', async () => {
+  const {service, actions, clock} = guardService({
+    channel: 'sensor-preemptive',
+    priority: 40,
+    operationClass: 'monitor',
+    alertDelivery: 'preemptive',
+  })
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'response_audio_delta', session_epoch: 1, response_id: 'r-1', pcm: new Uint8Array([0, 1]),
+  })
+  service.projectRuntimeEvent({
+    kind: 'observation',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'sensor-preemptive', delegate_id: 'd-alert', op: 'start', origin_ref: 'conversation:1',
+      trust: 'untrusted_external', content: {hit: true, observation: 'the kettle is boiling'}, refs: [],
+    },
+  })
+  await service.flushHostItems()
+  assert.ok(actions.includes('cancel:r-1'), 'the policy, not priority or channel name, authorizes preemption')
+  clock.advanceTo(clock.now() + 1)
+  await new Promise<void>(resolve => setTimeout(resolve, 5))
+  assert.equal(service.guardPreemptionForTest?.deadline_fired ?? 'cleared', true)
 })
 
 test('a user speaking revokes the reconnect permit a preemption was holding', async () => {

@@ -17,8 +17,8 @@
  * the private `#deliveryPass` rather than the public `flushHostItems`, because the public wrapper
  * would re-enter reconnect and deadlock against the lock already held.
  *
- * Guard behavior (controlled reconnect, preemption arbitration, clear deadlines) and project
- * confirmation are gated behind `controlledGuardReconnect` and a supplied controller. They are not
+ * Preemptive-alert behavior (controlled reconnect, arbitration, clear deadlines) and project
+ * confirmation are gated behind composition settings and a supplied controller. They are not
  * ported yet; where the core path touches them it reaches an explicit boundary that throws rather
  * than silently taking the inert branch, so a test that gets there fails loudly.
  */
@@ -42,7 +42,14 @@ import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { Clock } from '../clock.js'
 import type {ExecutorRole} from '../ports.js'
 import { validProgressSummary, type EventRecord, type JsonValue } from '../events.js'
-import { parseMemoryRef, USER_PRIORITY, type MemoryItem } from '../memory.js'
+import {
+  isMonitorPolicy,
+  isPreemptiveMonitorAlert,
+  monitorAlertDelivery,
+  parseMemoryRef,
+  USER_PRIORITY,
+  type MemoryItem,
+} from '../memory.js'
 import type {Suggestion} from '../suggestions.js'
 import type {WakeReason} from '../slots.js'
 import type { PlaybackCompletion, PlaybackGeneration } from '../playback.js'
@@ -98,9 +105,9 @@ import {
   type ExecutorState,
   type ContinuationBatch,
   type DeferredOriginToolCall,
-  type GuardActivationAuthority,
-  type GuardHistoryRecovery,
-  type GuardPreemption,
+  type PreemptiveAlertActivationAuthority,
+  type PreemptiveAlertHistoryRecovery,
+  type PreemptiveAlert,
   type HostItemOwner,
   type ProjectExpiryBatch,
   type QueuedHostResponse,
@@ -250,6 +257,8 @@ export interface ExecutorManifestLike {
   readonly model_visibility?: 'direct' | 'hidden' | undefined
   readonly policy: {
     readonly priority: number
+    readonly operation_class?: 'task' | 'monitor'
+    readonly alert_delivery?: 'none' | 'deferred' | 'preemptive'
     readonly suggest?: boolean
     readonly progress_via_surrogate?: boolean
   }
@@ -281,7 +290,8 @@ export interface ServiceRuntime {
   /**
    * The blackboard, for the conversation history a replacement provider is seeded with.
    *
-   * Optional because the history arms are off by default, and a runtime that never reconnects a Guard
+   * Optional because the history arms are off by default, and a runtime that never reconnects for a
+   * preemptive alert
    * has no reason to expose it.
    */
   readonly memory?: {
@@ -326,8 +336,13 @@ export interface RealtimeServiceOptions {
   readonly onActiveWorkChanged?: () => void
   readonly onCaption?: (frame: CaptionFrame) => void
   readonly telemetry?: RealtimeTelemetry
+  /** Generic composition seam; the legacy Guard-named options below remain accepted. */
+  readonly controlledPreemptiveAlertReconnect?: boolean
+  readonly preemptiveAlertHistoryRecovery?: PreemptiveAlertHistoryRecovery
+  readonly preemptiveAlertHistoryPairs?: number
+  /** @deprecated Compatibility options for existing environment/configuration keys. */
   readonly controlledGuardReconnect?: boolean
-  readonly guardHistoryRecovery?: GuardHistoryRecovery
+  readonly guardHistoryRecovery?: PreemptiveAlertHistoryRecovery
   readonly guardHistoryPairs?: number
   /** Absent means project confirmation is off, and every branch of it is inert. */
   readonly projectConfirmation?: ProjectConfirmationController
@@ -388,9 +403,9 @@ export class RealtimeService {
   readonly #onCaption: ((frame: CaptionFrame) => void) | undefined
   readonly #telemetry: RealtimeTelemetry | undefined
   readonly #onDiagnostic: (line: string) => void
-  readonly #controlledGuardReconnect: boolean
-  readonly #guardHistoryRecovery: GuardHistoryRecovery
-  readonly #guardHistoryPairs: number
+  readonly #controlledPreemptiveAlertReconnect: boolean
+  readonly #preemptiveAlertHistoryRecovery: PreemptiveAlertHistoryRecovery
+  readonly #preemptiveAlertHistoryPairs: number
   readonly #projectConfirmation: ProjectConfirmationController | undefined
   readonly #executorApproval: ExecutorApprovalController | undefined
   /** The coding-role executor's channel and label, resolved once from the registered manifests. */
@@ -419,12 +434,12 @@ export class RealtimeService {
   #urgentHostResponseOwner: UrgentHostResponseOwner | null = null
   #providerEpochNeedingActivation: number | null = null
   #providerReconnectSourceEpoch: number | null = null
-  #guardPreemptionToken = 0
-  #guardPreemption: GuardPreemption | null = null
+  #preemptiveAlertToken = 0
+  #preemptiveAlert: PreemptiveAlert | null = null
   /** The in-flight cancel deadline for the current preemption, if one is armed. */
-  #guardAlertAbort: AbortController | null = null
+  #preemptiveAlertAbort: AbortController | null = null
   /** Per-generation waits for the renderer to confirm a clear, keyed `utterance:epoch`. */
-  readonly #guardClearDeadlines = new Map<string, AbortController>()
+  readonly #preemptiveAlertClearDeadlines = new Map<string, AbortController>()
 
   readonly #deliveryLock = new Mutex()
   readonly #reconnectLock = new Mutex()
@@ -560,11 +575,11 @@ export class RealtimeService {
   #userOriginPreexistingResponseId: string | null = null
 
   constructor(options: RealtimeServiceOptions) {
-    const recovery = options.guardHistoryRecovery ?? 'none'
+    const recovery = options.preemptiveAlertHistoryRecovery ?? options.guardHistoryRecovery ?? 'none'
     if (recovery !== 'none' && recovery !== 'packed') {
       throw new TypeError('unknown Guard history recovery arm')
     }
-    const pairs = options.guardHistoryPairs ?? 4
+    const pairs = options.preemptiveAlertHistoryPairs ?? options.guardHistoryPairs ?? 4
     // 1, 2, or 4 rather than any positive number: these are the arms the recovery experiment has,
     // and an unlisted value would silently be a fifth arm nobody measured.
     if (pairs !== 1 && pairs !== 2 && pairs !== 4) {
@@ -589,9 +604,11 @@ export class RealtimeService {
     this.#onDiagnostic = options.onDiagnostic ?? ((line: string): void => {
       console.log(line)
     })
-    this.#controlledGuardReconnect = options.controlledGuardReconnect ?? false
-    this.#guardHistoryRecovery = recovery
-    this.#guardHistoryPairs = pairs
+    this.#controlledPreemptiveAlertReconnect = options.controlledPreemptiveAlertReconnect
+      ?? options.controlledGuardReconnect
+      ?? false
+    this.#preemptiveAlertHistoryRecovery = recovery
+    this.#preemptiveAlertHistoryPairs = pairs
     this.#projectConfirmation = options.projectConfirmation
     this.#intake = options.intake === undefined ? undefined : new IntakeController({
       ...options.intake,
@@ -778,7 +795,7 @@ export class RealtimeService {
     this.#providerEpochNeedingActivation = null
     this.#providerReconnectSourceEpoch = null
     this.#urgentHostResponseOwner = null
-    this.#guardPreemption = null
+    this.#preemptiveAlert = null
     this.#deliveryReady.set()
     if (this.#unsubscribe !== null) {
       this.#unsubscribe()
@@ -984,19 +1001,22 @@ export class RealtimeService {
       readonly semanticEventId?: string | null
       readonly priority?: number
       readonly preemptive?: boolean
-      readonly guardDelegateId?: string | null
+      /** A monitor policy has authorized this as a preemptive alert. */
+      readonly preemptiveAlert?: boolean
+      readonly preemptiveAlertDelegateId?: string | null
       readonly owner?: HostItemOwner | null
       readonly expiresAt?: number | null
     } = {},
   ): void {
     const priority = options.priority ?? 50
     const preemptive = options.preemptive ?? false
+    const preemptiveAlert = options.preemptiveAlert ?? false
     const effectivePriority = Math.min(priority, USER_PRIORITY - 1)
-    const guardDelegateId = options.guardDelegateId ?? null
-    const guardActivation: GuardActivationAuthority | null = guardDelegateId === null
+    const preemptiveAlertDelegateId = options.preemptiveAlertDelegateId ?? null
+    const preemptiveAlertActivation: PreemptiveAlertActivationAuthority | null = preemptiveAlertDelegateId === null
       ? null
       : {
-        delegate_id: guardDelegateId,
+        delegate_id: preemptiveAlertDelegateId,
         event_id: intent.item.event_id,
         source_epoch: this.session.sessionEpoch,
       }
@@ -1007,10 +1027,11 @@ export class RealtimeService {
       intent,
       priority: effectivePriority,
       preemptive,
+      preemptive_alert: preemptiveAlert,
       seq: this.#hostItemSeq,
       queued_at: this.#clock.now(),
       semantic_event_id: options.semanticEventId ?? null,
-      guard_activation: guardActivation,
+      preemptive_alert_activation: preemptiveAlertActivation,
       owner: options.owner ?? null,
       expires_at: options.expiresAt ?? null,
     }
@@ -1037,6 +1058,15 @@ export class RealtimeService {
       .filter(candidate => candidate.preemptive)
       .map(candidate => candidate.priority)
     this.#pendingPreemptPriority = priorities.length === 0 ? null : Math.max(...priorities)
+  }
+
+  /** Generic urgent items need the legacy priority band; monitor alerts carry explicit policy authority. */
+  #preemptEligible(queued: QueuedHostResponse): boolean {
+    return queued.preemptive && (queued.preemptive_alert || queued.priority >= PREEMPT_MIN_PRIORITY)
+  }
+
+  #hasEligiblePreempt(): boolean {
+    return this.#hostItems.some(queued => this.#preemptEligible(queued))
   }
 
   /**
@@ -1101,7 +1131,7 @@ export class RealtimeService {
     this.#onDiagnostic('[realtime-diagnostic] uncertain_delivery_exhausted')
     this.#providerFailed = true
     this.#urgentHostResponseOwner = null
-    this.#guardPreemption = null
+    this.#preemptiveAlert = null
     this.#stop.abort()
     this.#deliveryReady.set()
   }
@@ -1125,14 +1155,12 @@ export class RealtimeService {
         this.#onDiagnostic('[realtime-diagnostic] floor_stale_hold_released')
       }
       if (this.#rendererHostDeliveryPaused) return
-      const eligiblePreemptWasArmed = this.#pendingPreemptPriority !== null
-        && this.#pendingPreemptPriority >= PREEMPT_MIN_PRIORITY
+      const eligiblePreemptWasArmed = this.#hasEligiblePreempt()
       await this.#maybePreemptLocked()
       await this.#flushHostItemsLocked()
       shouldRedriveContinuations = eligiblePreemptWasArmed
         && (
-          this.#pendingPreemptPriority === null
-          || this.#pendingPreemptPriority < PREEMPT_MIN_PRIORITY
+          !this.#hasEligiblePreempt()
         )
         && this.session.foregroundIdle
         && this.session.floor.state !== 'user_speaking'
@@ -1143,25 +1171,24 @@ export class RealtimeService {
   /**
    * Arbitrate a preemptive host item against whatever the agent is saying.
    *
-   * Every early return here is a reason *not* to interrupt, and they are checked before any Guard
+   * Every early return here is a reason *not* to interrupt, and they are checked before any preemptive alert
    * state is touched so the ordinary path never reaches the unported arbitration.
    */
   async #maybePreemptLocked(): Promise<void> {
-    const priority = this.#pendingPreemptPriority
-    if (priority === null || priority < PREEMPT_MIN_PRIORITY) return
+    if (!this.#hasEligiblePreempt()) return
     if (this.session.floor.state === 'user_speaking') return
     if (this.session.foregroundIdle) return
     if (this.#urgentHostResponseOwner !== null) return
-    if (this.#guardPreemption !== null) return
+    if (this.#preemptiveAlert !== null) return
     const queued = this.#hostItems
-      .filter(candidate => candidate.preemptive && candidate.priority >= PREEMPT_MIN_PRIORITY)
+      .filter(candidate => this.#preemptEligible(candidate))
       .sort(compareQueuedHostResponses)
       .at(0)
     if (queued === undefined) return
 
-    this.#guardPreemptionToken += 1
-    const preemption: GuardPreemption = {
-      token: this.#guardPreemptionToken,
+    this.#preemptiveAlertToken += 1
+    const preemption: PreemptiveAlert = {
+      token: this.#preemptiveAlertToken,
       session_epoch: this.session.sessionEpoch,
       event_id: queued.intent.item.event_id,
       old_response_id: this.session.activeProviderResponseId,
@@ -1174,12 +1201,12 @@ export class RealtimeService {
       reconnect_disallowed: false,
       reconnect_aborted: false,
     }
-    this.#guardPreemption = preemption
+    this.#preemptiveAlert = preemption
     // Armed before the await: the provider may never confirm the cancel, and the deadline is what
     // stops the alert waiting behind a turn that will not stop.
     const abort = new AbortController()
-    this.#guardAlertAbort = abort
-    void this.#fireGuardAlertDeadline(preemption)
+    this.#preemptiveAlertAbort = abort
+    void this.#firePreemptiveAlertDeadline(preemption)
     this.#telemetry?.record('guard.preempt_started', {})
     let preempted: boolean
     try {
@@ -1187,17 +1214,17 @@ export class RealtimeService {
     } catch (cause) {
       // The preemption never happened, so its deadline must not fire against a session that is still
       // speaking normally.
-      this.#clearGuardPreemption(preemption.token)
+      this.#clearPreemptiveAlert(preemption.token)
       throw cause
     }
     if (!preempted) {
-      this.#clearGuardPreemption(preemption.token)
+      this.#clearPreemptiveAlert(preemption.token)
       return
     }
     // The session may have learned the response id only while preempting -- a turn that was still
     // starting when the alert arrived.
     const responseId = this.session.activeProviderResponseId
-    const current = this.#guardPreemption
+    const current = this.#preemptiveAlert
     if (
       responseId !== null
       && current !== null
@@ -1205,9 +1232,9 @@ export class RealtimeService {
       && this.session.providerTurnPhase(responseId) === 'cancel_requested'
     ) {
       if (current.old_response_id === null) {
-        this.#guardPreemption = {...current, old_response_id: responseId}
+        this.#preemptiveAlert = {...current, old_response_id: responseId}
       }
-      this.#recordGuardCancelSent(responseId)
+      this.#recordPreemptiveAlertCancelSent(responseId)
     }
   }
 
@@ -1227,11 +1254,11 @@ export class RealtimeService {
         if (queued.preemptive) this.#recomputePreemptPriority()
         continue
       }
-      const preemptiveOverlap = this.#guardOverlapAllowed(queued)
+      const preemptiveOverlap = this.#preemptiveAlertOverlapAllowed(queued)
       const ordinaryDelivery = this.session.foregroundIdle && this.session.floor.state === 'idle'
       if (!preemptiveOverlap && !ordinaryDelivery) break
       heapPop(this.#hostItems)
-      const userActivation = this.#guardActivationRequired(queued)
+      const userActivation = this.#preemptiveAlertActivationRequired(queued)
       let eligibilityRevoked = false
       const responseAllowed = (): boolean => {
         const eligible = this.#queuedHostItemEligible(queued)
@@ -1241,7 +1268,7 @@ export class RealtimeService {
       let delivery
       try {
         if (userActivation) {
-          // A reconnected session will not speak until something user-shaped arrives, so a Guard fact
+          // A reconnected session will not speak until something user-shaped arrives, so a preemptive-alert fact
           // crossing a reconnect has to carry that activation or it lands in a session that never
           // responds.
           delivery = await this.session.deliverHostResponse(queued.intent, {
@@ -1249,7 +1276,7 @@ export class RealtimeService {
             asUserActivation: true,
           })
         } else if (preemptiveOverlap) {
-          const preemption = this.#guardPreemption
+          const preemption = this.#preemptiveAlert
           // Only a permit-consuming preemption gets a confirmation timeout: it is speaking into a
           // session created for it, where waiting indefinitely would strand the alert.
           const confirmationTimeout = preemption !== null
@@ -1352,9 +1379,9 @@ export class RealtimeService {
     return this.#executorApprovalAuthority !== null && queued.semantic_event_id !== null
   }
 
-  /** Whether this queued item is the captured Guard the current preemption is waiting to deliver. */
-  #guardOverlapAllowed(queued: QueuedHostResponse): boolean {
-    const preemption = this.#guardPreemption
+  /** Whether this queued item is the captured preemptive alert the current handoff is waiting to deliver. */
+  #preemptiveAlertOverlapAllowed(queued: QueuedHostResponse): boolean {
+    const preemption = this.#preemptiveAlert
     return preemption !== null
       && queued.preemptive
       && queued.intent.item.event_id === preemption.event_id
@@ -1366,12 +1393,12 @@ export class RealtimeService {
   /**
    * Whether this item has to be injected as a user activation.
    *
-   * A reconnected provider session will not speak until something user-shaped arrives, so a Guard
+   * A reconnected provider session will not speak until something user-shaped arrives, so a preemptive alert
    * fact that crosses a reconnect has to carry that activation or it is delivered into a session
    * that never responds.
    */
-  #guardActivationRequired(queued: QueuedHostResponse): boolean {
-    const authority = queued.guard_activation
+  #preemptiveAlertActivationRequired(queued: QueuedHostResponse): boolean {
+    const authority = queued.preemptive_alert_activation
     if (authority?.event_id !== queued.intent.item.event_id) return false
     const authorized = queued.intent.item.event_id === `final:${authority.delegate_id}`
       || queued.intent.item.event_id.startsWith(`observation:${authority.delegate_id}:`)
@@ -1415,8 +1442,7 @@ export class RealtimeService {
     return this.#rendererHostDeliveryPaused
       || this.session.floor.state === 'user_speaking'
       || (
-        this.#pendingPreemptPriority !== null
-        && this.#pendingPreemptPriority >= PREEMPT_MIN_PRIORITY
+        this.#hasEligiblePreempt()
       )
   }
 
@@ -1434,8 +1460,7 @@ export class RealtimeService {
    */
   async #driveContinuationsLocked(): Promise<void> {
     if (
-      this.#pendingPreemptPriority !== null
-      && this.#pendingPreemptPriority >= PREEMPT_MIN_PRIORITY
+      this.#hasEligiblePreempt()
     ) {
       return
     }
@@ -1845,9 +1870,9 @@ export class RealtimeService {
    * Ported from `_reconnect_provider_session`. The whole method runs under `#reconnectLock`, and the
    * two things that look like implementation detail are both load-bearing:
    *
-   * The source epoch is armed *before* the await, so a Guard already waiting on the session's
+   * The source epoch is armed *before* the await, so a preemptive alert already waiting on the session's
    * response-request lock can see that the provider identity advanced even if it runs before this
-   * resumes. Arming it after would let that Guard act against a session that no longer exists.
+   * resumes. Arming it after would let that alert act against a session that no longer exists.
    *
    * The tail calls the private `#deliveryPass` rather than the public `flushHostItems`. The public
    * wrapper turns an uncertain delivery into a reconnect, and reconnecting while already holding the
@@ -1873,7 +1898,7 @@ export class RealtimeService {
         const oldEpoch = this.session.sessionEpoch
         this.#invalidateProjectConfirmation('provider_replaced')
         this.#invalidateExecutorApproval('provider_replaced')
-        this.#guardPreemption = null
+        this.#preemptiveAlert = null
         this.#providerReconnectSourceEpoch = oldEpoch
         await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
         // Only if nothing cleared it while we were awaiting. A user who started speaking during the
@@ -2289,7 +2314,12 @@ export class RealtimeService {
     this.#publishExecutorState()
     if (event.payload.content.hit !== true) return
     if (manifest.policy.suggest === true && delegate.routing_class === 'ambient') return
-    const speechView = event.payload.channel === 'guard' || event.payload.channel === 'watch'
+    const monitor = isMonitorPolicy(manifest.policy)
+    const delivery = monitorAlertDelivery(manifest.policy)
+    // A none monitor still records the hit and updates delegate state above, but does not address it
+    // to the user or take their floor.
+    if (monitor && delivery === 'none') return
+    const speechView = monitor
       ? monitorHitSpeechView(event.payload.content)
       : genericFinalSpeechView(displayName, 'ok', event.payload.content)
     const content = [...speechView]
@@ -2301,10 +2331,13 @@ export class RealtimeService {
       event_id: `observation:${event.payload.delegate_id}:${event.seq}`,
       content,
     }), {
-      // A monitoring hit outranks routine executor announcements without reaching the preemption band.
+      // A monitoring hit outranks routine executor announcements; only its policy may authorize a floor preempt.
       priority: Math.max(manifest.policy.priority, HIT_ALERT_MIN_PRIORITY),
-      preemptive: manifest.policy.priority >= PREEMPT_MIN_PRIORITY,
-      guardDelegateId: event.payload.channel === 'guard' ? event.payload.delegate_id : null,
+      preemptive: monitor
+        ? isPreemptiveMonitorAlert(manifest.policy)
+        : manifest.policy.priority >= PREEMPT_MIN_PRIORITY,
+      preemptiveAlert: isPreemptiveMonitorAlert(manifest.policy),
+      preemptiveAlertDelegateId: isPreemptiveMonitorAlert(manifest.policy) ? event.payload.delegate_id : null,
     })
   }
 
@@ -2381,10 +2414,7 @@ export class RealtimeService {
     ) return
     // A monitor's periodic heartbeat is operational state, not a new user-facing event. Speaking it
     // creates a fresh model turn that can accidentally replay an older acknowledgement.
-    if (
-      (payload.channel === 'guard' || payload.channel === 'watch')
-      && payload.phase === 'working'
-    ) return
+    if (isMonitorPolicy(manifest.policy) && payload.phase === 'working') return
     if (manifest.policy.progress_via_surrogate === true && payload.phase === 'working') return
 
     let content: string
@@ -2455,7 +2485,7 @@ export class RealtimeService {
     this.#publishExecutorState()
     if (suppressUnselectedSuggestion) return
 
-    const successfulMonitorStop = (payload.channel === 'watch' || payload.channel === 'guard')
+    const successfulMonitorStop = isMonitorPolicy(manifest.policy)
       && payload.outcome === 'ok'
       && (
         (claimed.op === 'stop' && payload.content.stopped === true)
@@ -2468,6 +2498,7 @@ export class RealtimeService {
       : genericFinalSpeechView(displayName, payload.outcome, payload.content)
     const content = [...finalView].slice(0, MAX_HOST_FACT_CHARS).join('')
     const hit = payload.outcome === 'ok' && payload.content.hit === true
+    const preemptiveMonitorHit = hit && isPreemptiveMonitorAlert(manifest.policy)
     this.queueHostItem(hostFactIntent({
       kind: 'final',
       host_item_id: this.#idFactory(),
@@ -2477,8 +2508,11 @@ export class RealtimeService {
       priority: hit
         ? Math.max(manifest.policy.priority, HIT_ALERT_MIN_PRIORITY)
         : manifest.policy.priority,
-      preemptive: manifest.policy.priority >= PREEMPT_MIN_PRIORITY && hit,
-      guardDelegateId: payload.channel === 'guard' && hit ? payload.delegate_id : null,
+      preemptive: hit && (isMonitorPolicy(manifest.policy)
+        ? isPreemptiveMonitorAlert(manifest.policy)
+        : manifest.policy.priority >= PREEMPT_MIN_PRIORITY),
+      preemptiveAlert: preemptiveMonitorHit,
+      preemptiveAlertDelegateId: preemptiveMonitorHit ? payload.delegate_id : null,
     })
   }
 
@@ -2567,7 +2601,7 @@ export class RealtimeService {
    * event would have to duplicate the shared tail.
    *
    * Two events never reach the session at all. A cancel rejection is routed by response ownership:
-   * confirmation carriers recover their provider epoch, while every other rejection is Guard's to
+   * confirmation carriers recover their provider epoch, while every other rejection is the preemptive alert's to
    * arbitrate. A provider error is about the transport rather than the conversation.
    *
    * The tail is the part worth reading twice: after everything an event implies has been recorded,
@@ -2589,9 +2623,9 @@ export class RealtimeService {
         )
         return
       }
-      // The provider kept speaking through a preemption. Guard's to arbitrate, and it does not reach
+      // The provider kept speaking through a preemption. The preemptive-alert arbiter owns it, and it does not reach
       // the session at all: this is about the transport, not the conversation.
-      await this.#handleGuardCancelRejected(event)
+      await this.#handlePreemptiveAlertCancelRejected(event)
       return
     }
     if (event.kind === 'provider_error') {
@@ -2608,7 +2642,7 @@ export class RealtimeService {
         this.#providerFailed = true
         this.#invalidateExecutorApproval('provider_failed')
         this.#urgentHostResponseOwner = null
-        this.#guardPreemption = null
+        this.#preemptiveAlert = null
         this.#stop.abort()
       }
       return
@@ -2824,7 +2858,7 @@ export class RealtimeService {
       })
     }
     if (event.kind === 'response_started' || event.kind === 'response_audio_delta') {
-      const preemption = this.#guardPreemption
+      const preemption = this.#preemptiveAlert
       // A turn that was still starting when the alert arrived has only now revealed its id, so the
       // preemption learns which response it is cancelling here rather than at arbitration time.
       if (
@@ -2835,16 +2869,16 @@ export class RealtimeService {
         && this.session.providerTurnPhase(event.response_id) === 'cancel_requested'
         && this.session.providerTurnWasFenced(event.response_id)
       ) {
-        this.#guardPreemption = {...preemption, old_response_id: event.response_id}
+        this.#preemptiveAlert = {...preemption, old_response_id: event.response_id}
       }
-      this.#recordGuardCancelSent(event.response_id)
+      this.#recordPreemptiveAlertCancelSent(event.response_id)
     }
     // Unconditional, and before the accepted-only work: a fence receipt is destructive to read, so it
     // has to be consumed on every event or a later one would see a stale interruption.
     this.#retireFencedPrestartUrgent()
     if (accepted && (event.kind === 'response_started' || event.kind === 'response_audio_delta')) {
       this.#bindUrgentHostResponse(event)
-      this.#finishGuardFirstAudio(event)
+      this.#finishPreemptiveAlertFirstAudio(event)
     }
 
     if (event.kind === 'response_started' && accepted) {
@@ -2885,11 +2919,11 @@ export class RealtimeService {
         this.#providerEpochNeedingActivation = null
       }
       this.#providerReconnectSourceEpoch = null
-      const preemption = this.#guardPreemption
+      const preemption = this.#preemptiveAlert
       if (preemption !== null) {
         // The user speaking is the authority the preemption was borrowing. A permit not yet spent is
         // now disallowed; one already spent means a reconnect is in flight and has to be abandoned.
-        this.#guardPreemption = {
+        this.#preemptiveAlert = {
           ...preemption,
           reconnect_disallowed: !preemption.reconnect_permit_consumed,
           reconnect_aborted: preemption.reconnect_permit_consumed,
@@ -2940,7 +2974,7 @@ export class RealtimeService {
           action: 'terminal',
         })
       }
-      this.#recordGuardCancelTerminal(event)
+      this.#recordPreemptiveAlertCancelTerminal(event)
       const generation = this.session.currentGeneration
       if (
         generation !== null
@@ -3045,7 +3079,7 @@ export class RealtimeService {
       ) {
         this.#releaseUrgentHostResponse(terminalOwner)
       }
-      this.#markGuardReplacementTerminal(terminalOwner)
+      this.#markPreemptiveAlertReplacementTerminal(terminalOwner)
     }
     if (event.kind === 'response_terminal' && executorQuarantinedResponse) {
       await this.#finishPendingExecutorApprovalResponseQuarantine(
@@ -3419,7 +3453,7 @@ export class RealtimeService {
     this.#providerFailed = true
     this.#invalidateExecutorApproval('task_failed')
     this.#urgentHostResponseOwner = null
-    this.#guardPreemption = null
+    this.#preemptiveAlert = null
     this.#stop.abort()
     this.#deliveryReady.set()
   }
@@ -4057,9 +4091,12 @@ export class RealtimeService {
   }
 
   #executorDisplayName(channel: string): string {
-    if (channel === 'guard') return '监控'
-    if (channel === 'watch') return '观察'
+    const agent = this.#agentRegistry.agentNameForChannel(channel)
+    if (agent !== null) return agent
     const manifest = this.#runtime.executors.get(channel)?.manifest
+    if (manifest !== undefined && isMonitorPolicy(manifest.policy)) {
+      return monitorAlertDelivery(manifest.policy) === 'deferred' ? '观察' : '监控'
+    }
     return manifest?.display_name ?? channel
   }
 
@@ -6237,7 +6274,7 @@ export class RealtimeService {
     )
     this.#recordOriginDeliveryProof(completion)
     this.#recordSemanticAcknowledgementHeard(completion)
-    this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
+    this.#cancelPreemptiveAlertClearDeadline(utteranceId, generationEpoch)
     for (const eventId of eventIds) {
       // Confirmed only if it was actually spoken: a suggestion in a turn that was cut off has not been
       // offered, and marking it fired would stop it ever being offered again.
@@ -6266,7 +6303,7 @@ export class RealtimeService {
       interruptedByLocalSpeech && audible,
     )
     // The acknowledgement arrived, so the deadline waiting for it has nothing left to retire.
-    this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
+    this.#cancelPreemptiveAlertClearDeadline(utteranceId, generationEpoch)
     this.#releaseUrgentHostResponse(urgentOwner)
     this.#deliveryReady.set()
     return true
@@ -6299,7 +6336,7 @@ export class RealtimeService {
     }
     const stopped = await stopping
     if (!stopped) return false
-    this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
+    this.#cancelPreemptiveAlertClearDeadline(utteranceId, generationEpoch)
     this.#releaseUrgentHostResponse(urgentOwner)
     this.#deliveryReady.set()
     return true
@@ -6568,9 +6605,9 @@ export class RealtimeService {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Family L: Guard preemption.
+  // Family L: preemptive-alert delivery.
   //
-  // A Guard alert is the one thing allowed to interrupt the agent mid-sentence, and interrupting is
+  // A preemptive alert is the one thing allowed to interrupt the agent mid-sentence, and interrupting is
   // the hard part. The provider has to be told to stop, the renderer has to be told to drop the audio
   // already in flight, and the replacement has to start speaking -- with no guarantee any of the three
   // acknowledges. So every step is deadlined: if the provider does not confirm the cancel, the host
@@ -6587,7 +6624,7 @@ export class RealtimeService {
    *
    * The last resort. The provider was asked to stop, said it would not, and the alert is still waiting
    * -- so the whole provider session is replaced under the preemption rather than letting the old turn
-   * run to completion. Gated behind `controlledGuardReconnect` because it is a heavy remedy for a case
+   * run to completion. Gated behind the composition-owned reconnect option because it is a heavy remedy for a case
    * that should not happen.
    *
    * `#reconnectLock` before `#deliveryLock`, never the reverse: that order is fixed across this layer,
@@ -6598,14 +6635,14 @@ export class RealtimeService {
    * not produced anything yet. Anything else and a reconnect would be discarding a session that is
    * working.
    */
-  async #handleGuardCancelRejected(event: {
+  async #handlePreemptiveAlertCancelRejected(event: {
     readonly session_epoch: number
     readonly response_id: string
   }): Promise<void> {
-    if (!this.#controlledGuardReconnect) return
+    if (!this.#controlledPreemptiveAlertReconnect) return
     await this.#reconnectLock.run(async () => {
       await this.#deliveryLock.run(async () => {
-        const preemption = this.#guardPreemption
+        const preemption = this.#preemptiveAlert
         if (
           preemption?.session_epoch !== event.session_epoch
           || preemption.session_epoch !== this.session.sessionEpoch
@@ -6624,31 +6661,31 @@ export class RealtimeService {
         const oldGeneration = preemption.old_generation
         if (queued === undefined || oldGeneration === null) return
 
-        const spent: GuardPreemption = {
+        const spent: PreemptiveAlert = {
           ...preemption,
           cancel_sent: true,
           reconnect_permit_consumed: true,
         }
-        this.#guardPreemption = spent
+        this.#preemptiveAlert = spent
         if (spent.deadline_fired) {
           // The alert already fenced the retained renderer generation. Anchor its uncertainty bound
-          // now, before a slow reconnect; ordinary Guard alerts never consume this permit.
-          this.#startGuardClearDeadline(oldGeneration)
+          // now, before a slow reconnect; ordinary deferred alerts never consume this permit.
+          this.#startPreemptiveAlertClearDeadline(oldGeneration)
         }
         const oldEpoch = this.session.sessionEpoch
-        const history = this.#guardRecoveryHistory()
+        const history = this.#preemptiveAlertRecoveryHistory()
         try {
-          const historyOutcome = await this.session.reconnectForGuard({
+          const historyOutcome = await this.session.reconnectForPreemptiveAlert({
             tools: structuredClone(this.#providerSchemas),
             oldGeneration,
             confirmationTimeout: 0.5,
             history,
-            historyMode: this.#guardHistoryRecovery,
+            historyMode: this.#preemptiveAlertHistoryRecovery,
           })
           this.#providerEpochNeedingActivation = this.session.sessionEpoch
-          if (this.#guardHistoryRecovery !== 'none') {
+          if (this.#preemptiveAlertHistoryRecovery !== 'none') {
             this.#telemetry?.record('guard.history_recovery', {
-              arm: this.#guardHistoryRecovery,
+              arm: this.#preemptiveAlertHistoryRecovery,
               outcome: historyOutcome,
               item_count: history.length,
               pair_count: Math.floor(history.length / 2),
@@ -6668,23 +6705,23 @@ export class RealtimeService {
           this.#reconcileToolStateAfterReconnect(oldEpoch)
           this.#reopenFailedSemanticAcknowledgements()
           this.#reconcileSemanticAcknowledgementsAfterReconnect()
-          const current = this.#guardPreemption
+          const current = this.#preemptiveAlert
           // The world may have moved while reconnecting: a replacement preemption, or a user who
           // started speaking and revoked the authority this was borrowing.
           if (current?.token !== spent.token) return
           if (current.reconnect_aborted) {
-            this.#clearGuardPreemption(current.token)
+            this.#clearPreemptiveAlert(current.token)
             return
           }
-          this.#guardPreemption = {
+          this.#preemptiveAlert = {
             ...current,
             session_epoch: this.session.sessionEpoch,
             old_response_id: null,
           }
-          await this.#deliverCapturedGuardLocked(queued)
+          await this.#deliverCapturedPreemptiveAlertLocked(queued)
         } catch (failure) {
           this.#telemetry?.record('guard.history_recovery_failure', {
-            arm: this.#guardHistoryRecovery,
+            arm: this.#preemptiveAlertHistoryRecovery,
             reason: diagnosticName(failure),
           })
           this.#onDiagnostic(
@@ -6701,28 +6738,28 @@ export class RealtimeService {
   }
 
   /** Recent conversation to hand a replacement provider, so it does not start blank. */
-  #guardRecoveryHistory(): readonly RecoveryTurn[] {
-    if (this.#guardHistoryRecovery === 'none') return []
+  #preemptiveAlertRecoveryHistory(): readonly RecoveryTurn[] {
+    if (this.#preemptiveAlertHistoryRecovery === 'none') return []
     const channel = this.#runtime.memory?.channels.get('conversation')
     if (channel === undefined) return []
-    const history = projectRecoveryTurns(channel.items, {maxPairs: this.#guardHistoryPairs})
-    if (this.#guardHistoryRecovery === 'packed') return packRecoveryTurns(history).turns
+    const history = projectRecoveryTurns(channel.items, {maxPairs: this.#preemptiveAlertHistoryPairs})
+    if (this.#preemptiveAlertHistoryRecovery === 'packed') return packRecoveryTurns(history).turns
     return history
   }
 
   /**
-   * Deliver the exact Guard captured before the reconnect, independent of heap order.
+   * Deliver the exact preemptive alert captured before the reconnect, independent of heap order.
    *
    * Not through the ordinary flush: the item was chosen before the session was replaced, and re-running
    * the priority comparison now could deliver something else into a session that exists solely to
    * carry this one. Removed from the heap by identity and re-heapified, rather than popped.
    */
-  async #deliverCapturedGuardLocked(queued: QueuedHostResponse): Promise<void> {
+  async #deliverCapturedPreemptiveAlertLocked(queued: QueuedHostResponse): Promise<void> {
     const index = this.#hostItems.indexOf(queued)
     if (index === -1) return
     this.#hostItems.splice(index, 1)
     this.#hostItems.sort(compareQueuedHostResponses)
-    const userActivation = this.#guardActivationRequired(queued)
+    const userActivation = this.#preemptiveAlertActivationRequired(queued)
     let lifecycleRevoked = false
     let delivery
     try {
@@ -6731,7 +6768,7 @@ export class RealtimeService {
         responseAllowed: () => {
           const eligible = this.#queuedHostItemEligible(queued)
           if (!eligible) lifecycleRevoked = true
-          return eligible && this.#guardResponseIsAllowed(queued.intent.item.event_id)
+          return eligible && this.#preemptiveAlertResponseIsAllowed(queued.intent.item.event_id)
         },
         asUserActivation: userActivation,
       })
@@ -6784,8 +6821,8 @@ export class RealtimeService {
    * started talking in between has revoked the authority, and an aborted reconnect means the session
    * this was for is gone.
    */
-  #guardResponseIsAllowed(eventId: string): boolean {
-    const preemption = this.#guardPreemption
+  #preemptiveAlertResponseIsAllowed(eventId: string): boolean {
+    const preemption = this.#preemptiveAlert
     return preemption !== null
       && preemption.event_id === eventId
       && !preemption.reconnect_aborted
@@ -6836,11 +6873,11 @@ export class RealtimeService {
    * the deadline path fires when the provider did not cooperate, and timing that would measure the
    * timeout rather than the handover.
    */
-  #finishGuardFirstAudio(event: {
+  #finishPreemptiveAlertFirstAudio(event: {
     readonly session_epoch: number
     readonly response_id: string
   }): void {
-    const preemption = this.#guardPreemption
+    const preemption = this.#preemptiveAlert
     const owner = this.#urgentHostResponseOwner
     const generation = this.session.currentGeneration
     if (
@@ -6856,13 +6893,13 @@ export class RealtimeService {
       return
     }
     const token = preemption.token
-    this.#clearGuardPreemption(token)
+    this.#clearPreemptiveAlert(token)
     if (
-      this.#controlledGuardReconnect
+      this.#controlledPreemptiveAlertReconnect
       && preemption.reconnect_permit_consumed
       && preemption.old_generation !== null
     ) {
-      this.#startGuardClearDeadline(preemption.old_generation)
+      this.#startPreemptiveAlertClearDeadline(preemption.old_generation)
     }
     this.#telemetry?.record('guard.first_audio_switch', {
       elapsed_ms: Math.max(0, Math.round((this.#clock.now() - preemption.queued_at) * 1_000)),
@@ -6876,37 +6913,37 @@ export class RealtimeService {
    * it had -- the alternative is the user hearing the old turn continue while an urgent alert waits
    * behind it, which is the failure preemption exists to prevent.
    */
-  async #fireGuardAlertDeadline(preemption: GuardPreemption): Promise<void> {
+  async #firePreemptiveAlertDeadline(preemption: PreemptiveAlert): Promise<void> {
     try {
       const delay = Math.max(
         0,
         preemption.queued_at + GUARD_ALERT_DEADLINE_S - this.#clock.now(),
       )
-      await this.#clock.sleep(delay, this.#guardAlertAbort?.signal)
-      const current = this.#guardPreemption
+      await this.#clock.sleep(delay, this.#preemptiveAlertAbort?.signal)
+      const current = this.#preemptiveAlert
       // Re-read, never trusted: the preemption this timer belongs to may have resolved, been replaced,
       // or already fired while this was sleeping.
       if (current?.token !== preemption.token || current.deadline_fired) return
       if (current.reconnect_aborted) {
-        this.#clearGuardPreemption(current.token)
+        this.#clearPreemptiveAlert(current.token)
         return
       }
       const controlledHandoff = current.reconnect_permit_consumed
       const expired = controlledHandoff && current.old_generation !== null
-        ? this.session.alertGuardHandoff(current.old_generation)
+        ? this.session.alertPreemptiveAlertHandoff(current.old_generation)
         : this.session.expireHostPreempt(current.old_generation)
       if (!expired) return
-      this.#guardPreemption = {...current, deadline_fired: true}
+      this.#preemptiveAlert = {...current, deadline_fired: true}
       if (
-        this.#controlledGuardReconnect
+        this.#controlledPreemptiveAlertReconnect
         && current.reconnect_permit_consumed
         && current.old_generation !== null
       ) {
-        this.#startGuardClearDeadline(current.old_generation)
+        this.#startPreemptiveAlertClearDeadline(current.old_generation)
       }
       this.#telemetry?.record('guard.alert_deadline_fired', {})
       // Both halves are done, so nothing is left to wait for.
-      if (current.replacement_terminal) this.#clearGuardPreemption(current.token)
+      if (current.replacement_terminal) this.#clearPreemptiveAlert(current.token)
       this.#deliveryReady.set()
     } catch (failure) {
       if (isAbort(failure)) return
@@ -6920,12 +6957,12 @@ export class RealtimeService {
    * The token argument is how a caller says "only if this is still the one I mean" -- without it, a
    * late callback would clear a preemption that started after the one it belonged to.
    */
-  #clearGuardPreemption(token?: number): void {
-    const current = this.#guardPreemption
+  #clearPreemptiveAlert(token?: number): void {
+    const current = this.#preemptiveAlert
     if (current === null || (token !== undefined && current.token !== token)) return
-    this.#guardPreemption = null
-    const abort = this.#guardAlertAbort
-    this.#guardAlertAbort = null
+    this.#preemptiveAlert = null
+    const abort = this.#preemptiveAlertAbort
+    this.#preemptiveAlertAbort = null
     abort?.abort()
   }
 
@@ -6935,12 +6972,12 @@ export class RealtimeService {
    * Keyed by generation and idempotent: the clear can be re-sent, and a second deadline for the same
    * generation would retire it twice.
    */
-  #startGuardClearDeadline(generation: PlaybackGeneration): void {
+  #startPreemptiveAlertClearDeadline(generation: PlaybackGeneration): void {
     const key = `${generation.utterance_id}:${generation.generation_epoch}`
-    if (this.#guardClearDeadlines.has(key)) return
+    if (this.#preemptiveAlertClearDeadlines.has(key)) return
     const abort = new AbortController()
-    this.#guardClearDeadlines.set(key, abort)
-    void this.#retireGuardClearUnknown(generation, key, abort.signal)
+    this.#preemptiveAlertClearDeadlines.set(key, abort)
+    void this.#retirePreemptiveAlertClearUnknown(generation, key, abort.signal)
   }
 
   /**
@@ -6950,7 +6987,7 @@ export class RealtimeService {
    * know how much of it the user heard, and recording either extreme would be a claim it cannot
    * support.
    */
-  async #retireGuardClearUnknown(
+  async #retirePreemptiveAlertClearUnknown(
     generation: PlaybackGeneration,
     key: string,
     signal: AbortSignal,
@@ -6966,28 +7003,28 @@ export class RealtimeService {
     } catch (failure) {
       if (!isAbort(failure)) throw failure
     } finally {
-      if (this.#guardClearDeadlines.get(key)?.signal === signal) {
-        this.#guardClearDeadlines.delete(key)
+      if (this.#preemptiveAlertClearDeadlines.get(key)?.signal === signal) {
+        this.#preemptiveAlertClearDeadlines.delete(key)
       }
     }
   }
 
-  #cancelGuardClearDeadline(utteranceId: string, generationEpoch: number): void {
+  #cancelPreemptiveAlertClearDeadline(utteranceId: string, generationEpoch: number): void {
     const key = `${utteranceId}:${generationEpoch}`
-    const abort = this.#guardClearDeadlines.get(key)
+    const abort = this.#preemptiveAlertClearDeadlines.get(key)
     if (abort === undefined) return
-    this.#guardClearDeadlines.delete(key)
+    this.#preemptiveAlertClearDeadlines.delete(key)
     abort.abort()
   }
 
   /** Record how the cancelled turn actually ended, which is the only measure of whether it worked. */
-  #recordGuardCancelTerminal(event: {
+  #recordPreemptiveAlertCancelTerminal(event: {
     readonly session_epoch: number
     readonly response_id: string
     readonly status: string
     readonly reason: string
   }): void {
-    const preemption = this.#guardPreemption
+    const preemption = this.#preemptiveAlert
     if (
       preemption?.session_epoch !== event.session_epoch
       || preemption.old_response_id !== event.response_id
@@ -7009,8 +7046,8 @@ export class RealtimeService {
   }
 
   /** Note that the cancel actually reached the provider. Once per preemption. */
-  #recordGuardCancelSent(responseId: string): void {
-    const preemption = this.#guardPreemption
+  #recordPreemptiveAlertCancelSent(responseId: string): void {
+    const preemption = this.#preemptiveAlert
     if (
       preemption?.session_epoch !== this.session.sessionEpoch
       || preemption.old_response_id !== responseId
@@ -7018,7 +7055,7 @@ export class RealtimeService {
     ) {
       return
     }
-    this.#guardPreemption = {...preemption, cancel_sent: true}
+    this.#preemptiveAlert = {...preemption, cancel_sent: true}
     this.#telemetry?.record('provider.cancel_sent', {
       elapsed_ms: Math.max(0, Math.round((this.#clock.now() - preemption.queued_at) * 1_000)),
     })
@@ -7030,8 +7067,8 @@ export class RealtimeService {
    * Half of the two-sided finish: the preemption is over when the replacement has finished *and* the
    * old turn has been dealt with. Whichever arrives second does the clearing.
    */
-  #markGuardReplacementTerminal(owner: UrgentHostResponseOwner | null): void {
-    const preemption = this.#guardPreemption
+  #markPreemptiveAlertReplacementTerminal(owner: UrgentHostResponseOwner | null): void {
+    const preemption = this.#preemptiveAlert
     if (
       owner === null
       || preemption?.event_id !== owner.event_id
@@ -7040,8 +7077,8 @@ export class RealtimeService {
       return
     }
     const marked = {...preemption, replacement_terminal: true}
-    this.#guardPreemption = marked
-    if (marked.deadline_fired) this.#clearGuardPreemption(marked.token)
+    this.#preemptiveAlert = marked
+    if (marked.deadline_fired) this.#clearPreemptiveAlert(marked.token)
   }
 
   /**
@@ -7164,7 +7201,7 @@ export class RealtimeService {
     })
   }
 
-  /** Stand in for the Guard delivery that would normally create an urgent owner. */
+  /** Stand in for preemptive-alert delivery that would normally create an urgent owner. */
   seedUrgentOwnerForTest(input: {
     readonly sessionEpoch: number
     readonly eventId: string
@@ -7185,10 +7222,11 @@ export class RealtimeService {
         }),
         priority: 90,
         preemptive: true,
+        preemptive_alert: false,
         seq: 0,
         queued_at: 0,
         semantic_event_id: null,
-        guard_activation: null,
+        preemptive_alert_activation: null,
         owner: null,
         expires_at: null,
       },
@@ -7224,8 +7262,13 @@ export class RealtimeService {
    * Its flags are the whole state machine -- whether the cancel was sent, whether the deadline fired,
    * whether the reconnect permit was spent -- and none of that is visible from outside otherwise.
    */
-  get guardPreemptionForTest(): GuardPreemption | null {
-    return this.#guardPreemption
+  get preemptiveAlertForTest(): PreemptiveAlert | null {
+    return this.#preemptiveAlert
+  }
+
+  /** @deprecated Test compatibility alias for the legacy Guard terminology. */
+  get guardPreemptionForTest(): PreemptiveAlert | null {
+    return this.preemptiveAlertForTest
   }
 
   /** Which responses a confirmation has blocked. The block outliving its turn is the failure mode. */
@@ -7281,16 +7324,25 @@ export class RealtimeService {
   }
 
   /** Wiring the unported families will need; exposed now so their absence is visible, not implied. */
-  get guardConfiguration(): {
+  get preemptiveAlertConfiguration(): {
     readonly controlledReconnect: boolean
-    readonly historyRecovery: GuardHistoryRecovery
+    readonly historyRecovery: PreemptiveAlertHistoryRecovery
     readonly historyPairs: number
   } {
     return {
-      controlledReconnect: this.#controlledGuardReconnect,
-      historyRecovery: this.#guardHistoryRecovery,
-      historyPairs: this.#guardHistoryPairs,
+      controlledReconnect: this.#controlledPreemptiveAlertReconnect,
+      historyRecovery: this.#preemptiveAlertHistoryRecovery,
+      historyPairs: this.#preemptiveAlertHistoryPairs,
     }
+  }
+
+  /** @deprecated Compatibility view for legacy configuration assertions. */
+  get guardConfiguration(): {
+    readonly controlledReconnect: boolean
+    readonly historyRecovery: PreemptiveAlertHistoryRecovery
+    readonly historyPairs: number
+  } {
+    return this.preemptiveAlertConfiguration
   }
 
   /**
@@ -7304,7 +7356,7 @@ export class RealtimeService {
     readonly reconnectLock: Mutex
     readonly requeueHostItem: (queued: QueuedHostResponse) => void
     readonly nextUrgentDeliveryToken: () => number
-    readonly nextGuardPreemptionToken: () => number
+    readonly nextPreemptiveAlertToken: () => number
     readonly bridge: RealtimeRuntimeBridge
     readonly tools: CompiledTools
     readonly runtime: ServiceRuntime
@@ -7329,9 +7381,9 @@ export class RealtimeService {
         this.#urgentDeliveryToken += 1
         return this.#urgentDeliveryToken
       },
-      nextGuardPreemptionToken: () => {
-        this.#guardPreemptionToken += 1
-        return this.#guardPreemptionToken
+      nextPreemptiveAlertToken: () => {
+        this.#preemptiveAlertToken += 1
+        return this.#preemptiveAlertToken
       },
       bridge: this.#bridge,
       tools: this.#tools,
