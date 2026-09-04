@@ -14,7 +14,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -35,7 +35,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -47,7 +47,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -88,7 +88,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -131,7 +131,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -152,7 +152,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -164,7 +164,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -205,7 +205,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -234,7 +234,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -255,7 +255,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -267,7 +267,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -308,7 +308,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -378,7 +378,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -399,7 +399,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -411,7 +411,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -452,7 +452,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -489,7 +489,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -510,7 +510,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -522,7 +522,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -563,7 +563,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -609,7 +609,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -630,7 +630,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -642,7 +642,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -683,7 +683,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -718,7 +718,7 @@
             "channel": "ambient_sim",
             "priority": 40,
             "wake": "fast",
-            "typical_latency": 3,
+            "typical_latency": 3.0,
             "compress_watermark": 8,
             "suggest": true
           },
@@ -738,7 +738,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "stop",
@@ -748,7 +748,7 @@
                 "properties": {},
                 "additionalProperties": false
               },
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "probe",
@@ -759,7 +759,7 @@
                 "additionalProperties": false
               },
               "readonly": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             }
           ]
         }
@@ -807,7 +807,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -828,7 +828,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -840,7 +840,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -881,7 +881,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -931,7 +931,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -952,7 +952,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -964,7 +964,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -1005,7 +1005,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -1160,7 +1160,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1181,7 +1181,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -1193,7 +1193,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -1234,7 +1234,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -1243,7 +1243,7 @@
       "memory": [
         {
           "channel": "conversation",
-          "ts": 1,
+          "ts": 1.0,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1252,7 +1252,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 2,
+          "ts": 2.0,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1261,7 +1261,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 3,
+          "ts": 3.0,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1309,7 +1309,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1330,7 +1330,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -1342,7 +1342,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -1383,7 +1383,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -1392,7 +1392,7 @@
       "memory": [
         {
           "channel": "conversation",
-          "ts": 1,
+          "ts": 1.0,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1401,7 +1401,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 2,
+          "ts": 2.0,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1410,7 +1410,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 3,
+          "ts": 3.0,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1482,7 +1482,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1503,7 +1503,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -1515,7 +1515,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -1556,7 +1556,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         },
@@ -1566,7 +1566,7 @@
             "channel": "ambient_sim",
             "priority": 40,
             "wake": "fast",
-            "typical_latency": 3,
+            "typical_latency": 3.0,
             "compress_watermark": 8,
             "suggest": true
           },
@@ -1586,7 +1586,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "stop",
@@ -1596,7 +1596,7 @@
                 "properties": {},
                 "additionalProperties": false
               },
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "probe",
@@ -1607,7 +1607,7 @@
                 "additionalProperties": false
               },
               "readonly": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             }
           ]
         }
@@ -1682,7 +1682,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1703,7 +1703,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -1715,7 +1715,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -1756,7 +1756,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -1786,7 +1786,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1807,7 +1807,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -1819,7 +1819,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -1860,7 +1860,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -1869,7 +1869,7 @@
       "memory": [
         {
           "channel": "conversation",
-          "ts": 1,
+          "ts": 1.0,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1878,7 +1878,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 2,
+          "ts": 2.0,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1887,7 +1887,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 3,
+          "ts": 3.0,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1896,7 +1896,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 4,
+          "ts": 4.0,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1905,7 +1905,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 5,
+          "ts": 5.0,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1914,7 +1914,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 6,
+          "ts": 6.0,
           "trust": "trusted_system",
           "priority": 50,
           "content": {
@@ -1923,7 +1923,7 @@
         },
         {
           "channel": "conversation",
-          "ts": 99,
+          "ts": 99.0,
           "trust": "trusted_user",
           "priority": 100,
           "content": {
@@ -1957,7 +1957,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -1978,7 +1978,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -1990,7 +1990,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -2031,7 +2031,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -2070,7 +2070,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -2091,7 +2091,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -2103,7 +2103,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -2144,7 +2144,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -2181,7 +2181,7 @@
             "channel": "param_sim",
             "priority": 45,
             "wake": "fast",
-            "typical_latency": 4,
+            "typical_latency": 4.0,
             "compress_watermark": 8
           },
           "ops": [
@@ -2206,7 +2206,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_int",
@@ -2226,7 +2226,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_str",
@@ -2246,7 +2246,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_bool",
@@ -2266,7 +2266,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_arr",
@@ -2286,7 +2286,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_obj",
@@ -2306,7 +2306,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "look",
@@ -2317,7 +2317,7 @@
                 "additionalProperties": false
               },
               "readonly": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             }
           ]
         }
@@ -2396,7 +2396,7 @@
             "channel": "param_sim",
             "priority": 45,
             "wake": "fast",
-            "typical_latency": 4,
+            "typical_latency": 4.0,
             "compress_watermark": 8
           },
           "ops": [
@@ -2421,7 +2421,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_int",
@@ -2441,7 +2441,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_str",
@@ -2461,7 +2461,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_bool",
@@ -2481,7 +2481,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_arr",
@@ -2501,7 +2501,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "loose_obj",
@@ -2521,7 +2521,7 @@
                 },
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             },
             {
               "name": "look",
@@ -2532,7 +2532,7 @@
                 "additionalProperties": false
               },
               "readonly": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             }
           ]
         }
@@ -2703,7 +2703,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -2724,7 +2724,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -2736,7 +2736,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -2777,7 +2777,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }
@@ -2836,7 +2836,7 @@
             "channel": "worker_sim",
             "priority": 50,
             "wake": "fast",
-            "typical_latency": 5,
+            "typical_latency": 5.0,
             "compress_watermark": 8,
             "progress_via_surrogate": true
           },
@@ -2857,7 +2857,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 30
+              "deadline_budget": 30.0
             },
             {
               "name": "status",
@@ -2869,7 +2869,7 @@
               },
               "readonly": true,
               "sync_result": true,
-              "deadline_budget": 5
+              "deadline_budget": 5.0
             },
             {
               "name": "configure",
@@ -2910,7 +2910,7 @@
                 ],
                 "additionalProperties": false
               },
-              "deadline_budget": 10
+              "deadline_budget": 10.0
             }
           ]
         }

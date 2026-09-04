@@ -1141,7 +1141,7 @@
                 "recency_fallback": 0
               },
               "omitted": 0,
-              "elapsed": 0
+              "elapsed": 0.0
             }
           },
           "runtime_calls": []
@@ -1199,7 +1199,7 @@
                 "recency_fallback": 2
               },
               "omitted": 0,
-              "elapsed": 0
+              "elapsed": 0.0
             }
           },
           "runtime_calls": []
@@ -1658,7 +1658,7 @@
                 "recency_fallback": 0
               },
               "omitted": 2,
-              "elapsed": 0
+              "elapsed": 0.0
             }
           },
           "runtime_calls": []
