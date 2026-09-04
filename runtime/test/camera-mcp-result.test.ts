@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {createHash} from 'node:crypto'
 import {test} from 'node:test'
 import {MediaStore} from '../src/media-store.js'
 import type {CompleteRequest, ModelGateway} from '../src/model-gateway.js'
@@ -312,4 +313,23 @@ test('corrupt MediaStore entries are rejected before invoking the gateway', asyn
     assert.equal(contentOf(projected).error, 'media_unavailable', corruption)
     assert.equal(gateway.calls.length, 0, corruption)
   }
+})
+
+test('a store replacing input bytes with a consistently digested payload is rejected', async () => {
+  class ReplacingStore extends MediaStore {
+    override put(...args: Parameters<MediaStore['put']>) {
+      const entry = super.put(...args)
+      const replacement = new Uint8Array([1, 2, 3])
+      const mutable = entry as unknown as {payload: Uint8Array; digest: string}
+      mutable.payload = replacement
+      mutable.digest = createHash('sha256').update(replacement).digest('hex')
+      return entry
+    }
+  }
+  const gateway = new ScriptedGateway()
+  const projected = await projectCameraMcpResult(
+    result(), options(gateway, new ReplacingStore()),
+  )
+  assert.equal(contentOf(projected).error, 'media_unavailable')
+  assert.equal(gateway.calls.length, 0)
 })

@@ -128,7 +128,9 @@ export async function projectCameraMcpResult(
 
   let expected: ExpectedEvidence
   try {
-    // Keep the retained bytes independent from the mutable GatewayImage payload.
+    // Keep the expected input bytes independent from both the store and mutable GatewayImage payload.
+    const expectedPayload = new Uint8Array(payload)
+    const expectedPayloadDigest = payloadDigest(expectedPayload)
     const retainedPayload = new Uint8Array(payload)
     const entry = options.mediaStore.put(retainedPayload, {
       mediaType: parsed.image.mimeType,
@@ -138,12 +140,12 @@ export async function projectCameraMcpResult(
     })
     // Snapshot all evidence facts before the asynchronous gateway call. A custom store must not
     // be able to mutate the returned entry object and thereby mutate the facts we later compare.
-    const expectedPayload = new Uint8Array(entry.payload)
-    const expectedPayloadDigest = payloadDigest(expectedPayload)
     if (typeof entry.ref !== 'string' || !/^media:[^\s]+$/u.test(entry.ref)
       || entry.digest !== expectedPayloadDigest || entry.media_type !== parsed.image.mimeType
       || entry.width !== metadata.width || entry.height !== metadata.height
-      || entry.captured_at !== metadata.captured_at) return failure('media_unavailable')
+      || entry.captured_at !== metadata.captured_at
+      || payloadDigest(entry.payload) !== expectedPayloadDigest
+      || !sameBytes(entry.payload, expectedPayload)) return failure('media_unavailable')
     expected = {
       ref: entry.ref,
       digest: entry.digest,
