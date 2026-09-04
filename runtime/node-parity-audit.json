@@ -75,6 +75,7 @@
     "runtime/src/effects.ts",
     "runtime/src/environment-contract.ts",
     "runtime/src/events.ts",
+    "runtime/src/executors/camera-mcp-result.ts",
     "runtime/src/executors/camera.ts",
     "runtime/src/executors/chromium-frame-source.ts",
     "runtime/src/executors/codex/adapter-live.ts",
@@ -105,7 +106,11 @@
     "runtime/src/executors/coding/work-order.ts",
     "runtime/src/executors/frame-source.ts",
     "runtime/src/executors/index.ts",
+    "runtime/src/executors/mcp-camera.ts",
     "runtime/src/executors/search.ts",
+    "runtime/src/executors/vision/controller-core.ts",
+    "runtime/src/executors/vision/controller.ts",
+    "runtime/src/executors/vision/lifecycle.ts",
     "runtime/src/executors/watcher.ts",
     "runtime/src/fixture-host.ts",
     "runtime/src/fixtures.ts",
@@ -177,6 +182,7 @@
     "runtime/src/trace.ts",
     "runtime/src/unicode-casefold.ts",
     "runtime/src/unicode-normalize.ts",
+    "runtime/src/vision-assess.ts",
     "runtime/src/work-tools.ts",
     "runtime/src/workspace-graph/context.ts",
     "runtime/src/workspace-graph/factory.ts",
@@ -985,6 +991,72 @@
       "test": "runtime/test/desktop-progress.test.ts"
     },
     {
+      "file": "runtime/src/executors/camera-mcp-result.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "line": 143,
+      "snippet": "/^media:[^\\s]+$/u",
+      "snippet_sha256": "fe308091d51f120597bcf951e3697f4c0316062d34cc842107dc0cb1b1ddc6ca",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/camera-mcp-result.test.ts",
+      "behavior": "valid MCP image is stored and projected without internal media leaks"
+    },
+    {
+      "file": "runtime/src/executors/camera-mcp-result.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 270,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/camera-mcp-result.test.ts",
+      "behavior": "oversized payload and invalid structured metadata fail closed"
+    },
+    {
+      "file": "runtime/src/executors/camera-mcp-result.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "line": 283,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/camera-mcp-result.test.ts",
+      "behavior": "oversized payload and invalid structured metadata fail closed"
+    },
+    {
+      "file": "runtime/src/executors/camera-mcp-result.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "line": 287,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/camera-mcp-result.test.ts",
+      "behavior": "oversized payload and invalid structured metadata fail closed"
+    },
+    {
+      "file": "runtime/src/executors/camera-mcp-result.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "line": 297,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/camera-mcp-result.test.ts",
+      "behavior": "oversized payload and invalid structured metadata fail closed"
+    },
+    {
+      "file": "runtime/src/executors/camera-mcp-result.ts",
+      "kind": "string_trim",
+      "occurrence_index": 5,
+      "line": 321,
+      "snippet": "observation.trim()",
+      "snippet_sha256": "01a358fe7ac88f719b30b2eecfa70c4a52378221065ee845e9c3f7d47ca4c970",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/camera-mcp-result.test.ts",
+      "behavior": "valid MCP image is stored and projected without internal media leaks"
+    },
+    {
       "file": "runtime/src/executors/codex/adapter-project.ts",
       "kind": "locale_unicode",
       "occurrence_index": 0,
@@ -1491,6 +1563,39 @@
       "test": "runtime/test/coding-intake.test.ts"
     },
     {
+      "file": "runtime/src/executors/mcp-camera.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 84,
+      "snippet": "block.text.length",
+      "snippet_sha256": "31f0aac22fe94df0a91fd5b1737d95b6a706d864e63e32c27a525968fc9e7a56",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/mcp-camera.test.ts",
+      "behavior": "MCP result parser accepts canonical four and five MiB image payloads"
+    },
+    {
+      "file": "runtime/src/executors/mcp-camera.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 84,
+      "snippet": "block.text.length",
+      "snippet_sha256": "31f0aac22fe94df0a91fd5b1737d95b6a706d864e63e32c27a525968fc9e7a56",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/mcp-camera.test.ts",
+      "behavior": "MCP result parser accepts canonical four and five MiB image payloads"
+    },
+    {
+      "file": "runtime/src/executors/mcp-camera.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "line": 96,
+      "snippet": "data.length",
+      "snippet_sha256": "5112417b26dcabce32653d1f32793b43b5ab7ff07de91af3d7cdcb5799a503ed",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/mcp-camera.test.ts",
+      "behavior": "MCP result parser accepts canonical four and five MiB image payloads"
+    },
+    {
       "file": "runtime/src/executors/search.ts",
       "kind": "string_length",
       "occurrence_index": 0,
@@ -1533,6 +1638,72 @@
       "disposition": "wire_json",
       "behavior": "search is a registry adapter and accepts the registry request context",
       "test": "runtime/test/executors-search.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/vision/controller-core.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 179,
+      "snippet": "delegateId.length",
+      "snippet_sha256": "901a0d5e2756036883271e7c20497264d110dd074e5cc830e1d08112d21d9eba",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-controller-core.test.ts",
+      "behavior": "runtime admission must be an exact bounded data result before delegation"
+    },
+    {
+      "file": "runtime/src/executors/vision/controller-core.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "line": 215,
+      "snippet": "model.trim()",
+      "snippet_sha256": "3b973d866d2ad5d99d7579a9af5f1e46ab3e16c821e791d0500f089211b9f7b8",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/vision-controller-core.test.ts",
+      "behavior": "routine and urgent assessments map to hidden watch and guard starts with exact defaults"
+    },
+    {
+      "file": "runtime/src/executors/vision/controller-core.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 2,
+      "line": 462,
+      "snippet": "instruction.trim().toLocaleLowerCase()",
+      "snippet_sha256": "2171190906af2aa56136fe1b96ecd3914fd5e2ffc4a0a89b68e83ef43c56d98f",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/vision-controller-core.test.ts",
+      "behavior": "valid-schema semantic mistakes become stable unclear without an effect"
+    },
+    {
+      "file": "runtime/src/executors/vision/controller-core.ts",
+      "kind": "string_trim",
+      "occurrence_index": 3,
+      "line": 462,
+      "snippet": "instruction.trim()",
+      "snippet_sha256": "5209fcb8877242a43cd5ccf7f8e68926a0639b198b22c0d7fd286d15c942de56",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/vision-controller-core.test.ts",
+      "behavior": "routine and urgent assessments map to hidden watch and guard starts with exact defaults"
+    },
+    {
+      "file": "runtime/src/executors/vision/controller.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 156,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-controller.test.ts",
+      "behavior": "vision facade requires exact own enumerable data keys for result and detail"
+    },
+    {
+      "file": "runtime/src/executors/vision/controller.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 156,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-controller.test.ts",
+      "behavior": "vision facade requires exact own enumerable data keys for result and detail"
     },
     {
       "file": "runtime/src/fixture-host.ts",
@@ -2466,7 +2637,7 @@
       "snippet": "sessionEpoch ?? this.#state.sessionEpoch",
       "snippet_sha256": "5221f61bc9c1717f92943cdf2ebbf5a38cbff30a55469e960cb6df7b3fab923a",
       "disposition": "wire_json",
-      "behavior": "an unknown Guard history mode is refused before the session is touched",
+      "behavior": "an unknown preemptive-alert history mode is refused before the session is touched",
       "test": "runtime/test/realtime-session.test.ts"
     },
     {
@@ -2477,7 +2648,7 @@
       "snippet": "snapshot.version",
       "snippet_sha256": "c6dc469ee7762a3634bff95675a73e385d20b773ed5283d1f637a8a2df59219e",
       "disposition": "wire_json",
-      "behavior": "an unknown Guard history mode is refused before the session is touched",
+      "behavior": "an unknown preemptive-alert history mode is refused before the session is touched",
       "test": "runtime/test/realtime-session.test.ts"
     },
     {
@@ -2488,7 +2659,7 @@
       "snippet": "snapshot.active_delegates.length",
       "snippet_sha256": "4a300b5a3d2751cd9fae1bfa0a638e8e0676d468420334175501ec08033d44e1",
       "disposition": "wire_json",
-      "behavior": "an unknown Guard history mode is refused before the session is touched",
+      "behavior": "an unknown preemptive-alert history mode is refused before the session is touched",
       "test": "runtime/test/realtime-session.test.ts"
     },
     {
@@ -2499,7 +2670,7 @@
       "snippet": "snapshot.spoken_event_ids.length",
       "snippet_sha256": "a79b67760cf038b6562d16127e2cd857d2afc5873e1993ff532124bf1f3cfcc0",
       "disposition": "wire_json",
-      "behavior": "an unknown Guard history mode is refused before the session is touched",
+      "behavior": "an unknown preemptive-alert history mode is refused before the session is touched",
       "test": "runtime/test/realtime-session.test.ts"
     },
     {
@@ -2510,7 +2681,7 @@
       "snippet": "snapshot.interrupted_event_ids.length",
       "snippet_sha256": "bb33228ce4eff94dfc84feb8ee7ceabae354a5f2f8a7c4062f79df686ab6d2f7",
       "disposition": "wire_json",
-      "behavior": "an unknown Guard history mode is refused before the session is touched",
+      "behavior": "an unknown preemptive-alert history mode is refused before the session is touched",
       "test": "runtime/test/realtime-session.test.ts"
     },
     {
@@ -2521,7 +2692,7 @@
       "snippet": "remaining",
       "snippet_sha256": "43e3ece73ff8f4eb23096122eaa99c8a8e84945a0b214662f2123bd6b6f0e692",
       "disposition": "wire_json",
-      "behavior": "an unknown Guard history mode is refused before the session is touched",
+      "behavior": "an unknown preemptive-alert history mode is refused before the session is touched",
       "test": "runtime/test/realtime-session.test.ts"
     },
     {
@@ -2532,7 +2703,7 @@
       "snippet": "omitted",
       "snippet_sha256": "f34912a1d0fcc21b27e4c2a11adc67d4fa5de69b5f9d4f3aa5bcb2f405950fea",
       "disposition": "wire_json",
-      "behavior": "an unknown Guard history mode is refused before the session is touched",
+      "behavior": "an unknown preemptive-alert history mode is refused before the session is touched",
       "test": "runtime/test/realtime-session.test.ts"
     },
     {
@@ -2798,6 +2969,127 @@
       "disposition": "host_only_unicode",
       "behavior": "the committed vectors were exported against the pinned Unicode version",
       "test": "runtime/test/unicode-nfkc.test.ts"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 124,
+      "snippet": "context.request_id.length",
+      "snippet_sha256": "81e5c6a513e1f44f8dff2b1e6fc6b145f6b2288418d9bb60a7e7b6fd2e00923d",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "oversized strings, excess shape, arrays, and nested values fail closed"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 155,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "oversized strings, excess shape, arrays, and nested values fail closed"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "line": 185,
+      "snippet": "question.length",
+      "snippet_sha256": "240c7c9a13ecf5de990f6060893a50fbae59a74f16fd7efd1d741fb12920d6c3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "oversized strings, excess shape, arrays, and nested values fail closed"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "line": 185,
+      "snippet": "question.length",
+      "snippet_sha256": "240c7c9a13ecf5de990f6060893a50fbae59a74f16fd7efd1d741fb12920d6c3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "oversized strings, excess shape, arrays, and nested values fail closed"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "line": 252,
+      "snippet": "condition.length",
+      "snippet_sha256": "7892ad538cce2e92d774d0f5af06380e9b26a3d46a4e8d31e523623de29b24c6",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "oversized strings, excess shape, arrays, and nested values fail closed"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "line": 252,
+      "snippet": "condition.length",
+      "snippet_sha256": "7892ad538cce2e92d774d0f5af06380e9b26a3d46a4e8d31e523623de29b24c6",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "oversized strings, excess shape, arrays, and nested values fail closed"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_length",
+      "occurrence_index": 6,
+      "line": 269,
+      "snippet": "evidence.trim().length",
+      "snippet_sha256": "bc016fb14b810a47f53250e51b44074f881baefd033453e227ead82aad9147cf",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "oversized strings, excess shape, arrays, and nested values fail closed"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_trim",
+      "occurrence_index": 7,
+      "line": 269,
+      "snippet": "evidence.trim()",
+      "snippet_sha256": "6469a72387b60c6c9bc4d1359c9655fe63f5b803c908d8984c13b8a3d4c81ace",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "urgent evidence must be an exact nonempty substring"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "string_length",
+      "occurrence_index": 8,
+      "line": 270,
+      "snippet": "evidence.length",
+      "snippet_sha256": "1a54e213b48b11ec5d885e6fe524deeb97e446ce613ce31b8e3f5c2cfc3590d2",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "oversized strings, excess shape, arrays, and nested values fail closed"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 9,
+      "line": 311,
+      "snippet": "identity.revision",
+      "snippet_sha256": "769282f0fce9821a3fa2c6fef750300df48a565082baa26481460d6f38c5ab20",
+      "disposition": "wire_json",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "stale request, revision, epoch, or desire supersedes the decision"
+    },
+    {
+      "file": "runtime/src/vision-assess.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 10,
+      "line": 311,
+      "snippet": "identity.session_epoch",
+      "snippet_sha256": "187d98a3155109fe8ff318d0e6ae973d87fed89be531fe6954e48466e8d4fcf6",
+      "disposition": "wire_json",
+      "test": "runtime/test/vision-assess.test.ts",
+      "behavior": "stale request, revision, epoch, or desire supersedes the decision"
     },
     {
       "file": "runtime/src/workspace-graph/context.ts",
