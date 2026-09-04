@@ -116,6 +116,9 @@ export function buildQwenRealtimeAssembly(
     ...(options.searchTransport === undefined ? {} : {searchTransport: options.searchTransport}),
     ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
+    ...(options.cameraModuleEnabled === undefined
+      ? {}
+      : {cameraModuleEnabled: options.cameraModuleEnabled}),
   })
   const provider = options.qwenProvider ?? buildQwenRealtimeAssembly({
     config: qwen,

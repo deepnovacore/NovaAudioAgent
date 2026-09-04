@@ -626,7 +626,7 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
   assert.equal(realtime.service.internals.tools, realtime.tools)
   assert.equal(realtime.tools.bindings.has('memory__recall'), true)
   assert.deepEqual([...realtime.runtime.executors.keys()].slice(0, 4), [
-    'search', 'cam', 'watch', 'guard',
+    'search', 'mcp__nova_camera', 'watch', 'guard',
   ])
   assert.deepEqual(realtime.service.guardConfiguration, {
     controlledReconnect: false, historyRecovery: 'none', historyPairs: 4,
@@ -652,6 +652,15 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
   await settleNamed('cascaded assembly repeated stop', realtime.stop())
   assert.equal(frameSource.stops, 1)
   assert.equal(telemetryCloses, 0)
+})
+
+test('cascaded composition propagates cameraModuleEnabled without changing search or memory', () => {
+  const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings(), {cameraModuleEnabled: false}))
+  const names = [...realtime.core.runtime.executors.keys()]
+  assert.deepEqual(names, ['search', 'fast_sim'])
+  assert.ok(!names.some(name => name === 'cam' || name === 'mcp__nova_camera' || name === 'watch' || name === 'guard'))
+  assert.ok(realtime.tools.bindings.has('search__search'))
+  assert.ok(realtime.tools.bindings.has('memory__recall'))
 })
 
 test('cascaded assembly owns enabled graph storage and exposes replaceable Header delivery',

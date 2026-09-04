@@ -7,6 +7,7 @@ import {
   CAMERA_MCP_MANIFEST,
   parseMcpToolResult,
 } from '../src/executors/mcp-camera.js'
+import {CAMERA_MAX_IMAGE_BYTES} from '../src/executors/camera-mcp-result.js'
 import type {ExecutorDispatchContext} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
 import {delegateSchema} from '../src/ports.js'
@@ -90,6 +91,57 @@ test('camera admission and cancellation happen before capture and late grants ca
   await adapter.close()
 })
 
+test('permission refusal is a trusted host fact with the watcher error code', async () => {
+  const adapter = new CameraMcpAdapter({
+    source: Object.assign(source(), {admitObservation: () => Promise.resolve('restricted' as const)}),
+    mediaStore: new MediaStore(), model: 'watch-model',
+    gateway: {complete() { return Promise.resolve({text: '{"observation":"never"}'})}},
+  })
+  assert.deepEqual(await adapter.dispatch('snapshot', {}, context()), {
+    outcome: 'refused', trust: 'trusted_system', content: {error: 'camera_permission_denied'},
+  })
+  await adapter.close()
+})
+
+test('a failed MCP peer connect is discarded before a clean retry', async () => {
+  const adapter = new CameraMcpAdapter({source: source(), mediaStore: new MediaStore(), model: 'watch-model',
+    gateway: {complete() { return Promise.resolve({text: '{"observation":"desk"}'}) }}})
+  const firstPeer = adapter.clientForTest() as Client & {connect: Client['connect']}
+  Object.defineProperty(firstPeer, 'connect', {
+    configurable: true,
+    value: () => Promise.reject(new Error('first peer connect failed')),
+  })
+  await assert.rejects(adapter.connect(), /first peer connect failed/u)
+  await adapter.connect()
+  assert.notEqual(adapter.clientForTest(), firstPeer)
+  const closing = adapter.close()
+  assert.equal(adapter.close(), closing)
+  await closing
+})
+
+test('malformed source frames never become base64 MCP output or gateway input', async () => {
+  const malformed: readonly unknown[] = [
+    {...frame, payload: new Uint8Array()},
+    {...frame, payload: new Uint8Array(5 * 1024 * 1024 + 1)},
+    {...frame, media_type: 'image/gif'},
+    {...frame, width: 0},
+    {...frame, height: 20_001},
+    {...frame, captured_at: 0},
+  ]
+  for (const value of malformed) {
+    let completions = 0
+    const adapter = new CameraMcpAdapter({
+      source: source(value as Frame), mediaStore: new MediaStore(), model: 'watch-model',
+      gateway: {complete() { completions += 1; return Promise.resolve({text: '{"observation":"never"}'})}},
+    })
+    assert.deepEqual(await adapter.dispatch('snapshot', {}, context()), {
+      outcome: 'unknown', trust: 'untrusted_external', content: {error: 'capture_unavailable'},
+    })
+    assert.equal(completions, 0)
+    await adapter.close()
+  }
+})
+
 test('MCP foundation accepts bounded plain text or one image only and fails closed for other shapes', () => {
   assert.deepEqual(parseMcpToolResult({content: [{type: 'text', text: 'ok'}]}), {kind: 'text', text: 'ok'})
   assert.equal(parseMcpToolResult({content: []}).kind, 'invalid')
@@ -98,4 +150,30 @@ test('MCP foundation accepts bounded plain text or one image only and fails clos
   assert.equal(parseMcpToolResult({content: [{type: 'image', data: '', mimeType: 'image/jpeg'}]}).kind, 'invalid')
   const hostile = new Proxy({}, {get() { throw new Error('hostile MCP response') }})
   assert.deepEqual(parseMcpToolResult(hostile), {kind: 'invalid'})
+  let getterCalls = 0
+  const accessor = Object.create(Object.prototype, {
+    content: {enumerable: true, get: () => { getterCalls += 1; return [] }},
+  }) as object
+  assert.deepEqual(parseMcpToolResult(accessor), {kind: 'invalid'})
+  assert.equal(getterCalls, 0)
+  let proxyGets = 0
+  const trapped = new Proxy({content: [{type: 'text', text: 'ok'}]}, {
+    get(target, key, receiver): unknown { proxyGets += 1; return Reflect.get(target, key, receiver) as unknown },
+    ownKeys() { throw new Error('hostile ownKeys') },
+  })
+  assert.deepEqual(parseMcpToolResult(trapped), {kind: 'invalid'})
+  assert.equal(proxyGets, 0)
+  let metadataGets = 0
+  const hostileMetadata = new Proxy({captured_at: 1_700_000_000, width: 2, height: 2}, {
+    get(target, key, receiver): unknown { metadataGets += 1; return Reflect.get(target, key, receiver) as unknown },
+    ownKeys() { throw new Error('hostile metadata ownKeys') },
+  })
+  assert.equal(parseMcpToolResult({
+    content: [{type: 'image', data: Buffer.from('x').toString('base64'), mimeType: 'image/jpeg'}],
+    structuredContent: hostileMetadata,
+  }).kind, 'invalid')
+  assert.equal(metadataGets, 0)
+  assert.equal(parseMcpToolResult({
+    content: [{type: 'image', data: 'A'.repeat(Math.ceil(CAMERA_MAX_IMAGE_BYTES / 3) * 4 + 4), mimeType: 'image/jpeg'}],
+  }).kind, 'invalid')
 })

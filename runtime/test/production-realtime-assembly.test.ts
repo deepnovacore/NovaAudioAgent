@@ -34,6 +34,28 @@ test('production selector constructs only the cascaded branch', () => {
   assert.equal(actual, expected)
 })
 
+test('production selector preserves cameraModuleEnabled for either selected composition', () => {
+  for (const mode of ['integrated', 'cascaded'] as const) {
+    const selected: boolean[] = []
+    buildProductionRealtimeAssembly({
+      settings: loadSettings({NOVA_AUDIO_AGENT_PIPELINE_MODE: mode}),
+      cameraModuleEnabled: false,
+    }, {
+      integrated: options => {
+        if (mode !== 'integrated') throw new Error('unselected')
+        selected.push(options.cameraModuleEnabled ?? true)
+        return {mode} as unknown as RealtimeAssembly
+      },
+      cascaded: options => {
+        if (mode !== 'cascaded') throw new Error('unselected')
+        selected.push(options.cameraModuleEnabled ?? true)
+        return {mode} as unknown as RealtimeAssembly
+      },
+    })
+    assert.deepEqual(selected, [false])
+  }
+})
+
 test('production selector reads only pipeline_mode before invoking the selected builder', () => {
   for (const mode of ['integrated', 'cascaded'] as const) {
     const settings = new Proxy({pipeline_mode: mode} as Settings, {

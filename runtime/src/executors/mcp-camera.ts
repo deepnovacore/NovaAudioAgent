@@ -15,12 +15,23 @@ import type {MediaStore} from '../media-store.js'
 import type {ModelGateway} from '../model-gateway.js'
 import {handoffPolicySchema} from '../memory.js'
 import {executorManifestSchema, opSpecSchema, type ExecutorManifest} from '../ports.js'
-import {CAMERA_MAX_IMAGE_BYTES, projectCameraMcpResult, type CameraMcpCallToolResult} from './camera-mcp-result.js'
+import {
+  CAMERA_MAX_HEIGHT,
+  CAMERA_MAX_IMAGE_BYTES,
+  CAMERA_MAX_PIXELS,
+  CAMERA_MAX_WIDTH,
+  CAMERA_MAX_CAPTURED_AT,
+  CAMERA_MIN_CAPTURED_AT,
+  projectCameraMcpResult,
+  type CameraMcpCallToolResult,
+} from './camera-mcp-result.js'
 import type {Frame, FrameSource, ObservationAdmission} from './watcher.js'
 
 export const MCP_CAMERA_EXECUTOR = 'mcp__nova_camera'
 export const MCP_CAMERA_SNAPSHOT = 'snapshot'
 const MAX_TEXT_CHARS = 400
+const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const MAX_BASE64_CHARS = Math.ceil(CAMERA_MAX_IMAGE_BYTES / 3) * 4
 
 export const CAMERA_MCP_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
   name: MCP_CAMERA_EXECUTOR,
@@ -57,37 +68,41 @@ export function parseMcpToolResult(input: unknown): ParsedMcpResult {
 }
 
 function parseMcpToolResultUnchecked(input: unknown): ParsedMcpResult {
-  if (!plain(input) || input.isError === true || !Array.isArray(input.content) || input.content.length !== 1) {
-    return {kind: 'invalid'}
+  const top = exactPlainData(input, ['content'], ['structuredContent'])
+  if (top === null) return {kind: 'invalid'}
+  const structuredContent = 'structuredContent' in top
+    ? exactPlainData(top.structuredContent, ['captured_at', 'width', 'height'], [])
+    : undefined
+  if ('structuredContent' in top && structuredContent === null) return {kind: 'invalid'}
+  const content = singletonDataArray(top.content)
+  if (content === null) return {kind: 'invalid'}
+  const block = exactPlainData(content.value, ['type'], ['text', 'data', 'mimeType'])
+  if (block === null) return {kind: 'invalid'}
+  if (block.type === 'text') {
+    if (Object.keys(block).length !== 2 || typeof block.text !== 'string'
+      || block.text.length === 0 || block.text.length > MAX_TEXT_CHARS) return {kind: 'invalid'}
+    return {kind: 'text', text: block.text}
   }
-  if (Object.keys(input).some(key => key !== 'content' && key !== 'structuredContent')) return {kind: 'invalid'}
-  const [content] = input.content as readonly unknown[]
-  if (!plain(content)) return {kind: 'invalid'}
-  if (content.type === 'text') {
-    if (typeof content.text !== 'string' || content.text.length === 0 || content.text.length > MAX_TEXT_CHARS
-      || Object.keys(content).some(key => key !== 'type' && key !== 'text')) {
-      return {kind: 'invalid'}
-    }
-    return {kind: 'text', text: content.text}
-  }
-  if (content.type !== 'image' || typeof content.data !== 'string' || typeof content.mimeType !== 'string'
-    || Object.keys(content).some(key => key !== 'type' && key !== 'data' && key !== 'mimeType')
-    || !canonicalImage(content.data, content.mimeType)) {
-    return {kind: 'invalid'}
-  }
+  if (Object.keys(block).length !== 3 || block.type !== 'image'
+    || typeof block.data !== 'string' || typeof block.mimeType !== 'string'
+    || !canonicalImage(block.data, block.mimeType)) return {kind: 'invalid'}
   // `projectCameraMcpResult` owns strict base64, MIME, size, and metadata validation.
-  return {kind: 'image', result: {content: [{type: 'image', data: content.data, mimeType: content.mimeType}],
-    ...(Object.prototype.hasOwnProperty.call(input, 'structuredContent')
-      ? {structuredContent: input.structuredContent} : {})}}
+  return {kind: 'image', result: {content: [{type: 'image', data: block.data, mimeType: block.mimeType}],
+    ...(structuredContent === undefined ? {} : {structuredContent})}}
 }
 
 function canonicalImage(data: string, mimeType: string): boolean {
-  if (!new Set(['image/jpeg', 'image/png', 'image/webp']).has(mimeType) || data === '') return false
+  if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimeType) || data === '' || data.length > MAX_BASE64_CHARS
+    || !canonicalBase64(data)) return false
   try {
     const decoded = Buffer.from(data, 'base64')
     return decoded.byteLength > 0 && decoded.byteLength <= CAMERA_MAX_IMAGE_BYTES
-      && decoded.toString('base64') === data
   } catch { return false }
+}
+
+function canonicalBase64(value: string): boolean {
+  return value.length % 4 === 0
+    && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
 }
 
 interface AdmissionGatedFrameSource extends FrameSource {
@@ -98,8 +113,43 @@ function isAdmissionGated(source: FrameSource): source is AdmissionGatedFrameSou
   return 'admitObservation' in source && typeof source.admitObservation === 'function'
 }
 
-function plain(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && Object.getPrototypeOf(value) === Object.prototype
+function exactPlainData(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[],
+): Readonly<Record<string, unknown>> | null {
+  try {
+    if (typeof value !== 'object' || value === null || Object.getPrototypeOf(value) !== Object.prototype) return null
+    const keys = Reflect.ownKeys(value)
+    if (keys.length < required.length || keys.some(key => typeof key !== 'string')) return null
+    const stringKeys = keys as readonly string[]
+    const allowed = new Set([...required, ...optional])
+    if (stringKeys.some(key => !allowed.has(key)) || required.some(key => !stringKeys.includes(key))) return null
+    const result: Record<string, unknown> = {}
+    for (const key of stringKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined || !descriptor.enumerable || !('value' in descriptor)) return null
+      result[key] = descriptor.value
+    }
+    return result
+  } catch {
+    return null
+  }
+}
+
+function singletonDataArray(value: unknown): Readonly<{readonly value: unknown}> | null {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null
+    const keys = Reflect.ownKeys(value)
+    if (keys.length !== 2 || !keys.includes('0') || !keys.includes('length')) return null
+    const length = Object.getOwnPropertyDescriptor(value, 'length')
+    const item = Object.getOwnPropertyDescriptor(value, '0')
+    if (length === undefined || !('value' in length) || length.value !== 1
+      || item === undefined || !item.enumerable || !('value' in item)) return null
+    return {value: item.value}
+  } catch {
+    return null
+  }
 }
 
 function cancelled(): ExecutorHandoff {
@@ -164,22 +214,31 @@ export class CameraMcpAdapter implements ExecutorAdapter {
   async connect(): Promise<void> {
     if (this.#closed !== undefined) {
       const closed = this.#closed
-      this.#connection ??= (async () => {
-        await closed
-        if (this.#closed === closed) {
-          this.#closed = undefined
-          this.#replaceClosedConnection()
-        }
-        await this.#server.connect(this.#serverTransport)
-        await this.#client.connect(this.#clientTransport)
-      })()
-      return await this.#connection
+      await closed
+      if (this.#closed === closed) {
+        this.#closed = undefined
+        this.#replaceClosedConnection()
+      }
     }
-    this.#connection ??= (async () => {
-      await this.#server.connect(this.#serverTransport)
-      await this.#client.connect(this.#clientTransport)
+    if (this.#connection !== undefined) return await this.#connection
+    const server = this.#server
+    const client = this.#client
+    const pending: {attempt: Promise<void> | undefined} = {attempt: undefined}
+    pending.attempt = (async () => {
+      try {
+        await server.connect(this.#serverTransport)
+        await client.connect(this.#clientTransport)
+      } catch (error) {
+        await Promise.allSettled([client.close(), server.close()])
+        if (pending.attempt !== undefined && this.#connection === pending.attempt) {
+          this.#connection = undefined
+          if (this.#server === server && this.#client === client) this.#replaceClosedConnection()
+        }
+        throw error
+      }
     })()
-    return await this.#connection
+    this.#connection = pending.attempt
+    return await pending.attempt
   }
 
   close(): Promise<void> {
@@ -234,27 +293,46 @@ export class CameraMcpAdapter implements ExecutorAdapter {
     let captured: Frame | null
     try { captured = await this.#source.snapshot() } catch { return cameraError('capture_unavailable') }
     if (signal.aborted) return cameraError('cancelled')
-    if (captured === null) return cameraError('capture_unavailable')
+    const valid = validFrame(captured)
+    if (valid === null) return cameraError('capture_unavailable')
     return {
-      content: [{type: 'image', data: Buffer.from(captured.payload).toString('base64'), mimeType: captured.media_type}],
-      structuredContent: {captured_at: captured.captured_at, width: captured.width, height: captured.height},
+      content: [{type: 'image', data: Buffer.from(valid.payload).toString('base64'), mimeType: valid.media_type}],
+      structuredContent: {captured_at: valid.captured_at, width: valid.width, height: valid.height},
     }
   }
 }
 
 function cameraResultError(input: unknown): ExecutorHandoff | null {
-  if (!plain(input) || input.isError !== true || !Array.isArray(input.content) || input.content.length !== 1) return null
-  const [block] = input.content as readonly unknown[]
-  if (!plain(block) || block.type !== 'text' || typeof block.text !== 'string'
-    || Object.keys(block).some(key => key !== 'type' && key !== 'text')) return failure('camera_mcp_invalid_result')
+  const top = exactPlainData(input, ['isError', 'content'], [])
+  if (top?.isError !== true) return null
+  const content = singletonDataArray(top.content)
+  const block = exactPlainData(content?.value, ['type', 'text'], [])
+  if (block?.type !== 'text' || typeof block.text !== 'string') return failure('camera_mcp_invalid_result')
   if (block.text === 'cancelled') return cancelled()
   if (block.text === 'camera_permission_denied' || block.text === 'camera_permission_restricted') {
-    return {outcome: 'refused', trust: 'untrusted_external', content: {error: block.text}}
+    return {outcome: 'refused', trust: 'trusted_system', content: {error: 'camera_permission_denied'}}
   }
-  if (block.text === 'capture_unavailable') {
-    return {outcome: 'unknown', trust: 'untrusted_external', content: {error: block.text}}
-  }
+  if (block.text === 'capture_unavailable') return {outcome: 'unknown', trust: 'untrusted_external', content: {error: 'capture_unavailable'}}
   return failure('camera_mcp_invalid_result')
+}
+
+function validFrame(value: Frame | null): Frame | null {
+  try {
+    if (value === null || !(value.payload instanceof Uint8Array)
+      || !SUPPORTED_IMAGE_MIME_TYPES.has(value.media_type)
+      || value.payload.byteLength === 0 || value.payload.byteLength > CAMERA_MAX_IMAGE_BYTES
+      || !Number.isSafeInteger(value.width) || value.width <= 0 || value.width > CAMERA_MAX_WIDTH
+      || !Number.isSafeInteger(value.height) || value.height <= 0 || value.height > CAMERA_MAX_HEIGHT
+      || value.width * value.height > CAMERA_MAX_PIXELS
+      || !Number.isFinite(value.captured_at) || value.captured_at < CAMERA_MIN_CAPTURED_AT
+      || value.captured_at > CAMERA_MAX_CAPTURED_AT) return null
+    return {
+      payload: new Uint8Array(value.payload), media_type: value.media_type,
+      width: value.width, height: value.height, captured_at: value.captured_at,
+    }
+  } catch {
+    return null
+  }
 }
 
 function cameraError(code: string): CallToolResult {

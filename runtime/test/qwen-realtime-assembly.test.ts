@@ -278,6 +278,19 @@ test('Qwen reports no validated original-image injection capability', () => {
   assert.deepEqual(qwen.mediaCapability, {originalImageInput: false})
 })
 
+test('Qwen composition propagates cameraModuleEnabled to the core assembly', () => {
+  const connector = recordingConnector()
+  const realtime = buildQwenRealtimeAssembly(qwenOptions(
+    settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}), connector.connector,
+    {cameraModuleEnabled: false},
+  ))
+  const names = [...realtime.core.runtime.executors.keys()]
+  assert.deepEqual(names.slice(0, 2), ['search', 'fast_sim'])
+  assert.ok(!names.some(name => name === 'mcp__nova_camera' || name === 'watch' || name === 'guard'))
+  assert.ok(realtime.tools.bindings.has('search__search'))
+  assert.ok(realtime.tools.bindings.has('memory__recall'))
+})
+
 test('Qwen factory owns enabled graph storage while unsafe graph config stays voice-only', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-qwen-graph-')))
   try {
