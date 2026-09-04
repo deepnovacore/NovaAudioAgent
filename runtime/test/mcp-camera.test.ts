@@ -2,15 +2,23 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import type {Client} from '@modelcontextprotocol/sdk/client/index.js'
 import {MediaStore} from '../src/media-store.js'
+import {Memory} from '../src/memory.js'
+import {PlaybackRegistry} from '../src/playback.js'
+import {compileToolSchema} from '../src/tool-schema.js'
+import {RealtimeRuntimeBridge} from '../src/realtime/bridge.js'
+import {RealtimeService, type ServiceProvider} from '../src/realtime/service.js'
+import {RealtimeSession, type SessionProvider} from '../src/realtime/session.js'
 import {
   CameraMcpAdapter,
   CAMERA_MCP_MANIFEST,
+  MCP_CAMERA_EXECUTOR,
   parseMcpToolResult,
 } from '../src/executors/mcp-camera.js'
 import {CAMERA_MAX_IMAGE_BYTES} from '../src/executors/camera-mcp-result.js'
 import type {ExecutorDispatchContext} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
-import {delegateSchema} from '../src/ports.js'
+import {delegateSchema, type DelegateRequest} from '../src/ports.js'
+import type {EventRecord} from '../src/events.js'
 import type {Frame, FrameSource} from '../src/executors/watcher.js'
 
 const frame: Frame = {
@@ -34,6 +42,127 @@ function source(value: Frame | null = frame): FrameSource {
   }
 }
 
+async function runCameraThroughRealtime(response: string | Error): Promise<{
+  readonly injected: readonly {readonly kind: string; readonly content: string; readonly call_id: string | null}[]
+  readonly created: readonly string[]
+  readonly lateFacts: readonly string[]
+}> {
+  const clock = new VirtualClock()
+  const memory = new Memory({policies: [CAMERA_MCP_MANIFEST.policy]})
+  const adapter = new CameraMcpAdapter({
+    source: source(), mediaStore: new MediaStore(), model: 'watch-model',
+    gateway: {complete: () => response instanceof Error
+      ? Promise.reject(response)
+      : Promise.resolve({text: response})},
+  })
+  const injected: {kind: string; content: string; call_id: string | null}[] = []
+  const created: string[] = []
+  let epoch = 0
+  const provider: SessionProvider & ServiceProvider = {
+    connect: () => { epoch += 1; return Promise.resolve({epoch}) },
+    injectHostItem: item => {
+      injected.push({kind: item.kind, content: item.content, call_id: item.call_id})
+      return Promise.resolve({
+        session_epoch: epoch, host_item_id: item.host_item_id,
+        provider_item_id: `provider:${item.event_id}`,
+      })
+    },
+    createResponse: intent => { created.push(intent.item.content); return Promise.resolve() },
+    cancelResponse: () => Promise.resolve(),
+    sendAudio: () => Promise.resolve(),
+    events: async function* (): AsyncGenerator<never> { await Promise.resolve() },
+    close: () => Promise.resolve(),
+  }
+  const playback = new PlaybackRegistry({
+    idFactory: (() => { let id = 0; return () => `id-${++id}` })(),
+    onFrame: () => undefined, onClear: () => undefined, onAlert: () => undefined,
+  })
+  const session = new RealtimeSession({
+    provider, playback, idFactory: (() => { let id = 100; return () => `id-${++id}` })(), clock,
+  })
+  const serviceHolder: {current?: RealtimeService} = {}
+  let dispatchDone: Promise<void> | undefined
+  let resolveDispatchDone!: () => void
+  const delegate = delegateSchema.parse({
+    delegate_id: 'camera-1', executor: MCP_CAMERA_EXECUTOR, op: 'snapshot', request: {},
+    origin_ref: 'conversation:1', deadline: 7, routing_class: 'user_awaited', dispatched_at: 0,
+  })
+  const executors = new Map([[MCP_CAMERA_EXECUTOR, {manifest: CAMERA_MCP_MANIFEST}]])
+  const runtime = {
+    clock, executors,
+    observe: () => () => undefined,
+    serve: () => new Promise<void>(() => undefined),
+    claimedHandoff: () => delegate,
+    terminatedByDeadline: () => true,
+    delegateFor: () => delegate,
+    inFlightDelegate: () => delegate,
+    memory,
+  }
+  const bridge = new RealtimeRuntimeBridge({
+    runtime: {
+      clock, memory, executors,
+      ingestUserInput: ({text}: {readonly text: string}) => {
+        const item = memory.append('conversation', {
+          ts: clock.now(), trust: 'trusted_user', priority: 100, content: {text},
+        })
+        return Promise.resolve(`${item.channel}:${item.seq}`)
+      },
+      dispatchExternal: (request: DelegateRequest) => {
+        dispatchDone = new Promise(resolve => { resolveDispatchDone = resolve })
+        void adapter.dispatch(request.op, request.request, {
+          clock, delegate, signal: new AbortController().signal, progress: () => undefined,
+        }).then(handoff => {
+          const event: EventRecord = {
+            kind: 'handoff', seq: 1, ts: clock.now(),
+            payload: {
+              channel: MCP_CAMERA_EXECUTOR, delegate_id: delegate.delegate_id,
+              origin_ref: delegate.origin_ref, outcome: handoff.outcome, trust: handoff.trust,
+              content: handoff.content,
+              refs: [...(handoff.refs ?? [])],
+            },
+          }
+          serviceHolder.current?.projectRuntimeEvent(event)
+          resolveDispatchDone()
+        })
+        return {accepted: true, delegate_id: delegate.delegate_id}
+      },
+    },
+    tools: compileToolSchema([CAMERA_MCP_MANIFEST]),
+    idFactory: (() => { let id = 200; return () => `id-${++id}` })(),
+  })
+  const service = new RealtimeService({
+    provider, runtime, tools: compileToolSchema([CAMERA_MCP_MANIFEST]), session, bridge,
+  })
+  serviceHolder.current = service
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: '看一下摄像头',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-item-1',
+    name: 'mcp__nova_camera__snapshot', arguments: {}, response_id: 'origin',
+  })
+  await dispatchDone
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'origin', status: 'completed', reason: '',
+  })
+  await service.flushHostItems()
+  const outcome = {injected, created, lateFacts: service.queuedHostItems().map(item => item.intent.item.content)}
+  await service.close()
+  await adapter.close()
+  return outcome
+}
+
 test('built-in camera serves snapshot through the actual linked MCP client with metadata and idempotent close', async () => {
   const adapter = new CameraMcpAdapter({source: source(), mediaStore: new MediaStore(), model: 'watch-model',
     gateway: {complete() { return Promise.resolve({text: '{"observation":"desk"}'}) }}})
@@ -55,6 +184,33 @@ test('built-in camera serves snapshot through the actual linked MCP client with 
   await adapter.connect()
   assert.deepEqual((await (adapter.clientForTest() as Client).listTools()).tools.map(tool => tool.name), ['snapshot'])
   await adapter.close()
+})
+
+test('camera snapshot advertises a synchronous result to the provider', () => {
+  const snapshot = CAMERA_MCP_MANIFEST.ops.find(op => op.name === 'snapshot')
+  assert.equal(snapshot?.sync_result, true)
+})
+
+test('camera snapshot returns one provider-facing result in the same realtime turn', async () => {
+  const result = await runCameraThroughRealtime('{"observation":"desk"}')
+
+  assert.deepEqual(result.injected.filter(item => item.kind === 'tool_output'), [{
+    kind: 'tool_output', call_id: 'call-1',
+    content: '{"state":"ok","content":{"observation":"desk","captured_at":1700000000,"width":2,"height":2,"evidence_ref":"camera.snapshot://sha256/32461d5bd1773012acef0ba15636752949bd7c2ce50f9172159d9f56cf0dd9af"}}',
+  }])
+  assert.equal(result.created.length, 1)
+  assert.deepEqual(result.lateFacts, [])
+  assert.doesNotMatch(result.injected[0]?.content ?? '', /base64|media:|\/private\/|\/tmp\//iu)
+})
+
+test('camera vision failure returns vision_description_unavailable in that same tool result', async () => {
+  const result = await runCameraThroughRealtime(new Error('vision timeout'))
+
+  assert.deepEqual(result.injected.filter(item => item.kind === 'tool_output'), [{
+    kind: 'tool_output', call_id: 'call-1',
+    content: '{"state":"failed","content":{"error":"vision_description_unavailable"}}',
+  }])
+  assert.deepEqual(result.lateFacts, [])
 })
 
 test('camera MCP adapter projects only objective evidence and preserves identity', async () => {

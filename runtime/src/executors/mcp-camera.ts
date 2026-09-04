@@ -43,6 +43,7 @@ export const CAMERA_MCP_MANIFEST: ExecutorManifest = executorManifestSchema.pars
     params: {type: 'object', properties: {}, required: [], additionalProperties: false},
     readonly: true,
     deadline_budget: 7,
+    sync_result: true,
     verifies: ['snapshot'],
   })],
   policy: handoffPolicySchema.parse({
