@@ -94,6 +94,7 @@ function parseMcpToolResultUnchecked(input: unknown): ParsedMcpResult {
 function canonicalImage(data: string, mimeType: string): boolean {
   if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimeType) || data === '' || data.length > MAX_BASE64_CHARS
     || !canonicalBase64(data)) return false
+  if (decodedByteLength(data) > CAMERA_MAX_IMAGE_BYTES) return false
   try {
     const decoded = Buffer.from(data, 'base64')
     return decoded.byteLength > 0 && decoded.byteLength <= CAMERA_MAX_IMAGE_BYTES
@@ -114,6 +115,11 @@ function canonicalBase64(value: string): boolean {
       || (code >= 0x30 && code <= 0x39) || code === 0x2b || code === 0x2f)) return false
   }
   return true
+}
+
+function decodedByteLength(value: string): number {
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  return value.length / 4 * 3 - padding
 }
 
 interface AdmissionGatedFrameSource extends FrameSource {

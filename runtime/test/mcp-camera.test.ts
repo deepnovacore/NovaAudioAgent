@@ -153,12 +153,40 @@ test('MCP result parser accepts canonical four and five MiB image payloads', () 
   }
 })
 
+test('MCP result parser rejects five MiB plus one byte before decoding', () => {
+  const data = Buffer.alloc(CAMERA_MAX_IMAGE_BYTES + 1).toString('base64')
+  const original = Object.getOwnPropertyDescriptor(Buffer, 'from')
+  if (original === undefined) throw new Error('Buffer.from descriptor missing')
+  const originalFrom = Buffer.from.bind(Buffer) as (value: string, encoding: BufferEncoding) => Buffer
+  let decodes = 0
+  Object.defineProperty(Buffer, 'from', {
+    ...original,
+    value(value: string, encoding: BufferEncoding): Buffer {
+      decodes += 1
+      return originalFrom(value, encoding)
+    },
+  })
+  try {
+    assert.equal(parseMcpToolResult({
+      content: [{type: 'image', data, mimeType: 'image/jpeg'}],
+    }).kind, 'invalid')
+    assert.equal(decodes, 0)
+  } finally {
+    Object.defineProperty(Buffer, 'from', original)
+  }
+})
+
 test('MCP foundation accepts bounded plain text or one image only and fails closed for other shapes', () => {
   assert.deepEqual(parseMcpToolResult({content: [{type: 'text', text: 'ok'}]}), {kind: 'text', text: 'ok'})
   assert.equal(parseMcpToolResult({content: []}).kind, 'invalid')
   assert.equal(parseMcpToolResult({content: [{type: 'audio', data: 'a', mimeType: 'audio/wav'}]}).kind, 'invalid')
   assert.equal(parseMcpToolResult({content: [{type: 'text', text: 'one'}, {type: 'text', text: 'two'}]}).kind, 'invalid')
   assert.equal(parseMcpToolResult({content: [{type: 'image', data: '', mimeType: 'image/jpeg'}]}).kind, 'invalid')
+  for (const data of ['A===', 'AA=A', 'AAAA=', 'AA!A']) {
+    assert.equal(parseMcpToolResult({
+      content: [{type: 'image', data, mimeType: 'image/jpeg'}],
+    }).kind, 'invalid')
+  }
   const hostile = new Proxy({}, {get() { throw new Error('hostile MCP response') }})
   assert.deepEqual(parseMcpToolResult(hostile), {kind: 'invalid'})
   let getterCalls = 0
@@ -186,8 +214,5 @@ test('MCP foundation accepts bounded plain text or one image only and fails clos
   assert.equal(metadataGets, 0)
   assert.equal(parseMcpToolResult({
     content: [{type: 'image', data: 'A'.repeat(Math.ceil(CAMERA_MAX_IMAGE_BYTES / 3) * 4 + 4), mimeType: 'image/jpeg'}],
-  }).kind, 'invalid')
-  assert.equal(parseMcpToolResult({
-    content: [{type: 'image', data: Buffer.alloc(CAMERA_MAX_IMAGE_BYTES + 1).toString('base64'), mimeType: 'image/jpeg'}],
   }).kind, 'invalid')
 })
