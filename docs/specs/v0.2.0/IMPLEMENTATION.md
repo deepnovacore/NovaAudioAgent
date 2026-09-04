@@ -102,8 +102,9 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
 
 - [x] The current default Nova surface is exactly six tools:
   `dispatch`, `cancel`, `confirm`, `memory__recall`, `search__search`, and
-  `mcp__nova_camera__snapshot`. Explicitly user-selected external MCP tools are
-  additional direct tools and are not counted in this six-tool surface.
+  `mcp__nova_camera__snapshot`. The built-in Camera MCP is the only direct MCP
+  currently assembled. External MCP server tools are not currently available;
+  their explicit user-selected allowlist and future direct surface belong to M3.
 - [x] The old frontend state/update surface is retired: `StructuredState`,
   `update_intent`, `update_goal`, `update_authorization`, and the legacy
   `cam__*`, `watch__*`, and `guard__*` bindings do not form model-facing tools.
@@ -133,6 +134,10 @@ Deterministic M1.5c coverage is recorded in targeted tests: `assembly.test.ts`,
 MCP SDK closure and release target contract. This is the covered deterministic
 scope, not a claim that full runtime/desktop suites, real voice, macOS camera,
 Windows, or live acceptance have completed.
+
+The root `npm run check`, complete runtime suite, desktop suite, and CLI suite
+were not rerun for M1.5c. Their older M1.5b/08 results remain historical
+snapshots below; they are not current M1.5c acceptance evidence.
 
 M1.5c live acceptance is still open: rerun the applicable 08 voice rows after
 the surface change, including real voice `dispatch` / `cancel` / `confirm`,

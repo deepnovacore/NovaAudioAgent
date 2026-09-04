@@ -36,7 +36,7 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 ### 3.2 现在的样子
 
-**当前默认 Nova 前台工具面固定为六个**（外部用户白名单 MCP 是额外的直接工具，不计入这六个，只有显式选择后才加入）：
+**当前默认 Nova 前台工具面固定为六个**（当前只有内置 Camera MCP 被装配；外部 MCP 尚不可用，未来 M3 才按用户显式白名单形成额外 direct surface）：
 
 | 工具 | 什么时候用 | 例子 |
 |---|---|---|
@@ -62,14 +62,19 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 - 监控是 policy-driven：采样节奏、唤醒优先级、side-VLM 调用策略和投递方式
   由宿主决定，模型输出不能修改这些策略。side-VLM 只得到一张已存储图片和
   有界目标，Qwen 只得到 observation、时间、尺寸和 `evidence_ref`。
-- AgentController registry 在编译前闭合，公开 agent descriptor，映射到唯一的
-  隐藏 channel owner；不存在让语音模型直接调用 `watch` / `guard` 的路径。
+- AgentController registry 在编译前闭合，公开 agent descriptor，通用地拥有
+  `dispatch` / `cancel` 路由并映射到唯一的隐藏 channel owner；coding intake
+  仍是 coding controller 的私有实现，不把它扩写成所有 agent 的公共契约。
+  不存在让语音模型直接调用 `watch` / `guard` 的路径。
+- 非 agent 的外部 MCP direct path 尚未装配，属于未来 M3 的用户显式 allowlist
+  surface；当前六工具中的 direct MCP 只有内置 Camera MCP。
 - 桌面 package contract 已按 MCP SDK 的固定版本和锁文件解析出的传递闭包登记；
   这是精确 allowlist，不是放宽成任意依赖，原有 forbidden media/camera 规则仍然有效。
 
 本节的“完成”仅指代码和已通过的确定性定向覆盖（工具面、camera gate、Vision
-隐藏 channel、monitor policy、state retirement、package/release closure）。不把
-它冒充成全量套件、真人语音、macOS camera、Windows 或 live 完成。
+隐藏 channel、monitor policy、state retirement、package/release closure）。root
+`npm run check`、完整 runtime、desktop、CLI 套件本轮均未复跑；不把定向覆盖
+冒充成全量套件、真人语音、macOS camera、Windows 或 live 完成。
 
 **编码执行器内部的 intake（跑在便宜的文本模型 `qwen-flash` 上）负责决定**：
 
@@ -95,7 +100,10 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 ## 四、我们是怎么验的
 
-**确定性测试（M1.5b/08 基线；每次都跑，串行）**
+**确定性测试（M1.5b/08 历史基线快照；不是 M1.5c 当前验收）**
+
+下表数字来自旧的 08 验证快照；本轮没有重新运行 root `npm run check`、完整
+runtime、desktop 或 CLI 套件。M1.5c 当前只认上面的定向确定性覆盖。
 
 | 套件 | 结果 |
 |---|---|
@@ -169,7 +177,7 @@ camera、Windows 和完整发布验收；当前定向确定性测试通过不替
 
 仍开放：
 
-1. **Agent 契约**：现在 `dispatch` 到非 coding 的 agent 只按 manifest 声明的 `run(work_order)` 直发，`cancel` 只有 coding 角色支持。接 AutoGLM 前要不要把 `AgentExecutor` 端口（roster / running / cancel / resolve）定成所有 agent 的通用契约？
+1. **Agent 契约**：AgentController registry 统一拥有公开的 `dispatch` / `cancel` 路由；coding intake 仍是 coding controller 的私有编排实现。非 agent 的 MCP direct path 尚未装配，未来 M3 再按用户显式 allowlist 定义。接 AutoGLM 前再评估是否把更多 executor 端口（roster / running / resolve）抽成通用契约。
 2. **发布门槛**建议定为：M1.5 全绿 + 真人语音链路（上面 10 条）+ 并发审批真机。M2/M3 不作为 v0.2 发布前置？
 3. **holdout 的两类系统性失分**（状态提问→steer、前缀重名）：安全副作用已由宿主兜底；是接受当前模型体验，还是要求 prompt 第二版把 holdout 提到 ≥9/10 再进真人验收？
 
