@@ -97,6 +97,13 @@ test('agent registration closes controller names, owned channels, manifests, and
     () => createAgentControllerRegistry({controllers: [], manifests: [hidden]}),
     /hidden executor.*codex.*owning controller/iu,
   )
+  assert.throws(
+    () => createAgentControllerRegistry({
+      controllers: [controller({name: 'direct_owner', summary: '直接执行', ownedChannels: ['watch']})],
+      manifests: [direct],
+    }),
+    /owned channel.*watch.*hidden/iu,
+  )
 })
 
 test('agent registry rejects blank public descriptor labels', () => {

@@ -401,14 +401,14 @@ export class VisionAgentControllerCore {
     if (!safeWanted(request.stillWanted) || !safeWanted(wanted)) return emptyResult('superseded')
     const cancellation = this.#machine.cancel(active.identity)
     if (cancellation.code === 'already_cancelled') {
-      if (!this.#dispatchStop(active)) return emptyResult('runtime_rejected')
+      if (!this.#dispatchStop(active, request.origin_ref)) return emptyResult('runtime_rejected')
       return Object.freeze({
         code: 'requested_stop' as const, accepted: true as const,
         detail: Object.freeze({channel: active.channel, op: 'stop' as const}),
       })
     }
     if (cancellation.code !== 'cancelled') return emptyResult('not_running')
-    const accepted = this.#dispatchStop(active)
+    const accepted = this.#dispatchStop(active, request.origin_ref)
     if (!accepted) {
       // Keep the fenced terminal reservation: the runtime may have started work even when its stop
       // admission was rejected. Only an exact terminal callback can prove it is safe to reopen.
@@ -434,11 +434,11 @@ export class VisionAgentControllerCore {
   }
 
   /** Issue an exact stop and return whether the synchronous runtime adapter admitted it. */
-  #dispatchStop(active: ActiveVisionReservation): boolean {
+  #dispatchStop(active: ActiveVisionReservation, originRef = active.origin_ref): boolean {
     if (active.stopAccepted) return true
     try {
       const result = parseRuntimeAdmission(this.#runtimePort.dispatch({
-        channel: active.channel, op: 'stop', request: {}, origin_ref: active.origin_ref,
+        channel: active.channel, op: 'stop', request: {}, origin_ref: originRef,
         // Cancellation fenced the machine before this callback can be observed by the port.
         stillWanted: () => true,
       }))

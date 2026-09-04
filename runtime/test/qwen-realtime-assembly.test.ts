@@ -285,7 +285,7 @@ test('Qwen composition propagates cameraModuleEnabled to the core assembly', () 
     {cameraModuleEnabled: false},
   ))
   const names = [...realtime.core.runtime.executors.keys()]
-  assert.deepEqual(names.slice(0, 2), ['search', 'fast_sim'])
+  assert.deepEqual(names, ['search'])
   assert.ok(!names.some(name => name === 'mcp__nova_camera' || name === 'watch' || name === 'guard'))
   assert.ok(realtime.tools.bindings.has('search__search'))
   assert.ok(realtime.tools.bindings.has('memory__recall'))

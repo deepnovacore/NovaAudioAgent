@@ -202,6 +202,9 @@ export function createAgentControllerRegistry(input: {
       if (!manifestNames.has(channel)) {
         throw new AgentControllerRegistryError(`owned channel '${channel}' has no registered manifest`)
       }
+      if (!hidden.has(channel)) {
+        throw new AgentControllerRegistryError(`owned channel '${channel}' must be hidden`)
+      }
       const owner = channelOwners.get(channel)
       if (owner !== undefined) {
         throw new AgentControllerRegistryError(`duplicate owned channel '${channel}': ${owner}, ${descriptor.name}`)

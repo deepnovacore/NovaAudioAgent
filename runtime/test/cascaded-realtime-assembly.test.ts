@@ -657,7 +657,7 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
 test('cascaded composition propagates cameraModuleEnabled without changing search or memory', () => {
   const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings(), {cameraModuleEnabled: false}))
   const names = [...realtime.core.runtime.executors.keys()]
-  assert.deepEqual(names, ['search', 'fast_sim'])
+  assert.deepEqual(names, ['search'])
   assert.ok(!names.some(name => name === 'cam' || name === 'mcp__nova_camera' || name === 'watch' || name === 'guard'))
   assert.ok(realtime.tools.bindings.has('search__search'))
   assert.ok(realtime.tools.bindings.has('memory__recall'))
@@ -760,6 +760,7 @@ test('core gateway preserves generic models or applies all Ark support overrides
       const records: GatewayRequest[] = []
       const restoreFetch = installRecordingFetch(records)
       const configured = settings({
+        NOVA_AUDIO_AGENT_EXECUTOR: 'fast_sim',
         NOVA_AUDIO_AGENT_FAST_MODEL: 'fast-original',
         NOVA_AUDIO_AGENT_WATCH_MODEL: 'watch-original',
         NOVA_AUDIO_AGENT_SURROGATE_MODEL: 'surrogate-original',

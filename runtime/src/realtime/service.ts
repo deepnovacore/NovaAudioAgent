@@ -644,11 +644,12 @@ export class RealtimeService {
       }
     }
     const controllers = [...(options.agentControllers ?? [])]
-    if (
-      options.runtime.executors.get('codex')?.manifest.model_visibility === 'hidden'
-      && !controllers.some(controller => controller.descriptor.name === 'codex')
-    ) {
+    const codingManifest = [...options.runtime.executors.values()]
+      .map(adapter => adapter.manifest)
+      .find(manifest => manifest.roles.includes('coding') && manifest.model_visibility === 'hidden')
+    if (codingManifest !== undefined && !controllers.some(controller => controller.descriptor.name === 'codex')) {
       controllers.unshift(new CodexAgentController({
+        channel: codingManifest.name,
         ...(this.#intake === undefined ? {} : {intake: this.#intake}),
         ...(options.agentExecutor === undefined ? {} : {executor: options.agentExecutor}),
         ...(options.agentDispatchPort === undefined ? {} : {dispatchPort: options.agentDispatchPort}),

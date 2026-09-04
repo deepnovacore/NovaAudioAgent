@@ -164,6 +164,7 @@ export class RealtimeRuntimeBridge {
     const originRef = options.originRef ?? null
     const binding = this.#tools.bindings.get(call.name)
     if (binding === undefined) return this.#refused(call, 'unknown_tool')
+    if (this.#tools.hidden.has(call.name)) return this.#refused(call, 'hidden_executor')
     let reason: WakeReason = {
       kind: 'realtime_tool',
       priority: USER_PRIORITY,

@@ -389,7 +389,7 @@ test('dispatch stop and public cancel target the sole channel, fence late callba
     code: 'cancelled', accepted: true, detail: {channel: 'watch', op: 'stop'},
   })
   assert.deepEqual(calls[1]?.request, {})
-  assert.equal(calls[1]?.origin_ref, 'user-item-1')
+  assert.equal(calls[1]?.origin_ref, 'user-item-2')
   value.permissionGranted(identity)
   assert.equal((await value.cancel({origin_ref: 'user-item-2', stillWanted: () => true})).code, 'requested_stop')
   value.terminal(identity)

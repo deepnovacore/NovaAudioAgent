@@ -22,7 +22,7 @@ import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model
 import { classifySurrogateVerdict, runSurrogateCall } from './calls.js'
 import { CameraMcpAdapter, MCP_CAMERA_EXECUTOR } from './executors/mcp-camera.js'
 import {
-  CODEX_AGENT_DESCRIPTOR,
+  codexAgentDescriptor,
   VisionAgentController,
   VisionAgentControllerCore,
   VisionLifecycleBridge,
@@ -186,8 +186,11 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const mediaStore = options.mediaStore ?? new MediaStore()
   const frameSource = options.frameSource ?? new DisabledFrameSource()
   const cameraModuleEnabled = options.cameraModuleEnabled ?? true
-  if ((options.executors ?? []).some(adapter => adapter.manifest.name === MCP_CAMERA_EXECUTOR)) {
-    throw new AssemblyError(`built-in executor cannot be overridden: ${MCP_CAMERA_EXECUTOR}`)
+  const cameraReserved = new Set([MCP_CAMERA_EXECUTOR, 'watch', 'guard'])
+  const suppliedReserved = (options.executors ?? []).find(adapter => cameraReserved.has(adapter.manifest.name))
+  const configuredReserved = settings.executors.find(name => cameraReserved.has(name))
+  if (suppliedReserved !== undefined || configuredReserved !== undefined) {
+    throw new AssemblyError(`built-in executor cannot be overridden: ${suppliedReserved?.manifest.name ?? configuredReserved}`)
   }
   const watchModel = stripLikePython(settings.watch_model ?? '') || settings.fast_model
   const visionLifecycle = cameraModuleEnabled ? new VisionLifecycleBridge() : undefined
@@ -244,7 +247,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   ]
   const manifests = executors.map(adapter => adapter.manifest)
   const agentDescriptors = [
-    ...(manifests.some(manifest => manifest.name === 'codex') ? [CODEX_AGENT_DESCRIPTOR] : []),
+    ...codingAgentDescriptors(manifests),
     ...(cameraModuleEnabled ? [VISION_AGENT_DESCRIPTOR] : []),
     ...(options.agentDescriptors ?? []),
   ]
@@ -307,12 +310,13 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
       gateway, watchModel, requestIdFactory: () => ids.next('vision'), lifecycleSink: visionLifecycle,
       runtimePort: {dispatch: request => {
         if (!request.stillWanted()) return {accepted: false, delegate_id: null}
-        return runtime.dispatchExternal({
+        const admission = runtime.dispatchExternal({
           executor: request.channel, op: request.op, request: request.request, origin_ref: request.origin_ref,
         }, {
           kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited',
           origin: null, selected_suggestion: null,
         })
+        return {accepted: admission.accepted, delegate_id: admission.delegate_id}
       }},
     })
     visionLifecycle.attach(vision)
@@ -365,6 +369,17 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
       })
     },
   }
+}
+
+function codingAgentDescriptors(manifests: readonly ExecutorManifest[]): readonly AgentDescriptor[] {
+  const coding = manifests.filter(manifest => manifest.roles.includes('coding'))
+  if (coding.length > 1) throw new AssemblyError('multiple coding executors are not supported')
+  const manifest = coding[0]
+  if (manifest === undefined) return []
+  if (manifest.model_visibility !== 'hidden') {
+    throw new AssemblyError(`coding executor '${manifest.name}' must be hidden`)
+  }
+  return [codexAgentDescriptor(manifest.name)]
 }
 
 export { simManifestRegistry }

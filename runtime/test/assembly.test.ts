@@ -18,7 +18,7 @@ import type {
   ModelGateway,
   StreamRequest,
 } from '../src/model-gateway.js'
-import { delegateSchema } from '../src/ports.js'
+import { delegateSchema, executorManifestSchema } from '../src/ports.js'
 
 function record(value: unknown): Record<string, unknown> {
   assert.equal(typeof value, 'object')
@@ -248,20 +248,44 @@ test('camera module off removes MCP camera, watch, and guard without affecting s
 
 test('camera assembly hides Watch and Guard behind the owned Vision controller', () => {
   const assembly = buildAssembly({
-    settings: settings(), gateway: new ScriptedGateway([]),
+    settings: settings({executors: []}), gateway: new ScriptedGateway([]),
   })
   const names = assembly.tools.schemas.map(schema => String(record(record(schema).function).name))
-  assert.ok(names.includes('mcp__nova_camera__snapshot'))
-  assert.ok(names.includes('dispatch') && names.includes('cancel') && names.includes('confirm'))
+  assert.deepEqual(names, [
+    'memory__recall', 'search__search', 'mcp__nova_camera__snapshot', 'dispatch', 'cancel', 'confirm',
+  ])
   assert.deepEqual(assembly.tools.agent_descriptors.map(descriptor => descriptor.name), ['vision'])
   assert.deepEqual(assembly.visionController?.descriptor.ownedChannels, ['watch', 'guard'])
   assert.ok(!assembly.tools.schemas.some(schema => /^(watch|guard)__/u.test(String(record(record(schema).function).name))))
 
   const disabled = buildAssembly({
-    settings: settings(), gateway: new ScriptedGateway([]), cameraModuleEnabled: false,
+    settings: settings({executors: []}), gateway: new ScriptedGateway([]), cameraModuleEnabled: false,
   })
-  assert.ok(!disabled.tools.schemas.some(schema => /^(mcp__nova_camera|watch|guard)__/u.test(String(record(record(schema).function).name))))
+  assert.deepEqual(disabled.tools.schemas.map(schema => String(record(record(schema).function).name)), [
+    'memory__recall', 'search__search',
+  ])
   assert.equal(disabled.visionController, undefined)
+})
+
+test('a hidden coding role owns its actual channel while retaining the public codex agent name', () => {
+  const coding = {
+    manifest: executorManifestSchema.parse({
+      name: 'workspace_coder', display_name: 'Workspace coder', model_visibility: 'hidden', roles: ['coding'],
+      policy: {channel: 'workspace_coder', priority: 50, wake: 'fast', typical_latency: 5, compress_watermark: 8},
+      ops: [
+        {name: 'run', description: 'run', params: {type: 'object', properties: {work_order: {type: 'string'}}, required: ['work_order'], additionalProperties: false}},
+        {name: 'status', description: 'status', readonly: true, params: {type: 'object', properties: {}, additionalProperties: false}},
+      ],
+    }),
+    dispatch: () => Promise.resolve({outcome: 'ok' as const, trust: 'trusted_system' as const, content: {}}),
+  }
+  const assembly = buildAssembly({
+    settings: settings({executors: ['workspace_coder']}), gateway: new ScriptedGateway([]), executors: [coding],
+  })
+  assert.deepEqual(assembly.tools.agent_descriptors.find(descriptor => descriptor.name === 'codex')?.ownedChannels,
+    ['workspace_coder'])
+  assert.equal(assembly.tools.bindings.get('workspace_coder__run')?.kind, 'delegate')
+  assert.equal(assembly.tools.schemas.some(schema => String(record(record(schema).function).name).startsWith('workspace_coder__')), false)
 })
 
 test('camera module off does not acquire the camera source lifecycle', async () => {
@@ -279,13 +303,19 @@ test('camera module off does not acquire the camera source lifecycle', async () 
   assert.equal(source.stops, 0)
 })
 
-test('a supplied camera MCP adapter cannot override Nova built-in camera authority', () => {
-  const adapter = {
-    manifest: {name: MCP_CAMERA_EXECUTOR},
+test('camera-reserved names cannot be supplied or configured in either module mode', () => {
+  for (const name of [MCP_CAMERA_EXECUTOR, 'watch', 'guard']) {
+    const adapter = {
+      manifest: {name},
     dispatch: () => Promise.resolve({outcome: 'ok' as const, trust: 'trusted_system' as const, content: {}}),
-  } as unknown as ExecutorAdapter
-  assert.throws(() => buildAssembly({settings: settings(), gateway: new ScriptedGateway([]), executors: [adapter]}),
-    (error: unknown) => error instanceof AssemblyError && error.message.includes(MCP_CAMERA_EXECUTOR))
+    } as unknown as ExecutorAdapter
+    for (const cameraModuleEnabled of [true, false]) {
+      assert.throws(() => buildAssembly({settings: settings(), gateway: new ScriptedGateway([]), executors: [adapter], cameraModuleEnabled}),
+        (error: unknown) => error instanceof AssemblyError && error.message.includes(name))
+      assert.throws(() => buildAssembly({settings: settings({executors: [name]}), gateway: new ScriptedGateway([]), cameraModuleEnabled}),
+        (error: unknown) => error instanceof AssemblyError && error.message.includes(name))
+    }
+  }
 })
 
 test('search and camera dispatch through the real runtime and shared media store', async () => {

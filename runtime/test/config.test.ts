@@ -528,6 +528,10 @@ test('a non-Codex configuration never reads the Codex credential environment slo
   assert.equal(reads, 0)
 })
 
+test('the production default config does not install a simulator executor', () => {
+  assert.deepEqual(loadSettings({}).executors, [])
+})
+
 test('the unprefixed Tavily credential is preserved for production assembly', () => {
   const configured = loadSettings({TAVILY_API_KEY: '  tavily-test-key  '})
   assert.equal(configured.tavily_api_key, 'tavily-test-key')

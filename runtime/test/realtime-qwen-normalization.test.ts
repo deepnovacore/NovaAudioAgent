@@ -423,12 +423,14 @@ test('the emitted session.update matches the pinned outbound payload', async () 
     'dispatch',
     'cancel',
     'confirm',
-    'guard__start',
-    'watch__start',
+    'executor 选 vision',
+    '宿主负责判断常规、紧急、否定和澄清',
     'memory__recall',
     'instruction',
   ]) {
     assert.ok((instructions as string).includes(required),
       `session instructions must still govern ${required}`)
   }
+  assert.equal((instructions as string).includes('guard__start'), false)
+  assert.equal((instructions as string).includes('watch__start'), false)
 })

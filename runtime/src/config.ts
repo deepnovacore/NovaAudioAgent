@@ -86,7 +86,7 @@ export const settingsSchema = z.object({
   qwen_guard_history_recovery: qwenGuardHistoryRecoverySchema.default('none'),
   qwen_guard_history_pairs: qwenGuardHistoryPairsSchema.default(4),
   executor: executorNameSchema.default('fast_sim'),
-  executors: z.array(executorNameSchema).min(1),
+  executors: z.array(executorNameSchema),
   codex_workspace: z.string().nullable().default(null),
   codex_bin: z.string().default('codex'),
   codex_prefix_args: z.array(z.string().min(1).max(32_768)).max(1).default([]),
@@ -237,7 +237,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
   const executor = configuredExecutor === undefined || configuredExecutor === ''
     ? 'fast_sim'
     : configuredExecutor
-  const executors = parseExecutors(environment.NOVA_AUDIO_AGENT_EXECUTORS, executor)
+  const executors = parseExecutors(environment.NOVA_AUDIO_AGENT_EXECUTORS, configuredExecutor ?? '')
   const candidate = {
     model_base_url: optionalString(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL),
     model_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_MODEL_API_KEY),
@@ -555,7 +555,7 @@ function executorOwnedSettings(environment: NodeJS.ProcessEnv, executors: readon
 }
 
 function parseExecutors(raw: string | undefined, fallback: string): string[] {
-  if (raw === undefined || raw === '') return [fallback]
+  if (raw === undefined || raw === '') return fallback === '' ? [] : [fallback]
   const names = raw.split(',').map(stripLikePython)
   if (names.some(name => name === '')) {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_EXECUTORS contains an empty name')

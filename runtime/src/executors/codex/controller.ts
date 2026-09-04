@@ -10,11 +10,16 @@ import type {AgentExecutor, CancelContext} from '../../coding-executor.js'
 import type {IntakeController} from '../coding/intake.js'
 import {CODEX_AGENT_SUMMARY} from './contract.js'
 
-export const CODEX_AGENT_DESCRIPTOR: AgentDescriptor = Object.freeze({
-  name: 'codex',
-  summary: CODEX_AGENT_SUMMARY,
-  ownedChannels: Object.freeze(['codex']),
-})
+export function codexAgentDescriptor(channel: string): AgentDescriptor {
+  return Object.freeze({
+    name: 'codex',
+    summary: CODEX_AGENT_SUMMARY,
+    ownedChannels: Object.freeze([channel]),
+  })
+}
+
+/** Backward-compatible descriptor for the built-in Codex executor channel. */
+export const CODEX_AGENT_DESCRIPTOR = codexAgentDescriptor('codex')
 
 /**
  * The Codex-specific bridge behind the generic host controller port.
@@ -23,18 +28,23 @@ export const CODEX_AGENT_DESCRIPTOR: AgentDescriptor = Object.freeze({
  * controller only translates a fenced public agent request into that existing private behavior.
  */
 export class CodexAgentController implements AgentController {
-  readonly descriptor = CODEX_AGENT_DESCRIPTOR
+  readonly descriptor: AgentDescriptor
+  readonly #channel: string
   readonly #intake: Pick<IntakeController, 'open' | 'view'> | undefined
   readonly #executor: Pick<AgentExecutor, 'cancel'> | undefined
   readonly #dispatchPort: AgentRuntimeDispatchPort | undefined
   readonly #resolveCancelTarget: CancelContext['resolveCancelTarget']
 
   constructor(options: {
+    /** Runtime channel selected by the composition root's `coding` role. */
+    readonly channel?: string
     readonly intake?: Pick<IntakeController, 'open' | 'view'>
     readonly executor?: Pick<AgentExecutor, 'cancel'>
     readonly dispatchPort?: AgentRuntimeDispatchPort
     readonly resolveCancelTarget: CancelContext['resolveCancelTarget']
   }) {
+    this.#channel = options.channel ?? 'codex'
+    this.descriptor = codexAgentDescriptor(this.#channel)
     this.#intake = options.intake
     this.#executor = options.executor
     this.#dispatchPort = options.dispatchPort
@@ -51,7 +61,7 @@ export class CodexAgentController implements AgentController {
       // host/runtime boundary so neither a synchronous nor an asynchronous caller can bypass it.
       if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
       const admission = dispatchPort.dispatch({
-        channel: 'codex', op: 'run', request: {work_order: request.instruction},
+        channel: this.#channel, op: 'run', request: {work_order: request.instruction},
         origin_ref: request.origin_ref, stillWanted: request.stillWanted,
       })
       if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
@@ -60,7 +70,7 @@ export class CodexAgentController implements AgentController {
       }
       return {
         code: 'delegated', accepted: true, delegate_id: admission.delegate_id,
-        detail: {channel: 'codex', op: 'run'},
+        detail: {channel: this.#channel, op: 'run'},
       }
     }
     const code = intake.open(

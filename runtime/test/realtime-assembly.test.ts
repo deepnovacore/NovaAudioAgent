@@ -3006,7 +3006,7 @@ test('late resolving and rejecting starts are observed without activating servic
     )
     await assert.rejects(
       settleNamed('late rejecting start observation', rejectingStart),
-      error => error === lateFailure,
+      error => error instanceof AssemblyError && error.message === 'camera MCP startup failed',
     )
     await waitNamed('late resolving core cleanup', () => resolving.frame.stops === 1)
     assert.equal(resolving.provider.connectCalls, 0)

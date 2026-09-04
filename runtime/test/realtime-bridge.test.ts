@@ -226,9 +226,9 @@ test('every bridge scenario matches the Python-exported golden', async () => {
   assert.deepEqual(mismatched, [], 'bridge behavior differs from the oracle')
 })
 
-test('hidden controller-owned executor ops stay admissible as host bindings', () => {
-  // The voice model only sees `dispatch` / `cancel` / `confirm`; the service rewrites a `dispatch`
-  // into `${executor}__run` and hands it here, so the binding must admit like any delegate call.
+test('raw hidden controller-owned executor ops are refused after binding resolution', () => {
+  // Service-side controller dispatch is an internal runtime call; raw provider calls with the same
+  // wire name must not bypass that host boundary merely because a binding exists for it.
   const manifest = CODEX_PROJECT_MANIFEST
   const memory = new Memory({policies: [manifest.policy]})
   const runtime = new ScriptedRuntime(
@@ -246,30 +246,17 @@ test('hidden controller-owned executor ops stay admissible as host bindings', ()
   const call = (name: string, arguments_: Readonly<Record<string, JsonValue>>) => bridge.acceptToolCall({
     kind: 'tool_call_ready', session_epoch: 1, call_id: `${name}-call`, item_id: `${name}-item`, name, arguments: arguments_, response_id: `${name}-response`,
   }, {originRef: 'conversation:1'})
-  const run = call('codex__run', {work_order: '开始实现', session: 'latest', title: '开始实现'})
-  assert.equal(run.accepted, true)
-  assert.equal(run.sync_result, false)
-  assert.equal(run.response_intent.kind, 'delegation_acknowledgement')
-  assert.equal(run.host_item.content, '{"state":"accepted"}')
-  const steer = call('codex__steer', {instruction: '顺便把字体调大'})
-  assert.equal(steer.accepted, true)
-  assert.equal(steer.response_intent.kind, 'delegation_acknowledgement')
-  const cancel = call('codex__cancel', {work_id: 'work-1'})
-  assert.equal(cancel.accepted, true)
-  assert.equal(cancel.sync_result, true)
-  assert.equal(cancel.host_item.content, '{"state":"pending"}')
-
-  // A run whose fields belong to another op, or an unknown session mode, never reaches the runtime.
   for (const [name, arguments_] of [
-    ['codex__run', {instruction: '开始实现'}],
-    ['codex__run', {work_order: '开始实现', session: 'resume'}],
-    ['codex__steer', {work_order: '开始实现'}],
+    ['codex__run', {work_order: '开始实现'}],
+    ['codex__steer', {instruction: '顺便把字体调大'}],
+    ['codex__status', {}],
+    ['codex__cancel', {work_id: 'work-1'}],
   ] as const) {
     const refused = call(name, arguments_)
     assert.equal(refused.accepted, false, name)
-    assert.equal(refused.code, 'invalid_params', name)
+    assert.equal(refused.code, 'hidden_executor', name)
   }
-  assert.deepEqual(runtime.unconsumed(), {ingest_refs: 0, dispatch_results: 0})
+  assert.deepEqual(runtime.unconsumed(), {ingest_refs: 0, dispatch_results: 3})
 })
 
 test('the golden records one result per scenario, in order', () => {

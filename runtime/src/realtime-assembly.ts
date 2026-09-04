@@ -48,6 +48,7 @@ const USER_AWAITED_TOOL = {kind: 'realtime_tool', priority: USER_PRIORITY, routi
 import {intakeModels, type IntakeModels} from './executors/coding/intake-model.js'
 import type {IntakeSettings, IntakeSession} from './executors/coding/intake.js'
 import type {ModelGateway} from './model-gateway.js'
+import {CodexAgentController} from './executors/index.js'
 
 /** Production compositions derive intake from settings only when an executor carries `coding`; an explicit `intake` without one still fails assembly. */
 export function defaultIntake(
@@ -834,6 +835,32 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   if (options.intake !== undefined && projectAdapter === undefined) {
     throw new AssemblyError('no executor with role coding')
   }
+  const agentDispatchPort = {
+    dispatch: (request: {
+      readonly channel: string
+      readonly op: string
+      readonly request: Readonly<Record<string, JsonValue>>
+      readonly origin_ref: string
+      readonly stillWanted: () => boolean
+    }) => {
+      // This is the runtime-side fence paired with the controller's last check. It must be
+      // immediately adjacent to dispatchExternal so a superseding user turn cannot start work.
+      if (!request.stillWanted()) return {accepted: false, delegate_id: null}
+      return core.runtime.dispatchExternal({
+        executor: request.channel, op: request.op, request: request.request, origin_ref: request.origin_ref,
+      }, USER_AWAITED_TOOL)
+    },
+  }
+  const agentControllers = [
+    ...(codingManifest === null || (options.intake !== undefined && projectAdapter !== undefined) ? [] : [new CodexAgentController({
+      channel: codingManifest.name,
+      ...(projectAdapter === undefined ? {} : {executor: projectAdapter}),
+      dispatchPort: agentDispatchPort,
+      resolveCancelTarget: (text, running) => options.intake?.models.resolveCancelTarget(text, running)
+        ?? Promise.resolve(null),
+    })]),
+    ...(core.visionController === undefined ? [] : [core.visionController]),
+  ]
   const service = new RealtimeService({
     provider: providerSession,
     runtime: core.runtime,
@@ -841,17 +868,8 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     providerSchemas,
     session,
     bridge,
-    agentDispatchPort: {
-      dispatch: request => {
-        // This is the runtime-side fence paired with the controller's last check. It must be
-        // immediately adjacent to dispatchExternal so a superseding user turn cannot start work.
-        if (!request.stillWanted()) return {accepted: false, delegate_id: null}
-        return core.runtime.dispatchExternal({
-          executor: request.channel, op: request.op, request: request.request, origin_ref: request.origin_ref,
-        }, USER_AWAITED_TOOL)
-      },
-    },
-    ...(core.visionController === undefined ? {} : {agentControllers: [core.visionController]}),
+    agentDispatchPort,
+    ...(agentControllers.length === 0 ? {} : {agentControllers}),
     ...(options.intake === undefined || projectAdapter === undefined ? {} : {intake: {
       ...options.intake,
       roster: () => projectAdapter.roster(),
