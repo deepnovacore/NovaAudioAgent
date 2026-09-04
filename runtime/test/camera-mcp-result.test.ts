@@ -216,3 +216,51 @@ test('symbol metadata fields are rejected rather than silently dropped', async (
   )
   assert.equal(contentOf(projected).error, 'invalid_metadata')
 })
+
+test('gateway mutation cannot alter retained evidence bytes', async () => {
+  const store = new MediaStore(undefined, {idFactory: () => 'mutation'})
+  const gateway: ModelGateway = {
+    async *stream(): AsyncIterable<never> { await Promise.resolve() },
+    async complete(request): Promise<{readonly text: string}> {
+      await Promise.resolve()
+      const image = request.images?.[0]?.payload
+      if (image !== undefined) image[0] = image[0]! ^ 0xff
+      return {text: '{"observation":"一张室内照片"}'}
+    },
+  }
+  const projected = await projectCameraMcpResult(result(), options(gateway, store))
+  assert.equal(projected.outcome, 'ok')
+  assert.deepEqual(store.peek('media:mutation')?.payload, new Uint8Array(Buffer.from('jpeg-payload')))
+})
+
+test('non-enumerable MCP shape fields are rejected consistently', async () => {
+  const image = {} as Record<string, unknown>
+  Object.defineProperties(image, {
+    type: {value: 'image'}, data: {value: Buffer.from('jpeg-payload').toString('base64')},
+    mimeType: {value: 'image/jpeg'},
+  })
+  const imageResult = await projectCameraMcpResult(
+    {content: [image], structuredContent: {captured_at: CAPTURED_AT, width: 640, height: 480}},
+    options(new ScriptedGateway()),
+  )
+  assert.equal(contentOf(imageResult).error, 'invalid_content')
+
+  const metadata = {} as Record<string, unknown>
+  Object.defineProperties(metadata, {
+    captured_at: {value: CAPTURED_AT}, width: {value: 640}, height: {value: 480},
+  })
+  const metadataResult = await projectCameraMcpResult(
+    result({metadata}), options(new ScriptedGateway()),
+  )
+  assert.equal(contentOf(metadataResult).error, 'invalid_metadata')
+
+  const topLevel = {} as Record<string, unknown>
+  Object.defineProperty(topLevel, 'content', {
+    value: [{type: 'image', data: Buffer.from('jpeg-payload').toString('base64'), mimeType: 'image/jpeg'}],
+  })
+  Object.defineProperty(topLevel, 'structuredContent', {
+    value: {captured_at: CAPTURED_AT, width: 640, height: 480}, enumerable: true,
+  })
+  const topLevelResult = await projectCameraMcpResult(topLevel, options(new ScriptedGateway()))
+  assert.equal(contentOf(topLevelResult).error, 'invalid_content')
+})

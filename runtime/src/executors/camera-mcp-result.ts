@@ -9,6 +9,7 @@
 import type { JsonValue } from '../events.js'
 import type { MediaStore } from '../media-store.js'
 import type { CompleteRequest, ModelGateway } from '../model-gateway.js'
+import { createHash } from 'node:crypto'
 
 export const CAMERA_MAX_IMAGE_BYTES = 5 * 1024 * 1024
 export const CAMERA_MAX_DESCRIPTION_CHARS = 400
@@ -116,7 +117,9 @@ export async function projectCameraMcpResult(
 
   let entry
   try {
-    entry = options.mediaStore.put(payload, {
+    // Keep the retained bytes independent from the mutable GatewayImage payload.
+    const retainedPayload = new Uint8Array(payload)
+    entry = options.mediaStore.put(retainedPayload, {
       mediaType: parsed.image.mimeType,
       width: metadata.width,
       height: metadata.height,
@@ -134,7 +137,7 @@ export async function projectCameraMcpResult(
       prompt: buildVisionPrompt(options.objective),
       jsonSchema: CAMERA_VISION_JSON_SCHEMA,
       // Do not send the internal ref as the provider-visible image label.
-      images: [{ref: 'camera-frame', media_type: parsed.image.mimeType, payload}],
+      images: [{ref: 'camera-frame', media_type: parsed.image.mimeType, payload: new Uint8Array(payload)}],
       ...(options.signal === undefined ? {} : {signal: options.signal}),
     }
     response = await options.gateway.complete(request)
@@ -144,7 +147,9 @@ export async function projectCameraMcpResult(
 
   let observation: string | null
   try {
-    observation = parseObservation(readDataProperty(response, 'text'))
+    observation = parseObservation(
+      isPlainObject(response) ? readDataProperty(response, 'text') : MISSING_PROPERTY,
+    )
   } catch {
     return failure('vision_description_unavailable')
   }
@@ -158,7 +163,8 @@ export async function projectCameraMcpResult(
     if (retained.ref !== entry.ref || retained.digest !== entry.digest
       || retained.media_type !== entry.media_type || retained.width !== entry.width
       || retained.height !== entry.height || retained.captured_at !== entry.captured_at
-      || !sameBytes(retained.payload, payload)) return failure('media_unavailable')
+      || payloadDigest(retained.payload) !== entry.digest
+      || !sameBytes(retained.payload, entry.payload)) return failure('media_unavailable')
   } catch {
     return failure('media_unavailable')
   }
@@ -184,10 +190,12 @@ function failure(error: CameraProjectionError): CameraProjectionFailure {
 function parseInput(input: unknown):
   | {readonly image: CameraMcpImageBlock; readonly structuredContent: unknown}
   | {readonly error: CameraProjectionError} {
-  if (!isPlainObject(input) || !Array.isArray(input.content) || input.content.length !== 1) {
+  if (!isPlainObject(input) || hasSymbolKeys(input)) return {error: 'invalid_content'}
+  const contentValue = readDataProperty(input, 'content')
+  if (!Array.isArray(contentValue) || contentValue.length !== 1) {
     return {error: 'invalid_content'}
   }
-  const content = input.content as readonly unknown[]
+  const content = contentValue as readonly unknown[]
   const candidate = content[0]
   if (!isPlainObject(candidate) || hasSymbolKeys(candidate)) {
     return {error: 'invalid_content'}
@@ -284,8 +292,13 @@ function hasSymbolKeys(value: object): boolean {
 
 function readDataProperty(value: object, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(value, key)
-  if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) return MISSING_PROPERTY
+  if (descriptor?.enumerable !== true
+    || !Object.hasOwn(descriptor, 'value')) return MISSING_PROPERTY
   return descriptor.value
+}
+
+function payloadDigest(payload: Uint8Array): string {
+  return createHash('sha256').update(payload).digest('hex')
 }
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
