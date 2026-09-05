@@ -1,3 +1,4 @@
+import {capabilitiesFromSettings} from './config.js'
 /** Provider-neutral cascaded production assembly over closed, host-owned node registries. */
 
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
@@ -24,6 +25,7 @@ import {OpenAIModelGateway, type ModelGateway} from './model-gateway.js'
 import {stripLikePython} from './python-text.js'
 import {
   buildRealtimeAssembly,
+  filterDisabledCoding,
   defaultIntake,
   type RealtimeAssembly,
   type RealtimeAssemblyOptions,
@@ -35,8 +37,7 @@ import {CascadedRealtimeError} from './realtime/cascaded/adapter.js'
 import {CascadedRealtimeProvider} from './realtime/cascaded/provider.js'
 import {createQwenCascadedLlmFactory} from './realtime/cascaded/qwen-llm.js'
 import {
-  CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
-  FRONTEND_INSTRUCTIONS,
+  frontendInstructions,
 } from './realtime/qwen.js'
 import {DoubaoAsrClient} from './realtime/volcengine/asr.js'
 import {
@@ -211,15 +212,18 @@ export function buildCascadedRealtimeAssembly(
   options: BuildCascadedRealtimeAssemblyOptions,
   registry: CascadedProviderRegistries = options.registries ?? cascadedProviderRegistries,
 ): RealtimeAssembly {
+  options = filterDisabledCoding(options)
   const selected = requireSelectedCascadedRealtimeConfig(options.settings)
   const selection = selected.selection
   validateCodingResource(options)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
-  const instructions = options.codexResource?.approvalController === null
-    || options.codexResource?.approvalController === undefined
-    ? FRONTEND_INSTRUCTIONS
-    : CODEX_APPROVAL_FRONTEND_INSTRUCTIONS
+  const capabilities = options.capabilities ?? capabilitiesFromSettings(options.settings)
+  const instructions = frontendInstructions({
+    search: capabilities.modules.search.enabled,
+    camera: options.cameraModuleEnabled ?? capabilities.modules.camera.enabled,
+    coding: capabilities.modules.coding.enabled,
+  }, options.codexResource?.approvalController != null)
 
   const endpointingFactory = registry.endpointing[selection.endpointingProvider]({
     config: selected.endpointing,
@@ -279,7 +283,8 @@ export function buildCascadedRealtimeAssembly(
     ...(options.searchTransport === undefined ? {} : {searchTransport: options.searchTransport}),
     ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
-    cameraModuleEnabled: options.cameraModuleEnabled ?? options.settings.camera_module_enabled,
+    ...(options.capabilities === undefined ? {} : {capabilities: options.capabilities}),
+    ...(options.cameraModuleEnabled === undefined ? {} : {cameraModuleEnabled: options.cameraModuleEnabled}),
     ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
   })
   const provider = new CascadedRealtimeProvider({

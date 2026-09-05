@@ -236,8 +236,8 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_PROGRESS_BUBBLES` | `core` | No | milestones | Progress bubble display mode. |
 | `NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG` | `core` | No | ~/.nova-audio-agent/capabilities.json | Capabilities registry path. |
 | `NOVA_AUDIO_AGENT_SEARCH_PROVIDER` | `search` | No | tavily | CLI or CI search provider override. |
-| `NOVA_AUDIO_AGENT_SEARCH_MCP_URL` | `search` | No | None | Web search MCP endpoint. |
-| `NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL` | `search` | No | web_search | Web search MCP tool name. |
+| `NOVA_AUDIO_AGENT_SEARCH_MCP_URL` | `search` | No | None | Web search MCP endpoint override; unset uses the verified Bailian preset when MCP is selected. |
+| `NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL` | `search` | No | web_search | Web search MCP tool override (generic default web_search; Bailian preset bailian_web_search). |
 | `NOVA_AUDIO_AGENT_KNOWLEDGE_PATH` | `core` | No | ~/.nova-audio-agent/knowledge.sqlite | Knowledge SQLite database path. |
 | `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER` | `core` | No | dashscope | Knowledge embedding provider. |
 | `NOVA_AUDIO_AGENT_EMBEDDING_MODEL` | `core` | No | text-embedding-v4 | Knowledge embedding model. |
@@ -281,3 +281,40 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_REALTIME_TRACE` | `telemetry` | No | 0 | Enable source-runtime trace records. |
 | `NOVA_ORB_OPAQUE` | `core` | No | 0 | Use an opaque desktop orb window. |
 <!-- END GENERATED ENV CONTRACT -->
+
+### Optional capability registry and MCP search
+
+Nova loads `~/.nova-audio-agent/capabilities.json`; use `NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG` for another path. A missing default file keeps search/camera/coding enabled and knowledge disabled. An explicit missing or invalid file fails startup with a redacted configuration reason. Registry module values override defaults; explicit `NOVA_AUDIO_AGENT_SEARCH_PROVIDER`, `NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED`, `NOVA_AUDIO_AGENT_SEARCH_MCP_URL`, and `NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL` override the registry and are reported by name. Desktop persists these choices in the registry, not a separate search-provider setting.
+
+Tavily remains the default. Set `modules.search.enabled` to `false` to disable search without credentials, or opt into MCP:
+
+```json
+{
+  "version": 1,
+  "modules": {
+    "search": {
+      "enabled": true,
+      "provider": "mcp",
+      "mcp": {
+        "url": "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+        "tool": "bailian_web_search",
+        "headers": {"authorization": "Bearer ${DASHSCOPE_API_KEY}"}
+      }
+    }
+  },
+  "frontbrainToolBudget": 24,
+  "mcpServers": {}
+}
+```
+
+The endpoint and Bearer authorization are verified against [Bailian external invocation](https://docs.agent.bailian.aliyun.com/zh/mcp/external-invocation); the search tool name is documented in [Bailian web search](https://help.aliyun.com/zh/model-studio/web-search/) (checked 2026-09-05). An MCP selection without an endpoint uses this Bailian preset. Nova still verifies the exact configured tool with `tools/list`; use the URL/tool overrides for other servers. Enable the WebSearch service in the Bailian console and provide its key through the environment. MCP search does not require `TAVILY_API_KEY`. The public tool stays `search__search`; results retain URL canonicalization, evidence digests and `untrusted_external` trust.
+
+Only HTTPS is allowed remotely. Loopback HTTP is available for unauthenticated local testing; custom or authentication headers require HTTPS. URLs, headers, and stdio environment values support `${VARIABLE}` interpolation. A missing value reports only `missing_environment:VARIABLE`. Disabled modules/servers do not require their credentials. External servers are limited to 8, with 32 allowlisted tools each; invalid servers report individual failed status and expose nothing. Tools require `enabled: true`; external-server discovery and exposure are handled by the MCP host. `frontbrain_tool_budget_exceeded: N/B` means the complete selected FrontBrain surface exceeds the budget; reduce the selected FrontBrain tools. The runtime never truncates that surface.
+
+Run `novaaudio doctor` for the shared registry validation, per-server failures and override names. `search_tool_missing` means the configured name was absent from discovery; `search_tool_failed` is a tool-reported error; `authentication` requires checking the selected provider key/service entitlement; `timeout` and `response_too_large` are bounded transport failures. Search defaults to an 8-second operation and 256-KiB response limit (registry `mcp.timeoutMs` / `mcp.maxResultBytes`). Each search terminates its owned remote session (with a separate 250-ms cleanup bound) and closes its SDK resources; no background reconnect is used.
+
+```sh
+npm run runtime:smoke:search:mcp
+```
+
+The smoke uses environment/registry credentials, makes one actual MCP search and prints only status and result count. It forces MCP only for that invocation and never changes the persisted default. **Live Bailian/macOS and Windows acceptance remains pending until successful runs are recorded here, including date, Nova/Codex versions and platform.** Local MCP protocol tests do not satisfy this release gate; switching the default is a separate change.

@@ -52,3 +52,5 @@ export * from './slots.js'
 export * from './suggestions.js'
 export * from './tool-schema.js'
 export * from './trace.js'
+
+export * from './capability-registry.js'

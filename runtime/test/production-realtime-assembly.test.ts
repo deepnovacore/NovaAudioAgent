@@ -241,3 +241,25 @@ test('selected branch failures never fail over and invalid modes are credential-
       && !error.message.includes('renderer-controlled-value'),
   )
 })
+
+test('registry Coding/Vision gates compose all four controller combinations', async () => {
+  const {parseCapabilityRegistry} = await import('../src/capability-registry.js')
+  for (const coding of [false, true]) {
+    for (const camera of [false, true]) {
+      const resource = projectResource()
+      const assembly = buildProductionRealtimeAssembly({
+        settings: loadSettings({DASHSCOPE_API_KEY: 'test-only', NOVA_AUDIO_AGENT_EXECUTORS: 'codex'}),
+        capabilities: parseCapabilityRegistry({version: 1, modules: {search: {enabled: false}, coding: {enabled: coding}, camera: {enabled: camera}}}),
+        codexResource: resource,
+      })
+      assert.equal(assembly.runtime.executors.has('codex'), coding)
+      assert.equal(assembly.core.visionController !== undefined, camera)
+      assert.deepEqual(assembly.tools.agent_descriptors.map(descriptor => descriptor.name).sort(), [
+        ...(coding ? ['codex'] : []), ...(camera ? ['vision'] : []),
+      ].sort())
+      for (const tool of ['dispatch', 'cancel', 'confirm']) assert.equal(assembly.tools.bindings.has(tool), coding || camera)
+      assert.equal(assembly.capabilityStatus.toolCount, assembly.tools.schemas.length)
+      await assembly.core.stop()
+    }
+  }
+})

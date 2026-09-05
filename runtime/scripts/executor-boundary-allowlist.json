@@ -14,5 +14,10 @@
     "pattern": "'codex'",
     "count": 13,
     "reason": "Executor-owned environment rows: user-facing NOVA_AUDIO_AGENT_CODEX_* names and their owner tag are explicitly allowed residue in spec 07."
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "['frontbrain', 'codex']",
+    "reason": "Spec 03 registry consumer names are validated configuration keys; this does not select or route a concrete coding executor."
   }
 ]

@@ -1,3 +1,4 @@
+import {loadCapabilityRegistry} from './capability-registry.js'
 /** The compiled realtime desktop entry Electron launches with `utilityProcess.fork()`. */
 
 import {randomUUID} from 'node:crypto'
@@ -46,7 +47,13 @@ process.exitCode = await runDesktopEntryWithStopSources({
   ),
   onDiagnostic,
   construct: async ownership => {
-    const settings = loadSettings()
+    const capabilities = loadCapabilityRegistry()
+    const loadedSettings = loadSettings()
+    // This entry owns the concrete Codex package; core gates injected adapters by their declared role.
+    const settings = capabilities.modules.coding.enabled ? loadedSettings : {
+      ...loadedSettings, executors: loadedSettings.executors.filter(name => name !== 'codex'),
+    }
+    for (const override of capabilities.overrides) onDiagnostic(`[capability-override] ${override}`)
     const clock = new RealClock()
     const telemetry = createRealtimeTelemetry(process.env, {clock})
     ownership.own(() => telemetry.close())
@@ -92,11 +99,11 @@ process.exitCode = await runDesktopEntryWithStopSources({
         })
         const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
           settings,
+          capabilities,
           telemetry,
           onDiagnostic,
           clock,
           frameSource,
-          cameraModuleEnabled: settings.camera_module_enabled,
           ...(codexResource === null ? {} : {codexResource}),
           ...callbacks,
         }

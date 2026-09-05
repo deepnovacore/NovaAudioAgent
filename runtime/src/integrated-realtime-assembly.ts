@@ -2,6 +2,7 @@
 
 import {
   ConfigurationError,
+  capabilitiesFromSettings,
   requireIntegratedRealtime,
   type IntegratedProviderName,
 } from './config.js'
@@ -13,7 +14,7 @@ import {
   type BuildQwenRealtimeProviderOptions,
 } from './qwen-realtime-assembly.js'
 import type {RealtimeProvider} from './realtime/protocol.js'
-import type {RealtimeAssembly} from './realtime-assembly.js'
+import {filterDisabledCoding, type RealtimeAssembly} from './realtime-assembly.js'
 
 export type BuildIntegratedRealtimeAssemblyOptions = Omit<
   BuildQwenRealtimeAssemblyOptions,
@@ -35,6 +36,7 @@ export function buildIntegratedRealtimeAssembly(
   options: BuildIntegratedRealtimeAssemblyOptions,
   registry: IntegratedProviderRegistry = integratedProviderRegistry,
 ): RealtimeAssembly {
+  options = filterDisabledCoding(options)
   const provider = options.settings.integrated_provider
   if (provider !== 'qwen') {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER 无效')
@@ -42,11 +44,17 @@ export function buildIntegratedRealtimeAssembly(
   const config = Object.freeze({...requireIntegratedRealtime(options.settings)})
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
+  const capabilities = options.capabilities ?? capabilitiesFromSettings(options.settings)
   const qwenProvider = registry.qwen({
     config,
     ...(options.connector === undefined ? {} : {connector: options.connector}),
     idFactory: () => ids.next('qwen'),
     now: () => clock.now(),
+    modules: {
+      search: capabilities.modules.search.enabled,
+      camera: options.cameraModuleEnabled ?? capabilities.modules.camera.enabled,
+      coding: capabilities.modules.coding.enabled,
+    },
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
     executorApproval: options.codexResource?.approvalController !== null
       && options.codexResource?.approvalController !== undefined,

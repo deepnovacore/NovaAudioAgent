@@ -1,5 +1,6 @@
+import {capabilityStatus, type CapabilityStatus} from './capability-registry.js'
 import { randomUUID } from 'node:crypto'
-import { AssemblyError, type Assembly } from './assembly.js'
+import { AssemblyError, type Assembly, type AssemblyOptions } from './assembly.js'
 import { canonicalJson } from './canonical-json.js'
 import type {PublicProjectContext} from './project-store.js'
 import type { JsonValue } from './events.js'
@@ -153,6 +154,7 @@ type CleanupResult =
  * lower-level classes expose individually idempotent methods.
  */
 export class RealtimeAssembly {
+  readonly capabilityStatus: CapabilityStatus
   readonly core: Assembly
   readonly provider: RealtimeProvider
   readonly providerSession: RealtimeProviderSession
@@ -200,6 +202,7 @@ export class RealtimeAssembly {
   #stopOperation: Promise<void> | null = null
 
   constructor(input: {
+    readonly toolCount?: number
     readonly core: Assembly
     readonly provider: RealtimeProvider
     readonly providerSession: RealtimeProviderSession
@@ -217,6 +220,7 @@ export class RealtimeAssembly {
     readonly unbindSuggestionSelected?: () => void
   }) {
     this.core = input.core
+    this.capabilityStatus = capabilityStatus(input.core.capabilities, input.toolCount ?? input.core.tools.schemas.length)
     this.provider = input.provider
     this.providerSession = input.providerSession
     this.playback = input.playback
@@ -827,6 +831,9 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   const providerSession = new RealtimeProviderSession(provider)
   const providerTools = options.providerToolView?.(core.tools) ?? core.tools
   const providerSchemas = validateProviderToolView(core.tools, providerTools)
+  const count = providerSchemas.length
+  const budget = core.capabilities.frontbrainToolBudget
+  if (count > budget) throw new FrontbrainToolBudgetError(count, budget)
   const idFactory = options.idFactory ?? (() => `nova_${randomUUID().replaceAll('-', '')}`)
   const wallClockNow = options.wallClockNow ?? (() => Date.now() / 1_000)
   const onDiagnostic = options.onDiagnostic ?? (line => { console.log(line) })
@@ -980,6 +987,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     },
   )
   return assignAssembly(new RealtimeAssembly({
+    toolCount: count,
     core,
     provider,
     providerSession,
@@ -1169,4 +1177,31 @@ function isJsonObject(value: JsonValue | undefined): value is Readonly<Record<st
 
 function noop(): void {
   return
+}
+
+export class FrontbrainToolBudgetError extends AssemblyError {
+  readonly code = 'frontbrain_tool_budget_exceeded'
+  constructor(readonly toolCount: number, readonly toolBudget: number) {
+    super(`frontbrain_tool_budget_exceeded: ${toolCount}/${toolBudget}`)
+  }
+}
+
+/** Apply the role gate before any concrete resource/controller composition, including injected builders. */
+export function filterDisabledCoding<T extends AssemblyOptions & Pick<RealtimeAssemblyOptions,
+  'codexResource' | 'codingAgentControllerFactory' | 'intake' | 'projectAdapter'>>(options: T): T {
+  if (options.capabilities?.modules.coding.enabled !== false) return options
+  const disabled = new Set([
+    ...(options.executors ?? []).filter(adapter => adapter.manifest.roles.includes('coding')).map(adapter => adapter.manifest.name),
+    ...(options.codexResource === undefined ? [] : [options.codexResource.adapter.manifest.name]),
+    ...(options.projectAdapter === undefined ? [] : [options.projectAdapter.manifest.name]),
+  ])
+  const selected: {-readonly [Key in keyof T]: T[Key]} = {...options}
+  selected.settings = {...options.settings, executors: options.settings.executors.filter(name => !disabled.has(name))}
+  if (selected.executors !== undefined) selected.executors = selected.executors.filter(adapter => !disabled.has(adapter.manifest.name))
+  if (selected.agentDescriptors !== undefined) selected.agentDescriptors = selected.agentDescriptors.filter(descriptor => !descriptor.ownedChannels.some(channel => disabled.has(channel)))
+  delete selected.codexResource
+  delete selected.codingAgentControllerFactory
+  delete selected.intake
+  delete selected.projectAdapter
+  return selected
 }

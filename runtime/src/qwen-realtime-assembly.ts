@@ -13,6 +13,7 @@ import { MonotonicIdFactory } from './ids.js'
 import { OpenAIModelGateway } from './model-gateway.js'
 import {
   buildRealtimeAssembly,
+  filterDisabledCoding,
   defaultIntake,
   type RealtimeAssembly,
   type RealtimeAssemblyOptions,
@@ -53,6 +54,7 @@ export interface BuildQwenRealtimeProviderOptions {
   readonly now: () => number
   readonly workspaceGraphPolicy: boolean
   readonly executorApproval: boolean
+  readonly modules?: {readonly search: boolean; readonly camera: boolean; readonly coding: boolean}
 }
 
 /**
@@ -81,8 +83,10 @@ export function buildQwenRealtimeAssembly(
       now: options.now,
       workspaceGraphPolicy: options.workspaceGraphPolicy,
       executorApproval: options.executorApproval,
+      ...(options.modules === undefined ? {} : {modules: options.modules}),
     })
   }
+  options = filterDisabledCoding(options)
   if (
     options.codexResource !== undefined
     && !options.settings.executors.includes(options.codexResource.adapter.manifest.name)
@@ -119,7 +123,8 @@ export function buildQwenRealtimeAssembly(
     ...(options.searchTransport === undefined ? {} : {searchTransport: options.searchTransport}),
     ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
-    cameraModuleEnabled: options.cameraModuleEnabled ?? options.settings.camera_module_enabled,
+    ...(options.capabilities === undefined ? {} : {capabilities: options.capabilities}),
+    ...(options.cameraModuleEnabled === undefined ? {} : {cameraModuleEnabled: options.cameraModuleEnabled}),
     ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
   })
   const provider = options.qwenProvider ?? buildQwenRealtimeAssembly({
@@ -127,6 +132,11 @@ export function buildQwenRealtimeAssembly(
     ...(options.connector === undefined ? {} : {connector: options.connector}),
     idFactory: () => ids.next('qwen'),
     now: () => clock.now(),
+    modules: {
+      search: core.capabilities.modules.search.enabled,
+      camera: options.cameraModuleEnabled ?? core.capabilities.modules.camera.enabled,
+      coding: core.capabilities.modules.coding.enabled,
+    },
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
     executorApproval: options.codexResource?.approvalController !== null
       && options.codexResource?.approvalController !== undefined,

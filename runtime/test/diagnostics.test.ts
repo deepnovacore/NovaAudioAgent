@@ -1,3 +1,5 @@
+import {mkdtempSync, writeFileSync, rmSync} from 'node:fs'
+import {join} from 'node:path'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 
@@ -229,4 +231,20 @@ test('diagnose CLI emits one canonical line with exact exit behavior', async () 
   output = ''
   assert.equal(await main(['diagnose'], {io: {write: text => { output += text }}}), 2)
   assert.match(output, /^Usage:/u)
+})
+
+test('diagnostics validate configured modules and require only the selected search credentials', async () => {
+  const directory = mkdtempSync('/private/tmp/nova-diagnose-registry-')
+  const path = join(directory, 'capabilities.json')
+  try {
+    writeFileSync(path, JSON.stringify({version: 1, modules: {search: {enabled: false}}}))
+    const report = await buildDiagnosticReport({environment: {DASHSCOPE_API_KEY: 'test-only', NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: path}, nodeVersion: 'v22.13.0'})
+    assert.equal(report.ok, true)
+    const mcp = await buildDiagnosticReport({environment: {DASHSCOPE_API_KEY: 'test-only', NOVA_AUDIO_AGENT_SEARCH_PROVIDER: 'mcp'}, nodeVersion: 'v22.13.0'})
+    assert.equal(mcp.ok, true)
+    writeFileSync(path, '{"version": 2, "secret": "never-report"}')
+    const invalid = await buildDiagnosticReport({environment: {NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: path}, nodeVersion: 'v22.13.0'})
+    assert.equal(invalid.ok, false)
+    assert.equal(canonicalJson(invalid).includes('never-report'), false)
+  } finally { rmSync(directory, {recursive: true, force: true}) }
 })

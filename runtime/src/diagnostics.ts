@@ -1,3 +1,4 @@
+import {loadCapabilityRegistry, parseCapabilityRegistry, type CapabilityRegistry} from './capability-registry.js'
 import {isAbsolute} from 'node:path'
 import {z} from 'zod'
 
@@ -96,8 +97,12 @@ export function buildDiagnosticReport(options: {
   }
 
   let settings: Settings
+  let capabilities: CapabilityRegistry
   try {
     settings = loadSettings(options.environment)
+    capabilities = options.environment === process.env || options.environment.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG
+      ? loadCapabilityRegistry({environment: options.environment})
+      : parseCapabilityRegistry({version: 1}, options.environment)
     checks.push(check('configuration.parse', 'pass', 'configuration_valid'))
   } catch {
     checks.push(check('configuration.parse', 'fail', 'configuration_invalid'))
@@ -106,7 +111,7 @@ export function buildDiagnosticReport(options: {
 
   checks.push(providerCheck(settings))
   checks.push(executorCheck(settings, options.executorChecks ?? []))
-  checks.push(searchCheck(settings))
+  checks.push(searchCheck(capabilities))
   try {
     checks.push(cameraCheck(options.environment))
   } catch {
@@ -151,8 +156,9 @@ function executorCheck(settings: Settings, executorChecks: readonly ExecutorDiag
   return check('executors.contract', 'pass', 'executor_configuration_valid')
 }
 
-function searchCheck(settings: Settings): DiagnosticCheck {
-  return stripLikePython(settings.tavily_api_key ?? '') === ''
+function searchCheck(capabilities: CapabilityRegistry): DiagnosticCheck {
+  if (!capabilities.modules.search.enabled || capabilities.modules.search.provider === 'mcp') return check('search.credential', 'pass', 'search_credential_present')
+  return stripLikePython(capabilities.modules.search.tavily.apiKey ?? '') === ''
     ? check('search.credential', 'fail', 'search_credential_missing')
     : check('search.credential', 'pass', 'search_credential_present')
 }

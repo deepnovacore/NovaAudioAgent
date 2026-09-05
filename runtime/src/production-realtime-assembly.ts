@@ -10,7 +10,7 @@ import {
   buildIntegratedRealtimeAssembly,
   type BuildIntegratedRealtimeAssemblyOptions,
 } from './integrated-realtime-assembly.js'
-import type {CodingAgentControllerFactory, RealtimeAssembly} from './realtime-assembly.js'
+import {filterDisabledCoding, type CodingAgentControllerFactory, type RealtimeAssembly} from './realtime-assembly.js'
 
 export type BuildProductionRealtimeAssemblyOptions =
   BuildIntegratedRealtimeAssemblyOptions & BuildCascadedRealtimeAssemblyOptions
@@ -28,7 +28,7 @@ export function buildProductionRealtimeAssembly(
   options: BuildProductionRealtimeAssemblyOptions,
   builders: ProductionRealtimeAssemblyBuilders = {},
 ): RealtimeAssembly {
-  const composition = productionCodingComposition(options)
+  const composition = productionCodingComposition(filterDisabledCoding(options))
   if (options.settings.pipeline_mode === 'integrated') {
     return (builders.integrated ?? buildIntegratedRealtimeAssembly)(composition)
   }

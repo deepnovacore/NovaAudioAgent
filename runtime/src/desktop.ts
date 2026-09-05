@@ -1142,3 +1142,5 @@ async function closeWebSocket(socket: WebSocket, graceMs: number): Promise<void>
     if (socket.readyState < WebSocket.CLOSING) socket.close(1001, 'shutdown')
   })
 }
+
+export * from './capability-registry.js'

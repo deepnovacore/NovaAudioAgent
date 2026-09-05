@@ -1,3 +1,4 @@
+import {parseCapabilityRegistry, type CapabilityRegistry} from './capability-registry.js'
 import { z } from 'zod'
 import { stripLikePython } from './python-text.js'
 import {findRetiredConfiguration} from './environment-contract.js'
@@ -775,4 +776,18 @@ function configurationFieldName(field: string): string {
     tavily_api_key: 'TAVILY_API_KEY',
   }
   return aliases[field] ?? `NOVA_AUDIO_AGENT_${field.toUpperCase()}`
+}
+
+/** Injected settings never trigger ambient filesystem reads. Production passes its loaded registry explicitly. */
+export function capabilitiesFromSettings(settings: Settings): CapabilityRegistry {
+  return parseCapabilityRegistry({version: 1, modules: {
+    camera: {enabled: settings.camera_module_enabled},
+    search: {provider: settings.search_provider, ...(settings.search_mcp_url === '' ? {} : {mcp: {
+      url: settings.search_mcp_url, tool: settings.search_mcp_tool,
+    }})},
+  }}, {
+    ...(settings.search_provider !== 'mcp' || settings.search_mcp_url !== '' || settings.dashscope_api_key === null ? {} : {DASHSCOPE_API_KEY: settings.dashscope_api_key}),
+    ...(settings.search_provider !== 'tavily' || settings.tavily_api_key === null ? {} : {TAVILY_API_KEY: settings.tavily_api_key}),
+    ...(settings.search_mcp_tool === 'web_search' ? {} : {NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL: settings.search_mcp_tool}),
+  })
 }

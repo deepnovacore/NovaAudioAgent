@@ -1,3 +1,4 @@
+import {inspectCapabilities} from './capability-registry.mjs'
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import {
@@ -443,5 +444,6 @@ export async function inspectDoctor({
     settingsPresent: await access(settings).then(() => true, () => false),
     configuredSecretKeys: Object.freeze(secretKeys),
     codexPresent: findCodex(platform),
+    capabilities: inspectCapabilities({environment, ...(home === undefined ? {} : {home})}),
   })
 }

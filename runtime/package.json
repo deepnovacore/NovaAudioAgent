@@ -33,7 +33,8 @@
     "smoke:qwen:routing": "npm run build && node scripts/qwen-progress-routing-live-smoke.mjs",
     "smoke:qwen:surrogate": "npm run build && node scripts/qwen-surrogate-progress-live-smoke.mjs",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke:search:mcp": "npm run build && node scripts/search-mcp-live-smoke.mjs"
   },
   "dependencies": {
     "@livekit/agents": "1.6.4",

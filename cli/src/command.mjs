@@ -37,7 +37,17 @@ export async function main(argv, {
       stdout.write(`Configured keys: ${report.configuredSecretKeys.length === 0 ? 'none' : report.configuredSecretKeys.join(', ')}\n`)
       stdout.write(`Codex: ${report.codexPresent ? 'found' : 'missing'}\n`)
     }
-    return report.supported ? 0 : 1
+    if (report.capabilities !== undefined) {
+      const status = report.capabilities
+      stdout.write(`Capabilities: ${status.ok ? 'valid' : 'needs attention'}${status.reason ? ` (${status.reason})` : ''}\n`)
+      if (status.modules) {
+        for (const [name, module] of Object.entries(status.modules)) stdout.write(`  ${name}: ${module.enabled ? 'enabled' : 'disabled'}${module.provider ? ` (${module.provider})` : ''}\n`)
+        stdout.write(`  FrontBrain budget: ${status.toolBudget}; exact count requires runtime composition\n`)
+        for (const server of status.servers) stdout.write(`  MCP ${server.name}: ${server.status}${server.reason ? ` (${server.reason})` : ''}\n`)
+        for (const name of status.overrides) stdout.write(`  Override: ${name}\n`)
+      }
+    }
+    return report.supported && report.capabilities?.ok !== false ? 0 : 1
   }
   if (command !== 'start' && command !== 'config') {
     stdout.write(`${HELP_TEXT}\n`)

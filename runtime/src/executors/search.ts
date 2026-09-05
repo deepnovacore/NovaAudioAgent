@@ -1,7 +1,7 @@
 /**
  * Bounded Tavily Search adapter.
  *
- * Ported from `src/nova_audio_agent/executors/search.py`. Search is the always-on readonly executor:
+ * Ported from `src/nova_audio_agent/executors/search.py`. Search is an optional readonly executor:
  * the transport owns one bounded HTTP request, the adapter owns the executor contract and evidence
  * normalization, and neither writes Memory or speaks to the user.
  *
@@ -88,6 +88,8 @@ export class TavilyTransportFailure extends Error {
 }
 
 export interface SearchTransport {
+  readonly provider?: 'tavily' | 'mcp'
+  close?(): Promise<void>
   search(query: string, options: {readonly maxResults: number}): Promise<Record<string, unknown>>
 }
 
@@ -242,9 +244,11 @@ export type SearchResult = Readonly<Record<string, JsonValue>> & {
 export class SearchAdapter implements ExecutorAdapter {
   readonly manifest = SEARCH_MANIFEST
   readonly #transport: SearchTransport
+  readonly #provider: string
 
   constructor(transport: SearchTransport) {
     this.#transport = transport
+    this.#provider = transport.provider ?? PROVIDER
   }
 
   async dispatch(
@@ -252,16 +256,17 @@ export class SearchAdapter implements ExecutorAdapter {
     request: Readonly<Record<string, JsonValue>>,
     ctx: ExecutorDispatchContext,
   ): Promise<ExecutorHandoff & {readonly refs: readonly string[]}> {
-    if (op !== 'search') return failure('failed', 'unknown_op')
+    const fail = (outcome: 'failed' | 'unknown', code: string, extra = {}) => failure(outcome, code, extra, this.#provider)
+    if (op !== 'search') return fail('failed', 'unknown_op')
 
     const normalized = normalizeRequest(request)
-    if (normalized === null) return failure('failed', 'invalid_params')
+    if (normalized === null) return fail('failed', 'invalid_params')
     const {query, maxResults} = normalized
 
     // Derived from the query and the delegate, so the same question in two different delegations gets
     // two refs -- the evidence belongs to a particular asking, not to a string.
     const queryRef = evidenceRef('query', [
-      ['provider', digestString(PROVIDER)],
+      ['provider', digestString(this.#provider)],
       ['query', digestString(query)],
       ['delegate_id', digestString(ctx.delegate.delegate_id)],
     ])
@@ -277,9 +282,9 @@ export class SearchAdapter implements ExecutorAdapter {
         const outcome = cause.code === 'authentication' || cause.code === 'provider_rejected'
           ? 'failed'
           : 'unknown'
-        return failure(outcome, cause.code, {query, queryRef, fetchedAt: ctx.clock.now()})
+        return fail(outcome, cause.code, {query, queryRef, fetchedAt: ctx.clock.now()})
       }
-      return failure('unknown', 'adapter_exception', {
+      return fail('unknown', 'adapter_exception', {
         query,
         queryRef,
         fetchedAt: ctx.clock.now(),
@@ -287,11 +292,11 @@ export class SearchAdapter implements ExecutorAdapter {
     }
 
     const fetchedAt = ctx.clock.now()
-    const results = normalizeResults(response.results, {queryRef, fetchedAt, maxResults})
+    const results = normalizeResults(response.results, {queryRef, fetchedAt, maxResults, provider: this.#provider})
     if (results.length === 0) {
       // A response with nothing usable in it is not a success. Reporting `ok` with no evidence would
       // tell the model the search worked and give it nothing to cite.
-      return failure('unknown', 'empty_evidence', {query, queryRef, fetchedAt})
+      return fail('unknown', 'empty_evidence', {query, queryRef, fetchedAt})
     }
 
     const providerRequestId = response.request_id
@@ -299,7 +304,7 @@ export class SearchAdapter implements ExecutorAdapter {
       outcome: 'ok',
       trust: 'untrusted_external',
       content: {
-        provider: PROVIDER,
+        provider: this.#provider,
         query,
         query_ref: queryRef,
         fetched_at: fetchedAt,
@@ -319,8 +324,9 @@ function failure(
     readonly queryRef?: string
     readonly fetchedAt?: number
   } = {},
+  provider = PROVIDER,
 ): ExecutorHandoff & {readonly refs: readonly string[]} {
-  const content: Record<string, JsonValue> = {error: code, provider: PROVIDER}
+  const content: Record<string, JsonValue> = {error: code, provider}
   if (extra.query !== undefined) content.query = extra.query
   if (extra.queryRef !== undefined) content.query_ref = extra.queryRef
   if (extra.fetchedAt !== undefined) content.fetched_at = extra.fetchedAt
@@ -368,6 +374,7 @@ function normalizeResults(
     readonly queryRef: string
     readonly fetchedAt: number
     readonly maxResults: number
+    readonly provider: string
   },
 ): SearchResult[] {
   if (!Array.isArray(value)) return []
@@ -402,7 +409,7 @@ function normalizeResults(
         ['content_digest', digestString(contentDigest)],
         // A Python `float`, so it always carries a decimal point -- even at a whole second.
         ['fetched_at', digestFloat(options.fetchedAt)],
-        ['provider', digestString(PROVIDER)],
+        ['provider', digestString(options.provider)],
         ['query_ref', digestString(options.queryRef)],
         ['rank', digestInt(rank)],
       ]),

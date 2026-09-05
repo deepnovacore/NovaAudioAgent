@@ -52,6 +52,7 @@
     "runtime/src/assembly.ts",
     "runtime/src/calls.ts",
     "runtime/src/canonical-json.ts",
+    "runtime/src/capability-registry.ts",
     "runtime/src/cascaded-realtime-assembly.ts",
     "runtime/src/cascaded-realtime-config.ts",
     "runtime/src/causal-runtime.ts",
@@ -107,6 +108,7 @@
     "runtime/src/executors/frame-source.ts",
     "runtime/src/executors/index.ts",
     "runtime/src/executors/mcp-camera.ts",
+    "runtime/src/executors/search-mcp.ts",
     "runtime/src/executors/search.ts",
     "runtime/src/executors/vision.ts",
     "runtime/src/executors/vision/controller-core.ts",
@@ -660,6 +662,94 @@
       "disposition": "host_only_unicode",
       "behavior": "agent registry rejects blank public descriptor labels",
       "test": "runtime/test/agent-controller.test.ts"
+    },
+    {
+      "file": "runtime/src/capability-registry.ts",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "line": 87,
+      "snippet": "value.trim()",
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "behavior": "interpolation, HTTPS and loopback auth policies fail closed without echoing values",
+      "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/capability-registry.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 87,
+      "snippet": "value.length",
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "behavior": "interpolation, HTTPS and loopback auth policies fail closed without echoing values",
+      "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/capability-registry.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "line": 100,
+      "snippet": "val.length",
+      "snippet_sha256": "d09539ceffd04ff35c0f280568e5971430a889d560d425e0262c4483a97ded1a",
+      "disposition": "intentional_utf16",
+      "behavior": "interpolation, HTTPS and loopback auth policies fail closed without echoing values",
+      "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/capability-registry.ts",
+      "kind": "string_trim",
+      "occurrence_index": 3,
+      "line": 108,
+      "snippet": "replacement.trim()",
+      "snippet_sha256": "a3ba278ce0710acfc1a0757830c33f3ef683b996a0ba6188ecde9feab000b086",
+      "disposition": "host_only_unicode",
+      "behavior": "interpolation, HTTPS and loopback auth policies fail closed without echoing values",
+      "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/capability-registry.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "line": 112,
+      "snippet": "resolved.length",
+      "snippet_sha256": "c11e913885f00d9ae66ce2f918a3ca2ff665690f6a2f7102d79a92a679fc0a3f",
+      "disposition": "intentional_utf16",
+      "behavior": "interpolation, HTTPS and loopback auth policies fail closed without echoing values",
+      "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/capability-registry.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 5,
+      "line": 123,
+      "snippet": "key.toLowerCase()",
+      "snippet_sha256": "d3ea0fe04ee87d0e0a02881a46d014a9ead5e302a346f7245b4fc6f9b0fe28b2",
+      "disposition": "host_only_unicode",
+      "behavior": "interpolation, HTTPS and loopback auth policies fail closed without echoing values",
+      "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/capability-registry.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 6,
+      "line": 179,
+      "snippet": "index + 1",
+      "snippet_sha256": "d4a5776d00115cfb1bc08c78f874ec20f7a58c2fbf285a17bbbf158fe7bd64a7",
+      "disposition": "wire_json",
+      "behavior": "interpolation, HTTPS and loopback auth policies fail closed without echoing values",
+      "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/capability-registry.ts",
+      "kind": "string_length",
+      "occurrence_index": 7,
+      "line": 225,
+      "snippet": "arg.length",
+      "snippet_sha256": "e85d4053fa02a7e534f3d31ef42e15a787c7134d01b6d8f626e92c234c5923d2",
+      "disposition": "intentional_utf16",
+      "behavior": "interpolation, HTTPS and loopback auth policies fail closed without echoing values",
+      "test": "runtime/test/capability-registry.test.ts"
     },
     {
       "file": "runtime/src/causal-runtime.ts",
@@ -1597,6 +1687,39 @@
       "behavior": "MCP result parser accepts canonical four and five MiB image payloads"
     },
     {
+      "file": "runtime/src/executors/search-mcp.ts",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "line": 112,
+      "snippet": "value.trim()",
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "behavior": "MCP text JSON and text links normalize through the existing SearchAdapter shape",
+      "test": "runtime/test/executors-search-mcp.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/search-mcp.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "line": 133,
+      "snippet": "/\\[([^\\]]{1,300})\\]\\((https?:\\/\\/[^)\\s]+)\\)/giu",
+      "snippet_sha256": "fe5725bb9129519524a136b1404d472d053d1eec8b9c5c56360f7997de72fa10",
+      "disposition": "host_only_unicode",
+      "behavior": "MCP text JSON and text links normalize through the existing SearchAdapter shape",
+      "test": "runtime/test/executors-search-mcp.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/search-mcp.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "line": 134,
+      "snippet": "/https?:\\/\\/[^\\s<>()\\]]+/giu",
+      "snippet_sha256": "0fe4c09197a1f8df2765ad3229311c54dddc92096bb0abf30bf84de4f5dff69e",
+      "disposition": "host_only_unicode",
+      "behavior": "MCP text JSON and text links normalize through the existing SearchAdapter shape",
+      "test": "runtime/test/executors-search-mcp.test.ts"
+    },
+    {
       "file": "runtime/src/executors/search.ts",
       "kind": "string_length",
       "occurrence_index": 0,
@@ -2145,6 +2268,28 @@
       "disposition": "wire_json",
       "behavior": "one provider session supports the realtime session connect and reconnect contract",
       "test": "runtime/test/realtime-assembly.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime-assembly.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
+      "line": 1185,
+      "snippet": "toolCount",
+      "snippet_sha256": "863e24fdb3ca8fcb45e185bc2bfb506aa01692ca2b5312a9d9d1a7d3cc4dd1f1",
+      "disposition": "wire_json",
+      "behavior": "final provider tool composition enforces exact N/B without partial exposure",
+      "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime-assembly.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 5,
+      "line": 1185,
+      "snippet": "toolBudget",
+      "snippet_sha256": "8ea03da034d0756ff31fbdaa32f8f8d94ad901bcdcbdc0bfe02d43cf8fa24a62",
+      "disposition": "wire_json",
+      "behavior": "final provider tool composition enforces exact N/B without partial exposure",
+      "test": "runtime/test/capability-registry.test.ts"
     },
     {
       "file": "runtime/src/realtime/cascaded/qwen-llm.ts",

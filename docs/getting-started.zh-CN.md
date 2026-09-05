@@ -206,8 +206,8 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 | `NOVA_AUDIO_AGENT_PROGRESS_BUBBLES` | `core` | 否 | milestones | 进度气泡显示模式。 |
 | `NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG` | `core` | 否 | ~/.nova-audio-agent/capabilities.json | 能力注册表路径。 |
 | `NOVA_AUDIO_AGENT_SEARCH_PROVIDER` | `search` | 否 | tavily | CLI 或 CI 搜索提供方覆盖。 |
-| `NOVA_AUDIO_AGENT_SEARCH_MCP_URL` | `search` | 否 | 无 | 网页搜索 MCP 地址。 |
-| `NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL` | `search` | 否 | web_search | 网页搜索 MCP 工具名。 |
+| `NOVA_AUDIO_AGENT_SEARCH_MCP_URL` | `search` | 否 | 无 | 网页搜索 MCP 地址覆盖；选择 MCP 且未设置时使用已核对的百炼预设。 |
+| `NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL` | `search` | 否 | web_search | 网页搜索 MCP 工具覆盖（通用默认 web_search；百炼预设 bailian_web_search）。 |
 | `NOVA_AUDIO_AGENT_KNOWLEDGE_PATH` | `core` | 否 | ~/.nova-audio-agent/knowledge.sqlite | 知识库 SQLite 数据库路径。 |
 | `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER` | `core` | 否 | dashscope | 知识库 embedding 提供方。 |
 | `NOVA_AUDIO_AGENT_EMBEDDING_MODEL` | `core` | 否 | text-embedding-v4 | 知识库 embedding 模型。 |
@@ -251,3 +251,13 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 | `NOVA_AUDIO_AGENT_REALTIME_TRACE` | `telemetry` | 否 | 0 | 启用源码运行时跟踪记录。 |
 | `NOVA_ORB_OPAQUE` | `core` | 否 | 0 | 使用不透明桌面悬浮球窗口。 |
 <!-- END GENERATED ENV CONTRACT -->
+
+### 能力注册表与可选 MCP 搜索
+
+运行时读取 `~/.nova-audio-agent/capabilities.json`，可用 `NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG` 指定路径。默认文件不存在时使用内置值：搜索、摄像头、Coding 开启，知识库关闭。显式指定的文件缺失或格式错误会阻止启动，错误信息不包含文件内容或密钥。模块按「环境变量覆盖 > 注册表 > 默认值」生效；生产装配会记录覆盖变量的名称。关闭搜索不需要任何搜索凭据；选择 MCP 不需要 Tavily Key。
+
+完整配置示例见 [英文接入说明](getting-started.md#optional-capability-registry-and-mcp-search)。百炼 Streamable HTTP 预设是 `https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp`，使用 `Authorization: Bearer ${DASHSCOPE_API_KEY}`，工具名为 `bailian_web_search`。已于 2026-09-05 核对[官方外部调用文档](https://docs.agent.bailian.aliyun.com/zh/mcp/external-invocation)和[联网搜索文档](https://help.aliyun.com/zh/model-studio/web-search/)，运行时仍通过 `tools/list` 核对工具名。其他服务可用 `NOVA_AUDIO_AGENT_SEARCH_MCP_URL` / `NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL` 覆盖。
+
+`novaaudio doctor` 与运行时共用验证器，显示模块状态、单个服务器失败原因和环境覆盖。`missing_environment:变量名` 表示缺少引用的凭据；`insecure_mcp_endpoint` 表示地址或 HTTP 鉴权头不符合规则；`search_tool_missing` 表示未发现配置的工具；`frontbrain_tool_budget_exceeded: N/B` 显示完整前台工具数量与预算，需减少前台选中的工具，运行时不会静默截断。
+
+执行 `npm run runtime:smoke:search:mcp` 可做一次真实搜索，读取现有环境凭据，只输出状态和结果数量，不改变默认值。默认仍为 Tavily。**真实百炼服务的 macOS / Windows 验收保持待完成**；需记录日期、Nova/Codex 版本和成功结果后，另行提交默认值切换。本地真实 MCP 协议测试只证明装配与传输行为，不等于线上验收。

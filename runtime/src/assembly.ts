@@ -1,3 +1,5 @@
+import {capabilityStatus, type CapabilityRegistry, type CapabilityStatus} from './capability-registry.js'
+import {McpSearchTransport} from './executors/search-mcp.js'
 /**
  * Production assembly: settings in, a serving runtime out.
  *
@@ -15,7 +17,7 @@ import {
   type ModelPort,
 } from './causal-runtime.js'
 import { RealClock, type Clock } from './clock.js'
-import { resolveProactivity, type Settings } from './config.js'
+import { capabilitiesFromSettings, resolveProactivity, type Settings } from './config.js'
 import { MonotonicIdFactory, type IdFactory } from './ids.js'
 import { GatewayCompressor, GatewaySurrogate } from './model-adapters.js'
 import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model-gateway.js'
@@ -61,6 +63,7 @@ export class AssemblyError extends Error {
 
 export interface AssemblyOptions {
   readonly settings: Settings
+  readonly capabilities?: CapabilityRegistry
   readonly clock?: Clock
   readonly ids?: IdFactory
   readonly gateway?: ModelGateway
@@ -80,6 +83,8 @@ export interface AssemblyOptions {
 }
 
 export interface Assembly {
+  readonly capabilities: CapabilityRegistry
+  readonly capabilityStatus: CapabilityStatus
   readonly runtime: CausalRuntime
   readonly gateway: ModelGateway
   readonly tools: CompiledTools
@@ -101,6 +106,7 @@ export interface Assembly {
 function resolveExecutors(
   settings: Settings,
   supplied: readonly ExecutorAdapter[],
+  codingEnabled: boolean,
 ): readonly ExecutorAdapter[] {
   const byName = new Map<string, ExecutorAdapter>()
   for (const adapter of supplied) {
@@ -117,7 +123,7 @@ function resolveExecutors(
       missing.push(name)
       continue
     }
-    resolved.push(adapter)
+    if (codingEnabled || !adapter.manifest.roles.includes('coding')) resolved.push(adapter)
   }
   if (missing.length > 0) {
     throw new AssemblyError(`no adapter for configured executor(s): ${missing.join(', ')}`)
@@ -134,10 +140,10 @@ function requireApiKey(settings: Settings): string {
   return key
 }
 
-function requireTavilyApiKey(settings: Settings): string {
-  const key = stripLikePython(settings.tavily_api_key ?? '')
+function requireTavilyApiKey(settings: Settings, capabilities: CapabilityRegistry): string {
+  const key = stripLikePython(capabilities.modules.search.tavily.apiKey ?? (capabilities.modules.search.tavily.apiKeyEnv === 'TAVILY_API_KEY' ? settings.tavily_api_key : null) ?? '')
   if (key === '') {
-    throw new AssemblyError('缺少 TAVILY_API_KEY')
+    throw new AssemblyError(`缺少 ${capabilities.modules.search.tavily.apiKeyEnv}`)
   }
   return key
 }
@@ -170,6 +176,10 @@ function isAdmissionGatedFrameSource(source: FrameSource): source is AdmissionGa
  */
 export function buildAssembly(options: AssemblyOptions): Assembly {
   const {settings} = options
+  const loadedCapabilities = options.capabilities ?? capabilitiesFromSettings(settings)
+  const capabilities = options.cameraModuleEnabled === undefined ? loadedCapabilities : {
+    ...loadedCapabilities, modules: {...loadedCapabilities.modules, camera: {enabled: options.cameraModuleEnabled}},
+  }
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
 
@@ -181,11 +191,13 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
-  const searchTransport = options.searchTransport
-    ?? new TavilyTransport(requireTavilyApiKey(settings))
+  const searchTransport: SearchTransport | undefined = !capabilities.modules.search.enabled ? undefined : options.searchTransport
+    ?? (capabilities.modules.search.provider === 'mcp'
+      ? new McpSearchTransport(capabilities.modules.search.mcp!)
+      : new TavilyTransport(requireTavilyApiKey(settings, capabilities)))
   const mediaStore = options.mediaStore ?? new MediaStore()
   const frameSource = options.frameSource ?? new DisabledFrameSource()
-  const cameraModuleEnabled = options.cameraModuleEnabled ?? true
+  const cameraModuleEnabled = options.cameraModuleEnabled ?? capabilities.modules.camera.enabled
   const cameraReserved = new Set([MCP_CAMERA_EXECUTOR, 'watch', 'guard'])
   const suppliedReserved = (options.executors ?? []).find(adapter => cameraReserved.has(adapter.manifest.name))
   const configuredReserved = settings.executors.find(name => cameraReserved.has(name))
@@ -195,7 +207,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const watchModel = stripLikePython(settings.watch_model ?? '') || settings.fast_model
   const visionLifecycle = cameraModuleEnabled ? new VisionLifecycleBridge() : undefined
 
-  const search = new SearchAdapter(searchTransport)
+  const search = searchTransport === undefined ? undefined : new SearchAdapter(searchTransport)
   const camera = cameraModuleEnabled ? new CameraMcpAdapter({
     source: frameSource, mediaStore, gateway, model: watchModel,
   }) : undefined
@@ -241,15 +253,16 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
       terminal: delegateId => visionLifecycle.terminal(delegateId),
     }}),
   }) : undefined
-  const configuredExecutors = resolveExecutors(settings, options.executors ?? [])
+  const configuredExecutors = resolveExecutors(settings, options.executors ?? [], capabilities.modules.coding.enabled)
   const executors = [
-    search,
+    ...(search === undefined ? [] : [search]),
     ...(camera === undefined || watch === undefined || guard === undefined ? [] : [camera, watch, guard]),
     ...configuredExecutors,
   ]
   const manifests = executors.map(adapter => adapter.manifest)
   const agentDescriptors = [
-    ...(options.agentDescriptors ?? []),
+    ...(options.agentDescriptors ?? []).filter(descriptor => capabilities.modules.coding.enabled
+      || !descriptor.ownedChannels.some(channel => (options.executors ?? []).some(adapter => adapter.manifest.name === channel && adapter.manifest.roles.includes('coding')))),
     ...(cameraModuleEnabled ? [VISION_AGENT_DESCRIPTOR] : []),
   ]
   const tools = compileToolSchema(manifests, {includeMemoryRecall: true, agentDescriptors})
@@ -332,6 +345,8 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     return pending
   }
   return {
+    capabilities,
+    capabilityStatus: capabilityStatus(capabilities, tools.schemas.length),
     runtime,
     gateway,
     tools,
@@ -362,6 +377,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     },
     stop(): Promise<void> {
       return serializeLifecycle(async () => {
+        await searchTransport?.close?.()
         if (!started) return
         if (cameraModuleEnabled) {
           try { await camera!.close() } finally { await frameSource.stop() }
