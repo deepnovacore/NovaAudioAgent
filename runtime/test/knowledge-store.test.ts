@@ -241,6 +241,9 @@ test('recall and getChunk redact document paths while keeping lexical matches ac
   const chunk = await client.getChunk(hit.locator)
   assert.equal(chunk.status, 'ok')
   assert.equal(chunk.text?.includes('/Users/example/private'), false)
+  const privateSource = (await client.listSources())[0]
+  assert.equal(privateSource?.locator, '/tmp/runtime-notes.md')
+  assert.equal(privateSource?.title.includes('/Users/example/private'), false)
   await client.removeSource('source-a')
   assert.equal((await client.getChunk(hit.locator)).status, 'gone')
 })

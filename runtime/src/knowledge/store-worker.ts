@@ -360,7 +360,7 @@ function sourceFrom(row: Row): KnowledgeSource {
   const status = textValue(row, 'status')
   if ((kind !== 'file' && kind !== 'url' && kind !== 'folder_child') || (status !== 'ready' && status !== 'failed')) throw new StoreError('STORE_READ_FAILED')
   return {
-    id: textValue(row, 'id'), title: redactOutput(textValue(row, 'title')), kind, locator: '[private]',
+    id: textValue(row, 'id'), title: redactOutput(textValue(row, 'title')), kind, locator: textValue(row, 'locator'),
     mime: textValue(row, 'mime'), fingerprint: textValue(row, 'fingerprint'), bytes: numberValue(row, 'bytes'),
     created_at: numberValue(row, 'created_at'), updated_at: numberValue(row, 'updated_at'), status,
   }
