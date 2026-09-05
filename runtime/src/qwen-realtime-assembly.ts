@@ -141,7 +141,7 @@ export function buildQwenRealtimeAssembly(
     executorApproval: options.codexResource?.approvalController !== null
       && options.codexResource?.approvalController !== undefined,
   })
-  const workspaceGraph = workspaceGraphServiceFromSettings(
+  const createWorkspaceGraph = () => workspaceGraphServiceFromSettings(
     options.settings,
     code => {
       if (code === 'workspace_graph_open_failed') return
@@ -158,7 +158,7 @@ export function buildQwenRealtimeAssembly(
     controlledPreemptiveAlertReconnect: options.settings.qwen_controlled_guard_reconnect,
     preemptiveAlertHistoryRecovery: options.settings.qwen_guard_history_recovery,
     preemptiveAlertHistoryPairs: options.settings.qwen_guard_history_pairs,
-    ...(workspaceGraph === undefined ? {} : {workspaceGraph}),
+    createWorkspaceGraph,
     ...(options.providerToolView === undefined
       ? {}
       : {providerToolView: options.providerToolView}),

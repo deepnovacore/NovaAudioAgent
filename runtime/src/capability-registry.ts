@@ -71,6 +71,7 @@ function environmentOverride(environment: Environment, name: string): string | u
   const value = environment[name]?.trim()
   return value === '' ? undefined : value
 }
+function omittedDefault(value: unknown, fallback: unknown): unknown { return value === undefined ? fallback : value }
 function invalid(field: string): never { throw new CapabilityConfigurationError(field) }
 function object(value: unknown, field: string, keys?: readonly string[]): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid(field)
@@ -93,7 +94,7 @@ function integer(value: unknown, fallback: number, max: number, field: string): 
   return value
 }
 function stringMap(value: unknown, field: string): Record<string, string> {
-  const entries = Object.entries(object(value ?? {}, field))
+  const entries = Object.entries(object(omittedDefault(value, {}), field))
   if (entries.length > 64) invalid(field)
   return Object.fromEntries(entries.map(([key, val]) => {
     if (!/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/u.test(key)) invalid(field)
@@ -125,19 +126,19 @@ export function validateMcpEndpoint(value: string, headers: Readonly<Record<stri
     || (url.protocol !== 'https:' && (url.protocol !== 'http:' || !loopback || hasAuth))) invalid('insecure_mcp_endpoint')
 }
 function moduleConfig(value: unknown, field: string, keys: readonly string[]): Record<string, unknown> {
-  return object(value ?? {}, field, ['enabled', ...keys])
+  return object(omittedDefault(value, {}), field, ['enabled', ...keys])
 }
 
 export function parseCapabilityRegistry(input: unknown, environment: Environment = {}): CapabilityRegistry {
   const document = object(input, 'document', ['version', 'modules', 'mcpServers', 'frontbrainToolBudget'])
   if (document.version !== 1) invalid('version')
-  const modules = object(document.modules ?? {}, 'modules', ['search', 'camera', 'coding', 'knowledge'])
+  const modules = object(omittedDefault(document.modules, {}), 'modules', ['search', 'camera', 'coding', 'knowledge'])
   const search = moduleConfig(modules.search, 'modules.search', ['provider', 'mcp', 'tavily'])
   const camera = moduleConfig(modules.camera, 'modules.camera', [])
   const coding = moduleConfig(modules.coding, 'modules.coding', [])
   const knowledge = moduleConfig(modules.knowledge, 'modules.knowledge', ['exposeToCodex'])
   const enabled = bool(search.enabled, true, 'modules.search.enabled')
-  const configuredProvider = search.provider ?? 'tavily'
+  const configuredProvider = omittedDefault(search.provider, 'tavily')
   if (configuredProvider !== 'tavily' && configuredProvider !== 'mcp') invalid('modules.search.provider')
   const provider = environmentOverride(environment, 'NOVA_AUDIO_AGENT_SEARCH_PROVIDER') ?? configuredProvider
   if (provider !== 'tavily' && provider !== 'mcp') invalid('NOVA_AUDIO_AGENT_SEARCH_PROVIDER')
@@ -150,18 +151,20 @@ export function parseCapabilityRegistry(input: unknown, environment: Environment
     cameraEnabled = ['true', '1', 'yes', 'on'].includes(cameraOverride)
     overrides.push('NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED')
   }
-  const tavily = object(search.tavily ?? {}, 'modules.search.tavily', ['apiKeyEnv'])
-  const apiKeyEnv = string(tavily.apiKeyEnv ?? 'TAVILY_API_KEY', 'modules.search.tavily.apiKeyEnv', 128)
+  const tavily = object(omittedDefault(search.tavily, {}), 'modules.search.tavily', ['apiKeyEnv'])
+  const apiKeyEnv = string(omittedDefault(tavily.apiKeyEnv, 'TAVILY_API_KEY'), 'modules.search.tavily.apiKeyEnv', 128)
   if (!ENV_NAME.test(apiKeyEnv)) invalid('modules.search.tavily.apiKeyEnv')
   let mcp: SearchMcpConfig | undefined
   if (search.mcp !== undefined || (enabled && provider === 'mcp')) {
-    const config = object(search.mcp ?? {}, 'modules.search.mcp', ['url', 'tool', 'headers', 'timeoutMs', 'maxResultBytes'])
+    const config = object(omittedDefault(search.mcp, {}), 'modules.search.mcp', ['url', 'tool', 'headers', 'timeoutMs', 'maxResultBytes'])
     const urlOverride = environmentOverride(environment, 'NOVA_AUDIO_AGENT_SEARCH_MCP_URL')
     const toolOverride = environmentOverride(environment, 'NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL')
     const preset = !urlOverride && config.url === undefined
-    const rawUrl = string(urlOverride ?? config.url ?? BAILIAN_SEARCH_MCP_URL, 'modules.search.mcp.url')
-    const tool = string(toolOverride ?? config.tool ?? (preset ? BAILIAN_SEARCH_MCP_TOOL : 'web_search'), 'modules.search.mcp.tool', 256)
-    const rawHeaders = stringMap(config.headers ?? (preset ? {authorization: 'Bearer ${DASHSCOPE_API_KEY}'} : {}), 'modules.search.mcp.headers')
+    const configuredUrl = string(omittedDefault(config.url, BAILIAN_SEARCH_MCP_URL), 'modules.search.mcp.url')
+    const rawUrl = string(urlOverride ?? configuredUrl, 'modules.search.mcp.url')
+    const configuredTool = string(omittedDefault(config.tool, preset ? BAILIAN_SEARCH_MCP_TOOL : 'web_search'), 'modules.search.mcp.tool', 256)
+    const tool = string(toolOverride ?? configuredTool, 'modules.search.mcp.tool', 256)
+    const rawHeaders = stringMap(omittedDefault(config.headers, preset ? {authorization: 'Bearer ${DASHSCOPE_API_KEY}'} : {}), 'modules.search.mcp.headers')
     const headers = enabled && provider === 'mcp' ? interpolateMap(rawHeaders, environment) : rawHeaders
     const url = enabled && provider === 'mcp' ? interpolateCapabilityValue(rawUrl, environment) : rawUrl
     if (enabled && provider === 'mcp') validateMcpEndpoint(url, headers)
@@ -171,7 +174,7 @@ export function parseCapabilityRegistry(input: unknown, environment: Environment
     if (urlOverride) overrides.push('NOVA_AUDIO_AGENT_SEARCH_MCP_URL')
     if (toolOverride) overrides.push('NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL')
   }
-  const servers = object(document.mcpServers ?? {}, 'mcpServers')
+  const servers = object(omittedDefault(document.mcpServers, {}), 'mcpServers')
   if (Object.keys(servers).length > 8) invalid('mcpServers:max_8')
   const mcpServers: Record<string, McpServerConfig> = Object.create(null) as Record<string, McpServerConfig>
   const serverStatuses: McpServerStatus[] = []
@@ -198,9 +201,9 @@ function parseServer(value: unknown, environment: Environment): McpServerConfig 
   const enabled = bool(config.enabled, true, 'server.enabled')
   const transport = config.transport
   if (transport !== 'streamable-http' && transport !== 'stdio') invalid('server.transport')
-  const exposure = object(config.exposeTo ?? {}, 'server.exposeTo', ['frontbrain', 'codex'])
+  const exposure = object(omittedDefault(config.exposeTo, {}), 'server.exposeTo', ['frontbrain', 'codex'])
   const exposeTo = {frontbrain: bool(exposure.frontbrain, false, 'server.exposeTo.frontbrain'), codex: bool(exposure.codex, true, 'server.exposeTo.codex')}
-  const rawTools = object(config.tools ?? {}, 'server.tools')
+  const rawTools = object(omittedDefault(config.tools, {}), 'server.tools')
   if (Object.keys(rawTools).length > 32) invalid('server.tools:max_32')
   const tools = Object.fromEntries(Object.entries(rawTools).map(([name, value]) => {
     string(name, 'server.tool_name', 256)
@@ -221,7 +224,7 @@ function parseServer(value: unknown, environment: Environment): McpServerConfig 
   }
   if (config.url !== undefined || config.headers !== undefined) invalid('server.transport_fields')
   const command = string(config.command, 'server.command')
-  const args = config.args ?? []
+  const args = omittedDefault(config.args, [])
   if (!Array.isArray(args) || args.length > 64 || args.some(arg => typeof arg !== 'string' || arg.length > 8192 || arg.includes('\0'))) invalid('server.args')
   const env = stringMap(config.env, 'server.env')
   if (Object.keys(env).some(key => !ENV_NAME.test(key))) invalid('server.env')

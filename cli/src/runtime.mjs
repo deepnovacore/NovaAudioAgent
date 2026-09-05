@@ -431,8 +431,16 @@ export async function inspectDoctor({
   const executable = resolve(root, target.executable)
   const settings = desktopSettingsPath({platform, home, environment})
   let secretKeys = []
+  let capabilitiesConfigPath
   try {
     const document = JSON.parse(await readFile(settings, 'utf8'))
+    // Match settings-store v4 migration/string validation, then backendLaunchSpec's nonempty saved-path override.
+    const acceptsV4Fields = document?.version === undefined || (typeof document.version === 'number' && document.version >= 4)
+    const candidate = document?.capabilitiesConfigPath
+    if (acceptsV4Fields && typeof candidate === 'string' && !/[\u0000-\u001f\u007f]/u.test(candidate)) {
+      const normalized = candidate.trim()
+      if (normalized && [...normalized].length <= 32768) capabilitiesConfigPath = normalized
+    }
     if (document?.secrets && typeof document.secrets === 'object' && !Array.isArray(document.secrets)) {
       secretKeys = Object.keys(document.secrets).sort()
     }
@@ -444,6 +452,11 @@ export async function inspectDoctor({
     settingsPresent: await access(settings).then(() => true, () => false),
     configuredSecretKeys: Object.freeze(secretKeys),
     codexPresent: findCodex(platform),
-    capabilities: inspectCapabilities({environment, ...(home === undefined ? {} : {home})}),
+    capabilities: inspectCapabilities({
+      environment: capabilitiesConfigPath === undefined ? environment : {
+        ...environment, NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: capabilitiesConfigPath,
+      },
+      ...(home === undefined ? {} : {home}),
+    }),
   })
 }

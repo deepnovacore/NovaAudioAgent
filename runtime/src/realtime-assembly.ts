@@ -136,6 +136,8 @@ export interface RealtimeAssemblyOptions {
   /** Required only when the resolved runtime has a coding role. */
   readonly codingAgentControllerFactory?: CodingAgentControllerFactory
   readonly workspaceGraph?: RealtimeWorkspaceGraph
+  /** Production graph allocation is deferred until final tool validation and service construction succeed. */
+  readonly createWorkspaceGraph?: () => RealtimeWorkspaceGraph | undefined
 }
 
 type LifecycleState = 'new' | 'starting' | 'started' | 'stopping' | 'stopped'
@@ -986,6 +988,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       service.onSuggestionSelected(suggestion, reason)
     },
   )
+  const workspaceGraph = options.workspaceGraph ?? options.createWorkspaceGraph?.()
   return assignAssembly(new RealtimeAssembly({
     toolCount: count,
     core,
@@ -1002,7 +1005,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     ...(projectAdapter === undefined ? {} : {projectAdapter}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
-    ...(options.workspaceGraph === undefined ? {} : {workspaceGraph: options.workspaceGraph}),
+    ...(workspaceGraph === undefined ? {} : {workspaceGraph}),
   }), assemblyHolder)
 }
 

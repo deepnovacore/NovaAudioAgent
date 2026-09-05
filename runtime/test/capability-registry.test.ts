@@ -129,3 +129,31 @@ test('disabled capability instruction sections are absent and doctor shares reda
   assert.equal(status.ok, false)
   assert.equal(JSON.stringify(status).includes('private-secret'), false)
 })
+
+test('explicit null never restores registry defaults and malformed null servers remain isolated', () => {
+  const invalid = [
+    {modules: null}, {mcpServers: null}, {frontbrainToolBudget: null},
+    ...['search', 'camera', 'coding', 'knowledge'].map(name => ({modules: {[name]: null}})),
+    ...['provider', 'mcp', 'tavily', 'enabled'].map(field => ({modules: {search: {[field]: null}}})),
+    ...['url', 'tool', 'headers', 'timeoutMs', 'maxResultBytes'].map(field => ({modules: {search: {mcp: {[field]: null}}}})),
+    {modules: {search: {tavily: {apiKeyEnv: null}}}},
+    {modules: {knowledge: {exposeToCodex: null}}},
+  ]
+  for (const document of invalid) {
+    assert.throws(() => parseCapabilityRegistry({version: 1, ...document}), /invalid capabilities configuration/u, JSON.stringify(document))
+    assert.throws(() => parseCapabilityRegistry({version: 1, ...document}, {
+      NOVA_AUDIO_AGENT_SEARCH_PROVIDER: 'mcp',
+      NOVA_AUDIO_AGENT_SEARCH_MCP_URL: 'https://example.test/mcp',
+      NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL: 'lookup',
+    }), /invalid capabilities configuration/u, JSON.stringify(document))
+  }
+  for (const config of [
+    ...['exposeTo', 'tools', 'headers', 'enabled'].map(field => ({...server, [field]: null})),
+    ...['args', 'env'].map(field => ({transport: 'stdio', command: 'node', [field]: null})),
+  ]) {
+    const parsed = parseCapabilityRegistry({version: 1, mcpServers: {good: server, bad: config}})
+    assert.equal(parsed.serverStatuses[1]?.status, 'failed', JSON.stringify(config))
+    assert.deepEqual(Object.keys(parsed.mcpServers), ['good'])
+  }
+  assert.equal(parseCapabilityRegistry({version: 1}).modules.camera.enabled, true)
+})

@@ -295,7 +295,7 @@ export function buildCascadedRealtimeAssembly(
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     idFactory: () => ids.next('cascaded'),
   })
-  const workspaceGraph = workspaceGraphServiceFromSettings(
+  const createWorkspaceGraph = () => workspaceGraphServiceFromSettings(
     options.settings,
     code => {
       if (code === 'workspace_graph_open_failed') return
@@ -312,7 +312,7 @@ export function buildCascadedRealtimeAssembly(
     controlledPreemptiveAlertReconnect: false,
     preemptiveAlertHistoryRecovery: 'none',
     preemptiveAlertHistoryPairs: 4,
-    ...(workspaceGraph === undefined ? {} : {workspaceGraph}),
+    createWorkspaceGraph,
     ...(options.providerToolView === undefined ? {} : {providerToolView: options.providerToolView}),
     ...(options.onAudioFrame === undefined ? {} : {onAudioFrame: options.onAudioFrame}),
     ...(options.onAudioClear === undefined ? {} : {onAudioClear: options.onAudioClear}),

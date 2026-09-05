@@ -1,3 +1,4 @@
+import {assertBudgetRejectsBeforeGraphWorker} from './graph-budget-probe.js'
 import assert from 'node:assert/strict'
 import {chmod, mkdtemp, realpath, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
@@ -886,3 +887,7 @@ test('core gateway preserves generic models or applies all Ark support overrides
       assert.equal(configured.fast_model, 'fast-original')
     }
   })
+
+test('cascaded budget rejection creates no graph Worker and evaluates the final tool view once', () => {
+  assertBudgetRejectsBeforeGraphWorker('cascaded')
+})

@@ -1,3 +1,4 @@
+import {assertBudgetRejectsBeforeGraphWorker} from './graph-budget-probe.js'
 import assert from 'node:assert/strict'
 import {chmod, mkdtemp, readFile, realpath, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
@@ -837,4 +838,8 @@ test('Qwen connector failure rolls core back safely and permits one later retry'
   assert.equal(connector.calls.length, 2)
   await settleNamed('retried Qwen stop', realtime.stop())
   assert.equal(frame.stops, 2)
+})
+
+test('qwen budget rejection creates no graph Worker and evaluates the final tool view once', () => {
+  assertBudgetRejectsBeforeGraphWorker('qwen')
 })
