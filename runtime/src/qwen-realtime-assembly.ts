@@ -54,7 +54,7 @@ export interface BuildQwenRealtimeProviderOptions {
   readonly now: () => number
   readonly workspaceGraphPolicy: boolean
   readonly executorApproval: boolean
-  readonly modules?: {readonly search: boolean; readonly camera: boolean; readonly coding: boolean}
+  readonly modules?: {readonly search: boolean; readonly camera: boolean; readonly coding: boolean; readonly knowledge?: boolean}
 }
 
 /**
@@ -125,6 +125,7 @@ export function buildQwenRealtimeAssembly(
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
     ...(options.capabilities === undefined ? {} : {capabilities: options.capabilities}),
     ...(options.externalMcp === undefined ? {} : {externalMcp: options.externalMcp}),
+    ...(options.knowledge === undefined ? {} : {knowledge: options.knowledge}),
     ...(options.cameraModuleEnabled === undefined ? {} : {cameraModuleEnabled: options.cameraModuleEnabled}),
     ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
   })
@@ -137,6 +138,7 @@ export function buildQwenRealtimeAssembly(
       search: core.capabilities.modules.search.enabled,
       camera: options.cameraModuleEnabled ?? core.capabilities.modules.camera.enabled,
       coding: core.capabilities.modules.coding.enabled,
+      knowledge: core.capabilities.modules.knowledge.enabled,
     },
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
     executorApproval: options.codexResource?.approvalController !== null

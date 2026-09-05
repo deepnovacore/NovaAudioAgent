@@ -73,6 +73,8 @@ export interface IntakeOptions {
   readonly fact: (session: Readonly<IntakeSession>, text: string) => void
   readonly record: (session: Readonly<IntakeSession>, kind: string, data: Readonly<Record<string, JsonValue>>) => void
   readonly diagnostic: (code: string) => void
+  /** Host-only retrieval; model output never supplies evidence or resolvable locators. */
+  readonly attachEvidence?: (order: WorkOrder, workspace: string | null, signal: AbortSignal) => Promise<Pick<WorkOrder, 'references' | 'evidence_excerpts'>>
 }
 
 /** Events and confirmed-host results only; lifecycle decisions stay with the coding controller. */
@@ -422,7 +424,10 @@ export class IntakeController {
         discovery: [...new Set([...current.discovery, ...result.work_order.discovery])].slice(0, 12),
         assumptions: [...new Set([...Object.values(slots).filter(slot => slot.state === 'inferred').map(slot => slot.note), ...result.work_order.assumptions])].slice(0, 12),
       }
-      current.work_order = renderWorkOrder(order)
+      const evidence = this.#options.attachEvidence === undefined ? undefined
+        : await this.#options.attachEvidence(order, current.workspace, abort.signal)
+      if (this.#current(snapshot.intake_id, snapshot.revision) !== current || abort.signal.aborted) return
+      current.work_order = renderWorkOrder({...order, ...evidence})
       current.title = deriveSessionTitle(order.objective)
       current.plan_revision = current.revision
       current.state = 'readback'

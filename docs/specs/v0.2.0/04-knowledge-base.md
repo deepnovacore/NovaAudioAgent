@@ -1,10 +1,12 @@
 # 04. Knowledge Base (RAG)
 
-> 摘要：新增独立的知识层 K（用户策展文档），与 L0–L4 工作区图分离。本地 SQLite Worker 存 sources / chunks / embeddings；默认 DashScope `text-embedding-v4`，local EmbeddingProvider 只预留接口、界面上不可选。混合检索（向量 + FTS5，RRF）。检索面：FrontBrain `knowledge__recall`、工作单引用（只附加当前执行端能解析的定位符）、可选 Codex 用的 loopback `nova-knowledge` MCP（开启即必须提供 `get_chunk`）。数据流向在设置页明示。默认不自动注入 ContextView。
+> 摘要：新增独立的知识层 K（用户策展文档），与 L0–L4 工作区图分离。本地 SQLite Worker 存 sources / chunks / embeddings；默认 DashScope `text-embedding-v4`，local EmbeddingProvider 只预留接口、界面上不可选。混合检索（向量 + FTS5，RRF）。检索面：内置 Knowledge MCP 的 `mcp__nova_knowledge__recall`、工作单引用（只附加当前执行端能解析的定位符）、可选 Codex 用的 loopback `nova-knowledge` MCP（开启即必须提供 `get_chunk`）。数据流向在设置页明示。默认不自动注入 ContextView。
+
+> 决定（2026-09-05，用户确认）：M4 纳入本轮实施。知识检索不新增原生语音工具，改为默认保留名称的内置 Knowledge MCP；模块默认关闭。`get_chunk` 仅投射给 Codex，导入/移除/重建仅走宿主入口。本卷描述验收目标，进度以 STATUS 台账为准。
 >
 > 修订（2026-09-03）：回应评审 P2-7（`knowledge://` 引用 Codex 打不开、`get_chunk` 可选、删除/重索引后失效）及产品建议「本地知识库要把数据流说清楚」「未实现的 provider 不可选」。发布门槛：本卷是否进入 v0.2.0 见 [00](00-overview.md#release-gate-for-04)。
 
-## Baseline (today)
+## Baseline (before M4)
 
 - Memory layers L0–L4 are documented in
   [`docs/archs/02-memory.md`](../../archs/02-memory.md). L1 is the workspace
@@ -60,8 +62,14 @@ Tables (conceptual):
 - `ingest_jobs` — id, source_id, state, error_code, updated_at
 - FTS5 virtual table over chunk text + heading_path
 
-Spike before implementation: confirm FTS5 is available in Node 22’s bundled
-SQLite. If not, ship trigram / LIKE fallback and note FTS5 as follow-up.
+Spike (2026-09-05, macOS): Node v22.13.0 reports `no such module: fts5`;
+Node v24.8.0 supports FTS5. The Worker feature-probes it and uses bounded,
+parameterized LIKE when absent (≤24 terms, ≤50 lexical candidates, existing
+20k chunk ceiling). A later FTS-capable open transactionally rebuilds the
+derived index from canonical chunks, including changes made by Node 22.
+Both paths retain the same vector/RRF and citation contracts. All 55 Knowledge
+tests and synthetic-document real embedding/MCP smoke passed on Node 22.13.0;
+the real smoke also passed on Node 24.8.0. Windows remains a separate gate.
 
 Scale target: 1k–20k chunks with brute-force cosine is acceptable; document
 `sqlite-vec` as a later acceleration option.
@@ -93,7 +101,7 @@ storage; text still leaves the machine in these cases:
 | Step | What leaves the machine | To whom |
 |---|---|---|
 | Ingest / reindex | Full chunk text (after the sensitivity gate) | Embedding provider (DashScope by default) |
-| `knowledge__recall` | The query; recalled chunk excerpts are then part of the realtime model context | Embedding provider; realtime model provider |
+| `mcp__nova_knowledge__recall` | The query; recalled chunk excerpts are then part of the realtime model context | Embedding provider; realtime model provider |
 | Work-order references / excerpts | Locators and ≤2 short excerpts inside the work order | Codex’s model provider |
 | `nova-knowledge` MCP for Codex | Chunk text returned by `recall` / `get_chunk` becomes Codex context | Codex’s model provider |
 
@@ -130,7 +138,7 @@ Hybrid: vector cosine top-N ∪ FTS5 top-N → Reciprocal Rank Fusion → trunca
 
 ### Surface 1 — FrontBrain tool
 
-`knowledge__recall`:
+`mcp__nova_knowledge__recall` (reserved built-in MCP server `nova_knowledge`):
 
 ```json
 {
@@ -207,7 +215,7 @@ item. Explicit tool / planner / Codex recall only.
 
 | Phase | Scope |
 |---|---|
-| 04 | Store, worker, DashScope embeddings, ingest UI, `knowledge__recall`, module toggle |
+| 04 | Store, worker, DashScope embeddings, ingest UI, `mcp__nova_knowledge__recall`, module toggle |
 | 04b | Host-attached work-order `references` / `evidence_excerpts`, `nova-knowledge` MCP for Codex (`recall` + `get_chunk`) |
 
 ## Implementation touchpoints
@@ -217,27 +225,27 @@ item. Explicit tool / planner / Codex recall only.
 | Worker / store | `runtime/src/knowledge/` (new), mirror workspace-graph client/worker split |
 | Tool | `tool-schema` + realtime recall wiring |
 | Desktop | knowledge panel in settings or a sibling window; main-process dialogs |
-| Deps | embedding HTTP client; `pdf-parse`; `mammoth`; MCP SDK (from 03) |
+| Deps | bounded compatible embedding HTTP client; `pdfjs-dist`; `mammoth` with `jszip` expansion preflight; MCP SDK (from 03) |
 
 ## Verification checklist
 
-- [ ] Worker isolation: main thread tests never open the DB file directly.
-- [ ] Sensitivity gate drops credential-like chunks.
-- [ ] Hybrid recall returns stable citations; empty corpus → empty ok handoff.
-- [ ] Disabled module removes `knowledge__recall` from schemas.
-- [ ] DashScope embed failure marks ingest job failed without crashing runtime.
-- [ ] `local` provider not selectable in the panel; env-forced `local` fails
+- [x] Worker isolation: main thread tests never open the DB file directly.
+- [x] Sensitivity gate drops credential-like chunks.
+- [x] Hybrid recall returns stable citations; empty corpus → empty ok handoff.
+- [x] Disabled module removes `mcp__nova_knowledge__recall` from schemas.
+- [x] DashScope embed failure marks ingest job failed without crashing runtime.
+- [x] `local` provider not selectable in the panel; env-forced `local` fails
       assembly with `embedding_provider_unavailable`, no half-written vectors.
-- [ ] `nova-knowledge` listens on loopback only; token required; both `recall`
+- [x] `nova-knowledge` listens on loopback only; token required; both `recall`
       and `get_chunk` present in `tools/list`; fixture for `ok` / `stale` /
       `gone`.
-- [ ] Reference attachment: locators only when `exposeToCodex`; workspace paths
+- [x] Reference attachment: locators only when `exposeToCodex`; workspace paths
       only for in-workspace files; nothing else; pre-render `get_chunk` check
       drops non-`ok` locators (fixture: delete source between recall and
       render).
-- [ ] Data-flow table rendered in the panel before first ingest.
-- [ ] `autoRecall` off: ContextView goldens unchanged.
-- [ ] FTS5 spike result documented in the PR that lands 04.
+- [x] Data-flow table rendered in the panel before first ingest.
+- [x] `autoRecall` off: ContextView goldens unchanged.
+- [x] FTS5 spike and Node 22 fallback evidence documented in the implementation ledger.
 
 ## Decision-record delta (apply on merge)
 

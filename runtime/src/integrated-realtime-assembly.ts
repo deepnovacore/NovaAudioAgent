@@ -54,6 +54,7 @@ export function buildIntegratedRealtimeAssembly(
       search: capabilities.modules.search.enabled,
       camera: options.cameraModuleEnabled ?? capabilities.modules.camera.enabled,
       coding: capabilities.modules.coding.enabled,
+      knowledge: capabilities.modules.knowledge.enabled,
     },
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
     executorApproval: options.codexResource?.approvalController !== null

@@ -29,7 +29,24 @@ of prompt text.
   MyContext adapter for the authoritative current workspace; those results remain untrusted,
   non-persistent explanation data.
 
-## Authority and failure boundaries
+## Separate document knowledge (K)
+
+The opt-in knowledge corpus is not another L0–L4 graph layer. A separate SQLite Worker
+stores user-admitted documents, chunks and embeddings; lexical and cosine ranks are combined
+with reciprocal-rank fusion. Lexical search uses FTS5 when available, otherwise bounded
+parameterized LIKE (including Node 22.13); capable opens rebuild FTS from canonical chunks.
+Ingestion/reindex is host-only and requires the settings
+panel's data-egress consent. Text goes to the configured embedding provider; local storage
+does not mean local-only inference.
+
+FrontBrain sees only `mcp__nova_knowledge__recall`. Optional authenticated loopback MCP
+adds `get_chunk` for Codex; work-order references are host-attached, bounded, and revalidated.
+Public results omit private source paths and remain `untrusted_external`. Disabling the
+module allocates no Worker or MCP server and does not change `memory__recall`.
+There is no automatic corpus injection into ContextView. See
+[spec 04](../specs/v0.2.0/04-knowledge-base.md) and its separate live acceptance ledger.
+
+## Workspace graph authority and failure boundaries
 
 The SQLite sidecar is the source of truth only for workspace-memory observations, cards, relations,
 and receipts. L0 remains authoritative for the present conversation and work; revision-bound intake

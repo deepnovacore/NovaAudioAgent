@@ -1,4 +1,5 @@
 import {createCapabilitiesEditor} from './capabilities-editor.mjs'
+import {createKnowledgePanel} from './knowledge-panel.mjs'
 // Settings are edited as one local transaction. Public drafts live in the
 // controller; secret plaintext remains only in password inputs until Save.
 import {
@@ -101,6 +102,7 @@ const capabilityEditor = createCapabilitiesEditor({root: document.querySelector(
   stateLabel: document.querySelector('#capabilities-state'), problemsLabel: document.querySelector('#capabilities-problems'),
   stage: patch => controller.stage(patch), probe: payload => api.probeCapabilities(payload)})
 const capabilitySettings = ['embeddingProvider', 'embeddingModel', 'knowledgePath', 'capabilitiesConfigPath'].map(key => document.getElementById(key))
+const knowledgePanel = createKnowledgePanel({document, action: payload => api.knowledgeAction(payload)})
 
 function populateVoiceOptions(select, presets) {
   for (const preset of presets) {
@@ -188,6 +190,7 @@ function render(view, _drafts, state) {
   if (!view) return
   currentView = view
   capabilityEditor.render(view)
+  knowledgePanel.render(view)
   for (const input of capabilitySettings) input.value = view[input.id] ?? ''
   controllerState = state
   for (const input of paletteInputs) input.checked = input.value === view.palette

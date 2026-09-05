@@ -24,11 +24,25 @@
       </section>
       <section class="setting-section">
         <h2>知识库配置</h2>
-        <p class="hint">启用开关在「能力」中。索引操作将在知识库面板提供。</p>
-        <div class="field"><label for="embeddingProvider">Embedding provider</label><select id="embeddingProvider"><option value="dashscope">DashScope</option><option value="local">Local</option></select></div>
+        <p class="hint">启用开关在「能力」中，保存并重启后生效。本地知识库指本地存储，不代表本地计算。</p>
+        <table><caption>知识库数据流向</caption><thead><tr><th>步骤</th><th>发送的数据</th><th>接收方</th></tr></thead><tbody>
+          <tr><td>导入 / 重建索引</td><td>敏感检查后的完整文本块</td><td>Embedding 服务商（默认 DashScope）</td></tr>
+          <tr><td>知识库检索</td><td>查询；检索片段随后进入实时模型上下文</td><td>Embedding 服务商；实时模型服务商</td></tr>
+          <tr><td>工作单引用 / 片段</td><td>定位符及最多 2 条短片段</td><td>Codex 模型服务商</td></tr>
+          <tr><td>Codex Knowledge MCP</td><td>recall / get_chunk 返回的文本</td><td>Codex 模型服务商</td></tr>
+        </tbody></table>
+        <div class="field"><label for="embeddingProvider">Embedding provider</label><select id="embeddingProvider"><option value="dashscope">DashScope</option><option value="local" disabled>Local（即将支持）</option></select></div>
         <div class="field"><label for="embeddingModel">Embedding 模型</label><input id="embeddingModel" type="text"></div>
         <div class="field"><label for="knowledgePath">知识库路径（留空使用默认）</label><input id="knowledgePath" type="text"></div>
         <div class="field"><label for="capabilitiesConfigPath">能力注册表路径（留空使用环境变量或默认）</label><input id="capabilitiesConfigPath" type="text"></div>
+        <div id="knowledge-panel" hidden>
+          <label><input id="knowledge-consent" type="checkbox">我了解上述数据流向，同意将导入文本发送给当前 Embedding 服务商。</label>
+          <p class="hint">支持文本、Markdown、代码、PDF、DOCX；单文件最多 10 MiB。敏感内容会被拒绝。修改模型后请重建所有来源。</p>
+          <div><button type="button" id="knowledge-files">添加文件</button> <button type="button" id="knowledge-folder">添加文件夹</button> <button type="button" id="knowledge-refresh">刷新</button></div>
+          <div class="field"><label for="knowledge-url">公开网页 URL</label><input id="knowledge-url" type="url" maxlength="2048"><button type="button" id="knowledge-add-url">导入网页</button></div>
+          <p id="knowledge-status" role="status" aria-live="polite"></p>
+          <ul id="knowledge-sources"></ul>
+        </div>
       </section>
       <section class="setting-section">
         <h2>权限</h2>

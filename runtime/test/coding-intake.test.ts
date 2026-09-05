@@ -90,6 +90,25 @@ test('intake zero-question fast path compiles once, preserves target/session and
   assert.match(h.intake.view.work_order!, /^WorkOrder v2/)
 })
 
+test('host knowledge attachment enriches only the current revision plan', async () => {
+  let release!: () => void
+  let entered!: () => void
+  const started = new Promise<void>(resolve => {entered = resolve})
+  const waiting = new Promise<void>(resolve => {release = resolve})
+  const h = harness({attachEvidence: async (_order, workspace) => {
+    assert.equal(workspace, '/canonical/project')
+    entered(); await waiting
+    return {references: ['knowledge://source/chunk?d=0123456789ab']}
+  }})
+  h.intake.open(request, 'Fix empty password', 'u1', 'e')
+  await started
+  h.intake.cancel()
+  release()
+  await h.intake.settled()
+  assert.equal(h.dispatched.length, 0)
+  assert.equal(h.records.includes('plan.compile'), false)
+})
+
 for (const [depth, budget] of [['minimal', 1], ['balanced', 3], ['thorough', 5]] as const) {
   test(`intake ${depth} enforces ${budget} user questions and missing-goal grace`, async () => {
     let plans = 0

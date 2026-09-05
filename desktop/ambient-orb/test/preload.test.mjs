@@ -63,7 +63,7 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   const { exposed, ipcRenderer, invokes } = await loadPreload()
 
   assert.deepEqual(Object.keys(exposed.settings).sort(), [
-    'clearAllManagedWorkspaces', 'clearCurrentManagedWorkspace', 'get', 'onChanged',
+    'clearAllManagedWorkspaces', 'clearCurrentManagedWorkspace', 'get', 'knowledgeAction', 'onChanged',
     'openCurrentManagedWorkspace',
     'probeCapabilities', 'repairProjects', 'rescanCodex', 'retryBackend',
     'retryMicrophone', 'set',
@@ -78,6 +78,7 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   await exposed.settings.openCurrentManagedWorkspace()
   await exposed.settings.clearCurrentManagedWorkspace()
   await exposed.settings.clearAllManagedWorkspaces()
+  await exposed.settings.knowledgeAction({action: 'status'})
   assert.deepEqual(invokes, [
     { channel: 'nova:settings:get', payload: undefined },
     { channel: 'nova:settings:set', payload: {settingsPatch: {palette: 'graphite'}} },
@@ -87,6 +88,7 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
     { channel: 'nova:workspaces:open-current', payload: undefined },
     { channel: 'nova:workspaces:clear-current', payload: undefined },
     { channel: 'nova:workspaces:clear-all', payload: undefined },
+    { channel: 'nova:knowledge:action', payload: {action: 'status'} },
   ])
 
   const seen = []

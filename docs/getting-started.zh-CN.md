@@ -260,4 +260,19 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 
 `novaaudio doctor` 与运行时共用验证器，显示模块状态、单个服务器失败原因和环境覆盖。`missing_environment:变量名` 表示缺少引用的凭据；`insecure_mcp_endpoint` 表示地址或 HTTP 鉴权头不符合规则；`search_tool_missing` 表示未发现配置的工具；`frontbrain_tool_budget_exceeded: N/B` 显示完整前台工具数量与预算，需减少前台选中的工具，运行时不会静默截断。
 
-执行 `npm run runtime:smoke:search:mcp` 可做一次真实搜索，读取现有环境凭据，只输出状态和结果数量，不改变默认值。默认仍为 Tavily。**真实百炼服务的 macOS / Windows 验收保持待完成**；需记录日期、Nova/Codex 版本和成功结果后，另行提交默认值切换。本地真实 MCP 协议测试只证明装配与传输行为，不等于线上验收。
+执行 `npm run runtime:smoke:search:mcp` 可做一次真实搜索，读取现有环境凭据，只输出状态和结果数量，不改变默认值。默认仍为 Tavily。**2026-09-05 已在 macOS / Node v24.8.0 / v0.2.0dev 通过真实百炼搜索：3 条 canonical 结果、evidence ref 与 untrusted 标记；Windows 待验。** 若 404 响应为“未开通该MCP或非可用开通状态”，需在百炼控制台开通 WebSearch，不是 Tavily 地址错误；两平台均过后再单独切默认值。
+
+### 可选文档知识库（M4）
+
+在桌面能力设置启用 `modules.knowledge.enabled` 并应用/重启后端。知识库面板会先展示数据流向；
+勾选同意后才能添加文件、文件夹或公开网页。存储在本地，但导入文本和查询会发送给当前 Embedding
+服务商（默认 DashScope `text-embedding-v4`），检索摘录会进入使用它的模型上下文。PDF/DOCX 在
+有资源上限的 Worker 中解析；尚未实现的 local embedding 选项不可选择。
+
+语音前台只增加 `mcp__nova_knowledge__recall`，不新增原生工具。若需要 Codex 解析完整引用，启用
+`modules.knowledge.exposeToCodex`；宿主提供带临时鉴权的本地 MCP，仅含 `recall / get_chunk`。
+移除和重建仍只在设置面板进行；原来的 `memory__recall` 不变。
+
+凭据已在环境中时，可运行 `npm run smoke:knowledge --workspace @nova-audio-agent/runtime`，仅发送
+脚本内的合成文档，不读取用户知识库。macOS 真实 embedding→检索→MCP 引用已于 2026-09-05 通过；
+Windows 和真人语音验收仍需独立完成。

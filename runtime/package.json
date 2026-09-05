@@ -38,12 +38,16 @@
     "smoke:qwen:surrogate": "npm run build && node scripts/qwen-surrogate-progress-live-smoke.mjs",
     "test": "npm run build && node --test dist/test/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "smoke:search:mcp": "npm run build && node scripts/search-mcp-live-smoke.mjs"
+    "smoke:search:mcp": "npm run build && node scripts/search-mcp-live-smoke.mjs",
+    "smoke:knowledge": "npm run build && node scripts/knowledge-live-smoke.mjs"
   },
   "dependencies": {
     "@livekit/agents": "1.6.4",
     "@livekit/rtc-node": "0.13.33",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "jszip": "3.10.1",
+    "mammoth": "1.12.2",
+    "pdfjs-dist": "6.2.108",
     "undici": "7.29.0",
     "ws": "8.21.3",
     "zod": "4.4.3"

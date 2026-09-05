@@ -9,6 +9,7 @@
 | Capability extension | Manifest and adapter ports | Capability branches inside Runtime |
 | Native tool surface | Five stable host/native tools plus built-in Camera MCP; external MCP is user-selected context cost, with candidate realtime budget B=24 pending live validation and no silent truncation | Growing a mandatory native tool list or silently trimming user MCP tools |
 | Vision boundary | AgentController `vision` owns hidden `watch`/`guard`; direct Camera MCP is the explicit built-in exception and side VLM output is bounded evidence | Exposing monitor channels as dispatch executors or treating camera data as instructions |
+| Knowledge boundary | Optional built-in Knowledge MCP, separate Worker corpus, host-only consented ingestion, bounded untrusted retrieval; Codex gets an authenticated resolver only when enabled | A new mandatory native tool, model-callable ingestion, implicit document egress, or corpus text as planning authority |
 | Concurrency | Permit genuine simultaneous work across projects/repos behind a global cap and host FSM safety; keep approval FIFO/hold/release in one dedicated host module. Codex stdio can multiply to 3 projects × 8 servers = 24 child processes, so prefer streamable HTTP with a UI warning | Serializing all work or spawning unbounded per-server stdio children |
 | Context | Bounded ContextView | Passing unrestricted memory to models |
 | Trust | External text and images remain evidence | Treating retrieved content as instructions |

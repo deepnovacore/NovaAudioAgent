@@ -157,3 +157,32 @@ test('rejects credential-bearing configuration and bounded invalid input before 
     error => error instanceof EmbeddingProviderFailure && error.code === 'invalid_input')
   assert.equal(calls, 0)
 })
+
+test('bounds embedding responses and converts an elapsed request deadline into a safe timeout', async t => {
+  for (const response of [
+    new Response('{}', {headers: {'content-length': String(4 * 1_024 * 1_024 + 1)}}),
+    new Response(new ReadableStream<Uint8Array>({
+      start(controller) {controller.enqueue(new Uint8Array(4 * 1_024 * 1_024 + 1))},
+    })),
+  ]) {
+    const provider = new DashScopeEmbeddingProvider({
+      baseUrl: 'https://dashscope.example/v1', apiKey: 'key', dims: 2,
+      fetch: () => Promise.resolve(response),
+    })
+    await assert.rejects(provider.embed(['safe']),
+      error => error instanceof EmbeddingProviderFailure && error.code === 'response_too_large')
+  }
+
+  const savedTimeout = AbortSignal.timeout.bind(AbortSignal)
+  const keepAlive = setTimeout(() => undefined, 1000)
+  t.after(() => clearTimeout(keepAlive))
+  t.mock.method(AbortSignal, 'timeout', () => savedTimeout(5))
+  const provider = new DashScopeEmbeddingProvider({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'key', dims: 2,
+    fetch: async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('aborted test transport')), {once: true})
+    }),
+  })
+  await assert.rejects(provider.embed(['safe']),
+    error => error instanceof EmbeddingProviderFailure && error.code === 'timeout')
+})

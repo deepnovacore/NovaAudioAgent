@@ -1,6 +1,7 @@
 import {capabilityStatus, type CapabilityStatus} from './capability-registry.js'
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly, type AssemblyOptions } from './assembly.js'
+import {attachKnowledgeReferences} from './knowledge/references.js'
 import { canonicalJson } from './canonical-json.js'
 import type {PublicProjectContext} from './project-store.js'
 import type { JsonValue } from './events.js'
@@ -904,6 +905,9 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     ...(agentControllers.length === 0 ? {} : {agentControllers}),
     ...(options.intake === undefined || projectAdapter === undefined ? {} : {intake: {
       ...options.intake,
+      ...(core.knowledge === undefined ? {} : {attachEvidence: ((order, workspace, signal) => attachKnowledgeReferences(
+        core.knowledge!.service, order.objective, workspace, Object.hasOwn(core.knowledge!.codexEntries, 'nova_knowledge'), signal,
+      )) satisfies NonNullable<IntakeOptions['attachEvidence']>}),
       roster: () => projectAdapter.roster(),
       running: () => projectAdapter.running(),
       activeProject: () => projectAdapter.publicProjectView(false).workspace_display_name,

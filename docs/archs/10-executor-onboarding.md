@@ -10,7 +10,9 @@ Add an executor in this order:
 4. Wire it in assembly by role. Keep the `AgentController` registry separate from manifests:
    controller descriptors declare model-visible tools and `ownedChannels`; hidden Vision `watch` and
    `guard` are never dispatch targets. Search remains a stable adapter contract, while the built-in
-   Camera MCP is projected directly as `mcp__nova_camera__snapshot`.
+   Camera MCP is projected directly as `mcp__nova_camera__snapshot`. The opt-in Knowledge MCP
+   similarly exposes only `mcp__nova_knowledge__recall` to FrontBrain; its ingestion APIs stay
+   host-only and its optional Codex `get_chunk` resolver never joins the voice tool enum.
 5. Add invalid-input, timeout, cancellation, sanitization, and registry-adapter contract tests.
 6. Add a live smoke only after deterministic lifecycle coverage passes.
 7. Document credentials and least-privilege setup in Getting Started.

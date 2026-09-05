@@ -1,6 +1,7 @@
 import {capabilityStatus, type CapabilityRegistry, type CapabilityStatus} from './capability-registry.js'
 import {McpSearchTransport} from './executors/search-mcp.js'
 import type {PreparedExternalMcp} from './executors/mcp.js'
+import type {PreparedKnowledge} from './knowledge/assembly.js'
 /**
  * Production assembly: settings in, a serving runtime out.
  *
@@ -67,6 +68,7 @@ export interface AssemblyOptions {
   readonly capabilities?: CapabilityRegistry
   /** Discovery is async and owned by the production entry before synchronous compilation. */
   readonly externalMcp?: PreparedExternalMcp
+  readonly knowledge?: PreparedKnowledge
   readonly clock?: Clock
   readonly ids?: IdFactory
   readonly gateway?: ModelGateway
@@ -95,6 +97,7 @@ export interface Assembly {
   readonly mediaStore: MediaStore
   readonly frameSource: FrameSource
   readonly visionController: VisionAgentController | undefined
+  readonly knowledge?: PreparedKnowledge
   start(): Promise<void>
   stop(): Promise<void>
 }
@@ -188,6 +191,10 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const capabilities = options.cameraModuleEnabled === undefined ? loadedCapabilities : {
     ...loadedCapabilities, modules: {...loadedCapabilities.modules, camera: {enabled: options.cameraModuleEnabled}},
   }
+  if (capabilities.modules.knowledge.enabled && options.knowledge === undefined) throw new AssemblyError('knowledge_preparation_required')
+  if (options.knowledge !== undefined && (options.knowledge.capabilities !== loadedCapabilities || !capabilities.modules.knowledge.enabled)) {
+    throw new AssemblyError('knowledge_configuration_mismatch')
+  }
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
 
@@ -206,7 +213,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const mediaStore = options.mediaStore ?? new MediaStore()
   const frameSource = options.frameSource ?? new DisabledFrameSource()
   const cameraModuleEnabled = options.cameraModuleEnabled ?? capabilities.modules.camera.enabled
-  const cameraReserved = new Set([MCP_CAMERA_EXECUTOR, 'watch', 'guard'])
+  const cameraReserved = new Set([MCP_CAMERA_EXECUTOR, 'mcp__nova_knowledge', 'watch', 'guard'])
   const suppliedReserved = (options.executors ?? []).find(adapter => cameraReserved.has(adapter.manifest.name))
   const configuredReserved = settings.executors.find(name => cameraReserved.has(name))
   if (suppliedReserved !== undefined || configuredReserved !== undefined) {
@@ -263,6 +270,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   }) : undefined
   const configuredExecutors = resolveExecutors(settings, options.executors ?? [], capabilities.modules.coding.enabled)
   const executors = [
+    ...(options.knowledge === undefined ? [] : [options.knowledge.adapter]),
     ...options.externalMcp?.adapters ?? [],
     ...(search === undefined ? [] : [search]),
     ...(camera === undefined || watch === undefined || guard === undefined ? [] : [camera, watch, guard]),
@@ -363,6 +371,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     mediaStore,
     frameSource,
     visionController,
+    ...(options.knowledge === undefined ? {} : {knowledge: options.knowledge}),
     start(): Promise<void> {
       return serializeLifecycle(async () => {
         if (started) return
@@ -386,13 +395,21 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     },
     stop(): Promise<void> {
       return serializeLifecycle(async () => {
-        await options.externalMcp?.close()
-        await searchTransport?.close?.()
-        if (!started) return
-        if (cameraModuleEnabled) {
-          try { await camera!.close() } finally { await frameSource.stop() }
+        const failures: unknown[] = []
+        for (const close of [
+          () => options.knowledge?.close(),
+          () => options.externalMcp?.close(),
+          () => searchTransport?.close?.(),
+          async () => {
+            if (started && cameraModuleEnabled) {
+              try { await camera!.close() } finally { await frameSource.stop() }
+            }
+            started = false
+          },
+        ]) {
+          try {await close()} catch (error) {failures.push(error)}
         }
-        started = false
+        if (failures.length > 0) throw failures[0]
       })
     },
   }

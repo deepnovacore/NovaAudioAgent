@@ -223,6 +223,7 @@ export function buildCascadedRealtimeAssembly(
     search: capabilities.modules.search.enabled,
     camera: options.cameraModuleEnabled ?? capabilities.modules.camera.enabled,
     coding: capabilities.modules.coding.enabled,
+    knowledge: capabilities.modules.knowledge.enabled,
   }, options.codexResource?.approvalController != null)
 
   const endpointingFactory = registry.endpointing[selection.endpointingProvider]({
@@ -285,6 +286,7 @@ export function buildCascadedRealtimeAssembly(
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
     ...(options.capabilities === undefined ? {} : {capabilities: options.capabilities}),
     ...(options.externalMcp === undefined ? {} : {externalMcp: options.externalMcp}),
+    ...(options.knowledge === undefined ? {} : {knowledge: options.knowledge}),
     ...(options.cameraModuleEnabled === undefined ? {} : {cameraModuleEnabled: options.cameraModuleEnabled}),
     ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
   })

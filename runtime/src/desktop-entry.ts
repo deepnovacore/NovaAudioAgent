@@ -1,6 +1,7 @@
 import {installDesktopControl, desktopBudgetFailure, type DesktopCapabilityState} from './desktop-control.js'
 import {loadCapabilityRegistry} from './capability-registry.js'
 import {prepareExternalMcp} from './executors/mcp.js'
+import {prepareKnowledge} from './knowledge/assembly.js'
 /** The compiled realtime desktop entry Electron launches with `utilityProcess.fork()`. */
 
 import {randomUUID} from 'node:crypto'
@@ -30,7 +31,9 @@ const stop = new AbortController()
 const parentPort = (process as UtilityProcess).parentPort
 
 let capabilityView: (() => DesktopCapabilityState | undefined) = () => undefined
-const control = installDesktopControl({...(parentPort === undefined ? {} : {parentPort}), signal: stop.signal, status: () => capabilityView()})
+let knowledgeHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
+const control = installDesktopControl({...(parentPort === undefined ? {} : {parentPort}), signal: stop.signal,
+  status: () => capabilityView(), handle: (method, params) => knowledgeHandle?.(method, params) ?? Promise.resolve(undefined)})
 
 const onDiagnostic = (line: string): void => {
   process.stderr.write(`${line}\n`)
@@ -61,6 +64,11 @@ const exitCode = await runDesktopEntryWithStopSources({
       ...loadedSettings, executors: loadedSettings.executors.filter(name => name !== 'codex'),
     }
     for (const override of capabilities.overrides) onDiagnostic(`[capability-override] ${override}`)
+    const knowledge = await prepareKnowledge(settings, capabilities, stop.signal)
+    if (knowledge !== undefined) {
+      ownership.own(() => knowledge.close())
+      knowledgeHandle = (method, params) => knowledge.service.handle(method, params)
+    }
     const clock = new RealClock()
     const telemetry = createRealtimeTelemetry(process.env, {clock})
     ownership.own(() => telemetry.close())
@@ -78,7 +86,7 @@ const exitCode = await runDesktopEntryWithStopSources({
         return codexConfig === null
           ? null
           : await createCodexAssemblyResource({
-              managedMcp: prepareManagedCodexMcp(capabilities),
+              managedMcp: prepareManagedCodexMcp(capabilities, knowledge?.codexEntries),
               config: codexConfig,
               composition: 'realtime',
               transportFactory: codexHost.transportFactory,
@@ -114,6 +122,7 @@ const exitCode = await runDesktopEntryWithStopSources({
           settings,
           capabilities,
           externalMcp,
+          ...(knowledge === undefined ? {} : {knowledge}),
           telemetry,
           onDiagnostic,
           clock,

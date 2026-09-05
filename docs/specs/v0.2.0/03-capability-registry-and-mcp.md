@@ -1,6 +1,6 @@
 # 03. Capability Registry and MCP
 
-> 摘要：用 `capabilities.json` + 设置「能力」页统一管理内置模块（search / camera / coding / knowledge）与外部 MCP。内置 search / coding 仍是原生 executor；内置 Camera MCP 是明确的直接工具例外。搜索新增 MCP Provider（百炼 / DashScope WebSearch 预设）；**默认值在真实接入验证通过之前保持 Tavily**。外部 MCP 的工具白名单是唯一真相：前台按白名单装配，Codex 侧通过私有 `CODEX_HOME` 的 `enabled_tools` 投射同一份白名单，并在线程启动后用 `mcpServerStatus/list` 核对实际可见工具。MCP manifest 通过一层显式的适配规则进入现有工具编译器：不伪造只读属性，不兼容的服务器单独失效。
+> 摘要：用 `capabilities.json` + 设置「能力」页统一管理内置模块（search / camera / coding / knowledge）与外部 MCP。内置 search / coding 仍是原生 executor；Camera 和 Knowledge 经内置 MCP 暴露直接工具（Knowledge 默认关闭，见 04）。搜索新增 MCP Provider（百炼 / DashScope WebSearch 预设）；**默认值在真实接入验证通过之前保持 Tavily**。外部 MCP 的工具白名单是唯一真相：前台按白名单装配，Codex 侧通过私有 `CODEX_HOME` 的 `enabled_tools` 投射同一份白名单，并在线程启动后用 `mcpServerStatus/list` 核对实际可见工具。MCP manifest 通过一层显式的适配规则进入现有工具编译器：不伪造只读属性，不兼容的服务器单独失效。
 >
 > 修订（2026-09-03）：回应评审 P1-4（白名单未在 Codex 侧闭环）、P2-5（manifest 规则与编译器不兼容）及产品建议「先验证再切默认」；再修订回应 P2（别名在 32 字符 server 下可达 66 → 按 server 长度动态预算）。
 

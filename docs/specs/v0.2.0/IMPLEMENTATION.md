@@ -154,7 +154,52 @@ include real voice `dispatch` / `cancel` / `confirm`, macOS camera permission
 and side-VLM live behavior, Guard interruption/takeover behavior, headset and
 concurrent approvals, and Windows acceptance.
 
-## Validation (2026-09-05 integration checkpoint)
+## M4 Knowledge MCP (2026-09-05 integration candidate)
+
+Layer K is implemented separately from workspace memory: private SQLite Worker,
+bounded text/PDF/DOCX/URL ingestion, DashScope-compatible embeddings, hybrid
+retrieval and digest-pinned citations. FrontBrain gets only
+`mcp__nova_knowledge__recall`; optional authenticated Codex loopback adds
+`get_chunk`. Ingestion/removal/reindex stay host-only. The desktop native picker,
+data-flow consent and safe status panel are wired to the utility process.
+Host-attached work-order evidence is revision-fenced and revalidated; no corpus
+is automatically injected into ContextView.
+
+Independent Terra/Sol reviews closed Worker exit/close failure paths, Float32
+overflow, path redaction, document expansion and admission bounds, MCP HTTP
+request lifecycle, provider wiring and attempt-all shutdown. Exact production
+dependency closure includes pinned `pdfjs-dist`, `mammoth` and `jszip`; the
+package checker was not relaxed. The authorized code-only external Claude
+review returned no output for 20 minutes and was terminated; it is **not** a
+passing external review.
+
+Real macOS smoke passed with a synthetic document only: configured embedding
+provider → Worker retrieval → actual in-memory MCP call → digest-pinned
+`get_chunk`, with `untrusted_external` trust. User corpus contents were not
+used. Node 22.13.0's bundled SQLite lacks FTS5 on the tested macOS binary;
+the spec's bounded parameterized LIKE fallback is implemented and independently
+reviewed. FTS-capable opens transactionally rebuild the derived index, including
+updates made under Node 22. All 55 Knowledge tests pass on Node 22.13.0; the real
+smoke passes on both Node 22.13.0 and Node 24.8.0. Windows and human-voice acceptance remain open;
+Search default stays Tavily despite the successful macOS Bailian smoke.
+
+Final serial verification on the integrated M4 candidate:
+
+| Check | Result |
+|---|---|
+| `npm run check` | Green; 218 audited files / 378 occurrences, 15 executor-boundary allowlisted occurrences |
+| Node 22.13.0 Knowledge suite | 55 passed, 0 failed |
+| Node 24.8.0 complete runtime | 2306 total: 2301 passed, 5 skipped, 0 failed |
+| Desktop build and complete suite | 849 total: 846 passed, 3 Windows skips, 0 failed; source startup smoke skipped |
+| CLI | 21 passed, 0 failed |
+| Fixture parity | 19 scenarios passed |
+
+The M4 implementation and deterministic checklist are complete. Human voice,
+physical camera/headset, actual concurrent approvals, Windows and release
+acceptance are not inferred from these results. No push or Search default flip
+was performed.
+
+## Validation (2026-09-05 pre-M4 integration checkpoint)
 
 | Check | Evidence |
 |---|---|
@@ -183,9 +228,13 @@ not rerun at this checkpoint.
 The bundled first-frame PNG also passes real Camera MCP → MediaStore →
 `qwen3-vl-plus` description, returning bounded `untrusted_external` evidence.
 Neither fixture test exercises physical camera permission. Search MCP
-initialization returns HTTP 404 with the available credential at the
-[official documented endpoint](https://help.aliyun.com/zh/model-studio/mcp-external-calls/),
-so Tavily remains the default; the account/service cause is not established.
+initially returned HTTP 404 at the
+[official documented endpoint](https://help.aliyun.com/zh/model-studio/mcp-external-calls/).
+The bounded response identified account provisioning: “未开通该MCP或非可用开通状态”.
+After the user enabled WebSearch on 2026-09-05, the same endpoint and credential
+passed the real macOS smoke: 3 canonical results, `untrusted_external`, Node
+v24.8.0. No transport URL fix was needed. Tavily remains the default until the
+separate Windows live gate and 03a-flip review are complete.
 
 Terra/Sol reviewed the integration and test-contract updates. External
 `claude-fable-5-1[1m]` review identified and prompted fixes for malformed-file

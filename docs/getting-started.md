@@ -317,4 +317,19 @@ Run `novaaudio doctor` for the shared registry validation, per-server failures a
 npm run runtime:smoke:search:mcp
 ```
 
-The smoke uses environment/registry credentials, makes one actual MCP search and prints only status and result count. It forces MCP only for that invocation and never changes the persisted default. **Live Bailian/macOS and Windows acceptance remains pending until successful runs are recorded here, including date, Nova/Codex versions and platform.** Local MCP protocol tests do not satisfy this release gate; switching the default is a separate change.
+The smoke uses environment/registry credentials, makes one actual MCP search and prints only status and result count. It forces MCP only for that invocation and never changes the persisted default. **macOS passed on 2026-09-05 (v0.2.0dev, Node v24.8.0): three canonical results with evidence refs and untrusted trust. Windows remains pending.** A 404 body stating the MCP is not enabled requires activating WebSearch in the Bailian console; it does not imply a Tavily endpoint error. Switching the default is a separate change after both platform gates.
+
+### Optional document knowledge (M4)
+
+Enable `modules.knowledge.enabled` in desktop capabilities and restart/apply the backend settings.
+In the knowledge panel, read and accept the data-flow disclosure before adding files, folders or a
+public URL. Storage is local, but ingestion and queries go to the configured embedding provider
+(default DashScope `text-embedding-v4`); recalled excerpts go to the consuming model. PDF/DOCX
+parsing runs in a bounded Worker. The local embedding option is disabled until implemented.
+
+FrontBrain gains only `mcp__nova_knowledge__recall`. To let Codex resolve full cited chunks, enable
+`modules.knowledge.exposeToCodex`; the host supplies an authenticated loopback MCP with read-only
+`recall` and `get_chunk`. Remove/reindex remain settings-only. `memory__recall` is unchanged.
+Run `npm run smoke:knowledge --workspace @nova-audio-agent/runtime` with model credentials in the
+environment for a synthetic-document smoke. It sends no existing user corpus. macOS real embedding
+and MCP retrieval passed on 2026-09-05; Windows and human-voice acceptance remain separate gates.

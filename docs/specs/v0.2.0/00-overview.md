@@ -92,7 +92,7 @@ flowchart TD
   C1 --> C1f[03a-flip default search → mcp]
   C1 --> C2[03b external MCP adapter + Codex projection]
   C2 --> D2[04b work-order references + nova-knowledge MCP]
-  D[04 knowledge store, ingest, knowledge__recall] --> D2
+  D[04 knowledge store, ingest, Knowledge MCP recall] --> D2
   C1 --> D
 ```
 
@@ -109,26 +109,28 @@ the listed checklists are green on `v0.2.0dev`.
 | **M1.5c — thin frontend** | Final six-tool Nova surface (`dispatch`, `cancel`, `confirm`, `memory__recall`, `search__search`, `mcp__nova_camera__snapshot`); Camera MCP + VLM projection; current Vision controller owns hidden `watch` / `guard` channels and monitoring is policy-driven. External MCP remains user-selected direct cost. | Final 6-tool compilation and exact Camera boundary; Vision hidden-channel/controller checks; monitoring policy checks; rerun every applicable 08 live-acceptance row after the surface change |
 | **M2 — capability registry** | `capabilities.json`, module toggles, MCP search provider opt-in, Tavily optional | 03a checklist; then 03a-flip after the live smoke is recorded |
 | **M3 — external MCP** | FrontBrain MCP executors with compiler adaptation; Codex projection with allowlist closure | 03b checklist incl. `mcpServerStatus/list` verification |
-| **M4 — knowledge** | Layer K store, ingest UI, `knowledge__recall`, then host-attached references + `nova-knowledge` | 04 checklist; release-gate decision below |
+| **M4 — knowledge** | Layer K store, ingest UI, `mcp__nova_knowledge__recall`, then host-attached references + `nova-knowledge` | 04 checklist; implementation approved, acceptance pending |
 
 Cross-cutting settings (`06`) land with the milestone that first needs each
 control.
 
 ### Release gate for 04
 
-Open question for the product owner: does v0.2.0 ship with M4, or does the
-release cut after M3 with knowledge following in v0.2.x? Arguments recorded so
-the decision is explicit:
+Decision (2026-09-05): the product owner approved completing M4 in this cycle,
+using built-in Knowledge MCP instead of another native frontend tool. Module
+default remains off. This approves implementation, not release before the 04
+acceptance checks pass. Prior trade-offs are retained for context:
 
 - For shipping together: the user asked for RAG in this cycle; the module gate
-  (`modules.knowledge.enabled = false` by default) means M4 adds no risk to
-  M1–M3 users.
-- For splitting: M4 carries the only new native deps (`pdf-parse`, `mammoth`,
+  (`modules.knowledge.enabled = false` by default) avoids allocating corpus
+  resources or adding retrieval tools for M1–M3 users; shared dependency changes still need regression testing.
+- For splitting: M4 carries new parsing deps (`pdfjs-dist`, `mammoth`, `jszip`,
   embedding client), the FTS5 spike, and a data-flow disclosure that deserves
   its own review. Shipping M1–M3 earlier gets the coding loop into daily use
   sooner.
 
-Until decided, M4 work proceeds after M3 and its docs stay marked “gate: TBD”.
+M4 implementation proceeds after the M3 code checkpoint; deterministic and live
+verification are tracked separately in STATUS.
 
 ## Proposed architecture deltas
 

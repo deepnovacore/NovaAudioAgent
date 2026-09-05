@@ -4,6 +4,7 @@ import {mkdtemp, open, realpath, symlink, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {test} from 'node:test'
+import {Agent, MockAgent} from 'undici'
 import {
   chunkKnowledgeText,
   fetchKnowledgeUrl,
@@ -117,6 +118,26 @@ test('rejects a DOCX whose compressed entries expand past the archive bound', as
 
   await assert.rejects(readKnowledgeFile(path),
     error => error instanceof KnowledgeDocumentFailure && error.code === 'parse_failed')
+})
+
+test('public HTML extraction bounds evidence and rejects private redirects and unsupported MIME', async t => {
+  const transport = new MockAgent()
+  transport.disableNetConnect()
+  t.mock.method(Agent.prototype, 'dispatch', (options: Parameters<Agent['dispatch']>[0], handler: Parameters<Agent['dispatch']>[1]) => transport.get(String(options.origin)).dispatch(options, handler))
+  t.after(() => transport.close())
+  const origin = transport.get('https://example.com')
+  origin.intercept({path: '/guide'}).reply(200, '<title> Guide &amp; Setup </title><script>doEvil()</script><style>hide</style><p>Hello\n\n世界 &lt;ready&gt;</p>', {headers: {'content-type': 'text/html'}})
+  const result = await fetchKnowledgeUrl('https://example.com/guide')
+  assert.equal(result.title, 'Guide & Setup')
+  assert.ok(result.text.includes('世界 <ready>'))
+  assert.ok(!result.text.includes('doEvil'))
+  assert.ok(!result.text.includes('hide'))
+  origin.intercept({path: '/redirect'}).reply(302, '', {headers: {location: 'http://127.0.0.1/private'}})
+  await assert.rejects(fetchKnowledgeUrl('https://example.com/redirect'), {code: 'url_denied'})
+  origin.intercept({path: '/image'}).reply(200, 'not text', {headers: {'content-type': 'image/png'}})
+  await assert.rejects(fetchKnowledgeUrl('https://example.com/image'), {code: 'unsupported_mime'})
+  origin.intercept({path: '/empty'}).reply(200, '<script>only script</script>', {headers: {'content-type': 'text/html'}})
+  await assert.rejects(fetchKnowledgeUrl('https://example.com/empty'), {code: 'empty_text'})
 })
 
 test('rejects URL credentials, private destinations, unsupported MIME, and cancellation', async () => {

@@ -1,4 +1,5 @@
 import {createBackendControl} from './backend-control.mjs'
+import {createKnowledgeActions} from './knowledge-actions.mjs'
 import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, invalidCommit} from './capabilities-settings.mjs'
 import {parseCapabilityRegistry} from '@nova-audio-agent/runtime/desktop'
 import {
@@ -1006,6 +1007,20 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       throw new Error('workspace clear rejected')
     }
     return workspaceActionReply(() => workspaceActions.clearAll())
+  })
+  ipcMain.handle('nova:knowledge:action', async (event, payload) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) throw new Error('knowledge action rejected')
+    const owner = backendControl, generation = settingsGeneration
+    const knowledgeActions = createKnowledgeActions({
+      pick: properties => dialog.showOpenDialog(settingsWindow, {title: '导入知识库', properties}),
+      request: (method, params) => {
+        if (!owner || owner !== backendControl || generation !== settingsGeneration
+          || runtimeCapabilities?.modules?.knowledge?.enabled !== true) throw new Error('knowledge unavailable')
+        return owner.request(method, params, {timeoutMs: 180000})
+      },
+    })
+    try { return await knowledgeActions.run(payload) }
+    catch { return {error: 'knowledge_unavailable_or_invalid_request'} }
   })
   ipcMain.handle('nova:capabilities:probe', async (event, payload) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) throw new Error('capability probe rejected')

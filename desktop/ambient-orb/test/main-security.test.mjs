@@ -32,6 +32,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:confirmation-mode',
     'nova:confirmation-placement',
     'nova:executor-result:open',
+    'nova:knowledge:action',
     'nova:memory-board:copy-json',
     'nova:memory-board:export',
     'nova:memory-board:request',

@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     // reply never carries any back out.
     set: commit => ipcRenderer.invoke('nova:settings:set', commit),
     probeCapabilities: payload => ipcRenderer.invoke('nova:capabilities:probe', payload),
+    knowledgeAction: payload => ipcRenderer.invoke('nova:knowledge:action', payload),
     onChanged: callback => {
       if (typeof callback !== 'function') return () => {}
       const listener = (_event, value) => callback(value)

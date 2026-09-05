@@ -1,6 +1,6 @@
 # v0.2.0 进度说明（给同事 review 用）
 
-> 日期：2026-09-05 · 分支：`v0.2.0dev` · 当前基线：`fd16c5a`（工作区仍有桌面能力修复）
+> 日期：2026-09-05 · 分支：`v0.2.0dev` · M4 集成候选（验证结果见 IMPLEMENTATION）
 > 这份文档用大白话讲"我们做到哪了、怎么验的、接下来干什么、想请你们拍板什么"。
 > 细节以各卷 spec 和 [`IMPLEMENTATION.md`](IMPLEMENTATION.md) 为准。
 
@@ -8,7 +8,7 @@
 
 Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0 的核心目标是：**让用户开口就能可靠地让 Codex 干活**——从"帮我把登录页那个 bug 修一下"开始，到必要的追问、生成工作单、审批、执行、看到结果，走通一整条链，并且中途不会因为模型"自作主张"而做错事。
 
-后续再扩到：私人知识库（M4）；能力注册表与 MCP（M2、M3）已有代码实现，仍需 live 验收。
+本轮已扩到私人知识库（M4）；能力注册表与 MCP（M2、M3）已有代码实现，跨平台与真人语音验收仍分别保留。
 
 ## 二、里程碑总览
 
@@ -18,9 +18,14 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 | **M1.5a** 执行器边界（spec 07） | Codex 变成一个真正的"插件"，核心代码不再认识 "codex" 这个词，只认角色（coding）；用 lint + 脚本强制 | ✅ 完成并经独立 review |
 | **M1.5b** 项目 / 会话 / 任务（spec 08） | 阶段性三工具前台；"在哪个项目、开不开新会话、停哪个任务"由编码执行器自己判断；支持多项目并发；显式取消；会话有可读标题（阶段性 surface 已被 M1.5c 取代） | 🟡 代码与测试完成，三轮 review 的已知阻断项均已修并带测试；语音端到端与并发审批真机未验，**不勾**（见第四、五节） |
 | **M1.5c** 前台变薄（spec 03 / 07） | 默认六工具面；Camera MCP + side-VLM 投影；Vision controller 持有隐藏 `watch` / `guard`；监控由宿主策略驱动；桌面发布依赖闭包包含 MCP SDK 及其传递依赖 | 🟡 代码与定向确定性覆盖已完成；旧 08 live 行、真人语音、macOS camera、Windows 与完整发布验收仍待做 |
-| **M2** 能力注册表（spec 03a） | `capabilities.json`、模块开关、MCP 搜索可选接入 | 🟡 代码/定向测试完成；live Search 仍待验 |
+| **M2** 能力注册表（spec 03a） | `capabilities.json`、模块开关、MCP 搜索可选接入 | 🟡 代码/定向测试完成；百炼 Search macOS live 已通过，Windows 与默认翻转仍待验 |
 | **M3** 外部 MCP（spec 03b） | 用户自配 MCP 服务器接入，并投影到 Codex | 🟡 代码/定向测试完成；live 与发布验收仍待验 |
-| **M4** 知识库（spec 04） | 本地 SQLite 私人知识库 + 混合检索 | ⬜ 未开始，是否随 v0.2.0 发布待定 |
+| **M4** 知识库（spec 04） | 本地 SQLite 私人知识库 + 混合检索 + 内置 Knowledge MCP | 🟡 代码、确定性清单和本机全量回归完成；Node 22/24 真实 embedding→检索→MCP smoke 通过；Windows/真人语音未验 |
+
+M4 最终证据：runtime 2301 通过 / 5 跳过，desktop 846 通过 / 3 Windows 跳过，CLI 21/21，
+fixtures 19/19，`npm run check` 全绿；Node 22 的 Knowledge 专项 55/55。Node 22.13 没有 FTS5，
+已实现有界 LIKE 回退；回到 Node 24 时从正文事务重建派生索引。Terra/Sol 独立复审的阻断项已关闭。
+外部 Claude 代码复审 20 分钟无返回后终止，**未记为通过**。没有推送、发布或切换 Search 默认值。
 
 ## 三、最近两天干了什么（07 + 08）
 
@@ -130,7 +135,7 @@ fake-loopback 两个分支通过；预算超限现在无 readiness timeout、无
 和 seek 同步问题），固定 PNG 也通过真实 Camera MCP → MediaStore →
 `qwen3-vl-plus` 旁路描述，结果为 `untrusted_external`。这些不包含物理摄像头权限。
 文件 oracle 覆盖首末参考帧及采样差异，不宣称逐像素证明中间帧身份；42 项 mutation
-runner 本轮未重跑。Search MCP 初始化实测 HTTP 404，原因尚未确定，默认保持 Tavily。
+runner 本轮未重跑。Search MCP 的 404 已定位为百炼 WebSearch 未开通或开通状态不可用；用户开通后，2026-09-05 macOS 真实 smoke 返回 3 条 canonical 结果、`untrusted_external`（Node v24.8.0）。Windows live 尚未通过，默认保持 Tavily。
 
 沙箱内出现过的 desktop `EPERM` / `SIGABRT` 属于环境性问题；沙箱外已对同一
 desktop 套件精确复现并通过。这里不把它冒充真人语音、物理摄像头或 Windows

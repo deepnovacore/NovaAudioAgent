@@ -33,6 +33,8 @@
 | Endpointing | The cascaded stage deciding when an utterance has ended (semantic turn detector or bounded silence) |
 | Workspace memory graph | The opt-in durable SQLite graph of workspaces and weak relations; feeds only bounded, suggestion-only context |
 | Graph board | The read-only desktop projection of the published graph snapshot; never model context |
+| Knowledge corpus (K) | Opt-in user-admitted documents, stored separately from workspace memory; cloud embedding egress requires explicit disclosure and consent |
+| Knowledge MCP | Built-in `mcp__nova_knowledge__recall` evidence tool; optional Codex loopback additionally resolves digest-pinned chunks via `get_chunk`, never mutates the corpus |
 | MyContext adapter | An optional loopback-only, read-only evidence provider behind Nova's strict capability handshake; no adapter ships in this repository |
 
 ## Invariants
