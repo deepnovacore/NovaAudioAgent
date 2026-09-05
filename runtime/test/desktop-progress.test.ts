@@ -43,11 +43,11 @@ test('progress projects only correlated accepted evidence and never private comm
   assert.equal(executorProgressSchema.safeParse({...frame, summary: 'x'.repeat(181)}).success, false)
   assert.equal('extra' in executorProgressSchema.parse({...frame, extra: 'not a wire field'}), false)
   assert.equal(executorResultSchema.safeParse({
-    type: 'executor.result',
+    type: 'executor.result', work_id: 'd',
     result: {delegate_id: 'd', executor: 'codex', outcome: 'ok', summary: 'done', started_at: -1, ended_at: 0, changed_files: null},
   }).success, false)
   assert.equal(executorResultSchema.safeParse({
-    type: 'executor.result',
+    type: 'executor.result', work_id: 'd',
     result: {delegate_id: 'd', executor: 'codex', outcome: 'ok', summary: 'done', started_at: 2, ended_at: 1, changed_files: null},
   }).success, false)
 })

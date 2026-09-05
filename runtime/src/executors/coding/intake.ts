@@ -172,7 +172,7 @@ export class IntakeController {
     this.#userInputPending = false
     const current = this.#session
     if (current === null || !this.active) return
-    if (current.session_id !== sessionId) { this.cancel(); return }
+    if (current.session_id !== sessionId || stripLikePython(text) === '') { this.cancel(); return }
     if (current.state === 'committing' || current.origin_ref === originRef) return
     if (current.proposal_id !== null && isPurePlanDecision(text)) return
     if (/^(取消|不用了|算了|cancel)[。！!.，\s]*$/iu.test(text.trim())) { this.cancel(); return }
@@ -310,10 +310,12 @@ export class IntakeController {
       const userText = [current.opening, ...current.turns.map(turn => turn.question === null
         ? `用户补充：${turn.answer}`
         : `宿主追问：${turn.question}\n用户补充：${turn.answer}`)].join('\n')
+      // Local onset precedes final ASR and does not advance the intake revision yet.
+      if (this.#userInputPending) return
       if (kind === 'cancel') {
-        const outcome = await this.#options.cancel(userText, () => this.#live(snapshot.intake_id, snapshot.revision) !== null)
+        const outcome = await this.#options.cancel(userText, () => !this.#userInputPending && this.#live(snapshot.intake_id, snapshot.revision) !== null)
         current = this.#current(snapshot.intake_id, snapshot.revision)
-        if (current === null) return
+        if (current === null || this.#userInputPending) return
         this.#options.record(current, 'intake.cancel', {code: outcome.code})
         this.#route(current, renderCancelResult(outcome))
         return

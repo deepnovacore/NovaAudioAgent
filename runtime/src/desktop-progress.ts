@@ -6,9 +6,11 @@ import type {Suggestion} from './suggestions.js'
 
 const identifier = z.string().min(1).max(128)
 const summary = z.string().min(1).max(180)
+const projectLabel = z.string().min(1).max(240).refine(value => [...value].length <= 120)
 const credentialName = /(?:^|[\s_-])(?:[a-z0-9]+[_-])*?(?:secret|token|password|api[_-]?key|access[_-]?key|authorization)(?:[_-][a-z0-9]+)*(?:\s*[:=]|\s+)|(?:^|\s)--?(?:token|password|secret|api[_-]?key|access[_-]?key|authorization)(?:=|\s+)/iu
 const executorResultBodySchema = z.object({
   delegate_id: identifier, executor: identifier,
+  project: projectLabel.optional(), title: projectLabel.optional(),
   outcome: z.enum(['ok', 'failed', 'refused', 'unknown', 'cancelled']), summary,
   started_at: z.number().finite().nonnegative(), ended_at: z.number().finite().nonnegative(),
   changed_files: z.number().int().nonnegative().nullable(),
@@ -23,8 +25,9 @@ export const executorProgressSchema = z.object({
 export type ExecutorProgress = z.infer<typeof executorProgressSchema>
 export const executorResultSchema = z.object({
   type: z.literal('executor.result'),
+  work_id: identifier,
   result: executorResultBodySchema.nullable(),
-})
+}).refine(value => value.result === null || value.work_id === value.result.delegate_id, {message: 'result work identity mismatch'})
 export type ExecutorResult = z.infer<typeof executorResultSchema>['result']
 export type ProgressMode = 'off' | 'milestones' | 'all'
 type RuntimeEvidence = Pick<CausalRuntime, 'inFlightDelegate' | 'claimedHandoff' | 'delegateFor' | 'terminatedByDeadline'>
@@ -106,7 +109,7 @@ export function projectExecutorEvent(
     executor: publicExecutor, phase, summary: text, level, ts: event.ts})
   if (!parsed.success) return null
   if (result === undefined) return {progress: parsed.data}
-  const parsedResult = executorResultSchema.safeParse({type: 'executor.result', result})
+  const parsedResult = executorResultSchema.safeParse({type: 'executor.result', work_id: id, result})
   if (!parsedResult.success) return null
   return {progress: parsed.data, result: parsedResult.data.result}
 }

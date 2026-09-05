@@ -76,8 +76,9 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
   - [x] Desktop `project.state` gains `roster[{name, last_used_at,
     running[{work_id, title}]}]`; `pending_action` is `create_workspace |
     select_workspace | reuse_workspace | resume_session` with a distinct pill
-    per action. The renderer validates and forwards `roster` but does not draw
-    it yet.
+    per action. The renderer validates `roster`; the existing project/result
+    affordance opens a native menu showing projects and running work titles,
+    with one selectable entry per retained result.
   - [x] Agent manifest contract checked at compile time (`tool-schema.ts`): an
     `agent.summary` executor must declare `run` with a required string
     `work_order` and no other required parameter, else `ToolSchemaError`.
@@ -445,3 +446,31 @@ It checks 100/125/150% CSS zoom, approval expiry, three-bubble bounds, a below-o
 stack with the last-result button, and the actual settings window size.
 Screenshots go to ignored `desktop/ambient-orb/build/renderer-smoke/`.
 This verifies rendering and interaction, not OS DPI behavior or live audio.
+
+
+## 2026-09-05 — M1 pending speech and concurrent result repair (Task 9)
+
+- Intake effect admission and the asynchronous cancel `stillWanted` predicate now
+  honor pending user input as well as the existing intake ID/revision fence.
+  A cancel resolver superseded before final ASR leaves the intake amendable.
+  Accepted empty final transcripts cancel intake like failed transcripts; a new
+  valid request can reopen it. No local-end or timeout authorizes old effects.
+- Desktop retention is keyed by `work_id = delegate_id`, with 64 session slots.
+  New entries evict the oldest retained terminal slot, never a live slot; if all
+  64 slots are live, additional tracking is refused with
+  `desktop.result_retention_full`. Existing live work still completes normally.
+  Every change/reconnect replays an explicit `executor.results.reset` then at most
+  64 `executor.result` frames, each carrying required `work_id` and nullable
+  `result`; result identity must match. Each result frame remains under 16 KiB.
+  Project/title metadata is captured from the existing running roster before
+  completion removes that roster entry. A same-work start clears only its result.
+- The existing affordance is now “项目与结果”: native menu project/running labels
+  and independent result choices lead to the existing single-result native dialog
+  (outcome, project/title, summary, changed-file count and start/end times).
+  It works with progress bubbles off; all source strings are native/plain text.
+- Deterministic validation: targeted runtime 385/385; desktop build plus suite
+  808 pass / 3 skip; `npm run check` passes; renderer smoke passes at CSS zoom 1/1.25/1.5 and verifies
+  two projects/results, per-work clear, replay and markup-as-text. The old smoke
+  approval fixture was migrated from `codex.approval` to the current
+  `executor.approval` wire. This closes implementation gaps only; physical/live
+  acceptance and the separate Task 10 ownership extraction remain open.

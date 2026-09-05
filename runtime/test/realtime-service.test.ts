@@ -10243,3 +10243,88 @@ test('dispatch on the coordinated coding executor opens the intake; a committed 
   assert.equal(dispatched.length, 0)
   await service.close()
 })
+
+for (const race of ['assess-steer', 'assess-cancel', 'cancel-resolver'] as const) {
+  test(`intake pending speech fences ${race} through RealtimeService and reassesses the final correction`, async () => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    let entered!: () => void
+    const enteredPromise = new Promise<void>(resolve => { entered = resolve })
+    const effects: string[] = []
+    let first = true
+    const intake = intakePorts({
+      models: {
+        assess: async input => {
+          if (first && race !== 'cancel-resolver') { entered(); await held }
+          return {intake_id: input.intake_id, revision: input.revision,
+            kind: race === 'assess-steer' ? 'steer' : 'cancel', project: null, project_evidence: null, session: 'latest',
+            slots: {goal: {state: 'stated', note: 'adjust task'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
+            readiness: .25, intent_to_proceed: true, candidate_question: null, discovery: [], early_exit: false, abandon: false}
+        },
+        plan: () => { throw new Error('unexpected plan') }, resolveCancelTarget: () => Promise.resolve(null),
+      },
+      steer: (_current, _project, text) => { effects.push(text); return {accepted: true, delegate_id: 'running'} },
+      cancel: async (text, stillWanted) => {
+        if (first && race === 'cancel-resolver') { entered(); await held }
+        if (!stillWanted()) return {code: 'not_running'}
+        effects.push(text)
+        return {code: 'not_running'}
+      },
+    })
+    const {service} = pipelineService({projectTool: true, intake})
+    await service.connect()
+    await speak(service, 'u1', 'Adjust the running task')
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
+    await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 't1', call_id: 'c1', name: 'dispatch', arguments: {executor: 'codex', instruction: 'Adjust the running task', origin_ref: 'conversation:1'}})
+    await enteredPromise
+    await service.localSpeechOnset('amendment')
+    release()
+    await service.settleIntakeForTest()
+    assert.deepEqual(effects, [], 'an older instruction must not act while ASR is pending')
+    assert.notEqual(service.intakeSession?.state, 'closed', 'stale cancel resolution must leave the intake amendable')
+    first = false
+    await speak(service, 'u2', 'Apply my corrected request')
+    await service.settleIntakeForTest()
+    assert.equal(effects.length, 1)
+    assert.match(effects[0]!, /Apply my corrected request/u)
+    await service.close()
+  })
+}
+
+for (const terminal of ['failed', 'empty'] as const) {
+  test(`intake ${terminal} transcript abandons pending speech safely and a new request can proceed`, async () => {
+    const effects: string[] = []
+    const {service} = pipelineService({projectTool: true, intake: intakePorts({
+      models: {
+        assess: input => Promise.resolve({intake_id: input.intake_id, revision: input.revision,
+          kind: 'steer', project: null, project_evidence: null, session: 'latest',
+          slots: {goal: {state: 'stated', note: 'task'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
+          readiness: .25, intent_to_proceed: false, candidate_question: null, discovery: [], early_exit: false, abandon: false}),
+        plan: () => { throw new Error('unexpected plan') }, resolveCancelTarget: () => Promise.resolve(null),
+      },
+      steer: (_current, _project, text) => { effects.push(text); return {accepted: true, delegate_id: 'd'} },
+    })})
+    await service.connect()
+    await speak(service, 'u1', 'Discuss adjusting the task')
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
+    await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 't1', call_id: 'c1', name: 'dispatch', arguments: {executor: 'codex', instruction: 'Discuss adjusting the task', origin_ref: 'conversation:1'}})
+    await service.settleIntakeForTest()
+    await service.localSpeechOnset('false-start')
+    await service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 'false-start', provider_item_id: 'u2'})
+    await service.handleEvent({kind: 'user_speech_ended', session_epoch: 1, speech_id: 'false-start', provider_item_id: 'u2'})
+    await service.handleEvent(terminal === 'failed'
+      ? {kind: 'user_transcript_failed', session_epoch: 1, item_id: 'u2'}
+      : {kind: 'user_transcript_final', session_epoch: 1, item_id: 'u2', text: '   '})
+    await service.settleIntakeForTest()
+    assert.equal(service.intakeSession?.state, 'closed')
+    assert.deepEqual(effects, [])
+    await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: 'r1', status: 'completed', reason: ''})
+    await speak(service, 'u3', 'Discuss a new task')
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r3'})
+    await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r3', item_id: 't3', call_id: 'c3', name: 'dispatch', arguments: {executor: 'codex', instruction: 'Discuss a new task'}})
+    await service.settleIntakeForTest()
+    assert.notEqual(service.intakeSession?.state, 'closed', JSON.stringify(service.toolCallAcceptances().at(-1)?.acceptance))
+    assert.equal(service.intakeSession?.opening, 'Discuss a new task')
+    await service.close()
+  })
+}

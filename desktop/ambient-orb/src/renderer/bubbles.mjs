@@ -21,13 +21,18 @@ export function parseProgressFrame(frame) {
   })
 }
 
-/** `null` is the retained-result reset; `undefined` is a malformed frame. */
+/** `null` clears only frame.work_id; `undefined` is a malformed frame. */
 export function parseLastResultFrame(frame) {
-  if (!frame || typeof frame !== 'object' || frame.type !== 'executor.result') return undefined
+  if (!frame || typeof frame !== 'object' || frame.type !== 'executor.result'
+    || !validText(frame.work_id, 128)
+    || new TextEncoder().encode(JSON.stringify(frame)).length > 16 * 1024) return undefined
   if (frame.result === null) return null
   const result = frame.result
   if (!result || typeof result !== 'object'
+    || result.delegate_id !== frame.work_id
     || !validText(result.delegate_id, 128)
+    || (result.project !== undefined && !validProjectLabel(result.project))
+    || (result.title !== undefined && !validProjectLabel(result.title))
     || !validText(result.executor, 128)
     || !RESULT_OUTCOMES.has(result.outcome)
     || !validSummary(result.summary)
@@ -38,6 +43,8 @@ export function parseLastResultFrame(frame) {
       || (Number.isSafeInteger(result.changed_files) && result.changed_files >= 0))) return undefined
   return Object.freeze({
     delegateId: result.delegate_id,
+    ...(result.project === undefined ? {} : {project: result.project}),
+    ...(result.title === undefined ? {} : {title: result.title}),
     executor: result.executor,
     outcome: result.outcome,
     summary: result.summary,
@@ -45,6 +52,20 @@ export function parseLastResultFrame(frame) {
     endedAt: result.ended_at,
     changedFiles: result.changed_files,
   })
+}
+
+export function validProjectLabel(value) {
+  return validText(value, 240) && [...value].length <= 120
+}
+
+/** Same bounded public roster is checked before renderer display and native menu IPC. */
+export function parseProjectRoster(value) {
+  if (!Array.isArray(value) || value.length > 10 || !value.every(entry =>
+    entry && validProjectLabel(entry.name) && validTimestamp(entry.last_used_at)
+    && Array.isArray(entry.running) && entry.running.length <= 64
+    && entry.running.every(work => work && validText(work.work_id, 128) && validProjectLabel(work.title)))) return null
+  return value.map(entry => ({name: entry.name, last_used_at: entry.last_used_at,
+    running: entry.running.map(work => ({work_id: work.work_id, title: work.title}))}))
 }
 
 export function createProgressBubbleController({

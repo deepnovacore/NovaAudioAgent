@@ -132,9 +132,9 @@ export class DesktopSocketBridge {
   #approvalOutbound: ExecutorApprovalView | null = null
   readonly #progressMode: ProgressMode
   readonly #progressSummaries = new Map<string, string>()
-  #lastResult: ExecutorResult | undefined
-  #resultPending = false
-  #latestDelegateId: string | null = null
+  // ponytail: 64 session entries; refuse new tracking when every slot is live.
+  readonly #results = new Map<string, {result: ExecutorResult; project?: string; title?: string}>()
+  #resultReplay: string[] = []
 
   /**
    * The highest generation the renderer has been told to clear.
@@ -281,6 +281,13 @@ export class DesktopSocketBridge {
     projectStateMessage(view)
     if (sameProjectView(view, this.#projectView)) return
     this.#projectView = view
+    for (const entry of view.roster ?? []) for (const work of entry.running) {
+      const retained = this.#results.get(work.work_id)
+      if (retained?.result === null) {
+        retained.project = entry.name
+        retained.title = work.title
+      }
+    }
     this.#syncProjectDelivery()
   }
 
@@ -307,11 +314,25 @@ export class DesktopSocketBridge {
 
   onExecutorProgress(input: ExecutorProgress, result?: ExecutorResult): void {
     const frame = executorProgressSchema.parse(input)
-    if (frame.phase === 'started') this.#latestDelegateId = frame.delegate_id
-    if (result !== undefined && (result === null || this.#latestDelegateId === null || this.#latestDelegateId === frame.delegate_id)) {
-      this.#lastResult = executorResultSchema.parse({type: 'executor.result', result}).result
-      this.#resultPending = true
-      if (this.#authenticated) this.#onOutboundAvailable?.()
+    if (result !== undefined) {
+      const parsed = executorResultSchema.parse({type: 'executor.result', work_id: frame.delegate_id, result})
+      const previous = this.#results.get(frame.delegate_id)
+      const project = this.#projectView?.roster?.find(entry => entry.running.some(work => work.work_id === frame.delegate_id))
+      const title = project?.running.find(work => work.work_id === frame.delegate_id)?.title ?? previous?.title
+      const projectName = project?.name ?? previous?.project
+      const retained = {...(projectName === undefined ? {} : {project: projectName}), ...(title === undefined ? {} : {title})}
+      const enriched = parsed.result === null ? null : {...parsed.result, ...retained}
+      // Validate metadata too before changing retained state; serialization stays one bounded work per frame.
+      const wire = executorResultSchema.parse({type: 'executor.result', work_id: frame.delegate_id, result: enriched})
+      if (Buffer.byteLength(JSON.stringify(wire)) > MAX_DESKTOP_JSON_BYTES) throw new DesktopProtocolError('desktop result frame is too large')
+      const oldestFinished = [...this.#results].find(([, entry]) => entry.result !== null)?.[0]
+      if (previous === undefined && this.#results.size >= 64 && oldestFinished === undefined) {
+        this.#telemetry?.record('desktop.result_retention_full', {})
+      } else {
+        if (previous === undefined && this.#results.size >= 64) this.#results.delete(oldestFinished!)
+        this.#results.set(frame.delegate_id, {result: wire.result, ...retained})
+        this.#replayResults()
+      }
     }
     if (result !== undefined && result !== null) this.#progressSummaries.delete(frame.delegate_id)
     if (this.#progressMode === 'off' || this.#progressMode === 'milestones' && frame.level === 'detail') return
@@ -355,6 +376,7 @@ export class DesktopSocketBridge {
     this.#projectOutbound = null
     this.#approvalOutbound = null
     this.#progressSummaries.clear()
+    this.#resultReplay = []
   }
 
   /** Mark the connection authenticated, which is what unblocks the single-slot queues. */
@@ -367,10 +389,14 @@ export class DesktopSocketBridge {
     this.#syncExecutorStateDelivery()
     this.#syncProjectDelivery()
     this.#syncApprovalDelivery()
-    if (this.#lastResult !== undefined) {
-      this.#resultPending = true
-      this.#onOutboundAvailable?.()
-    }
+    if (this.#results.size > 0) this.#replayResults()
+  }
+
+  #replayResults(): void {
+    // A fresh snapshot also removes evicted entries from a connected renderer. Never aggregate 64 results into one frame.
+    this.#resultReplay = [JSON.stringify({type: 'executor.results.reset'}), ...[...this.#results].map(([work_id, entry]) =>
+      JSON.stringify({type: 'executor.result', work_id, result: entry.result}))]
+    if (this.#authenticated) this.#onOutboundAvailable?.()
   }
 
   #fencePlaybackForConnectionBoundary(
@@ -556,9 +582,8 @@ export class DesktopSocketBridge {
         }
       }
     }
-    if (this.#authenticated && this.#resultPending) {
-      this.#resultPending = false
-      return {frame: JSON.stringify({type: 'executor.result', result: this.#lastResult}), policy: 'latest'}
+    if (this.#authenticated && this.#resultReplay.length > 0) {
+      return {frame: this.#resultReplay.shift()!, policy: 'latest'}
     }
     return null
   }

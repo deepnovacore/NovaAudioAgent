@@ -52,7 +52,7 @@ import {
 import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
-import { executorResultDialogOptions, parseExecutorResult } from './executor-result.mjs'
+import { executorResultDialogOptions, executorResultMenuTemplate } from './executor-result.mjs'
 import { shouldOpenSettings } from './launch-command.mjs'
 import {
   canonicalInstalledExecutable,
@@ -1084,10 +1084,13 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('executor result request rejected')
     }
-    const result = parseExecutorResult(value)
-    if (result === null) throw new Error('executor result rejected')
-    const response = await dialog.showMessageBox(mainWindow, executorResultDialogOptions(result))
-    if (response.response === 0) openMemoryBoard(launchId)
+    const template = executorResultMenuTemplate(value, async result => {
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      const response = await dialog.showMessageBox(mainWindow, executorResultDialogOptions(result))
+      if (response.response === 0) openMemoryBoard(launchId)
+    })
+    if (template === null || template.length === 0) throw new Error('executor result rejected')
+    Menu.buildFromTemplate(template).popup({window: mainWindow})
     return true
   })
   ipcMain.on('nova:window-drag:start', event => {

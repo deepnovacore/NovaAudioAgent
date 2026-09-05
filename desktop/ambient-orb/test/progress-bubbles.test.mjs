@@ -117,7 +117,7 @@ test('parses only bounded sanitized executor progress frames', () => {
 
 test('parses terminal result frames and permits a null reset', () => {
   assert.deepEqual(parseLastResultFrame({
-    type: 'executor.result',
+    type: 'executor.result', work_id: 'delegate-7',
     result: {
       delegate_id: 'delegate-7', executor: 'codex', outcome: 'ok', summary: '已完成',
       started_at: 1, ended_at: 2, changed_files: 3, ignored: 'unknown fields drop',
@@ -126,9 +126,9 @@ test('parses terminal result frames and permits a null reset', () => {
     delegateId: 'delegate-7', executor: 'codex', outcome: 'ok', summary: '已完成',
     startedAt: 1, endedAt: 2, changedFiles: 3,
   })
-  assert.equal(parseLastResultFrame({type: 'executor.result', result: null}), null)
+  assert.equal(parseLastResultFrame({type: 'executor.result', work_id: 'delegate-7', result: null}), null)
   assert.equal(parseLastResultFrame({
-    type: 'executor.result',
+    type: 'executor.result', work_id: 'delegate-7',
     result: {...{delegate_id: 'delegate-7', executor: 'codex', outcome: 'ok', summary: 'ok', started_at: 2, ended_at: 1, changed_files: null}},
   }), undefined)
 })
@@ -281,4 +281,14 @@ test('resumes a hovered milestone for only its remaining lifetime', async () => 
   now = 7_000
   bubbles.resume('milestone')
   assert.deepEqual(timers, [12_000, 10_000])
+})
+
+test('result wire requires a keyed reset and refuses cross-work identity, malformed metadata and oversize frames', () => {
+  const result = {delegate_id: 'a', executor: 'codex', outcome: 'ok', summary: 'done', started_at: 1, ended_at: 2, changed_files: 0, project: '<alpha>', title: '<img src=x>'}
+  const frame = {type: 'executor.result', work_id: 'a', result}
+  assert.equal(parseLastResultFrame(frame).title, '<img src=x>')
+  assert.equal(parseLastResultFrame({...frame, work_id: 'b'}), undefined)
+  assert.equal(parseLastResultFrame({type: 'executor.result', result: null}), undefined)
+  assert.equal(parseLastResultFrame({...frame, result: {...result, project: {html: 'x'}}}), undefined)
+  assert.equal(parseLastResultFrame({...frame, extra: 'x'.repeat(16 * 1024)}), undefined)
 })

@@ -50,3 +50,36 @@ test('renders an honest native fallback with Memory Board as an explicit action'
   assert.match(options.detail, /耗时：3\.3s/u)
   assert.match(options.detail, /变更文件：未知/u)
 })
+
+test('cancelled results keep project and title through the dialog trust boundary', () => {
+  const result = parseExecutorResult({delegateId: 'a', executor: 'codex', outcome: 'cancelled', summary: 'Stopped', startedAt: 1, endedAt: 2, changedFiles: 0, project: '<alpha>', title: '<img src=x>'})
+  assert.ok(result)
+  assert.match(executorResultDialogOptions(result).detail, /<alpha>.*<img src=x>/u)
+  assert.equal(executorResultDialogOptions(result).message, '已停止')
+})
+
+test('project/result menu exposes independent runs and selects one retained outcome as plain native labels', async () => {
+  const {executorResultMenuTemplate} = await import('../src/main/executor-result.mjs')
+  const opened = []
+  const result = {delegateId: 'a', executor: 'codex', outcome: 'ok', summary: '<b>done</b>', startedAt: 1, endedAt: 2, changedFiles: 3, project: '<alpha>', title: '<img src=x>'}
+  const roster = [{name: '<alpha>', last_used_at: 1, running: [{work_id: 'live-a', title: 'A title'}]}, {name: 'beta', last_used_at: 2, running: [{work_id: 'live-b', title: 'B title'}]}]
+  const menu = executorResultMenuTemplate({results: [result, {...result, delegateId: 'b', project: 'beta', title: 'B result'}], roster}, item => opened.push(item))
+  assert.ok(menu)
+  assert.ok(menu.some(item => item.label === '<alpha>'))
+  assert.ok(menu.some(item => item.label?.includes('A title')))
+  assert.ok(menu.some(item => item.label?.includes('B title')))
+  const outcomes = menu.filter(item => typeof item.click === 'function')
+  assert.equal(outcomes.length, 2)
+  assert.match(outcomes[0].label, /<alpha>.*<img src=x>/u)
+  outcomes[0].click()
+  assert.deepEqual(opened, [result])
+  assert.equal(executorResultMenuTemplate({results: Array(65).fill(result), roster}, () => {}), null)
+  assert.equal(executorResultMenuTemplate({results: [result], roster: [{name: 'bad', last_used_at: 1, running: [{work_id: 'x', title: {html: 'unsafe'}}]}]}, () => {}), null)
+})
+
+
+test('project/title limits use the existing roster code-point bound', () => {
+  const result = {delegateId: 'a', executor: 'codex', outcome: 'ok', summary: 'done', startedAt: 1, endedAt: 2, changedFiles: 0, project: '🌟'.repeat(120), title: '🌟'.repeat(120)}
+  assert.ok(parseExecutorResult(result))
+  assert.equal(parseExecutorResult({...result, title: '🌟'.repeat(121)}), null)
+})

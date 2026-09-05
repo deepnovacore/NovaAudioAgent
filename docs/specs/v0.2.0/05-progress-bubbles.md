@@ -103,6 +103,17 @@ by unit tests. Prefer missing a detail bubble over leaking sensitive text.
 - The entry persists until the next dispatch replaces it; it does not
   auto-dismiss and is independent of `progressBubbles` (it exists even at
   `off`).
+- Session retention is bounded to 64 work slots. Evict the oldest retained
+  terminal slot when a new work needs space; never evict a live slot. If all
+  slots are live, refuse new result tracking with a diagnostic. This is a UI
+  retention ceiling, not a work admission/cancellation policy.
+- Runtime sends `executor.results.reset` followed by one
+  `executor.result {work_id, result}` frame per retained slot on updates and
+  reconnect. `result:null` clears only that work; non-null result identity must
+  equal `work_id`. Never aggregate the snapshot into a frame over 16 KiB.
+- The existing affordance opens a native project/result menu; each retained
+  result opens the compact single-result dialog. Project/title disambiguate
+  concurrent work. Project roster and running titles share this read-only menu.
 - YOLO runs show the same entry; audit goes there, not into bubbles.
 
 ## Renderer UX

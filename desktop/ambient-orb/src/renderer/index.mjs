@@ -39,7 +39,7 @@ import {
 } from './confirmation-controls.mjs'
 import { deriveOrbState } from './state.mjs'
 import { BackendReconnectController } from './backend-reconnect.mjs'
-import {mountProgressBubbles, parseProgressFrame, parseLastResultFrame} from './bubbles.mjs'
+import {mountProgressBubbles, parseProgressFrame, parseLastResultFrame, parseProjectRoster} from './bubbles.mjs'
 
 const PROJECT_CONFIRMATION_TTL_SECONDS = 360
 
@@ -62,7 +62,11 @@ const confirmationAnnouncement = document.querySelector('#confirmation-announcem
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
 const lastResultButton = document.querySelector('#last-result')
-let lastResult = null
+const retainedResults = new Map()
+let projectRoster = []
+function updateResultButton() {
+  lastResultButton.hidden = retainedResults.size === 0 && projectRoster.length === 0
+}
 const applyBubbleLayout = layout => {
   const active = layout?.rows > 0 && !layout.suppressed
   shell.dataset.bubbles = String(active)
@@ -820,7 +824,8 @@ async function handleControl(message) {
     const pendingWorkspace = message.pending_workspace_display_name
     const pendingSession = message.pending_session_title
     const pendingExpires = message.pending_expires_in_seconds
-    // Every project proposal carries a pill action (decision 2026-09-04); the roster is accepted but not rendered here.
+    const roster = parseProjectRoster(message.roster)
+    // Every project proposal carries a pill action (decision 2026-09-04).
     const validAction = pendingAction === null
       || ['create_workspace', 'reuse_workspace', 'select_workspace', 'resume_session'].includes(pendingAction)
     const pendingMetadata = pendingAction !== null
@@ -854,7 +859,7 @@ async function handleControl(message) {
       && validConfirmationId
       && (message.pending_confirmation || pendingConfirmationId === undefined)
       && validAction
-      && Array.isArray(message.roster)
+      && roster !== null
       && (pendingWorkspace === null
         || (typeof pendingWorkspace === 'string' && [...pendingWorkspace].length <= 120))
       && (pendingSession === null
@@ -867,6 +872,8 @@ async function handleControl(message) {
         ? (!pendingMetadata || (pendingWorkspace !== null && pendingExpires !== null))
         : !pendingMetadata)
     if (valid) {
+      projectRoster = roster
+      updateResultButton()
       axes.workspace = workspace || ''
       axes.session = session || ''
       // A proposal without an action (bare store view) is pending without a pill.
@@ -916,13 +923,17 @@ async function handleControl(message) {
   } else if (message.type === 'executor.progress') {
     const frame = parseProgressFrame(message)
     if (frame !== null) void progressBubbles.push(frame)
+  } else if (message.type === 'executor.results.reset') {
+    if (Object.keys(message).length === 1) {
+      retainedResults.clear()
+      updateResultButton()
+    }
   } else if (message.type === 'executor.result') {
     const result = parseLastResultFrame(message)
     if (result !== undefined) {
-      lastResult = result
-      lastResultButton.hidden = result === null
-      lastResultButton.title = result?.summary ?? ''
-      lastResultButton.setAttribute('aria-label', result ? `最近结果：${result.summary}` : '最近结果')
+      if (result === null) retainedResults.delete(message.work_id)
+      else if (retainedResults.has(message.work_id) || retainedResults.size < 64) retainedResults.set(message.work_id, result)
+      updateResultButton()
     }
   } else if (message.type === 'error') {
     axes.error = 'backend'
@@ -987,8 +998,9 @@ function resetRendererConnection(processReplaced, {closeSocket = true} = {}) {
   codexApprovalDecision.deliveryLost()
   void progressBubbles.clear()
   if (processReplaced) {
-    lastResult = null
-    lastResultButton.hidden = true
+    retainedResults.clear()
+    projectRoster = []
+    updateResultButton()
     axes.executorName = ''
     axes.codex = 'idle'
     axes.pendingConfirmation = false
@@ -1217,7 +1229,7 @@ confirmationAllowSession.addEventListener('click', () => {
   if (axes.pendingConfirmationKind === 'codex' && codexApprovalDecision.decide(true, 'session')) render()
 })
 lastResultButton.addEventListener('click', () => {
-  if (lastResult !== null) void window.novaAudioAgentDesktop.executorResult.open(lastResult)
+  void window.novaAudioAgentDesktop.executorResult.open({results: [...retainedResults.values()], roster: projectRoster})
 })
 window.addEventListener('beforeunload', () => {
   stopConfirmationPlacement()

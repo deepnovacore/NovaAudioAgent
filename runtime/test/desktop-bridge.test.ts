@@ -33,6 +33,7 @@ interface TelemetryRecord {
 interface JsonFrame {
   readonly type?: string
   readonly result?: unknown
+  readonly work_id?: string
 }
 
 function parseJsonFrame(frame: string | Uint8Array): JsonFrame {
@@ -53,7 +54,7 @@ function findJsonFrame(frames: readonly JsonFrame[], type: string): JsonFrame {
   return frame
 }
 
-test('bubble filtering never hides last results, which replay on reconnect and clear on the next dispatch', () => {
+test('bubble filtering never hides retained results, which replay on reconnect and clear only the dispatched work', () => {
   for (const mode of ['off', 'milestones', 'all'] as const) {
     const {bridge} = harness({progressBubbles: mode})
     bridge.markAuthenticated()
@@ -72,7 +73,8 @@ test('bubble filtering never hides last results, which replay on reconnect and c
     assert.deepEqual(findJsonFrame(replay, 'executor.result').result, result)
     bridge.onExecutorProgress({...base, delegate_id: 'next', phase: 'started', summary: '任务开始', level: 'milestone'}, null)
     const cleared = drainJsonFrames(bridge)
-    assert.equal(findJsonFrame(cleared, 'executor.result').result, null)
+    assert.equal(cleared.find(frame => frame.type === 'executor.result' && frame.work_id === 'next')?.result, null)
+    assert.deepEqual(cleared.find(frame => frame.type === 'executor.result' && frame.work_id === 'd')?.result, result)
   }
 })
 
@@ -929,4 +931,61 @@ test('the project dedup is value-based in both places it is checked', () => {
   bridge.onProjectView({...view})
   assert.equal(bridge.pendingCounts.project, false)
   assert.equal(bridge.takeNextFrame(), null)
+})
+
+
+test('concurrent retained results survive both completion orders, keyed clear, and reconnect with bubbles off', () => {
+  for (const order of [['a', 'b'], ['b', 'a']]) {
+    const {bridge} = harness({progressBubbles: 'off'})
+    const progress = (id: string, phase: 'started' | 'completed') => ({type: 'executor.progress' as const, delegate_id: id, executor: 'codex', ts: 2, phase, summary: 'task', level: 'milestone' as const})
+    bridge.markAuthenticated()
+    drainJsonFrames(bridge)
+    for (const id of ['a', 'b']) bridge.onExecutorProgress(progress(id, 'started'), null)
+    for (const id of order) bridge.onExecutorProgress(progress(id, 'completed'), {delegate_id: id, executor: 'codex', outcome: 'ok', summary: id, started_at: 1, ended_at: 2, changed_files: 1})
+    const results = () => drainJsonFrames(bridge).filter(frame => frame.type === 'executor.result').map(frame => frame.result).filter(Boolean)
+    assert.equal(results().length, 2)
+    bridge.release(); bridge.markAuthenticated()
+    assert.equal(results().length, 2)
+    bridge.onExecutorProgress(progress('a', 'started'), null)
+    assert.deepEqual(results().map(value => (value as {delegate_id: string}).delegate_id), ['b'])
+    bridge.onExecutorProgress(progress('c', 'started'), null)
+    assert.deepEqual(results().map(value => (value as {delegate_id: string}).delegate_id), ['b'])
+  }
+})
+
+test('result snapshots are bounded, preserve live slots, refuse overflow and reject mismatched work identity', () => {
+  const {bridge, telemetry} = harness({progressBubbles: 'off'})
+  bridge.markAuthenticated()
+  drainJsonFrames(bridge)
+  const progress = (id: string, phase: 'started' | 'completed') => ({type: 'executor.progress' as const, delegate_id: id, executor: 'codex', ts: 2, phase, summary: 'task', level: 'milestone' as const})
+  for (let i = 0; i < 64; i++) bridge.onExecutorProgress(progress(`live-${i}`, 'started'), null)
+  bridge.onExecutorProgress(progress('overflow', 'started'), null)
+  assert.ok(telemetry.records.some(record => record.kind === 'desktop.result_retention_full'))
+  const snapshot = drainJsonFrames(bridge)
+  assert.equal(snapshot.filter(frame => frame.type === 'executor.result').length, 64)
+  assert.equal(snapshot.filter(frame => frame.type === 'executor.results.reset').length, 1)
+  const result = {delegate_id: 'live-0', executor: 'codex', outcome: 'ok' as const, summary: '界'.repeat(180), started_at: 1, ended_at: 2, changed_files: 1}
+  assert.throws(() => bridge.onExecutorProgress(progress('other', 'completed'), result), /identity/u)
+  assert.throws(() => bridge.onExecutorProgress(progress('live-0', 'completed'), {...result, summary: 'x'.repeat(181)}))
+  bridge.onExecutorProgress(progress('live-0', 'completed'), result)
+  bridge.onExecutorProgress(progress('new-live', 'started'), null)
+  const retained = drainJsonFrames(bridge).filter(frame => frame.type === 'executor.result')
+  assert.equal(retained.length, 64)
+  assert.ok(!retained.some(frame => JSON.stringify(frame).includes('live-0"')))
+  assert.ok(retained.some(frame => JSON.stringify(frame).includes('live-63"')))
+  bridge.onExecutorProgress(progress('live-63', 'completed'), {...result, delegate_id: 'live-63'})
+  for (let frame; (frame = bridge.takeNextFrame()) !== null;) assert.ok(Buffer.byteLength(String(frame)) <= 16 * 1024)
+})
+
+test('retained result keeps the work project/title after its running roster entry disappears', () => {
+  const {bridge} = harness({progressBubbles: 'off'})
+  bridge.markAuthenticated()
+  const progress = {type: 'executor.progress' as const, delegate_id: 'a', executor: 'codex', ts: 2, summary: 'task', level: 'milestone' as const}
+  const base = {workspace_display_name: 'alpha', session_title: null, pending_confirmation: false, pending_confirmation_busy: false}
+  bridge.onExecutorProgress({...progress, phase: 'started'}, null)
+  bridge.onProjectView({...base, roster: [{name: 'alpha', last_used_at: 1, running: [{work_id: 'a', title: '🌟'.repeat(120)}]}]})
+  bridge.onProjectView({...base, roster: [{name: 'alpha', last_used_at: 1, running: []}]})
+  bridge.onExecutorProgress({...progress, phase: 'completed'}, {delegate_id: 'a', executor: 'codex', outcome: 'ok', summary: 'done', started_at: 1, ended_at: 2, changed_files: 1})
+  const result = findJsonFrame(drainJsonFrames(bridge), 'executor.result').result
+  assert.deepEqual(result, {delegate_id: 'a', executor: 'codex', outcome: 'ok', summary: 'done', started_at: 1, ended_at: 2, changed_files: 1, project: 'alpha', title: '🌟'.repeat(120)})
 })
