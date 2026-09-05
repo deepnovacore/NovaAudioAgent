@@ -3,6 +3,7 @@ import {chmod, lstat, mkdir, mkdtemp, realpath, rm, symlink} from 'node:fs/promi
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test, {type TestContext} from 'node:test'
+import {Worker} from 'node:worker_threads'
 
 import {KnowledgeStoreClient, KnowledgeStoreClientError} from '../src/knowledge/store-client.js'
 import type {KnowledgeSource} from '../src/knowledge/types.js'
@@ -23,14 +24,50 @@ function source(id = 'source-a'): KnowledgeSource {
 }
 
 async function store(t: TestContext): Promise<KnowledgeStoreClient> {
+  return (await storeWithPath(t)).client
+}
+
+async function storeWithPath(t: TestContext): Promise<{readonly client: KnowledgeStoreClient; readonly path: string}> {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-store-'))
-  const client = new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite')})
+  const path = join(directory, 'knowledge.sqlite')
+  const client = new KnowledgeStoreClient({path})
   t.after(async () => {
     await client.close()
     await rm(directory, {recursive: true, force: true})
   })
   await client.open()
-  return client
+  return {client, path}
+}
+
+async function holdWriteLock(path: string): Promise<{readonly release: () => Promise<void>}> {
+  const worker = new Worker(new URL('./fixtures/workspace-graph-sqlite-worker.js', import.meta.url), {
+    workerData: {mode: 'lock', path},
+  })
+  await new Promise<void>((resolve, reject) => {
+    worker.once('error', reject)
+    worker.once('message', message => {
+      if ((message as {readonly kind?: unknown}).kind === 'locked') resolve()
+      else reject(new Error('fixture did not acquire lock'))
+    })
+  })
+  let released = false
+  return {
+    release: () => {
+      if (released) return Promise.resolve()
+      released = true
+      return new Promise((resolve, reject) => {
+      worker.once('error', reject)
+      worker.once('message', message => {
+        if ((message as {readonly kind?: unknown}).kind !== 'released') {
+          reject(new Error('fixture did not release lock'))
+          return
+        }
+        void worker.terminate().then(() => resolve(), reject)
+      })
+      worker.postMessage('release')
+      })
+    },
+  }
 }
 
 function temporaryClient(
@@ -160,10 +197,29 @@ test('close immediately rejects an in-flight Worker write instead of queueing be
   const rejected = assert.rejects(pending, (error: unknown) => (
     error instanceof KnowledgeStoreClientError && error.code === 'CLIENT_CLOSED'
   ))
-  await Promise.race([
-    client.close(),
-    new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error('close queued behind write')), 150)),
-  ])
+  const closing = client.close()
+  await rejected
+  await closing
+})
+
+test('close resolves only after a busy Worker has actually terminated', async t => {
+  const {client, path} = await storeWithPath(t)
+  const lock = await holdWriteLock(path)
+  t.after(() => lock.release().catch(() => undefined))
+  const pending = client.replaceSource({
+    source: source(), provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Busy', text: 'blocked write', token_estimate: 2, vector: [1, 0]}],
+  })
+  const rejected = assert.rejects(pending, (error: unknown) => (
+    error instanceof KnowledgeStoreClientError && error.code === 'CLIENT_CLOSED'
+  ))
+  await new Promise(resolve => setTimeout(resolve, 50))
+  let closed = false
+  const closing = client.close().then(() => { closed = true })
+  await new Promise(resolve => setTimeout(resolve, 300))
+  assert.equal(closed, false)
+  await lock.release()
+  await closing
   await rejected
 })
 
@@ -207,6 +263,15 @@ test('new private database parent and SQLite sidecars stay owner-only', async t 
   assert.equal((await lstat(`${path}-shm`)).mode & 0o7777, 0o600)
 })
 
+test('Windows admission does not enforce POSIX file-mode equality', async t => {
+  if (process.platform !== 'win32') return
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-windows-'))
+  t.after(() => rm(root, {recursive: true, force: true}))
+  const client = temporaryClient(t, join(root, 'knowledge.sqlite'))
+  await client.open()
+  assert.deepEqual(await client.listSources(), [])
+})
+
 test('Float32 overflow rejects before replacement and leaves prior data intact', async t => {
   const client = await store(t)
   await client.replaceSource({
@@ -222,12 +287,14 @@ test('Float32 overflow rejects before replacement and leaves prior data intact',
 
 test('recall and getChunk redact document paths while keeping lexical matches across providers', async t => {
   const client = await store(t)
+  const headingUnc = String.raw`\\server\share\heading.md`
+  const documentUnc = String.raw`\\server\share\document.md`
   await client.replaceSource({
-    source: {...source(), title: 'Plan /Users/example/private/plan.md'},
+    source: {...source(), title: 'Plan https://example.com/a and /Users/example/private/plan.md'},
     provider_id: 'embed-a', dims: 2,
     chunks: [{
-      heading_path: 'See /Users/example/private/heading.md',
-      text: 'Use /Users/example/private/document.md for lexical retention',
+      heading_path: `见/Users/example/private/heading.md and ${headingUnc}`,
+      text: `URL https://example.com/a; 见/Users/example/private/document.md; ${documentUnc} lexical retention`,
       token_estimate: 4,
       vector: [1, 0],
     }],
@@ -238,9 +305,15 @@ test('recall and getChunk redact document paths while keeping lexical matches ac
   assert.equal(hit.title.includes('/Users/example/private'), false)
   assert.equal(hit.heading_path.includes('/Users/example/private'), false)
   assert.equal(hit.text.includes('/Users/example/private'), false)
+  assert.equal(hit.title.includes('https://example.com/a'), true)
+  assert.equal(hit.text.includes('https://example.com/a'), true)
+  assert.equal(hit.heading_path.includes(headingUnc), false)
+  assert.equal(hit.text.includes(documentUnc), false)
   const chunk = await client.getChunk(hit.locator)
   assert.equal(chunk.status, 'ok')
   assert.equal(chunk.text?.includes('/Users/example/private'), false)
+  assert.equal(chunk.text?.includes('https://example.com/a'), true)
+  assert.equal(chunk.text?.includes(documentUnc), false)
   const privateSource = (await client.listSources())[0]
   assert.equal(privateSource?.locator, '/tmp/runtime-notes.md')
   assert.equal(privateSource?.title.includes('/Users/example/private'), false)

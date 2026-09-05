@@ -57,8 +57,6 @@ interface Pending<Result> {
   readonly reject: (error: KnowledgeStoreClientError) => void
 }
 
-const CLOSE_GRACE_MS = 250
-
 export class KnowledgeStoreClient {
   readonly #worker: KnowledgeStoreWorker
   readonly #pending = new Map<number, Pending<unknown>>()
@@ -86,12 +84,22 @@ export class KnowledgeStoreClient {
     this.#closed = true
     this.#expectedExit = true
     this.#rejectPending('CLIENT_CLOSED')
-    this.#closing = new Promise(resolve => {
-      const timer = setTimeout(resolve, CLOSE_GRACE_MS)
-      void this.#worker.terminate().then(
-        () => { clearTimeout(timer); resolve() },
-        () => { clearTimeout(timer); resolve() },
-      )
+    this.#closing = new Promise((resolve, reject) => {
+      this.#worker.on('exit', code => {
+        if (code === 0) resolve()
+        else reject(new KnowledgeStoreClientError('WORKER_EXITED'))
+      })
+      this.#worker.on('error', () => reject(new KnowledgeStoreClientError('WORKER_ERROR')))
+      try {
+        // This is deliberately not an RPC promise: existing requests were rejected above,
+        // while the Worker drains its bounded SQLite call and exits after the close signal.
+        this.#worker.postMessage({kind: 'request', request_id: this.#nextRequestId++, operation: 'close'})
+      } catch {
+        void this.#worker.terminate().then(
+          () => reject(new KnowledgeStoreClientError('WORKER_PROTOCOL_FAILURE')),
+          () => reject(new KnowledgeStoreClientError('WORKER_PROTOCOL_FAILURE')),
+        )
+      }
     })
     return this.#closing
   }

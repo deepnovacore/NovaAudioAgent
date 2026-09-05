@@ -65,7 +65,12 @@ port.on('message', message => {
     return
   }
   try {
-    port.postMessage({kind: 'response', request_id: request.request_id, ok: true, result: execute(request)})
+    const result = execute(request)
+    if (request.operation === 'close') {
+      port.close()
+      return
+    }
+    port.postMessage({kind: 'response', request_id: request.request_id, ok: true, result})
   } catch (error) {
     port.postMessage({kind: 'response', request_id: request.request_id, ok: false, error_code: codeFor(error)})
   }
@@ -584,7 +589,9 @@ function secureSidecar(databasePath: string, suffix: '-wal' | '-shm'): void {
 }
 
 function privateFile(info: {readonly isFile: () => boolean; readonly mode: number; readonly uid: number}): boolean {
-  return info.isFile() && ownedByCurrentUser(info.uid) && (info.mode & 0o7777) === 0o600
+  return info.isFile() && ownedByCurrentUser(info.uid) && (
+    process.platform === 'win32' || (info.mode & 0o7777) === 0o600
+  )
 }
 
 function ownedByCurrentUser(uid: number): boolean {
@@ -592,7 +599,32 @@ function ownedByCurrentUser(uid: number): boolean {
 }
 
 function redactOutput(value: string): string {
-  return value.replace(/(^|[\s<>"'`()\[\]{},;!?=:])(?:[A-Za-z]:[\\/]|\/)[^\s<>"'`()\[\]{},;!?]*/gu, '$1[path]')
+  let result = ''
+  let offset = 0
+  for (const match of value.matchAll(/https?:\/\/[^\s<>"'`()\[\]{},;!?]+/giu)) {
+    const index = match.index
+    if (index === undefined) continue
+    result += redactPathSpans(value.slice(offset, index))
+    const token = match[0]
+    result += safeOutputUrl(token) ? token : redactPathSpans(token)
+    offset = index + token.length
+  }
+  return result + redactPathSpans(value.slice(offset))
+}
+
+function safeOutputUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && url.username === '' && url.password === ''
+      && content.scrub('knowledge-output-url', value).kind === 'clean'
+  } catch {
+    return false
+  }
+}
+
+function redactPathSpans(value: string): string {
+  return value.replace(/(?:\\\\[^\s<>"'`()\[\]{},;!?]+|[A-Za-z]:[\\/][^\s<>"'`()\[\]{},;!?]+|\/(?!\/)[^\s<>"'`()\[\]{},;!?]+)/gu, '[path]')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
