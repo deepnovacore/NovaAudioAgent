@@ -3,7 +3,7 @@ import {test} from 'node:test'
 import {mkdtemp, readFile, rm, chmod} from 'node:fs/promises'
 import {join} from 'node:path'
 import {parseCapabilityRegistry} from '../src/capability-registry.js'
-import {prepareManagedCodexMcp} from '../src/executors/codex/managed-mcp.js'
+import {prepareManagedCodexMcp, managedMcpConfigToml} from '../src/executors/codex/managed-mcp.js'
 import {CredentialSnapshotter} from '../src/executors/codex/credential-snapshot.js'
 import {hostCodexHomeForTest, hostBinaryForTest, hostWorkspaceForTest, createApprovedCodexSpawnSpec, approvedCodexSpawnDetails} from '../src/executors/codex/process-owner.js'
 
@@ -79,4 +79,36 @@ test('trusted host knowledge entry uses the same allowlist/reference path while 
   assert.deepEqual(managed.servers.nova_knowledge?.enabled_tools, ['recall'])
   assert.equal(managed.servers.nova_knowledge?.bearer_token_env_var, 'NOVA_MANAGED_MCP_NOVA_KNOWLEDGE_TOKEN')
   assert.equal(JSON.stringify(managed).includes('dummy-local-token'), false)
+})
+
+
+test('stdio inline credentials fail per server in joined, split and command text forms', () => {
+  const ordinaryArgs = ['--transport', 'stdio', '--query', 'password safety', '--token-file', '/tmp/auth-file']
+  for (const text of [
+    {args: ['--api-key=dummy-sensitive-value']},
+    {args: ['--api-key', 'dummy-sensitive-value']},
+    {args: ['--token', 'dummy-sensitive-value']},
+    {args: ['--password', 'dummy-sensitive-value']},
+    {args: ['-H', 'Authorization: dummy-sensitive-value']},
+    {command: '/usr/bin/env PASSWORD=dummy-sensitive-value node'},
+    {command: 'node --api-key dummy-sensitive-value'},
+    {args: ['--server', 'https://example.test/mcp?token=dummy-sensitive-value']},
+  ]) {
+    const stdio = {transport: 'stdio', command: '/usr/bin/false', tools: {read: tool}}
+    const capabilities = registry({bad: {...stdio, ...text}, safe: {...stdio, args: ordinaryArgs}})
+    const managed = prepareManagedCodexMcp(capabilities)
+    assert.deepEqual(Object.keys(managed.servers), ['safe'])
+    assert.equal(capabilities.serverStatuses.find(server => server.name === 'bad')?.codex?.reason, 'codex_secret_command_unrepresentable')
+    assert.equal(managedMcpConfigToml(managed).includes('dummy-sensitive-value'), false)
+    assert.deepEqual(managed.servers.safe?.args, ordinaryArgs)
+  }
+})
+
+test('TOML control escaping preserves accepted argument, tool and header strings without breaking healthy servers', () => {
+  const capabilities = registry({control: {transport: 'stdio', command: '/usr/bin/false', args: ['dummy\u007f', '\b\t\n\r\f', '中文😀'], tools: {'read\u007f': tool}}, safe: http})
+  const managed = prepareManagedCodexMcp(capabilities, {headers: {...capabilities.mcpServers.safe!, headers: {'X-Test\u007f': 'dummy-header'}}})
+  assert.deepEqual(Object.keys(managed.servers), ['control', 'safe', 'headers'])
+  assert.equal(managed.servers.control?.args?.[0], 'dummy\u007f')
+  // TOML forbids these raw controls in all basic strings, including quoted table keys.
+  assert.doesNotMatch(managedMcpConfigToml(managed), /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u)
 })

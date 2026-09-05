@@ -544,6 +544,10 @@ exposure with `codex_env_unrepresentable`. Conflicting values for the same origi
 name fail every affected server with `codex_env_conflict`; Windows matching is
 case-insensitive. Nova keeps its existing host environment allowlist. A future
 scoped launcher adapter is needed for noncredential stdio settings.
+Recognizable inline credentials in stdio command/argument text (including split
+flags) fail as `codex_secret_command_unrepresentable`; supply them through the
+supported environment references instead. TOML string escaping covers every
+accepted string and key, including DEL, so one entry cannot break the shared file.
 
 URLs containing interpolation, recognized credential parameters, userinfo or fragments cannot be
 projected safely and fail with `codex_secret_url_unrepresentable`. Move credentials

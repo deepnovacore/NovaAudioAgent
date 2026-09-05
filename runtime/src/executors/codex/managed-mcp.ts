@@ -81,6 +81,7 @@ export function prepareManagedCodexMcp(
           env[canonical] = value
         }
         if (config.command === undefined) fail('codex_transport_unrepresentable')
+        if (sensitivity.scrubCommand(config.command, config.args).kind !== 'clean') fail('codex_secret_command_unrepresentable')
         entry = {...base, command: config.command, args: config.args ?? [], ...(Object.keys(env).length === 0 ? {} : {env_vars: Object.keys(env)})}
       }
       candidates.set(name, {entry, env})
@@ -136,8 +137,8 @@ export function managedMcpConfigToml(managed: ManagedCodexMcp | undefined): stri
 }
 function toml(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(toml).join(', ')}]`
-  if (typeof value === 'object' && value !== null) return `{ ${Object.entries(value).map(([key, field]) => `${JSON.stringify(key)} = ${toml(field)}`).join(', ')} }`
-  return JSON.stringify(value)
+  if (typeof value === 'object' && value !== null) return `{ ${Object.entries(value).map(([key, field]) => `${toml(key)} = ${toml(field)}`).join(', ')} }`
+  return JSON.stringify(value).replaceAll('\u007f', '\\u007f')
 }
 
 export function validateManagedMcpConfig(actual: unknown, managed?: ManagedCodexMcp): void {

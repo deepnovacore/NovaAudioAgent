@@ -179,6 +179,12 @@ export class SensitiveContentPolicy {
     if (!hasMeaningfulContent(scrubbed)) return {kind: 'rejected'}
     return {kind: 'redacted', value: scrubbed, matches}
   }
+
+  /** Normalize split CLI flags only for screening; callers keep the original command/args. */
+  scrubCommand(command: string, args: readonly string[] = []): ScrubResult {
+    const text = [command, ...args].join(' ').replace(/(--?[A-Za-z][A-Za-z0-9_-]*)\s+(?=\S)/gu, '$1=')
+    return this.scrub('command', text)
+  }
 }
 
 function isSensitiveComponent(component: string): boolean {
