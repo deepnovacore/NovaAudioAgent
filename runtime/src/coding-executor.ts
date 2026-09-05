@@ -6,6 +6,8 @@
  * lifetime, an optional project adapter that owns workspace/session bookkeeping, and the events it
  * publishes back. Concrete executors live under `executors/<name>/` and implement these interfaces.
  */
+import type {AgentDescriptor, AgentController, AgentRuntimeDispatchPort} from './agent-controller.js'
+import type {IntakeOptions, IntakeEventPort} from './executors/coding/intake.js'
 import type {ApprovalController} from './approval-port.js'
 import type {ExecutorAdapter, ExecutorHandoff} from './causal-runtime.js'
 import type {JsonValue} from './events.js'
@@ -73,8 +75,8 @@ export interface CancelContext {
  * An executor the voice model reaches only through `dispatch` / `cancel` / `confirm` (spec 08).
  *
  * `openDispatch` from the spec is the coordinator itself — `IntakeController.open` in
- * `executors/coding/intake.ts`; the host owns that instance because facts and proposals are host
- * surfaces, and routes a `dispatch` call into it. The adapter side of the port is below.
+ * `executors/coding/intake.ts`; the coding AgentController owns that instance and receives host callbacks for facts, proposals
+ * and dispatch. The adapter side of the port is below.
  */
 export interface AgentExecutor {
   /** ≤10 entries, most recently used first; `running` merged from the adapter's run slots. */
@@ -132,6 +134,8 @@ export interface ProjectExecutorAdapter extends ExecutorAdapter, AgentExecutor {
 
 /** Host-owned lifetime wrapper around a coding executor and its optional approval surface. */
 export interface CodingExecutorResource {
+  readonly agentDescriptor?: AgentDescriptor
+  readonly agentControllerFactory?: CodingAgentControllerFactory
   readonly adapter: ExecutorAdapter
   readonly mode: 'ordinary' | 'live' | 'project'
   readonly projectView: PublicProjectView | null
@@ -154,4 +158,15 @@ export function executorWithRole(
 
 export function executorDisplayName(manifest: Pick<ExecutorManifest, 'name' | 'display_name'>): string {
   return manifest.display_name ?? manifest.name
+}
+
+/** Composition-supplied constructor for the controller behind the sole coding role. */
+export interface CodingAgentControllerFactory {
+  create(context: {
+    readonly channel: string
+    readonly intake: IntakeOptions | undefined
+    readonly dispatchPort: AgentRuntimeDispatchPort
+    readonly executor: Pick<AgentExecutor, 'cancel'> | undefined
+    readonly resolveCancelTarget: CancelContext['resolveCancelTarget']
+  }): AgentController & {readonly intake?: IntakeEventPort | undefined}
 }

@@ -62,7 +62,7 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
     points) sent as `threadName`; `thread/name/updated` mirrored into
     `store.setSessionTitle`; `任务 N` defaults deleted, `beginSessionForRun`
     requires a title.
-  - [x] Approval FIFO in the Codex approval controller: one voice-visible
+  - [x] Approval FIFO in the dedicated host `approval.ts` module: one voice-visible
     approval at a time, queued items start their TTL when they become head,
     invalidation is scoped per work; `ApprovalView` carries `work` (project +
     session title), `queued` and `held`. Bounded: total pending ≤
@@ -70,6 +70,17 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
     immediately. `hold()` / `release()` pause the head's TTL while a project
     confirmation hides it (`expires_in_seconds: null` on the wire); an
     already-expired head is dropped rather than revived by `hold()`.
+  - [x] M1 ownership closure (2026-09-05): the same host module owns voice
+    authority, epoch/revision/response matching, retry and quarantine. The
+    service forwards events and supplies transport callbacks; the concrete
+    package retains protocol parsing, display validation and redaction.
+    `CodexAgentController` constructs intake; the service receives only its
+    event/decision port. Final queued-fact eligibility and workspace-change
+    handling stay inside intake, including the authorized-commit blank-final
+    fence. Concrete resources supply their descriptor and existing
+    `CodingAgentControllerFactory`; generic runtime/desktop imports do not
+    load Codex, and desktop version admission uses the explicit
+    `@nova-audio-agent/runtime/executors/codex/version` package boundary.
   - [x] Internal Codex contract collapsed to `run / steer / status / cancel`;
     the six `project` actions and two `confirm_*` ops are gone from the
     model-facing manifest.

@@ -2,7 +2,8 @@ import {lstatSync, realpathSync} from 'node:fs'
 import {isAbsolute, relative, resolve, sep} from 'node:path'
 import {z} from 'zod'
 
-import type {Clock} from '../../clock.js'
+import {HostApprovalController, type HostApprovalControllerOptions as CodexApprovalControllerOptions, type ApprovalPort as CodexApprovalPort} from '../../approval.js'
+export type {CodexApprovalControllerOptions, CodexApprovalPort}
 import {
   APPROVAL_TTL_SECONDS,
   type ApprovalDecision,
@@ -14,10 +15,8 @@ import {
 } from '../../approval-port.js'
 import {snapshotJsonRecord} from './safe-json.js'
 import {codePointLengthLikePython, isWellFormed, stripLikePython} from '../../python-text.js'
-import {MAX_CONCURRENT_WORK} from '../../work-tools.js'
 
 export const CODEX_APPROVAL_TTL_SECONDS = APPROVAL_TTL_SECONDS
-const CODEX_APPROVAL_ID_LIMIT = 128
 const CODEX_APPROVAL_COMMAND_LIMIT = 4096
 const CODEX_APPROVAL_PATH_LIMIT = 4096
 const CODEX_APPROVAL_CHANGE_LIMIT = 64
@@ -72,31 +71,6 @@ export interface CodexApprovalResolution {
   readonly decision: CodexApprovalDecision
 }
 
-interface PendingApproval {
-  readonly id: string
-  readonly offer: CodexApprovalOffer
-  readonly work: ApprovalWork | null
-  /** Armed when the entry becomes head (spec 08): queue position has no deadline of its own. */
-  expiresAt: number
-  readonly signal: AbortSignal
-  readonly resolve: (resolution: CodexApprovalResolution) => void
-  /** Replaced by `release`, which re-arms the head with a fresh deadline. */
-  expiryAbort: AbortController
-  /** Parked by `hold` behind a project confirmation: the deadline is stale and must not drop the entry. */
-  held: boolean
-  onSignalAbort: (() => void) | null
-  state: 'pending' | 'responding'
-  resolution: CodexApprovalResolution | null
-}
-
-export interface CodexApprovalControllerOptions {
-  readonly clock: Clock
-  readonly idFactory: () => string
-}
-
-/** What a transport needs from the approval FIFO; `forWork` binds it to one running work. */
-export type CodexApprovalPort = Pick<CodexApprovalController, 'offer' | 'consume' | 'invalidate'>
-
 export function isCodexApprovalPort(value: unknown): value is CodexApprovalPort {
   return typeof value === 'object' && value !== null
     && typeof (value as CodexApprovalPort).offer === 'function'
@@ -122,244 +96,11 @@ export interface CodexApprovalServerResponse {
     | {readonly permissions: PermissionProfile; readonly scope: 'turn' | 'session'}
 }
 
-/**
- * Owns the Codex permission FIFO (spec 08): exactly one approval is voice-visible (the head); later
- * offers queue with their server request still open and get a full TTL once they become head.
- */
-export class CodexApprovalController {
-  readonly #clock: Clock
-  readonly #idFactory: () => string
-  readonly #observers: ((view: CodexApprovalView) => void)[] = []
-  #current: PendingApproval | null = null
-  readonly #queue: PendingApproval[] = []
-
-  constructor(options: CodexApprovalControllerOptions) {
-    this.#clock = options.clock
-    this.#idFactory = options.idFactory
-  }
-
-  get view(): CodexApprovalView {
-    const current = this.#current
-    if (current === null) return emptyView()
-    return {
-      pending_approval: true,
-      pending_approval_busy: current.state === 'responding',
-      pending_approval_id: current.id,
-      kind: current.offer.kind,
-      local_detail: current.offer.local_detail,
-      operation_summary: current.offer.operation_summary,
-      expires_at: current.expiresAt,
-      ...(current.offer.allowed_decisions === undefined ? {} : {allowed_decisions: current.offer.allowed_decisions}),
-      work: current.work,
-      queued: this.#queue.length,
-      ...(current.held ? {held: true} : {}),
-    }
-  }
-
-  /** The same surface bound to one running work: its offers carry `work`, its invalidations touch only its own entries. */
-  forWork(work: ApprovalWork): CodexApprovalPort {
-    return {
-      offer: (input, signal) => this.offer(input, signal, work),
-      consume: resolution => this.consume(resolution),
-      invalidate: reason => this.invalidateWork(work.work_id, reason),
-    }
-  }
-
-  get pending(): boolean {
-    return this.#current?.state === 'pending' && (this.#current.held || this.#clock.now() < this.#current.expiresAt)
-  }
-
-  /** Park the head (spec 08: it waits behind a project confirmation). The timer stops; a renderer click still decides. */
-  hold(): boolean {
-    const current = this.#current
-    if (current?.state !== 'pending' || current.held) return false
-    if (this.#clock.now() >= current.expiresAt) {
-      this.#drop(current)
-      return false
-    }
-    current.held = true
-    current.expiryAbort.abort()
-    this.#publish()
-    return true
-  }
-
-  /** Un-park the head with a fresh full TTL, exactly as if it had just been promoted. */
-  release(): boolean {
-    const current = this.#current
-    if (current?.state !== 'pending' || !current.held) return false
-    current.held = false
-    current.expiryAbort = new AbortController()
-    this.#arm(current)
-    this.#publish()
-    return true
-  }
-
-  observe(observer: (view: CodexApprovalView) => void): () => void {
-    this.#observers.push(observer)
-    return (): void => {
-      const index = this.#observers.indexOf(observer)
-      if (index !== -1) this.#observers.splice(index, 1)
-    }
-  }
-
-  /** Offer only host-sanitized display facts. A concurrent offer queues behind the head. */
-  async offer(
-    input: CodexApprovalOffer,
-    signal: AbortSignal,
-    work: ApprovalWork | null = null,
-  ): Promise<CodexApprovalResolution | null> {
-    if (!(signal instanceof AbortSignal) || signal.aborted) return null
-    const offer = validateAndSnapshotOffer(input)
-    // ponytail: the FIFO holds at most MAX_CONCURRENT_WORK entries and one per work. A Codex turn blocks
-    // on its pending approval, so a second request from the same work is a protocol anomaly, and there
-    // are never more asking works than run slots. An over-cap offer is declined at once (the shape the
-    // transport already handles) and publishes nothing; a per-work sub-queue is the upgrade path if a
-    // transport ever legitimately pipelines approvals.
-    const pending = this.#current === null ? this.#queue : [this.#current, ...this.#queue]
-    if (
-      pending.length >= MAX_CONCURRENT_WORK
-      || (work !== null && pending.some(entry => entry.work?.work_id === work.work_id))
-    ) return Object.freeze({decision: 'decline'})
-    const id = validateApprovalId(this.#idFactory())
-    let resolve!: (resolution: CodexApprovalResolution) => void
-    const decision = new Promise<CodexApprovalResolution>(done => { resolve = done })
-    const entry: PendingApproval = {
-      id,
-      offer,
-      work,
-      expiresAt: 0,
-      signal,
-      resolve,
-      expiryAbort: new AbortController(),
-      held: false,
-      onSignalAbort: null,
-      state: 'pending',
-      resolution: null,
-    }
-    entry.onSignalAbort = () => { this.#drop(entry) }
-    signal.addEventListener('abort', entry.onSignalAbort, {once: true})
-    if (this.#current === null) this.#promote(entry)
-    else this.#queue.push(entry)
-    this.#publish()
-    return await decision
-  }
-
-  /** Accept exactly one structured decision for the current Nova-generated public ID. */
-  acceptDecision(input: {
-    readonly approvalId: string
-    readonly decision: CodexApprovalDecision
-  }): boolean {
-    const current = this.#current
-    if (
-      current?.state !== 'pending'
-      || typeof input.approvalId !== 'string'
-      || input.approvalId !== current.id
-      || !(current.offer.allowed_decisions ?? ['accept', 'decline']).includes(input.decision)
-    ) return false
-    if ((!current.held && this.#clock.now() >= current.expiresAt) || current.signal.aborted) {
-      this.#drop(current)
-      return false
-    }
-    const resolution = Object.freeze({decision: input.decision})
-    current.state = 'responding'
-    current.resolution = resolution
-    current.expiryAbort.abort()
-    current.resolve(resolution)
-    this.#publish()
-    return true
-  }
-
-  /** Spend a returned resolution once; stale or invalidated resolutions become decline. */
-  consume(resolution: CodexApprovalResolution): CodexApprovalDecision {
-    const current = this.#current
-    if (
-      current?.state !== 'responding'
-      || current.resolution !== resolution
-      || current.signal.aborted
-    ) return 'decline'
-    const decision = resolution.decision
-    this.#detach(current)
-    this.#current = null
-    this.#promoteNext()
-    this.#publish()
-    return decision
-  }
-
-  /** Drop the head (expiry, epoch change, carrier loss); the next queued entry becomes visible. */
-  invalidate(reason: string): boolean {
-    void reason
-    const current = this.#current
-    if (current === null) return false
-    this.#drop(current)
-    return true
-  }
-
-  /** Drop every entry of one work (its turn ended or its transport closed) without touching other works. */
-  invalidateWork(workId: string, reason: string): boolean {
-    void reason
-    const owned = [this.#current, ...this.#queue].filter(
-      (entry): entry is PendingApproval => entry?.work?.work_id === workId,
-    )
-    for (const entry of owned) this.#drop(entry)
-    return owned.length > 0
-  }
-
-  async #expireAtDeadline(current: PendingApproval): Promise<void> {
-    try {
-      await this.#clock.sleep(
-        Math.max(0, current.expiresAt - this.#clock.now()),
-        current.expiryAbort.signal,
-      )
-    } catch {
-      return
-    }
-    if (this.#current !== current || current.held || this.#clock.now() < current.expiresAt) return
-    this.#drop(current)
-  }
-
-  #promote(entry: PendingApproval): void {
-    this.#current = entry
-    this.#arm(entry)
-  }
-
-  #arm(entry: PendingApproval): void {
-    entry.expiresAt = this.#clock.now() + CODEX_APPROVAL_TTL_SECONDS
-    void this.#expireAtDeadline(entry)
-  }
-
-  #promoteNext(): void {
-    const next = this.#queue.shift()
-    if (next !== undefined) this.#promote(next)
-  }
-
-  /** Remove one entry wherever it sits, declining it if still undecided; a dropped head promotes the next. */
-  #drop(entry: PendingApproval): void {
-    if (this.#current === entry) {
-      this.#current = null
-      this.#promoteNext()
-    } else {
-      const index = this.#queue.indexOf(entry)
-      if (index === -1) return
-      this.#queue.splice(index, 1)
-    }
-    this.#detach(entry)
-    if (entry.state === 'pending') entry.resolve(Object.freeze({decision: 'decline' as const}))
-    this.#publish()
-  }
-
-  #detach(entry: PendingApproval): void {
-    entry.expiryAbort.abort()
-    if (entry.onSignalAbort !== null) {
-      entry.signal.removeEventListener('abort', entry.onSignalAbort)
-      entry.onSignalAbort = null
-    }
-  }
-
-  #publish(): void {
-    const view = this.view
-    for (const observer of [...this.#observers]) {
-      try { observer(view) } catch { /* observers never own approval state */ }
-    }
+/** Codex display validation and redaction adapt offers into the host-owned FIFO. */
+export class CodexApprovalController extends HostApprovalController {
+  override async offer(input: CodexApprovalOffer, signal: AbortSignal, work: ApprovalWork | null = null): Promise<CodexApprovalResolution | null> {
+    if (!(signal instanceof AbortSignal) || signal.aborted) return Promise.resolve(null)
+    return await super.offer(validateAndSnapshotOffer(input), signal, work)
   }
 }
 
@@ -675,29 +416,6 @@ function exactKeys(value: Readonly<Record<string, unknown>>, allowed: readonly s
 
 function approvalResponse(decision: CodexApprovalDecision): CodexApprovalServerResponse {
   return Object.freeze({result: Object.freeze({decision})})
-}
-
-function emptyView(): CodexApprovalView {
-  return {
-    pending_approval: false,
-    pending_approval_busy: false,
-    kind: null,
-    local_detail: null,
-    operation_summary: null,
-    expires_at: null,
-    work: null,
-    queued: 0,
-  }
-}
-
-function validateApprovalId(value: string): string {
-  if (
-    typeof value !== 'string'
-    || !isWellFormed(value)
-    || value === ''
-    || codePointLengthLikePython(value) > CODEX_APPROVAL_ID_LIMIT
-  ) throw new TypeError('invalid Codex approval id')
-  return value
 }
 
 function validateAndSnapshotOffer(input: CodexApprovalOffer): CodexApprovalOffer {

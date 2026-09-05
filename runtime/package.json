@@ -11,6 +11,10 @@
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
     },
+    "./executors/codex/version": {
+      "types": "./dist/src/executors/codex/version.d.ts",
+      "default": "./dist/src/executors/codex/version.js"
+    },
     "./desktop": {
       "types": "./dist/src/desktop.d.ts",
       "default": "./dist/src/desktop.js"

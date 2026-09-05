@@ -1,3 +1,5 @@
+import type {CodingExecutorResource} from '../../coding-executor.js'
+import {codexAgentDescriptor, codingAgentControllerFactory} from './controller.js'
 import {
   OwnedCodexAppServerTransport,
   type CodexAppServerTransport,
@@ -174,7 +176,7 @@ export const unavailableCodexBackendTransportFactory: CodexBackendTransportFacto
   },
 })
 
-export interface CodexAssemblyResource {
+export interface CodexAssemblyResource extends CodingExecutorResource {
   readonly adapter: ExecutorAdapter
   readonly mode: CodexAssemblyMode
   readonly projectView: PublicProjectView | null
@@ -363,6 +365,8 @@ async function createProjectResource(
 }
 
 class BasicCodexAssemblyResource implements CodexAssemblyResource {
+  readonly agentControllerFactory = codingAgentControllerFactory
+  get agentDescriptor() { return codexAgentDescriptor(this.adapter.manifest.name) }
   readonly mode = 'ordinary'
   readonly projectView = null
   readonly approvalPolicy = 'never'
@@ -413,6 +417,8 @@ class BasicCodexAssemblyResource implements CodexAssemblyResource {
 }
 
 class ProjectCodexAssemblyResource implements CodexAssemblyResource {
+  readonly agentControllerFactory = codingAgentControllerFactory
+  get agentDescriptor() { return codexAgentDescriptor(this.adapter.manifest.name) }
   readonly mode = 'project'
   readonly #startupTransport: CodexAppServerTransport
   readonly #unsubscribeApproval: (() => void) | null

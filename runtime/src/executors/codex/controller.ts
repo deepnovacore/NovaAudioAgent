@@ -1,3 +1,4 @@
+import type {CodingAgentControllerFactory} from '../../coding-executor.js'
 import type {
   AgentActionResult,
   AgentCancelRequest,
@@ -7,7 +8,7 @@ import type {
   AgentRuntimeDispatchPort,
 } from '../../agent-controller.js'
 import type {AgentExecutor, CancelContext} from '../../coding-executor.js'
-import type {IntakeController} from '../coding/intake.js'
+import {IntakeController, type IntakeOptions, type IntakeEventPort, type IntakeSession} from '../coding/intake.js'
 import {CODEX_AGENT_SUMMARY} from './contract.js'
 
 export function codexAgentDescriptor(channel: string): AgentDescriptor {
@@ -30,7 +31,7 @@ export const CODEX_AGENT_DESCRIPTOR = codexAgentDescriptor('codex')
 export class CodexAgentController implements AgentController {
   readonly descriptor: AgentDescriptor
   readonly #channel: string
-  readonly #intake: Pick<IntakeController, 'open' | 'view'> | undefined
+  readonly #intake: IntakeController | undefined
   readonly #executor: Pick<AgentExecutor, 'cancel'> | undefined
   readonly #dispatchPort: AgentRuntimeDispatchPort | undefined
   readonly #resolveCancelTarget: CancelContext['resolveCancelTarget']
@@ -38,18 +39,22 @@ export class CodexAgentController implements AgentController {
   constructor(options: {
     /** Runtime channel selected by the composition root's `coding` role. */
     readonly channel?: string
-    readonly intake?: Pick<IntakeController, 'open' | 'view'>
+    readonly intake?: IntakeOptions
     readonly executor?: Pick<AgentExecutor, 'cancel'>
     readonly dispatchPort?: AgentRuntimeDispatchPort
     readonly resolveCancelTarget: CancelContext['resolveCancelTarget']
   }) {
     this.#channel = options.channel ?? 'codex'
     this.descriptor = codexAgentDescriptor(this.#channel)
-    this.#intake = options.intake
+    this.#intake = options.intake === undefined ? undefined : new IntakeController(options.intake)
     this.#executor = options.executor
     this.#dispatchPort = options.dispatchPort
     this.#resolveCancelTarget = options.resolveCancelTarget
   }
+
+  get intake(): IntakeEventPort | undefined { return this.#intake }
+  inspectIntakeForTest(): Readonly<IntakeSession> | null { return this.#intake?.view ?? null }
+  async settleIntakeForTest(): Promise<void> { await this.#intake?.settled() }
 
   dispatch(request: AgentDispatchRequest): Promise<AgentActionResult> {
     try {
@@ -112,4 +117,15 @@ export class CodexAgentController implements AgentController {
 
 function workDetail(work: {readonly work_id: string; readonly project: string; readonly title: string}) {
   return {work_id: work.work_id, project: work.project, title: work.title}
+}
+
+/** Concrete package supplies its controller through the existing composition seam. */
+export const codingAgentControllerFactory: CodingAgentControllerFactory = {
+  create: context => new CodexAgentController({
+    channel: context.channel,
+    ...(context.intake === undefined ? {} : {intake: context.intake}),
+    ...(context.executor === undefined ? {} : {executor: context.executor}),
+    dispatchPort: context.dispatchPort,
+    resolveCancelTarget: context.resolveCancelTarget,
+  }),
 }

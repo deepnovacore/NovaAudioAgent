@@ -45,7 +45,6 @@ export {
   type ManagedWorkspaceScope,
 } from './managed-workspace-maintenance.js'
 
-export {admitCodexCliVersion} from './executors/index.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024

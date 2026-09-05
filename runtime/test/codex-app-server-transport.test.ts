@@ -6,7 +6,7 @@ import {PassThrough, Writable} from 'node:stream'
 import {test} from 'node:test'
 import {fileURLToPath} from 'node:url'
 
-import * as runtime from '../src/index.js'
+import * as runtime from '../src/executors/codex/index.js'
 import {
   OwnedCodexAppServerTransport,
   type TransportObserver,

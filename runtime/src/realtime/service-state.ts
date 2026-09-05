@@ -319,3 +319,19 @@ export function parseCallKey(key: string): {readonly sessionEpoch: number; reado
   if (!Number.isInteger(sessionEpoch)) throw new TypeError(`malformed call key: ${key}`)
   return {sessionEpoch, id: key.slice(separator + 1)}
 }
+
+/** A host fact carrying one context item. */
+export function hostFactIntent(item: {
+  readonly kind: 'progress' | 'final' | 'recovery' | 'dialogue_context'
+  readonly host_item_id: string
+  readonly event_id: string
+  readonly content: string
+}): HostResponseIntent {
+  // `call_id` belongs to tool output alone, and a host fact is never that.
+  return {
+    kind: 'host_fact',
+    item: {...item, call_id: null},
+    task_summary: null,
+    origin_spoken: false,
+  }
+}

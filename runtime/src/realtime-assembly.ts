@@ -6,7 +6,6 @@ import type {PublicProjectContext} from './project-store.js'
 import type { JsonValue } from './events.js'
 import {
   executorWithRole,
-  type AgentExecutor,
   type CancelContext,
   type CodingExecutorResource,
   type CommittedWorkspaceEvent,
@@ -45,24 +44,15 @@ import type {Suggestion} from './suggestions.js'
 import type {WakeReason} from './slots.js'
 import {USER_PRIORITY} from './memory.js'
 import type {CoordinatorDecision} from './coding-executor.js'
-import type {AgentController, AgentRuntimeDispatchPort} from './agent-controller.js'
 
 /** Intake-issued delegate requests carry the user's own priority (the voice model awaited them). */
 const USER_AWAITED_TOOL = {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null} as const
 import {intakeModels, type IntakeModels} from './executors/coding/intake-model.js'
-import type {IntakeController, IntakeSettings, IntakeSession} from './executors/coding/intake.js'
+import type {IntakeOptions, IntakeSettings, IntakeSession} from './executors/coding/intake.js'
 import type {ModelGateway} from './model-gateway.js'
 
-/** Composition-supplied constructor for the controller behind the sole coding role. */
-export interface CodingAgentControllerFactory {
-  create(context: {
-    readonly channel: string
-    readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined
-    readonly dispatchPort: AgentRuntimeDispatchPort
-    readonly executor: Pick<AgentExecutor, 'cancel'> | undefined
-    readonly resolveCancelTarget: CancelContext['resolveCancelTarget']
-  }): AgentController
-}
+export type {CodingAgentControllerFactory} from './coding-executor.js'
+import type {CodingAgentControllerFactory} from './coding-executor.js'
 
 /** Production compositions derive intake from settings only when an executor carries `coding`; an explicit `intake` without one still fails assembly. */
 export function defaultIntake(
@@ -893,7 +883,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     },
   }
   const agentControllerFactory = codingManifest === null ? undefined : {
-    create: ({intake}: {readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined}) =>
+    create: ({intake}: {readonly intake: IntakeOptions | undefined}) =>
       options.codingAgentControllerFactory!.create({
         channel: codingManifest.name,
         intake,

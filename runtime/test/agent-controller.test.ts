@@ -1,3 +1,4 @@
+import type {IntakeOptions} from '../src/executors/coding/intake.js'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 
@@ -207,20 +208,22 @@ test('registry snapshots descriptors, controller methods, and map authority', as
 })
 
 test('the Codex controller preserves intake dispatch and forwards the revision fence to cancellation', async () => {
-  const opened: unknown[][] = []
-  const intake = {
-    get view() {
-      return {state: 'open'}
-    },
-    open(...arguments_: unknown[]) {
-      opened.push(arguments_)
-      return 'intake_opened' as const
-    },
+  let opened = 0
+  const intake: IntakeOptions = {
+    idFactory: () => `intake-${++opened}`,
+    settings: {clarification_depth: 'balanced', plan_readback: 'silent'},
+    models: {assess: () => new Promise(() => undefined), plan: () => Promise.resolve(null), resolveCancelTarget: () => Promise.resolve(null)},
+    roster: () => [], running: () => [], activeProject: () => null,
+    resolveTarget: () => Promise.reject(new Error('not expected')),
+    prepare: () => { throw new Error('not expected') },
+    dispatch: () => ({accepted: false}), steer: () => ({accepted: false}),
+    cancel: () => Promise.resolve({code: 'not_running'}),
+    invalidateProposal: () => undefined, fact: () => undefined, record: () => undefined, diagnostic: () => undefined,
   }
   let cancelInstruction: string | undefined
   let cancelStillWanted: (() => boolean) | undefined
   const codex = new CodexAgentController({
-    intake: intake as never,
+    intake,
     executor: {
       cancel: (instruction, context) => {
         cancelInstruction = instruction
@@ -236,17 +239,18 @@ test('the Codex controller preserves intake dispatch and forwards the revision f
     sessionEpoch: 9, acceptedUserInputRevision: 12, stillWanted: () => true,
   })
   assert.deepEqual(dispatch, {code: 'intake_opened', accepted: true, detail: {state: 'open'}})
-  assert.deepEqual(opened, [[
-    {work_order: '修复布局', project: null, session: 'latest'},
-    '修复布局', 'conversation:4', '9',
-  ]])
+  const current = codex.inspectIntakeForTest()
+  assert.deepEqual(current?.request, {work_order: '修复布局', project: null, session: 'latest'})
+  assert.equal(current?.origin_ref, 'conversation:4')
+  assert.equal(current?.session_id, '9')
+
 
   const superseded = await codex.dispatch({
     instruction: '不应打开', originalUserText: '不应打开', origin_ref: 'conversation:4',
     sessionEpoch: 9, acceptedUserInputRevision: 13, stillWanted: () => false,
   })
   assert.deepEqual(superseded, {code: 'superseded', accepted: false, detail: {}})
-  assert.equal(opened.length, 1, 'a stale revision cannot open intake')
+  assert.equal(opened, 1, 'a stale revision cannot open intake')
 
   let currentRevision = 12
   const cancellation = await codex.cancel({

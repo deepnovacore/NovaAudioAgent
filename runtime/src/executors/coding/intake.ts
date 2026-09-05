@@ -75,6 +75,11 @@ export interface IntakeOptions {
   readonly diagnostic: (code: string) => void
 }
 
+/** Events and confirmed-host results only; lifecycle decisions stay with the coding controller. */
+export type IntakeEventPort = Pick<IntakeController,
+  'userInputStarted' | 'userTurn' | 'cancel' | 'decline' | 'beginConfirmed' | 'settleConfirmed' |
+  'workspaceChanged' | 'factEligible'>
+
 const emptySlots = (): IntakeSlots => ({
   goal: {state: 'missing', note: ''}, scope: {state: 'missing', note: ''},
   acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''},
@@ -130,7 +135,7 @@ export function renderCancelResult(result: CancelResult): string {
   return `code=ambiguous_work：有多个任务在跑：${result.running.map(work => `${work.project}/${work.title}`).join('、')}。请用户说明要停哪一个。`
 }
 
-/** Two service-owned single-flight slots; latest revision replaces pending work, never active work. */
+/** Two controller-owned single-flight slots; latest revision replaces pending work, never active work. */
 export class IntakeController {
   readonly #options: IntakeOptions
   #session: IntakeSession | null = null
@@ -139,12 +144,25 @@ export class IntakeController {
   #assessPending = false
   #planPending = false
   #userInputPending = false
+  #workspaceId: string | null | undefined = undefined
   readonly #abort = new Set<AbortController>()
 
   constructor(options: IntakeOptions) { this.#options = options }
   get view(): Readonly<IntakeSession> | null { return this.#session === null ? null : structuredClone(this.#session) }
   get active(): boolean { return this.#session !== null && this.#session.state !== 'closed' }
   userInputStarted(): void { if (this.active) this.#userInputPending = true }
+
+  workspaceChanged(workspaceId: string | null): void {
+    if (this.#workspaceId !== undefined && this.#workspaceId !== workspaceId
+      && this.#session?.state !== 'committing') this.cancel()
+    this.#workspaceId = workspaceId
+  }
+  factEligible(eventId: string, sessionEpoch: number): boolean {
+    const intake = this.#session
+    return intake?.session_id === String(sessionEpoch)
+      && eventId.startsWith(`intake:${intake.intake_id}:${intake.revision}:`)
+      && intake.outcome !== 'cancelled'
+  }
 
   open(request: Readonly<Record<string, JsonValue>>, text: string, originRef: string, sessionId: string): 'intake_opened' | 'intake_in_progress' {
     if (this.active && this.#session!.session_id !== sessionId) this.cancel()

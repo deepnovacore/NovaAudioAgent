@@ -26,9 +26,8 @@
 import {createHash, randomUUID} from 'node:crypto'
 import {canonicalJson} from '../canonical-json.js'
 import {
-  IntakeController,
+  type IntakeEventPort,
   type IntakeOptions,
-  type IntakeSession,
 } from '../executors/coding/intake.js'
 import {
   createAgentControllerRegistry,
@@ -61,7 +60,8 @@ import type {
   ProjectConfirmationController,
   ProjectConfirmationView,
 } from '../project-confirmation.js'
-import type {ApprovalController as ExecutorApprovalController, ApprovalView as ExecutorApprovalView} from '../approval-port.js'
+import type {ApprovalController as ExecutorApprovalController} from '../approval-port.js'
+import {ApprovalHost} from '../approval.js'
 import {ConfirmationTurnIsolation} from './confirmation-turn-isolation.js'
 import type {
   HostContextItem,
@@ -95,6 +95,7 @@ import {
   SYNC_RESULT_SNIPPET_CHARS,
   SYNC_RESULT_TITLE_CHARS,
   USER_HOLD_MAX_S,
+  hostFactIntent,
   callKey,
   compareQueuedHostResponses,
   parseCallKey,
@@ -123,7 +124,6 @@ import {UserOriginBindingLedger} from './user-origin-binding.js'
 
 const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
 const UNKNOWN_CONFIRMATION_TOOL_RESULT = JSON.stringify({code: 'unknown_confirmation', state: 'refused'})
-const CODEX_APPROVAL_CLARIFICATION = '请明确说同意或拒绝。'
 
 function sameAgentDescriptors(
   left: readonly {readonly name: string; readonly summary: string; readonly ownedChannels: readonly string[]}[],
@@ -149,19 +149,6 @@ type ProviderReconnectReason =
   | 'project_confirmation_expiry_cleanup'
   | 'test'
 
-type ExecutorApprovalDecisionReason =
-  | 'not_pending'
-  | 'epoch_mismatch'
-  | 'authority_missing'
-  | 'revision_mismatch'
-  | 'item_mismatch'
-  | 'response_mismatch'
-  | 'malformed_arguments'
-  | 'expired'
-  | 'replaced'
-  | 'context_not_ready'
-  | 'voice_exhausted'
-
 interface BoundToolOrigin {
   readonly observedProviderResponseId: string | null
   readonly originItemId: string | null
@@ -173,46 +160,6 @@ interface ProjectConfirmationDecisionRetry {
   readonly source_response_id: string
   requested: boolean
   retry_response_id: string | null
-}
-
-interface ExecutorApprovalDecisionRetry {
-  readonly item_key: string
-  readonly source_response_id: string
-  requested: boolean
-  retry_response_id: string | null
-}
-
-interface ExecutorApprovalAuthorityState {
-  readonly approvalId: string
-  readonly sessionEpoch: number
-  readonly expiresAt: number
-  readonly lifecycleToken: number
-  readonly contextItem: HostContextItem
-  contextReady: boolean
-  preContextOnset: boolean
-  attempt: 0 | 1 | 2
-  clarificationQueued: boolean
-}
-
-interface ExecutorApprovalPendingResponseQuarantine {
-  readonly sessionEpoch: number
-  readonly sourceRetry: ExecutorApprovalDecisionRetry | null
-  requestFreshResponse: boolean
-  responseId: string | null
-  terminal: boolean
-}
-
-/**
- * The host fact for a pending executor approval (spec 08): names the work when the executor knows it,
- * carries the id the model must copy into `confirm`, and never a wire tool name.
- */
-function approvalFactText(view: ExecutorApprovalView, id: string, executorDisplayName: string): string {
-  const who = view.work === null ? executorDisplayName : `项目 ${view.work.project} · 会话 ${view.work.title}`
-  const queued = view.queued > 0 ? `（还有 ${view.queued} 个等待）` : ''
-  const summary = (view.operation_summary ?? '').replace(/。$/u, '')
-  const text = `权限请求 id=${id}：${who} 请求批准 ${view.kind ?? ''}：${summary}${queued}。`
-    + '只有用户本轮明确同意或拒绝后才调用 confirm(id, accepted)；不要朗读 id。'
-  return [...text].slice(0, MAX_HOST_FACT_CHARS).join('')
 }
 
 function suggestionSpeechView(content: Readonly<Record<string, JsonValue>>): string {
@@ -319,7 +266,7 @@ export interface RealtimeServiceOptions {
     IntakeOptions,
     'models' | 'settings' | 'roster' | 'running' | 'activeProject' | 'resolveTarget' | 'dispatch' | 'steer' | 'cancel' | 'record'
   >
-  /** Composition-owned late binding for a controller that needs the service's private intake port. */
+  /** Supplies the coding controller with host callbacks; the controller owns intake construction. */
   readonly agentControllerFactory?: AgentControllerFactory
   /** Additional host-owned controllers. */
   readonly agentControllers?: readonly AgentController[]
@@ -370,8 +317,8 @@ export interface RealtimeServiceOptions {
 
 export interface AgentControllerFactory {
   create(context: {
-    readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined
-  }): AgentController
+    readonly intake: IntakeOptions | undefined
+  }): AgentController & {readonly intake?: IntakeEventPort | undefined}
 }
 
 /**
@@ -384,9 +331,8 @@ const SHUTDOWN_GRACE_MS = 250
 
 export class RealtimeService {
   readonly session: RealtimeSession
-  readonly #intake: IntakeController | undefined
+  readonly #intake: IntakeEventPort | undefined
   #intakeUser: {text: string; origin_ref: string; epoch: number} | null = null
-  #intakeWorkspaceId: string | null | undefined = undefined
   #localSpeechOnsetRevision = 0
   #lastLocalSpeechOnsetId: string | null = null
 
@@ -407,7 +353,7 @@ export class RealtimeService {
   readonly #preemptiveAlertHistoryRecovery: PreemptiveAlertHistoryRecovery
   readonly #preemptiveAlertHistoryPairs: number
   readonly #projectConfirmation: ProjectConfirmationController | undefined
-  readonly #executorApproval: ExecutorApprovalController | undefined
+  readonly #approvalHost: ApprovalHost
   /** The coding-role executor's channel and label, resolved once from the registered manifests. */
   readonly #coding: CodingChannel | null
   readonly #agentRegistry: AgentControllerRegistry
@@ -482,8 +428,6 @@ export class RealtimeService {
   /** Best-effort provider cleanup is observed so it cannot reject outside service ownership. */
   readonly #providerRetirementTasks = new Set<Promise<void>>()
   readonly #providerRetirementEventIds = new Set<string>()
-  /** Exact audible approval responses being fenced after the local user settles or answers them. */
-  readonly #executorApprovalPromptReleaseTasks = new Set<Promise<void>>()
   /** Exact standalone delegation acknowledgements superseded by their own terminal handoff. */
   readonly #semanticAcknowledgementReleaseTasks = new Set<Promise<void>>()
   readonly #audioStarted = new Set<string>()
@@ -504,10 +448,6 @@ export class RealtimeService {
   readonly #lateSync = new Map<string, string>()
   /** Policy-free project turn identity state; never shared with Codex approval occupancy. */
   readonly #projectConfirmationIsolation = new ConfirmationTurnIsolation<ToolCallReady>(
-    MAX_TRACKED_TOOL_CALLS,
-  )
-  /** Codex uses a separate isolation instance so its authority never shares project occupancy. */
-  readonly #executorApprovalIsolation = new ConfirmationTurnIsolation<ToolCallReady>(
     MAX_TRACKED_TOOL_CALLS,
   )
   /** Later utterances captured while another item owns the same confirmation. */
@@ -537,25 +477,6 @@ export class RealtimeService {
   #projectExpiryDraining: Promise<void> | null = null
   #unsubscribeProjectExpiry: (() => void) | null = null
   #unsubscribeExecutorApproval: (() => void) | null = null
-  #executorApprovalAuthority: ExecutorApprovalAuthorityState | null = null
-  /** Current controller identity observed independently of the optional provider voice path. */
-  #executorApprovalObservedIdentity: {
-    readonly approvalId: string
-    readonly sessionEpoch: number
-    readonly expiresAt: number
-  } | null = null
-  /** One closed expiry tombstone used only to classify a late decision; never restored or emitted. */
-  #executorApprovalExpiredIdentity: {
-    readonly approvalId: string
-    readonly sessionEpoch: number
-  } | null = null
-  #executorApprovalLifecycleToken = 0
-  #executorApprovalDecisionRetry: ExecutorApprovalDecisionRetry | null = null
-  #executorApprovalPendingResponseQuarantine: ExecutorApprovalPendingResponseQuarantine | null = null
-  readonly #executorApprovalQuarantinedResponses = new Map<string, null>()
-  /** Internal response identity -> closed attempt number; IDs never enter approval telemetry. */
-  readonly #executorApprovalCarrierAttempts = new Map<string, 1 | 2>()
-  #executorApprovalNeedsFreshResponse = false
   /**
    * The last progress summary spoken for each delegate.
    *
@@ -610,7 +531,7 @@ export class RealtimeService {
     this.#preemptiveAlertHistoryRecovery = recovery
     this.#preemptiveAlertHistoryPairs = pairs
     this.#projectConfirmation = options.projectConfirmation
-    this.#intake = options.intake === undefined ? undefined : new IntakeController({
+    const intake: IntakeOptions | undefined = options.intake === undefined ? undefined : {
       ...options.intake,
       idFactory: this.#idFactory,
       dispatch: intake => {
@@ -652,8 +573,20 @@ export class RealtimeService {
         this.#publishProjectView()
         return proposal
       },
+    }
+    this.#approvalHost = new ApprovalHost({
+      session: this.session, clock: this.#clock, idFactory: this.#idFactory,
+      controller: options.executorApproval, telemetry: this.#telemetry,
+      projectBlocking: () => this.#projectConfirmation?.pending === true || this.#projectConfirmation?.committing === true,
+      displayName: () => this.#coding?.display_name ?? '执行器',
+      queueHostItem: (intent, options) => this.queueHostItem(intent, options),
+      deliveryReady: () => this.#deliveryReady.set(),
+      reportDeliveryFailure: failure => this.#reportDeliveryFailure(failure),
+      retireProviderHostEventNow: eventId => this.#retireProviderHostEventNow(eventId),
+      retireProviderHostEvent: eventId => this.#retireProviderHostEvent(eventId),
+      removeQueuedPrompt: id => this.#removeQueuedExecutorApprovalPrompt(id),
+      releaseQuestion: id => this.#releaseExecutorApprovalQuestion(id),
     })
-    this.#executorApproval = options.executorApproval
     this.#coding = null
     for (const adapter of options.runtime.executors.values()) {
       if (adapter.manifest.roles.includes('coding')) {
@@ -663,9 +596,9 @@ export class RealtimeService {
     }
     const controllers = [...(options.agentControllers ?? [])]
     if (options.agentControllerFactory !== undefined) {
-      controllers.unshift(options.agentControllerFactory.create({
-        intake: this.#intake,
-      }))
+      const controller = options.agentControllerFactory.create({intake})
+      this.#intake = controller.intake
+      controllers.unshift(controller)
     }
     this.#agentRegistry = createAgentControllerRegistry({
       controllers,
@@ -688,23 +621,19 @@ export class RealtimeService {
       if (proposalId !== undefined && proposalId !== null) this.#intake?.decline(proposalId)
     }) ?? null
     this.#unsubscribeExecutorApproval = options.executorApproval?.observe(view => {
-      this.#syncExecutorApproval(view)
+      this.#approvalHost.syncExecutorApproval(view)
     }) ?? null
-    if (options.executorApproval !== undefined) this.#syncExecutorApproval(options.executorApproval.view)
+    if (options.executorApproval !== undefined) this.#approvalHost.syncExecutorApproval(options.executorApproval.view)
   }
 
   get executorState(): ExecutorState {
     return this.#executorState
   }
 
-  get intakeSession(): Readonly<IntakeSession> | null { return this.#intake?.view ?? null }
-  async settleIntakeForTest(): Promise<void> { await this.#intake?.settled() }
   agentNameForChannel(channel: string): string | null { return this.#agentRegistry.agentNameForChannel(channel) }
 
   onProjectWorkspaceChanged(workspaceId: string | null): void {
-    if (this.#intakeWorkspaceId !== undefined && this.#intakeWorkspaceId !== workspaceId
-      && this.#intake?.view?.state !== 'committing') this.#intake?.cancel()
-    this.#intakeWorkspaceId = workspaceId
+    this.#intake?.workspaceChanged(workspaceId)
   }
 
   get stopped(): boolean {
@@ -739,7 +668,7 @@ export class RealtimeService {
       this.#userOrigins.beginEpoch(this.session.sessionEpoch)
     }
     this.#syncProjectConfirmationIsolation()
-    if (this.#executorApproval !== undefined) this.#syncExecutorApproval(this.#executorApproval.view)
+    this.#approvalHost.sync()
     this.#unsubscribe = this.#runtime.observe(event => {
       this.projectRuntimeEvent(event)
     })
@@ -779,7 +708,7 @@ export class RealtimeService {
   async close(): Promise<void> {
     this.#stop.abort()
     this.#invalidateProjectConfirmation('service_closed')
-    this.#invalidateExecutorApproval('service_closed')
+    this.#approvalHost.invalidateExecutorApproval('service_closed')
     if (this.#unsubscribeProjectExpiry !== null) {
       this.#unsubscribeProjectExpiry()
       this.#unsubscribeProjectExpiry = null
@@ -818,7 +747,7 @@ export class RealtimeService {
     const backgroundTasks = [
       ...this.#tasks,
       ...this.#providerRetirementTasks,
-      ...this.#executorApprovalPromptReleaseTasks,
+      ...this.#approvalHost.pendingTasks,
       ...this.#semanticAcknowledgementReleaseTasks,
       ...this.#projectConfirmationCarrierReleaseTasks,
     ]
@@ -848,7 +777,7 @@ export class RealtimeService {
       this.#localSpeechOnsetRevision += 1
     }
     this.#intake?.userInputStarted()
-    this.#noteExecutorApprovalOnsetBeforeContext()
+    this.#approvalHost.noteExecutorApprovalOnsetBeforeContext()
     const generation = this.session.currentGeneration
     if (generation !== null) {
       const key = callKey(generation.session_epoch, generation.response_id)
@@ -863,11 +792,7 @@ export class RealtimeService {
         this.#localSpeechInterruptedResponses.delete(oldest.value)
       }
     }
-    const approvalId = this.#executorApprovalAuthority?.approvalId
-    if (approvalId !== undefined) {
-      this.#removeQueuedExecutorApprovalPrompt(approvalId)
-      this.#releaseExecutorApprovalQuestion(approvalId)
-    }
+    this.#approvalHost.releaseQuestionOnOnset()
     await this.session.localSpeechOnset(speechId)
   }
 
@@ -960,28 +885,7 @@ export class RealtimeService {
 
   /** Renderer clicks are direct local-user authority on the same one-shot controller as voice. */
   executorApprovalDecision(approvalId: string, approved: boolean, scope?: 'session'): boolean {
-    if (typeof approved !== 'boolean' || scope !== undefined && (scope !== 'session' || !approved)) return false
-    const controller = this.#executorApproval
-    if (controller === undefined) return false
-    const accepted = controller.acceptDecision({
-      approvalId,
-      decision: approved ? scope === 'session' ? 'acceptForSession' : 'accept' : 'decline',
-    })
-    const expired = this.#executorApprovalExpiredIdentity
-    this.#recordExecutorApprovalDecision(
-      this.session.sessionEpoch,
-      'renderer',
-      accepted && approved ? 'accepted' : 'refused',
-      accepted
-        ? undefined
-        : controller.pending
-          ? controller.view.pending_approval_id !== approvalId ? 'replaced' : 'not_pending'
-          : expired?.sessionEpoch === this.session.sessionEpoch
-              && expired.approvalId === approvalId
-            ? 'expired'
-            : 'not_pending',
-    )
-    return accepted
+    return this.#approvalHost.executorApprovalDecision(approvalId, approved, scope)
   }
 
   async waitStopped(): Promise<void> {
@@ -1346,20 +1250,8 @@ export class RealtimeService {
   /** Revalidate lifecycle eligibility at the final provider boundary. */
   #queuedHostItemEligible(queued: QueuedHostResponse): boolean {
     const eventId = queued.intent.item.event_id
-    if (eventId.startsWith('intake:')) {
-      const intake = this.#intake?.view
-      if (intake?.session_id !== String(this.session.sessionEpoch)
-        || !eventId.startsWith(`intake:${intake.intake_id}:${intake.revision}:`)
-        || intake.outcome === 'cancelled') return false
-    }
-    if (eventId.startsWith('approval:')) {
-      const authority = this.#executorApprovalAuthority
-      if (
-        authority === null
-        || !eventId.startsWith(`approval:${authority.approvalId}:`)
-        || !this.#executorApprovalAuthorityIsCurrent(authority)
-      ) return false
-    }
+    if (eventId.startsWith('intake:') && this.#intake?.factEligible(eventId, this.session.sessionEpoch) !== true) return false
+    if (eventId.startsWith('approval:') && !this.#approvalHost.factEligible(eventId)) return false
     if (queued.semantic_event_id !== null) {
       const acknowledgement = this.#semanticAcknowledgements.get(queued.semantic_event_id)
       if (
@@ -1376,7 +1268,7 @@ export class RealtimeService {
 
   /** A pending permission question owns the foreground ahead of any generic startup receipt. */
   #executorApprovalBlocksSemanticAcknowledgement(queued: QueuedHostResponse): boolean {
-    return this.#executorApprovalAuthority !== null && queued.semantic_event_id !== null
+    return this.#approvalHost.blocksSemanticAcknowledgement(queued.semantic_event_id)
   }
 
   /** Whether this queued item is the captured preemptive alert the current handoff is waiting to deliver. */
@@ -1897,7 +1789,7 @@ export class RealtimeService {
         }
         const oldEpoch = this.session.sessionEpoch
         this.#invalidateProjectConfirmation('provider_replaced')
-        this.#invalidateExecutorApproval('provider_replaced')
+        this.#approvalHost.invalidateExecutorApproval('provider_replaced')
         this.#preemptiveAlert = null
         this.#providerReconnectSourceEpoch = oldEpoch
         await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
@@ -2646,7 +2538,7 @@ export class RealtimeService {
         this.#clearCaptions()
       } else {
         this.#providerFailed = true
-        this.#invalidateExecutorApproval('provider_failed')
+        this.#approvalHost.invalidateExecutorApproval('provider_failed')
         this.#urgentHostResponseOwner = null
         this.#preemptiveAlert = null
         this.#stop.abort()
@@ -2654,25 +2546,7 @@ export class RealtimeService {
       return
     }
 
-    const executorEventResponseId = 'response_id' in event ? event.response_id : null
-    const pendingExecutorResponseQuarantineAtStart = event.kind === 'response_started'
-      && this.#executorApprovalPendingResponseQuarantine?.sessionEpoch === event.session_epoch
-      && this.#executorApprovalPendingResponseQuarantine.responseId === null
-    if (
-      event.kind !== 'response_started'
-      && (
-        executorEventResponseId === null
-        || this.session.responseEventIds(executorEventResponseId).length === 0
-      )
-    ) {
-      this.#claimPendingExecutorApprovalResponseQuarantine(
-        event.session_epoch,
-        executorEventResponseId,
-      )
-    }
-    let executorQuarantinedResponse = executorEventResponseId !== null
-      && this.#isExecutorApprovalResponseQuarantined(event.session_epoch, executorEventResponseId)
-
+    const approvalEvent = this.#approvalHost.beforeEvent(event)
     if (this.#telemetry !== undefined) {
       if (event.kind === 'response_audio_delta') {
         // First delta only: the metric is time-to-first-audio, and recording every delta would make
@@ -2702,7 +2576,7 @@ export class RealtimeService {
       && !isConfirmationDecision
     const isExecutorApprovalDecision = confirmTarget === 'approval'
     const blockedExecutorApprovalTool = event.kind === 'tool_call_ready'
-      && this.#blocksExecutorApprovalTool(event)
+      && this.#approvalHost.blocksExecutorApprovalTool(event)
       && !isExecutorApprovalDecision
     // Qwen may create the response that will emit the confirmation function before VAD reports
     // speech end. That response is an authorization carrier, not an audible assistant turn. Let it
@@ -2714,90 +2588,14 @@ export class RealtimeService {
       && this.session.floor.state === 'user_speaking'
       && !this.#projectConfirmationIsolation.responseFencePending
       && this.#projectConfirmationIsolation.reservation?.sessionEpoch === event.session_epoch
-    const executorFencePendingAtStart = this.#executorApprovalIsolation.responseFencePending
-    const executorResponseCandidate = event.kind === 'response_started'
-      && event.session_epoch === this.session.sessionEpoch
-      && !executorFencePendingAtStart
-      && this.#executorApproval?.pending === true
-      && this.#executorApprovalIsolation.authority?.sessionEpoch === event.session_epoch
-      && !pendingExecutorResponseQuarantineAtStart
-      && this.session.userInputRevision
-        > (this.#executorApprovalIsolation.authority?.createdUserRevision ?? Number.MAX_SAFE_INTEGER)
-    const codexProvisionalCandidate = event.kind === 'response_started'
-      && event.session_epoch === this.session.sessionEpoch
-      && !executorFencePendingAtStart
-      && this.#executorApproval?.pending === true
-      && this.#executorApprovalIsolation.reservation === null
-      && !pendingExecutorResponseQuarantineAtStart
-      && this.session.userInputRevision
-        === this.#executorApprovalIsolation.authority?.createdUserRevision
-    const codexResponseStartsDuringSpeech = executorResponseCandidate
-      && this.session.floor.state === 'user_speaking'
-    const orphanedExecutorRetryCandidate = event.kind === 'response_started'
-      && (executorQuarantinedResponse || pendingExecutorResponseQuarantineAtStart)
     const accepted = blockedConfirmationTool || blockedExecutorApprovalTool
       ? false
       : await this.session.accept(event, {
           allowResponseStartDuringUserSpeech: confirmationResponseStartsDuringSpeech
-            || codexResponseStartsDuringSpeech
-            || orphanedExecutorRetryCandidate,
+            || approvalEvent.responseStartsDuringSpeech
+            || approvalEvent.orphanedExecutorRetryCandidate,
         })
-    if (
-      event.kind === 'response_started'
-      && accepted
-      && pendingExecutorResponseQuarantineAtStart
-      && this.session.responseEventIds(event.response_id).length === 0
-    ) {
-      this.#claimPendingExecutorApprovalResponseQuarantine(
-        event.session_epoch,
-        event.response_id,
-      )
-      executorQuarantinedResponse = true
-    }
-    const executorHostOwnedResponse = event.kind === 'response_started'
-      && accepted
-      && this.#isExecutorApprovalHostResponse(event.response_id)
-    if (event.kind === 'response_started' && executorFencePendingAtStart) {
-      this.#executorApprovalIsolation.setResponseFencePending(false)
-    }
-    if (event.kind === 'response_started' && accepted && executorQuarantinedResponse) {
-      this.session.suppressResponse(event.response_id)
-      this.#cancelExecutorApprovalPromptResponse(event.session_epoch, event.response_id)
-    }
-    if (
-      event.kind === 'response_started'
-      && accepted
-      && executorResponseCandidate
-      && !executorHostOwnedResponse
-      && !orphanedExecutorRetryCandidate
-    ) {
-      this.#executorApprovalIsolation.markBlockedResponse({
-        sessionEpoch: event.session_epoch,
-        responseId: event.response_id,
-      })
-      this.session.suppressResponse(event.response_id)
-      await this.#bindExecutorApprovalResponse(event.session_epoch, event.response_id)
-    }
-    if (
-      event.kind === 'response_started'
-      && accepted
-      && codexProvisionalCandidate
-      && !executorHostOwnedResponse
-      && !orphanedExecutorRetryCandidate
-      && this.session.responseEventIds(event.response_id).length === 0
-    ) {
-      const authority = this.#executorApprovalIsolation.authority
-      const tracked = authority === null ? 'stale' : this.#executorApprovalIsolation.trackProvisionalResponse({
-        sessionEpoch: event.session_epoch,
-        userRevision: authority.createdUserRevision + 1,
-        responseId: event.response_id,
-      })
-      if (tracked === 'tracked' || tracked === 'idempotent') {
-        this.session.suppressResponse(event.response_id)
-      } else if (tracked === 'overflow') {
-        await this.#retireExecutorApprovalVoiceAuthority()
-      }
-    }
+    const executorQuarantinedResponse = await this.#approvalHost.afterEventAccepted(event, accepted, approvalEvent)
     if (
       event.kind === 'response_started'
       && this.#projectConfirmationPendingQuarantineEpoch === event.session_epoch
@@ -2946,13 +2744,9 @@ export class RealtimeService {
           event.provider_item_id,
         )
       }
-      this.#noteExecutorApprovalOnsetBeforeContext()
-      const approvalId = this.#executorApprovalAuthority?.approvalId
-      if (approvalId !== undefined) {
-        this.#removeQueuedExecutorApprovalPrompt(approvalId)
-        this.#releaseExecutorApprovalQuestion(approvalId)
-      }
-      await this.#reserveExecutorApprovalItem(event.session_epoch, event.provider_item_id)
+      this.#approvalHost.noteExecutorApprovalOnsetBeforeContext()
+      this.#approvalHost.releaseQuestionOnOnset()
+      await this.#approvalHost.reserveExecutorApprovalItem(event.session_epoch, event.provider_item_id)
       this.#reserveProjectConfirmation(event)
     }
     if (
@@ -2965,21 +2759,12 @@ export class RealtimeService {
         this.session.userInputRevision,
         event.provider_item_id,
       )
-      await this.#reserveExecutorApprovalItem(event.session_epoch, event.provider_item_id)
-      await this.#maybeRequestFreshExecutorApprovalResponse()
+      await this.#approvalHost.reserveExecutorApprovalItem(event.session_epoch, event.provider_item_id)
+      await this.#approvalHost.maybeRequestFreshExecutorApprovalResponse()
     }
 
     if (event.kind === 'response_terminal' && accepted) {
-      const executorCarrierKey = callKey(event.session_epoch, event.response_id)
-      const executorCarrierAttempt = this.#executorApprovalCarrierAttempts.get(executorCarrierKey)
-      if (executorCarrierAttempt !== undefined) {
-        this.#executorApprovalCarrierAttempts.delete(executorCarrierKey)
-        this.#telemetry?.record('approval.carrier', {
-          session_epoch: event.session_epoch,
-          attempt: executorCarrierAttempt,
-          action: 'terminal',
-        })
-      }
+      this.#approvalHost.noteTerminal(event)
       this.#recordPreemptiveAlertCancelTerminal(event)
       const generation = this.session.currentGeneration
       if (
@@ -3050,30 +2835,7 @@ export class RealtimeService {
           }
         }
       }
-      const codexCarrier = this.#executorApprovalIsolation.responseState({
-        sessionEpoch: event.session_epoch,
-        responseId: event.response_id,
-      })
-      if (
-        codexCarrier?.authorizationCarrier === true
-        && !this.session.responseHasSpoken(event.response_id)
-        && this.#executorApproval?.pending === true
-      ) {
-        const reservation = this.#executorApprovalIsolation.reservation
-        const retry = this.#executorApprovalDecisionRetry
-        const isRetryTerminal = retry?.retry_response_id === event.response_id
-        if (reservation !== null && !isRetryTerminal) {
-          this.#executorApprovalDecisionRetry ??= {
-            item_key: callKey(reservation.sessionEpoch, reservation.itemId),
-            source_response_id: event.response_id,
-            requested: false,
-            retry_response_id: null,
-          }
-          await this.#maybeRequestExecutorApprovalDecisionRetry()
-        } else if (reservation !== null && isRetryTerminal) {
-          await this.#exhaustExecutorApprovalAttempt()
-        }
-      }
+      await this.#approvalHost.settleTerminal(event)
       if (itemId !== undefined) {
         this.#projectConfirmationShadowItems.delete(callKey(event.session_epoch, itemId))
       }
@@ -3088,7 +2850,7 @@ export class RealtimeService {
       this.#markPreemptiveAlertReplacementTerminal(terminalOwner)
     }
     if (event.kind === 'response_terminal' && executorQuarantinedResponse) {
-      await this.#finishPendingExecutorApprovalResponseQuarantine(
+      await this.#approvalHost.finishPendingExecutorApprovalResponseQuarantine(
         event.session_epoch,
         event.response_id,
       )
@@ -3110,8 +2872,8 @@ export class RealtimeService {
             event.item_id,
           )
         }
-        await this.#reserveExecutorApprovalItem(event.session_epoch, event.item_id)
-        await this.#maybeRequestFreshExecutorApprovalResponse()
+        await this.#approvalHost.reserveExecutorApprovalItem(event.session_epoch, event.item_id)
+        await this.#approvalHost.maybeRequestFreshExecutorApprovalResponse()
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
         this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
         this.#intakeUser = {text: event.text, origin_ref: originRef, epoch: event.session_epoch}
@@ -3145,8 +2907,8 @@ export class RealtimeService {
             event.item_id,
           )
         }
-        await this.#reserveExecutorApprovalItem(event.session_epoch, event.item_id)
-        await this.#maybeRequestFreshExecutorApprovalResponse()
+        await this.#approvalHost.reserveExecutorApprovalItem(event.session_epoch, event.item_id)
+        await this.#approvalHost.maybeRequestFreshExecutorApprovalResponse()
         // The transcript will never arrive, so anything waiting on it is waiting forever. Released
         // with a null ref: the calls still need an answer, and the bridge refuses them for want of
         // evidence rather than this layer dropping them silently.
@@ -3169,12 +2931,12 @@ export class RealtimeService {
         // A refused confirmation tool still owes the provider a terminal result, or the protocol stalls
         // waiting for one that will never come.
         if (blockedConfirmationTool) await this.#closeProjectConfirmationTool(event)
-        else if (blockedExecutorApprovalTool) await this.#closeExecutorApprovalCarrierTool(event)
+        else if (blockedExecutorApprovalTool) await this.#approvalHost.closeExecutorApprovalCarrierTool(event)
         else if (
           isExecutorApprovalDecision
           && event.session_epoch === this.session.sessionEpoch
         ) {
-          await this.#handleExecutorApprovalDecision(event, {
+          await this.#approvalHost.handleExecutorApprovalDecision(event, {
             observedProviderResponseId: event.response_id,
             originItemId: null,
             originRef: null,
@@ -3195,15 +2957,7 @@ export class RealtimeService {
       if (this.#projectConfirmationPendingQuarantineEpoch === event.session_epoch) {
         this.#projectConfirmationPendingQuarantineEpoch = null
       }
-      if (!this.#executorApprovalIsolation.markProvisionalTerminal({
-        sessionEpoch: event.session_epoch,
-        responseId: event.response_id,
-      })) {
-        this.#executorApprovalIsolation.clearResponse({
-          sessionEpoch: event.session_epoch,
-          responseId: event.response_id,
-        })
-      }
+      this.#approvalHost.clearTerminal(event)
     }
 
     if (accepted) await this.driveContinuations()
@@ -3236,20 +2990,15 @@ export class RealtimeService {
   #confirmTarget(event: ToolCallReady): 'approval' | 'project' | 'none' | null {
     if (event.name !== CONFIRM_TOOL) return null
     const id = confirmArguments(event.arguments)?.id ?? null
-    const approval = this.#executorApproval?.view
     const project = this.#projectConfirmation
-    if (id !== null && (
-      approval?.pending_approval_id === id
-      || this.#executorApprovalAuthority?.approvalId === id
-      || this.#executorApprovalExpiredIdentity?.approvalId === id
-    )) return 'approval'
+    if (id !== null && this.#approvalHost.ownsId(id)) return 'approval'
     if (id !== null && project?.lifecycleId === id) return 'project'
     if (id !== null) return 'none'
     if (project?.pending === true) return 'project'
-    if (approval?.pending_approval === true) return 'approval'
+    if (this.#approvalHost.pending) return 'approval'
     if (
       event.response_id !== null
-      && this.#isExecutorApprovalResponseQuarantined(event.session_epoch, event.response_id)
+      && this.#approvalHost.isExecutorApprovalResponseQuarantined(event.session_epoch, event.response_id)
     ) return 'approval'
     return 'none'
   }
@@ -3260,7 +3009,7 @@ export class RealtimeService {
 
     const confirmTarget = this.#confirmTarget(event)
     if (confirmTarget === 'approval') {
-      await this.#routeExecutorApprovalCall(event, observedResponseId)
+      await this.#approvalHost.routeExecutorApprovalCall(event, observedResponseId)
       return
     }
     const originItemId = observedResponseId === null
@@ -3340,92 +3089,6 @@ export class RealtimeService {
     await this.#handleToolCall(event)
   }
 
-  /** Route Codex's typed carrier without making transcript success or text an authority gate. */
-  async #routeExecutorApprovalCall(
-    event: ToolCallReady,
-    observedResponseId: string | null,
-  ): Promise<void> {
-    if (
-      event.response_id !== null
-      && this.#isExecutorApprovalResponseQuarantined(event.session_epoch, event.response_id)
-    ) {
-      await this.#handleExecutorApprovalDecision(event, {
-        observedProviderResponseId: observedResponseId,
-        originItemId: null,
-        originRef: null,
-      })
-      return
-    }
-    const authority = this.#executorApprovalIsolation.authority
-    const responseId = event.response_id
-    const providerRevision = responseId === null
-      ? undefined
-      : this.session.providerTurnUserInputRevision(responseId)
-    const reservation = this.#executorApprovalIsolation.reservation
-    const revision = responseId !== null
-      && reservation !== null
-      && this.#executorApprovalIsolation.isAuthorizationCarrier({
-        sessionEpoch: event.session_epoch,
-        userRevision: reservation.userRevision,
-        responseId,
-      })
-      ? reservation.userRevision
-      : providerRevision
-    if (
-      authority !== null
-      && responseId !== null
-      && observedResponseId === responseId
-      && authority.sessionEpoch === event.session_epoch
-      && revision !== undefined
-      && revision > authority.createdUserRevision
-      && revision === this.session.userInputRevision
-    ) {
-      const reservation = this.#executorApprovalIsolation.reservation
-      if (this.#executorApprovalIsolation.isAuthorizationCarrier({
-        sessionEpoch: event.session_epoch,
-        userRevision: revision,
-        responseId,
-      })) {
-        await this.#handleExecutorApprovalDecision(event, {
-          observedProviderResponseId: responseId,
-          originItemId: reservation?.itemId ?? null,
-          originRef: null,
-        })
-        return
-      }
-      const deferred = this.#executorApprovalIsolation.deferCall({
-        sessionEpoch: event.session_epoch,
-        userRevision: revision,
-        responseId,
-        call: event,
-      })
-      if (deferred === 'deferred') return
-    }
-    const decision = confirmArguments(event.arguments)
-    if (
-      authority !== null
-      && responseId !== null
-      && observedResponseId === responseId
-      && authority.sessionEpoch === event.session_epoch
-      && providerRevision === authority.createdUserRevision
-      && this.#executorApproval?.pending === true
-      && this.#clock.now() < authority.expiresAt
-      && decision?.id === authority.authorityId
-    ) {
-      const deferred = this.#executorApprovalIsolation.deferProvisionalCall({
-        sessionEpoch: event.session_epoch,
-        responseId,
-        call: event,
-      })
-      if (deferred === 'deferred') return
-    }
-    await this.#handleExecutorApprovalDecision(event, {
-      observedProviderResponseId: observedResponseId,
-      originItemId: null,
-      originRef: null,
-    })
-  }
-
   /**
    * Wrap a loop so its failure stops the service instead of vanishing.
    *
@@ -3457,7 +3120,7 @@ export class RealtimeService {
       return
     }
     this.#providerFailed = true
-    this.#invalidateExecutorApproval('task_failed')
+    this.#approvalHost.invalidateExecutorApproval('task_failed')
     this.#urgentHostResponseOwner = null
     this.#preemptiveAlert = null
     this.#stop.abort()
@@ -3467,7 +3130,6 @@ export class RealtimeService {
   #reportDeliveryFailure(failure: RealtimeDeliveryError): void {
     this.#onDiagnostic(`[realtime-diagnostic] delivery_failure type=${diagnosticName(failure)}`)
   }
-
 
   // ---------------------------------------------------------------------------------------------
   // Family H: binding a tool call to the user turn that justifies it.
@@ -3606,7 +3268,7 @@ export class RealtimeService {
       return
     }
     if (confirmTarget === 'approval') {
-      await this.#handleExecutorApprovalDecision(event, origin)
+      await this.#approvalHost.handleExecutorApprovalDecision(event, origin)
       return
     }
     await this.#handleToolCall(event, {
@@ -4160,8 +3822,7 @@ export class RealtimeService {
     // Spec 08: a colliding executor approval waits behind the project confirmation. Its voice authority
     // is withdrawn and its TTL paused (`hold`, never declined); `#publishProjectView` re-arms both once
     // this one settles.
-    if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
-    this.#executorApproval?.hold()
+    this.#approvalHost.hold()
     const current = this.#projectConfirmationIsolation.authority
     if (current?.authorityId === lifecycleId && current.sessionEpoch === sessionEpoch) return
     const remaining = controller.view.pending_expires_in_seconds
@@ -4303,298 +3964,8 @@ export class RealtimeService {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Codex permission approval.
-  //
-  // This is deliberately smaller than project confirmation. The Codex controller already owns the
-  // one-shot decision and expiry; this layer only records which post-request final user item can
-  // authorize the dedicated provider function. Renderer clicks call the same controller directly.
-  // ---------------------------------------------------------------------------------------------
-
-  #syncExecutorApproval(view: ExecutorApprovalView): void {
-    if (
-      view.pending_approval
-      && !view.pending_approval_busy
-      && view.pending_approval_id !== undefined
-      && view.kind !== null
-      && view.operation_summary !== null
-    ) {
-      if (this.session.sessionEpoch < 1 || view.expires_at === null) return
-      this.#executorApprovalObservedIdentity = {
-        approvalId: view.pending_approval_id,
-        sessionEpoch: this.session.sessionEpoch,
-        expiresAt: view.expires_at,
-      }
-      if (this.#projectConfirmation?.pending === true || this.#projectConfirmation?.committing === true) {
-        // Spec 08: the approval keeps its queue place, its TTL is paused (`hold`) and it is not voice-armed
-        // while a project confirmation holds the floor; `#publishProjectView` releases it once that settles.
-        if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
-        this.#executorApproval?.hold()
-        return
-      }
-      if (
-        this.#executorApprovalAuthority?.approvalId === view.pending_approval_id
-        && this.#executorApprovalAuthority.sessionEpoch === this.session.sessionEpoch
-      ) return
-      this.#executorApprovalExpiredIdentity = null
-      if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
-      this.#executorApprovalLifecycleToken += 1
-      const contextItem = hostFactIntent({
-        kind: 'final',
-        host_item_id: this.#idFactory(),
-        event_id: `approval:${view.pending_approval_id}:requested`,
-        content: approvalFactText(view, view.pending_approval_id, this.#coding?.display_name ?? '执行器'),
-      }).item
-      const authority: ExecutorApprovalAuthorityState = {
-        approvalId: view.pending_approval_id,
-        sessionEpoch: this.session.sessionEpoch,
-        expiresAt: view.expires_at,
-        lifecycleToken: this.#executorApprovalLifecycleToken,
-        contextItem,
-        contextReady: false,
-        preContextOnset: false,
-        attempt: 0,
-        clarificationQueued: false,
-      }
-      this.#executorApprovalAuthority = authority
-      this.#executorApprovalDecisionRetry = null
-      if (
-        this.#executorApprovalPendingResponseQuarantine?.sessionEpoch
-        !== this.session.sessionEpoch
-      ) this.#executorApprovalPendingResponseQuarantine = null
-      this.#executorApprovalNeedsFreshResponse = false
-      this.#executorApprovalIsolation.invalidate()
-      this.#trackExecutorApprovalTask(this.#prepareExecutorApprovalContext(authority))
-      return
-    }
-    const observed = this.#executorApprovalObservedIdentity
-    if (observed !== null) {
-      this.#executorApprovalExpiredIdentity = this.#clock.now() >= observed.expiresAt
-        ? {
-            approvalId: observed.approvalId,
-            sessionEpoch: observed.sessionEpoch,
-          }
-        : null
-      this.#executorApprovalObservedIdentity = null
-    }
-    this.#clearExecutorApprovalVoiceState()
-    this.#deliveryReady.set()
-  }
-
-  /** Confirm the neutral ID-bearing fact before any provider response may answer it aloud. */
-  async #prepareExecutorApprovalContext(authority: ExecutorApprovalAuthorityState): Promise<void> {
-    let injected = false
-    try {
-      injected = await this.session.injectHostContext(authority.contextItem)
-    } catch (failure) {
-      this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
-        ? failure
-        : new RealtimeDeliveryError(String(failure)))
-    }
-    if (!this.#executorApprovalAuthorityIsCurrent(authority)) {
-      this.#telemetry?.record('approval.context', {
-        session_epoch: authority.sessionEpoch,
-        outcome: 'stale',
-      })
-      if (injected) await this.#retireProviderHostEventNow(authority.contextItem.event_id)
-      return
-    }
-    if (!injected) {
-      this.#telemetry?.record('approval.context', {
-        session_epoch: authority.sessionEpoch,
-        outcome: 'failed',
-      })
-      // A context that was not confirmed cannot support voice authority. Keep the renderer's
-      // controller pending, but release the foreground so an existing task receipt is not held until
-      // the approval TTL. Uncertain injection is intentionally not retried: the provider may already
-      // have accepted the fact even though this session could not confirm it.
-      this.#clearExecutorApprovalVoiceState()
-      this.#deliveryReady.set()
-      return
-    }
-    authority.contextReady = true
-    this.#telemetry?.record('approval.context', {
-      session_epoch: authority.sessionEpoch,
-      outcome: 'ready',
-    })
-    if (authority.preContextOnset) {
-      this.#beginExecutorApprovalAttempt(
-        authority,
-        2,
-        this.session.userInputRevision,
-        'rotated',
-      )
-      this.#queueExecutorApprovalClarification(authority)
-      return
-    }
-    this.#beginExecutorApprovalAttempt(authority, 1, this.session.userInputRevision, 'begun')
-    // The fact is already in provider context. This queued delivery therefore only creates its
-    // host-owned audible response and cannot expose a response before context confirmation.
-    this.queueHostItem({
-      kind: 'host_fact',
-      item: authority.contextItem,
-      task_summary: null,
-      origin_spoken: false,
-    }, {
-      priority: USER_PRIORITY - 1,
-      preemptive: true,
-    })
-  }
-
-  #executorApprovalAuthorityIsCurrent(authority: ExecutorApprovalAuthorityState): boolean {
-    return this.#executorApprovalAuthority === authority
-      && authority.lifecycleToken === this.#executorApprovalLifecycleToken
-      && authority.sessionEpoch === this.session.sessionEpoch
-      && this.#executorApproval?.pending === true
-      && this.#clock.now() < authority.expiresAt
-  }
-
-  #trackExecutorApprovalTask(work: Promise<void>): void {
-    const task = work.finally(() => {
-      this.#executorApprovalPromptReleaseTasks.delete(task)
-    })
-    this.#executorApprovalPromptReleaseTasks.add(task)
-  }
-
-  #beginExecutorApprovalAttempt(
-    authority: ExecutorApprovalAuthorityState,
-    attempt: 1 | 2,
-    createdUserRevision: number,
-    action: 'begun' | 'rotated',
-  ): void {
-    if (!this.#executorApprovalAuthorityIsCurrent(authority)) return
-    authority.attempt = attempt
-    this.#executorApprovalDecisionRetry = null
-    this.#executorApprovalIsolation.beginAuthority({
-      authorityId: authority.approvalId,
-      sessionEpoch: authority.sessionEpoch,
-      createdUserRevision,
-      expiresAt: authority.expiresAt,
-    })
-    this.#telemetry?.record('approval.attempt', {
-      session_epoch: authority.sessionEpoch,
-      attempt,
-      action,
-    })
-  }
-
-  /** The only extra audible prompt; it uses host createResponse, never a free provider retry. */
-  #queueExecutorApprovalClarification(authority: ExecutorApprovalAuthorityState): void {
-    if (!this.#executorApprovalAuthorityIsCurrent(authority) || authority.clarificationQueued) return
-    authority.clarificationQueued = true
-    this.queueHostItem(hostFactIntent({
-      kind: 'final',
-      host_item_id: this.#idFactory(),
-      event_id: `approval:${authority.approvalId}:clarification`,
-      content: CODEX_APPROVAL_CLARIFICATION,
-    }), {priority: USER_PRIORITY - 1, preemptive: true})
-  }
-
-  #noteExecutorApprovalOnsetBeforeContext(): void {
-    const authority = this.#executorApprovalAuthority
-    if (authority !== null && !authority.contextReady) authority.preContextOnset = true
-  }
-
-  /** Retain one provider inference whose response id has not arrived yet across lifecycle changes. */
-  #capturePendingExecutorApprovalResponse(requestFreshResponse: boolean): void {
-    const retry = this.#executorApprovalDecisionRetry
-    const reservation = this.#executorApprovalIsolation.reservation
-    const pendingRetry = retry?.requested === true && retry.retry_response_id === null
-    const pendingInitial = !pendingRetry
-      && reservation !== null
-      && !this.#executorApprovalIsolation.blockedResponses.some(response => (
-        response.authorizationCarrier && response.userRevision === reservation.userRevision
-      ))
-    if (!pendingRetry && !pendingInitial) return
-    const current = this.#executorApprovalPendingResponseQuarantine
-    if (current !== null) {
-      if (current.sessionEpoch === this.session.sessionEpoch) {
-        current.requestFreshResponse ||= requestFreshResponse
-      }
-      return
-    }
-    this.#executorApprovalPendingResponseQuarantine = {
-      sessionEpoch: this.session.sessionEpoch,
-      sourceRetry: pendingRetry ? retry : null,
-      requestFreshResponse,
-      responseId: null,
-      terminal: false,
-    }
-  }
-
-  /** The first response identity observed for the retained one-inference provider slot owns it. */
-  #claimPendingExecutorApprovalResponseQuarantine(
-    sessionEpoch: number,
-    responseId: string | null,
-  ): void {
-    const pending = this.#executorApprovalPendingResponseQuarantine
-    if (
-      responseId === null
-      || pending?.sessionEpoch !== sessionEpoch
-      || pending.responseId !== null
-    ) return
-    pending.responseId = responseId
-    this.#rememberExecutorApprovalQuarantinedResponse(sessionEpoch, responseId)
-    this.session.suppressResponse(responseId)
-  }
-
-  #isExecutorApprovalResponseQuarantined(sessionEpoch: number, responseId: string): boolean {
-    return this.#executorApprovalQuarantinedResponses.has(callKey(sessionEpoch, responseId))
-  }
-
-  #rememberExecutorApprovalQuarantinedResponse(sessionEpoch: number, responseId: string): void {
-    const key = callKey(sessionEpoch, responseId)
-    this.#executorApprovalQuarantinedResponses.delete(key)
-    this.#executorApprovalQuarantinedResponses.set(key, null)
-    while (this.#executorApprovalQuarantinedResponses.size > MAX_TRACKED_TOOL_CALLS) {
-      const oldest = this.#executorApprovalQuarantinedResponses.keys().next()
-      if (oldest.done) break
-      this.#executorApprovalQuarantinedResponses.delete(oldest.value)
-    }
-  }
-
-  async #finishPendingExecutorApprovalResponseQuarantine(
-    sessionEpoch: number,
-    responseId: string,
-  ): Promise<void> {
-    const pending = this.#executorApprovalPendingResponseQuarantine
-    if (
-      pending?.sessionEpoch !== sessionEpoch
-      || pending.responseId !== responseId
-    ) return
-    pending.terminal = true
-    if (pending.requestFreshResponse) this.#executorApprovalNeedsFreshResponse = true
-    this.#executorApprovalPendingResponseQuarantine = null
-    await this.#maybeRequestFreshExecutorApprovalResponse()
-    this.#deliveryReady.set()
-  }
-
-  /** A failed stale request proves that its not-yet-identified response can no longer arrive. */
-  #releaseFailedExecutorApprovalResponseRequest(retry: ExecutorApprovalDecisionRetry): void {
-    const pending = this.#executorApprovalPendingResponseQuarantine
-    if (pending?.sourceRetry === retry && pending.responseId === null) {
-      this.#executorApprovalPendingResponseQuarantine = null
-    }
-  }
-
-  #clearExecutorApprovalVoiceState(): void {
-    const authority = this.#executorApprovalAuthority
-    this.#executorApprovalLifecycleToken += 1
-    this.#capturePendingExecutorApprovalResponse(false)
-    const abandonedCalls = this.#executorApprovalIsolation.takeAbandonedCalls()
-    if (authority !== null) {
-      this.#removeQueuedExecutorApprovalPrompt(authority.approvalId)
-      this.#releaseExecutorApprovalQuestion(authority.approvalId)
-      this.#quarantineExecutorApprovalCarriers()
-      this.#retireExecutorApprovalProviderContext(authority.approvalId)
-    }
-    this.#executorApprovalAuthority = null
-    this.#executorApprovalDecisionRetry = null
-    this.#executorApprovalNeedsFreshResponse = false
-    this.#executorApprovalIsolation.invalidate()
-    this.#scheduleExecutorApprovalRefusals(abandonedCalls)
-  }
-
-  /** Remove only the undelivered local queue entry; provider context is a separate lifecycle. */
+  // Approval transport: queue delivery and exact audible-response fencing.
+  /** Remove only the undelivered local queue entry; provider context has its own lifecycle. */
   #removeQueuedExecutorApprovalPrompt(approvalId: string): void {
     const prefix = `approval:${approvalId}:`
     const retained = this.#hostItems.filter(queued => (
@@ -4614,517 +3985,15 @@ export class RealtimeService {
     const owner = this.#urgentHostResponseOwner
     if (owner?.event_id.startsWith(prefix) === true) {
       if (owner.response_id === null) {
-        this.#executorApprovalIsolation.setResponseFencePending(
+        this.#approvalHost.setResponseFencePending(
           this.session.armPendingResponseFence(),
         )
       } else {
         this.session.suppressResponse(owner.response_id)
-        this.#cancelExecutorApprovalPromptResponse(owner.session_epoch, owner.response_id)
+        this.#approvalHost.cancelExecutorApprovalPromptResponse(owner.session_epoch, owner.response_id)
       }
       this.#releaseUrgentHostResponse(owner)
     }
-  }
-
-  #retireExecutorApprovalProviderContext(approvalId: string): void {
-    this.#retireProviderHostEvent(`approval:${approvalId}:requested`)
-    this.#retireProviderHostEvent(`approval:${approvalId}:clarification`)
-  }
-
-  #isExecutorApprovalHostResponse(responseId: string): boolean {
-    return this.session.responseEventIds(responseId).some(eventId => (
-      eventId.startsWith('approval:')
-      && (eventId.endsWith(':requested') || eventId.endsWith(':clarification'))
-    ))
-  }
-
-  /** Quarantine only exact initial/retry/provisional responses recorded by Codex isolation. */
-  #quarantineExecutorApprovalCarriers(): void {
-    for (const response of this.#executorApprovalIsolation.blockedResponses) {
-      this.#cancelExecutorApprovalPromptResponse(response.sessionEpoch, response.responseId)
-    }
-  }
-
-  /** Fence one exact already-audible approval response without ever targeting a newer user turn. */
-  #cancelExecutorApprovalPromptResponse(sessionEpoch: number, responseId: string): void {
-    const cancellation = (async (): Promise<void> => {
-      if (sessionEpoch !== this.session.sessionEpoch) return
-      try {
-        await this.session.quarantineResponse(responseId)
-      } catch (failure) {
-        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
-          ? failure
-          : new RealtimeDeliveryError(String(failure)))
-      } finally {
-        this.#deliveryReady.set()
-      }
-    })()
-    const task = cancellation.finally(() => {
-      this.#executorApprovalPromptReleaseTasks.delete(task)
-    })
-    this.#executorApprovalPromptReleaseTasks.add(task)
-  }
-
-  /** Reserve one exact item in the current attempt; one newer revision gets a fresh isolation. */
-  async #reserveExecutorApprovalItem(sessionEpoch: number, itemId: string | null): Promise<void> {
-    const state = this.#executorApprovalAuthority
-    let authority = this.#executorApprovalIsolation.authority
-    if (
-      itemId === null
-      || this.#executorApproval?.pending !== true
-      || state === null
-      || !state.contextReady
-      || authority?.sessionEpoch !== sessionEpoch
-    ) return
-    const userRevision = this.session.userInputRevision
-    const existing = this.#executorApprovalIsolation.reservation
-    const supersedesTrackedCarrier = existing === null
-      && this.#executorApprovalIsolation.blockedResponses.some(response => (
-        response.userRevision !== null && response.userRevision < userRevision
-      ))
-    if (
-      existing !== null && userRevision > existing.userRevision
-      || supersedesTrackedCarrier
-    ) {
-      if (state.attempt !== 1) {
-        await this.#retireExecutorApprovalVoiceAuthority()
-        return
-      }
-      this.#rotateExecutorApprovalAttempt(state, userRevision - 1)
-      authority = this.#executorApprovalIsolation.authority
-      if (authority?.sessionEpoch !== sessionEpoch) return
-    }
-    const abandonedCalls = this.#executorApprovalIsolation.takeAbandonedCalls({
-      sessionEpoch,
-      userRevision,
-    })
-    if (abandonedCalls.length > 0) {
-      await this.#refuseExecutorApprovalCalls(abandonedCalls)
-    }
-    const result = this.#executorApprovalIsolation.reserveUserItem({
-      sessionEpoch,
-      itemId,
-      userRevision,
-    })
-    if (result === 'stale') {
-      await this.#retireExecutorApprovalVoiceAuthority()
-      return
-    }
-    if (result !== 'reserved' && result !== 'idempotent') return
-    const provisional = this.#executorApprovalIsolation.bindProvisionalResponse()
-    if (provisional.kind === 'ambiguous') {
-      await this.#exhaustExecutorApprovalAttempt()
-      return
-    }
-    if (provisional.kind === 'bound') {
-      await this.#bindExecutorApprovalResponse(sessionEpoch, provisional.responseId, userRevision)
-      if (provisional.terminal && this.#executorApproval?.pending === true) {
-        this.#executorApprovalDecisionRetry ??= {
-          item_key: callKey(sessionEpoch, itemId),
-          source_response_id: provisional.responseId,
-          requested: false,
-          retry_response_id: null,
-        }
-        await this.#maybeRequestExecutorApprovalDecisionRetry()
-      }
-      return
-    }
-    const responseId = this.session.activeProviderResponseId
-    if (responseId !== null) await this.#bindExecutorApprovalResponse(sessionEpoch, responseId)
-  }
-
-  /** Replace attempt one before any await so old calls/responses cannot enter attempt two. */
-  #rotateExecutorApprovalAttempt(
-    state: ExecutorApprovalAuthorityState,
-    createdUserRevision: number,
-  ): void {
-    if (!this.#executorApprovalAuthorityIsCurrent(state) || state.attempt !== 1) return
-    this.#capturePendingExecutorApprovalResponse(true)
-    this.#quarantineExecutorApprovalCarriers()
-    const abandoned = this.#executorApprovalIsolation.takeAbandonedCalls()
-    this.#beginExecutorApprovalAttempt(state, 2, createdUserRevision, 'rotated')
-    this.#scheduleExecutorApprovalRefusals(abandoned)
-    this.#deliveryReady.set()
-  }
-
-  /** Spend one attempt; only the first exhaustion may create the single host clarification. */
-  async #exhaustExecutorApprovalAttempt(): Promise<void> {
-    const state = this.#executorApprovalAuthority
-    if (state === null || !this.#executorApprovalAuthorityIsCurrent(state)) return
-    const attempt = state.attempt
-    if (attempt === 1 || attempt === 2) {
-      this.#telemetry?.record('approval.attempt', {
-        session_epoch: state.sessionEpoch,
-        attempt,
-        action: 'exhausted',
-      })
-    }
-    this.#quarantineExecutorApprovalCarriers()
-    const abandoned = this.#executorApprovalIsolation.takeAbandonedCalls()
-    this.#executorApprovalDecisionRetry = null
-    this.#executorApprovalIsolation.invalidate()
-    await this.#refuseExecutorApprovalCalls(abandoned)
-    if (!this.#executorApprovalAuthorityIsCurrent(state)) return
-    if (attempt === 1 && !state.clarificationQueued) {
-      this.#beginExecutorApprovalAttempt(
-        state,
-        2,
-        this.session.userInputRevision,
-        'rotated',
-      )
-      this.#queueExecutorApprovalClarification(state)
-      this.#deliveryReady.set()
-      return
-    }
-    state.attempt = 0
-    this.#deliveryReady.set()
-  }
-
-  /** Bind initial/retry carrier solely through exact authority/item/response/revision identity. */
-  async #bindExecutorApprovalResponse(
-    sessionEpoch: number,
-    responseId: string,
-    correlatedRevision?: number,
-  ): Promise<boolean> {
-    const reservation = this.#executorApprovalIsolation.reservation
-    const revision = correlatedRevision ?? this.session.providerTurnUserInputRevision(responseId)
-    if (
-      reservation?.sessionEpoch !== sessionEpoch
-      || revision === undefined
-      || revision !== reservation.userRevision
-      || revision !== this.session.userInputRevision
-    ) return false
-    await this.#refuseExecutorApprovalCalls(this.#executorApprovalIsolation.takeAbandonedCalls({
-      sessionEpoch,
-      userRevision: revision,
-      responseId,
-    }))
-    const retry = this.#executorApprovalDecisionRetry
-    const result = retry?.requested === true
-      && retry.retry_response_id === null
-      ? this.#executorApprovalIsolation.bindRetryResponse({
-          sessionEpoch,
-          itemId: reservation.itemId,
-          userRevision: revision,
-          responseId,
-        })
-      : this.#executorApprovalIsolation.bindResponse({
-          sessionEpoch,
-          itemId: reservation.itemId,
-          userRevision: revision,
-          responseId,
-        })
-    if (result !== 'bound' && result !== 'idempotent') return false
-    if (retry?.requested === true && retry.retry_response_id === null) {
-      retry.retry_response_id = responseId
-    }
-    this.#executorApprovalIsolation.markBlockedResponse({sessionEpoch, responseId})
-    this.session.suppressResponse(responseId)
-    if (result === 'bound') {
-      const attempt = this.#executorApprovalAuthority?.attempt
-      if (attempt === 1 || attempt === 2) {
-        const key = callKey(sessionEpoch, responseId)
-        this.#executorApprovalCarrierAttempts.delete(key)
-        this.#executorApprovalCarrierAttempts.set(key, attempt)
-        while (this.#executorApprovalCarrierAttempts.size > MAX_TRACKED_TOOL_CALLS) {
-          const oldest = this.#executorApprovalCarrierAttempts.keys().next()
-          if (oldest.done) break
-          this.#executorApprovalCarrierAttempts.delete(oldest.value)
-        }
-        this.#telemetry?.record('approval.carrier', {
-          session_epoch: sessionEpoch,
-          attempt,
-          action: 'bound',
-        })
-      }
-    }
-    const calls = this.#executorApprovalIsolation.releaseCallsForResponse({
-      sessionEpoch,
-      userRevision: revision,
-      responseId,
-    })
-    for (const call of calls) {
-      await this.#handleExecutorApprovalDecision(call, {
-        observedProviderResponseId: responseId,
-        originItemId: reservation.itemId,
-        originRef: null,
-      })
-    }
-    return true
-  }
-
-  /** One exact silent carrier may request one same-reservation structured-decision retry. */
-  async #maybeRequestExecutorApprovalDecisionRetry(): Promise<void> {
-    const retry = this.#executorApprovalDecisionRetry
-    const reservation = this.#executorApprovalIsolation.reservation
-    const authority = this.#executorApprovalIsolation.authority
-    const state = this.#executorApprovalAuthority
-    if (
-      retry === null
-      || retry.requested
-      || reservation === null
-      || authority === null
-      || state === null
-      || retry.item_key !== callKey(reservation.sessionEpoch, reservation.itemId)
-      || this.#executorApproval?.pending !== true
-      || this.#clock.now() >= authority.expiresAt
-    ) return
-    const attempt = state.attempt
-    retry.requested = true
-    if (attempt === 1 || attempt === 2) {
-      this.#telemetry?.record('approval.carrier', {
-        session_epoch: state.sessionEpoch,
-        attempt,
-        action: 'retry_requested',
-      })
-    }
-    let requested = false
-    try {
-      requested = await this.session.requestUserResponse()
-    } catch (failure) {
-      this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
-        ? failure
-        : new RealtimeDeliveryError(String(failure)))
-    }
-    if (!requested && (attempt === 1 || attempt === 2)) {
-      this.#telemetry?.record('approval.carrier', {
-        session_epoch: state.sessionEpoch,
-        attempt,
-        action: 'retry_failed',
-      })
-    }
-    const stillCurrent = this.#executorApprovalAuthorityIsCurrent(state)
-      && state.attempt === attempt
-      && this.#executorApprovalDecisionRetry === retry
-      && this.#executorApprovalIsolation.authority === authority
-      && this.#executorApprovalIsolation.reservation === reservation
-    if (!stillCurrent) {
-      if (!requested) this.#releaseFailedExecutorApprovalResponseRequest(retry)
-      return
-    }
-    if (requested) return
-    await this.#exhaustExecutorApprovalAttempt()
-  }
-
-  /** Replace one ambiguous old retry with an initial carrier request for the fresh attempt. */
-  async #maybeRequestFreshExecutorApprovalResponse(): Promise<void> {
-    const state = this.#executorApprovalAuthority
-    if (
-      !this.#executorApprovalNeedsFreshResponse
-      || state === null
-      || !this.#executorApprovalAuthorityIsCurrent(state)
-      || state.attempt !== 2
-      || this.#executorApprovalIsolation.reservation === null
-    ) return
-    let requested = false
-    try {
-      requested = await this.session.requestUserResponse()
-    } catch (failure) {
-      this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
-        ? failure
-        : new RealtimeDeliveryError(String(failure)))
-    }
-    if (requested) this.#executorApprovalNeedsFreshResponse = false
-  }
-
-  #blocksExecutorApprovalTool(event: {
-    readonly session_epoch: number
-    readonly response_id: string | null
-  }): boolean {
-    if (
-      event.response_id !== null
-      && this.#isExecutorApprovalResponseQuarantined(event.session_epoch, event.response_id)
-    ) return true
-    return event.response_id !== null && this.#executorApprovalIsolation.responseState({
-        sessionEpoch: event.session_epoch,
-        responseId: event.response_id,
-      })?.blocked === true
-  }
-
-  async #closeExecutorApprovalCarrierTool(event: ToolCallReady): Promise<void> {
-    await this.session.injectToolOutput({
-      kind: 'tool_output',
-      host_item_id: this.#idFactory(),
-      event_id: this.#idFactory(),
-      call_id: event.call_id,
-      content: JSON.stringify({code: 'approval_carrier_tool_refused', state: 'refused'}),
-    })
-  }
-
-  /** Complete every abandoned current-session function without routing output to a retired epoch. */
-  async #refuseExecutorApprovalCalls(calls: readonly ToolCallReady[]): Promise<void> {
-    for (const call of calls) {
-      if (call.session_epoch !== this.session.sessionEpoch) continue
-      try {
-        await this.session.injectToolOutput({
-          kind: 'tool_output',
-          host_item_id: this.#idFactory(),
-          event_id: this.#idFactory(),
-          call_id: call.call_id,
-          content: JSON.stringify({code: 'approval_not_authorized', state: 'refused'}),
-        })
-      } catch (failure) {
-        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
-          ? failure
-          : new RealtimeDeliveryError(String(failure)))
-      }
-    }
-  }
-
-  /** A controller observer is synchronous, so own its protocol-completion work as a tracked task. */
-  #scheduleExecutorApprovalRefusals(calls: readonly ToolCallReady[]): void {
-    if (calls.length === 0) return
-    const refusal = this.#refuseExecutorApprovalCalls(calls)
-    const task = refusal.finally(() => {
-      this.#executorApprovalPromptReleaseTasks.delete(task)
-    })
-    this.#executorApprovalPromptReleaseTasks.add(task)
-  }
-
-  /** Permanently retire voice authority while leaving renderer/controller/provider-fact policy intact. */
-  async #retireExecutorApprovalVoiceAuthority(): Promise<void> {
-    const state = this.#executorApprovalAuthority
-    if (state?.attempt === 1 || state?.attempt === 2) {
-      this.#telemetry?.record('approval.attempt', {
-        session_epoch: state.sessionEpoch,
-        attempt: state.attempt,
-        action: 'exhausted',
-      })
-    }
-    this.#capturePendingExecutorApprovalResponse(false)
-    this.#quarantineExecutorApprovalCarriers()
-    const abandonedCalls = this.#executorApprovalIsolation.takeAbandonedCalls()
-    await this.#refuseExecutorApprovalCalls(abandonedCalls)
-    this.#executorApprovalDecisionRetry = null
-    this.#executorApprovalNeedsFreshResponse = false
-    this.#executorApprovalIsolation.invalidate()
-    if (state !== null) state.attempt = 0
-    this.#deliveryReady.set()
-  }
-
-  async #handleExecutorApprovalDecision(
-    event: ToolCallReady,
-    origin: BoundToolOrigin,
-  ): Promise<void> {
-    const controller = this.#executorApproval
-    const authority = this.#executorApprovalIsolation.authority
-    const reservation = this.#executorApprovalIsolation.reservation
-    const decision = confirmArguments(event.arguments)
-    const voiceState = this.#executorApprovalAuthority
-    let code = decision === null
-      ? 'approval_invalid'
-      : controller?.pending === true ? 'approval_not_authorized' : 'approval_not_pending'
-    let state = 'refused'
-    let telemetryOutcome: 'accepted' | 'refused' = 'refused'
-    let telemetryReason: ExecutorApprovalDecisionReason | undefined
-    const expired = this.#executorApprovalExpiredIdentity
-    if (decision === null) telemetryReason = 'malformed_arguments'
-    else if (controller?.pending !== true) {
-      telemetryReason = expired?.sessionEpoch === event.session_epoch
-          && expired.approvalId === decision.id
-        ? 'expired'
-        : 'not_pending'
-    }
-    else if (voiceState === null) telemetryReason = 'authority_missing'
-    else if (decision.id !== voiceState.approvalId) telemetryReason = 'replaced'
-    else if (voiceState.sessionEpoch !== event.session_epoch) telemetryReason = 'epoch_mismatch'
-    else if (this.#clock.now() >= voiceState.expiresAt) telemetryReason = 'expired'
-    else if (!voiceState.contextReady) telemetryReason = 'context_not_ready'
-    else if (voiceState.attempt === 0) telemetryReason = 'voice_exhausted'
-    else if (authority === null || reservation === null) telemetryReason = 'authority_missing'
-    else if (
-      origin.originItemId !== null
-      && origin.originItemId !== reservation.itemId
-    ) telemetryReason = 'item_mismatch'
-    else if (
-      event.response_id === null
-      || origin.observedProviderResponseId !== event.response_id
-    ) telemetryReason = 'response_mismatch'
-    if (
-      decision !== null
-      && controller?.pending === true
-      && authority !== null
-      && telemetryReason === undefined
-    ) {
-      const responseId = event.response_id
-      const providerRevision = responseId === null
-        ? undefined
-        : this.session.providerTurnUserInputRevision(responseId)
-      const revision = responseId !== null
-        && reservation !== null
-        && this.#executorApprovalIsolation.isAuthorizationCarrier({
-          sessionEpoch: event.session_epoch,
-          userRevision: reservation.userRevision,
-          responseId,
-        })
-        ? reservation.userRevision
-        : providerRevision
-      const authorized = authority.authorityId === decision.id
-        && authority.sessionEpoch === event.session_epoch
-        && this.#clock.now() < authority.expiresAt
-        && reservation !== null
-        && reservation.sessionEpoch === event.session_epoch
-        && responseId !== null
-        && origin.observedProviderResponseId === responseId
-        && revision !== undefined
-        && revision === reservation.userRevision
-        && revision > authority.createdUserRevision
-        && revision === this.session.userInputRevision
-        && this.#executorApprovalIsolation.isAuthorizationCarrier({
-          sessionEpoch: event.session_epoch,
-          userRevision: revision,
-          responseId,
-        })
-      if (!authorized) {
-        code = 'approval_not_authorized'
-        telemetryReason = revision === undefined || reservation === null
-          ? 'revision_mismatch'
-          : revision !== reservation.userRevision
-              || revision <= authority.createdUserRevision
-              || revision !== this.session.userInputRevision
-            ? 'revision_mismatch'
-            : 'response_mismatch'
-      } else if (controller.acceptDecision({
-        approvalId: decision.id,
-        decision: decision.accepted ? 'accept' : 'decline',
-      })) {
-        this.session.settleUserResponse(responseId)
-        code = decision.accepted ? 'approval_accepted' : 'approval_declined'
-        state = decision.accepted ? 'accepted' : 'refused'
-        telemetryOutcome = decision.accepted ? 'accepted' : 'refused'
-        telemetryReason = undefined
-      } else {
-        telemetryReason = 'not_pending'
-      }
-    }
-    this.#recordExecutorApprovalDecision(
-      event.session_epoch,
-      'function',
-      telemetryOutcome,
-      telemetryReason,
-    )
-    await this.session.injectToolOutput({
-      kind: 'tool_output',
-      host_item_id: this.#idFactory(),
-      event_id: this.#idFactory(),
-      call_id: event.call_id,
-      content: JSON.stringify({code, state}),
-    })
-  }
-
-  #recordExecutorApprovalDecision(
-    sessionEpoch: number,
-    source: 'function' | 'renderer',
-    outcome: 'accepted' | 'refused',
-    reason?: ExecutorApprovalDecisionReason,
-  ): void {
-    this.#telemetry?.record('approval.decision', reason === undefined
-      ? {session_epoch: sessionEpoch, source, outcome}
-      : {session_epoch: sessionEpoch, source, outcome, reason})
-  }
-
-  #invalidateExecutorApproval(reason: string): void {
-    this.#executorApproval?.invalidate(reason)
-    if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -6178,13 +5047,9 @@ export class RealtimeService {
       // A renderer that cannot accept the view must not prevent the state change that produced it.
     }
     // Spec 08: an executor approval that waited behind this confirmation gets a fresh TTL and is
-    // voice-armed once it is over. `release` publishes, and the observer runs `#syncExecutorApproval`
+    // voice-armed once it is over. `release` publishes, and the observer runs the host sync
     // with the re-armed view; a head that was never held is synced directly.
-    const approval = this.#executorApproval
-    if (approval?.view.pending_approval === true && !controller.pending && !controller.committing
-      && !approval.release()) {
-      this.#syncExecutorApproval(approval.view)
-    }
+    if (!controller.pending && !controller.committing) this.#approvalHost.release()
   }
 
   /**
@@ -7614,22 +6479,6 @@ function asError(cause: unknown): Error {
   const wrapped = new Error(`provider close failed: ${String(cause)}`)
   wrapped.cause = cause
   return wrapped
-}
-
-/** A host fact carrying one context item. The shape is the same at every projection site. */
-function hostFactIntent(item: {
-  readonly kind: 'progress' | 'final' | 'recovery' | 'dialogue_context'
-  readonly host_item_id: string
-  readonly event_id: string
-  readonly content: string
-}): HostResponseIntent {
-  // `call_id` belongs to tool output alone, and a host fact is never that.
-  return {
-    kind: 'host_fact',
-    item: {...item, call_id: null},
-    task_summary: null,
-    origin_spoken: false,
-  }
 }
 
 /**

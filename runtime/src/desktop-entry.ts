@@ -5,11 +5,6 @@ import {randomUUID} from 'node:crypto'
 
 import {loadSettings} from './config.js'
 import {
-  createCodexAssemblyResource,
-  createProductionCodexHost,
-  resolveCodexHostConfig,
-} from './executors/codex/host.js'
-import {
   buildDesktopRealtimeComposition,
   runDesktopEntryWithStopSources,
   type DesktopStopParentSource,
@@ -57,27 +52,32 @@ process.exitCode = await runDesktopEntryWithStopSources({
     const clock = new RealClock()
     const telemetry = createRealtimeTelemetry(process.env, {clock})
     ownership.own(() => telemetry.close())
-    const sourceResourcesPath = process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH
-    const codexHost = createProductionCodexHost(settings, {
-      ...(sourceResourcesPath === undefined ? {} : {resourcesPath: sourceResourcesPath}),
-      onDiagnostic: code => onDiagnostic(`[runtime-diagnostic] ${code}`),
-    })
-    const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
     let publishExecutorApproval: (view: ExecutorApprovalView) => void = () => undefined
-    const codexResource = codexConfig === null
+    const codexResource = !capabilities.modules.coding.enabled || !settings.executors.includes('codex')
       ? null
-      : await createCodexAssemblyResource({
-          config: codexConfig,
-          composition: 'realtime',
-          transportFactory: codexHost.transportFactory,
-          clock,
-          idFactory: () => randomUUID().replaceAll('-', ''),
-          onDiagnostic,
-          codexApprovalBroker: {
-            publish: view => { publishExecutorApproval(view) },
-          },
-          ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
+      : await (async () => {
+        const {createCodexAssemblyResource, createProductionCodexHost, resolveCodexHostConfig} = await import('./executors/codex/host.js')
+        const sourceResourcesPath = process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH
+        const codexHost = createProductionCodexHost(settings, {
+          ...(sourceResourcesPath === undefined ? {} : {resourcesPath: sourceResourcesPath}),
+          onDiagnostic: code => onDiagnostic(`[runtime-diagnostic] ${code}`),
         })
+        const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
+        return codexConfig === null
+          ? null
+          : await createCodexAssemblyResource({
+              config: codexConfig,
+              composition: 'realtime',
+              transportFactory: codexHost.transportFactory,
+              clock,
+              idFactory: () => randomUUID().replaceAll('-', ''),
+              onDiagnostic,
+              codexApprovalBroker: {
+                publish: view => { publishExecutorApproval(view) },
+              },
+              ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
+            })
+      })()
     if (codexResource !== null) ownership.own(() => codexResource.close())
     const camera = selectDesktopCameraSource(process.env)
     const composition = buildDesktopRealtimeComposition({

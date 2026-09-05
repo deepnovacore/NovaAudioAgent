@@ -47,7 +47,7 @@ import {
 import {CodexApprovalController, type CodexApprovalResolution} from '../src/executors/codex/approval.js'
 import {CodexAgentController} from '../src/executors/codex/controller.js'
 import type {AgentExecutor} from '../src/coding-executor.js'
-import type {IntakeController} from '../src/executors/coding/intake.js'
+import {IntakeController, type IntakeOptions} from '../src/executors/coding/intake.js'
 import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
 
@@ -658,7 +658,7 @@ function pipelineService(options: {
   /** Fold the ops into the spec 08 host tools; a raw `codex__*` from the provider is then refused. */
   readonly agent?: boolean
 } = {}): {
-  readonly service: RealtimeService
+  readonly service: RealtimeService & {readonly intakeSession: ReturnType<CodexAgentController['inspectIntakeForTest']>; settleIntakeForTest(): Promise<void>}
   readonly actions: string[]
   readonly injectedContents: string[]
   readonly injectedItems: HostContextItem[]
@@ -802,7 +802,13 @@ function pipelineService(options: {
     routing_class: 'user_awaited',
   }
   let ingested = 0
-  const service = new RealtimeService({
+  let codingController: CodexAgentController | undefined
+  // Test inspection is owned by the concrete controller, never part of the production service port.
+  class TestService extends RealtimeService {
+    get intakeSession() { return codingController?.inspectIntakeForTest() ?? null }
+    async settleIntakeForTest(): Promise<void> { await codingController?.settleIntakeForTest() }
+  }
+  const service = new TestService({
     provider,
     runtime: {
       clock,
@@ -845,7 +851,7 @@ function pipelineService(options: {
     }),
     ...(options.intake === undefined ? {} : {intake: options.intake}),
     ...(manifest.model_visibility === 'hidden' && options.agentControllers === undefined ? {agentControllerFactory: {
-      create: ({intake}: {readonly intake: Pick<IntakeController, 'open' | 'view'> | undefined}) => new CodexAgentController({
+      create: ({intake}: {readonly intake: IntakeOptions | undefined}) => (codingController = new CodexAgentController({
         ...(intake === undefined ? {} : {intake}),
         ...(options.agentExecutor === undefined ? {} : {executor: options.agentExecutor}),
         dispatchPort: {
@@ -857,7 +863,7 @@ function pipelineService(options: {
           },
         },
         resolveCancelTarget: () => Promise.resolve(null),
-      }),
+      })),
     }} : {}),
     ...(options.agentControllers === undefined ? {} : {agentControllers: options.agentControllers}),
     ...(executorApproval === null ? {} : {executorApproval}),
@@ -10328,3 +10334,32 @@ for (const terminal of ['failed', 'empty'] as const) {
     await service.close()
   })
 }
+
+test('intake owns final queued-fact eligibility and workspace changes without service snapshot reads', async () => {
+  const {service, injectedItems} = pipelineService({projectTool: true, intake: intakePorts({
+    models: {assess: () => new Promise(() => undefined), plan: () => Promise.resolve(null), resolveCancelTarget: () => Promise.resolve(null)},
+  })})
+  await service.connect()
+  await speak(service, 'u1', 'Discuss the layout')
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r1'})
+  await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'r1', item_id: 't1', call_id: 'c1', name: 'dispatch', arguments: {executor: 'codex', instruction: 'Discuss the layout'}})
+  const intake = service.intakeSession!
+  await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: 'r1', status: 'completed', reason: ''})
+  const snapshot = Object.getOwnPropertyDescriptor(IntakeController.prototype, 'view')!
+  Object.defineProperty(IntakeController.prototype, 'view', {get: () => { throw new Error('service inspected intake state') }, configurable: true})
+  try {
+    service.queueHostItem(hostFact(`intake:${intake.intake_id}:${intake.revision + 1}:stale`), {priority: 99, preemptive: false})
+    await service.flushHostItems()
+    assert.equal(injectedItems.some(item => item.event_id.endsWith(':stale')), false)
+    assert.equal(service.queuedHostItems().some(item => item.intent.item.event_id.endsWith(':stale')), false)
+    service.onProjectWorkspaceChanged('alpha')
+    service.onProjectWorkspaceChanged('beta')
+    service.queueHostItem(hostFact(`intake:${intake.intake_id}:${intake.revision}:cancelled`), {priority: 99, preemptive: false})
+    await service.flushHostItems()
+    assert.equal(injectedItems.some(item => item.event_id.endsWith(':cancelled')), false)
+    assert.equal(service.queuedHostItems().some(item => item.intent.item.event_id.endsWith(':cancelled')), false)
+  } finally {
+    Object.defineProperty(IntakeController.prototype, 'view', snapshot)
+    await service.close()
+  }
+})

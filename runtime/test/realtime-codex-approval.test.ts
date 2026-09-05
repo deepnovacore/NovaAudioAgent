@@ -182,7 +182,7 @@ test('file display data is snapshotted and observer failures cannot strand autho
 test('invalid generated IDs and malformed public decisions never replace pending state', async () => {
   for (const idFactory of [() => '', () => 'x'.repeat(129)]) {
     const approval = new CodexApprovalController({clock: new VirtualClock(), idFactory})
-    await assert.rejects(offerCommand(approval), /invalid Codex approval id/u)
+    await assert.rejects(offerCommand(approval), /invalid approval id/u)
     assert.equal(approval.pending, false)
   }
 

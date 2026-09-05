@@ -1,4 +1,4 @@
-import {admitCodexCliVersion} from '@nova-audio-agent/runtime/desktop'
+import {admitCodexCliVersion} from '@nova-audio-agent/runtime/executors/codex/version'
 
 const SOURCES = new Set(['path', 'npm-user', 'common', 'manual', 'npm-launcher'])
 

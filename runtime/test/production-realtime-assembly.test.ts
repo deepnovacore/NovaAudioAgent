@@ -1,3 +1,4 @@
+import {codexAgentDescriptor, codingAgentControllerFactory} from '../src/executors/codex/controller.js'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 
@@ -48,7 +49,7 @@ function projectResource(): CodexAssemblyResource {
     observeTerminalWorkOrder: () => () => undefined,
   } as never
   return {
-    adapter,
+    adapter, agentDescriptor: codexAgentDescriptor('codex'), agentControllerFactory: codingAgentControllerFactory,
     mode: 'project', projectView: null, approvalPolicy: 'never', approvalController: null,
     start: () => Promise.resolve(), close: () => Promise.resolve(),
   }
@@ -86,7 +87,7 @@ test('production selector supplies the paired coding factory and descriptor only
     let selected: SelectedCodingComposition | undefined
     const actual = buildProductionRealtimeAssembly({
       ...options(loadSettings({NOVA_AUDIO_AGENT_PIPELINE_MODE: mode})),
-      codexResource: {adapter: {manifest: {name: 'workspace_coder'}}},
+      codexResource: {adapter: {manifest: {name: 'workspace_coder'}}, agentDescriptor: codexAgentDescriptor('workspace_coder'), agentControllerFactory: codingAgentControllerFactory},
     } as never, {
       integrated: input => {
         if (mode !== 'integrated') throw new Error('unselected')
@@ -138,7 +139,7 @@ test('production integrated composition registers the default coding controller 
 test('production composition rejects descriptors that collide with the coding controller', () => {
   const base: BuildProductionRealtimeAssemblyOptions = {
     ...options(loadSettings({NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated'})),
-    codexResource: {adapter: {manifest: {name: 'workspace_coder'}}} as never,
+    codexResource: {adapter: {manifest: {name: 'workspace_coder'}}, agentDescriptor: codexAgentDescriptor('workspace_coder'), agentControllerFactory: codingAgentControllerFactory} as never,
   }
   for (const descriptor of [
     {name: 'codex', summary: 'duplicate public name', ownedChannels: ['other']},
