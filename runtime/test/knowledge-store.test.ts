@@ -8,6 +8,18 @@ import {Worker} from 'node:worker_threads'
 import {KnowledgeStoreClient, KnowledgeStoreClientError} from '../src/knowledge/store-client.js'
 import type {KnowledgeSource} from '../src/knowledge/types.js'
 
+async function settlesWithin<T>(label: string, promise: Promise<T>, milliseconds = 1_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} did not settle`)), milliseconds)
+  })
+  try {
+    return await Promise.race([promise, expired])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 function source(id = 'source-a'): KnowledgeSource {
   return {
     id,
@@ -221,6 +233,15 @@ test('close resolves only after a busy Worker has actually terminated', async t 
   await lock.release()
   await closing
   await rejected
+})
+
+test('close settles after a Worker has already failed during bootstrap', async () => {
+  const client = new KnowledgeStoreClient({path: undefined as unknown as string})
+  await assert.rejects(client.open(), (error: unknown) => (
+    error instanceof KnowledgeStoreClientError && error.code === 'WORKER_ERROR'
+  ))
+  await new Promise(resolve => setTimeout(resolve, 50))
+  await settlesWithin('close after worker exit', client.close())
 })
 
 test('unsafe existing parent and database symlink are rejected without permission repair', async t => {

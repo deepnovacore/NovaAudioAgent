@@ -64,7 +64,10 @@ export class KnowledgeStoreClient {
   #closed = false
   #failed = false
   #expectedExit = false
+  #exited = false
   #closing: Promise<void> | undefined
+  #resolveClosing: (() => void) | undefined
+  #rejectClosing: ((error: KnowledgeStoreClientError) => void) | undefined
 
   constructor(options: KnowledgeStoreClientOptions) {
     const workerUrl = new URL('./store-worker.js', import.meta.url)
@@ -72,9 +75,7 @@ export class KnowledgeStoreClient {
     this.#worker = new Worker(workerUrl, workerOptions)
     this.#worker.on('message', message => this.#handleMessage(message))
     this.#worker.on('error', () => this.#fail('WORKER_ERROR'))
-    this.#worker.on('exit', () => {
-      if (!this.#expectedExit) this.#fail('WORKER_EXITED')
-    })
+    this.#worker.on('exit', code => this.#handleExit(code))
   }
 
   async open(): Promise<void> { await this.#request('open', {}) }
@@ -84,23 +85,18 @@ export class KnowledgeStoreClient {
     this.#closed = true
     this.#expectedExit = true
     this.#rejectPending('CLIENT_CLOSED')
+    if (this.#exited) return this.#closing = Promise.resolve()
     this.#closing = new Promise((resolve, reject) => {
-      this.#worker.on('exit', code => {
-        if (code === 0) resolve()
-        else reject(new KnowledgeStoreClientError('WORKER_EXITED'))
-      })
-      this.#worker.on('error', () => reject(new KnowledgeStoreClientError('WORKER_ERROR')))
-      try {
-        // This is deliberately not an RPC promise: existing requests were rejected above,
-        // while the Worker drains its bounded SQLite call and exits after the close signal.
-        this.#worker.postMessage({kind: 'request', request_id: this.#nextRequestId++, operation: 'close'})
-      } catch {
-        void this.#worker.terminate().then(
-          () => reject(new KnowledgeStoreClientError('WORKER_PROTOCOL_FAILURE')),
-          () => reject(new KnowledgeStoreClientError('WORKER_PROTOCOL_FAILURE')),
-        )
-      }
+      this.#resolveClosing = resolve
+      this.#rejectClosing = reject
     })
+    try {
+      // This is deliberately not an RPC promise: existing requests were rejected above,
+      // while the Worker drains its bounded SQLite call and exits after the close signal.
+      this.#worker.postMessage({kind: 'request', request_id: this.#nextRequestId++, operation: 'close'})
+    } catch {
+      void this.#worker.terminate().catch(() => undefined)
+    }
     return this.#closing
   }
 
@@ -156,6 +152,20 @@ export class KnowledgeStoreClient {
       return
     }
     pending.resolve(response.result)
+  }
+
+  #handleExit(code: number): void {
+    this.#exited = true
+    if (this.#resolveClosing !== undefined || this.#rejectClosing !== undefined) {
+      const resolve = this.#resolveClosing
+      const reject = this.#rejectClosing
+      this.#resolveClosing = undefined
+      this.#rejectClosing = undefined
+      if (code === 0) resolve?.()
+      else reject?.(new KnowledgeStoreClientError('WORKER_EXITED'))
+      return
+    }
+    if (!this.#expectedExit) this.#fail('WORKER_EXITED')
   }
 
   #fail(code: Extract<KnowledgeStoreClientErrorCode, `WORKER_${string}`>): void {

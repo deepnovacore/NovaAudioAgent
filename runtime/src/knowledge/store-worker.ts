@@ -72,6 +72,10 @@ port.on('message', message => {
     }
     port.postMessage({kind: 'response', request_id: request.request_id, ok: true, result})
   } catch (error) {
+    if (request.operation === 'close') {
+      port.close()
+      return
+    }
     port.postMessage({kind: 'response', request_id: request.request_id, ok: false, error_code: codeFor(error)})
   }
 })
