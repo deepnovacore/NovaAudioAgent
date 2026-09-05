@@ -16,6 +16,20 @@
       <span id="status" aria-live="polite"></span>
     </header>
     <main>
+      <section class="setting-section" id="capabilities-section">
+        <h2>能力</h2>
+        <p id="capabilities-state" class="hint" aria-live="polite"></p>
+        <p id="capabilities-problems" class="warning" aria-live="polite"></p>
+        <div id="capabilities-editor"></div>
+      </section>
+      <section class="setting-section">
+        <h2>知识库配置</h2>
+        <p class="hint">启用开关在「能力」中。索引操作将在知识库面板提供。</p>
+        <div class="field"><label for="embeddingProvider">Embedding provider</label><select id="embeddingProvider"><option value="dashscope">DashScope</option><option value="local">Local</option></select></div>
+        <div class="field"><label for="embeddingModel">Embedding 模型</label><input id="embeddingModel" type="text"></div>
+        <div class="field"><label for="knowledgePath">知识库路径（留空使用默认）</label><input id="knowledgePath" type="text"></div>
+        <div class="field"><label for="capabilitiesConfigPath">能力注册表路径（留空使用环境变量或默认）</label><input id="capabilitiesConfigPath" type="text"></div>
+      </section>
       <section class="setting-section">
         <h2>权限</h2>
         <fieldset id="codex-approval-mode" class="segmented segmented-approval">

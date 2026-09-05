@@ -124,7 +124,8 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     clearAllManagedWorkspaces: () => ipcRenderer.invoke('nova:workspaces:clear-all'),
     // The payload may carry plaintext key values on their way *into* main; the
     // reply never carries any back out.
-    set: patch => ipcRenderer.invoke('nova:settings:set', patch),
+    set: commit => ipcRenderer.invoke('nova:settings:set', commit),
+    probeCapabilities: payload => ipcRenderer.invoke('nova:capabilities:probe', payload),
     onChanged: callback => {
       if (typeof callback !== 'function') return () => {}
       const listener = (_event, value) => callback(value)

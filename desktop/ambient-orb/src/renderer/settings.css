@@ -715,3 +715,11 @@ footer {
 
   .swatch { forced-color-adjust: none; }
 }
+
+#capabilities-editor fieldset { margin: 14px 0; padding: 14px; border: 1px solid var(--border, #cbc6bd); border-radius: 10px; min-width: 0; }
+#capabilities-editor details { margin: 12px 0; padding: 12px; border: 1px solid var(--border, #cbc6bd); border-radius: 10px; }
+#capabilities-editor summary { cursor: pointer; overflow-wrap: anywhere; }
+#capabilities-editor button { margin: 6px 8px 6px 0; }
+#capabilities-editor textarea { width: 100%; min-height: 76px; resize: vertical; font: inherit; }
+#capabilities-editor .field input[type="checkbox"] { width: auto; justify-self: start; }
+#capabilities-state, #capabilities-problems, #capabilities-editor p { overflow-wrap: anywhere; }

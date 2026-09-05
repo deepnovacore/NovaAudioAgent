@@ -1144,3 +1144,5 @@ async function closeWebSocket(socket: WebSocket, graceMs: number): Promise<void>
 
 export * from './capability-registry.js'
 export {probeMcpServer} from './mcp-client.js'
+
+export {SensitiveContentPolicy} from './workspace-graph/sensitivity.js'

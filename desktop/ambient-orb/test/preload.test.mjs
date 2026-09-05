@@ -64,13 +64,14 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
 
   assert.deepEqual(Object.keys(exposed.settings).sort(), [
     'clearAllManagedWorkspaces', 'clearCurrentManagedWorkspace', 'get', 'onChanged',
-    'openCurrentManagedWorkspace', 'repairProjects', 'rescanCodex', 'retryBackend',
+    'openCurrentManagedWorkspace',
+    'probeCapabilities', 'repairProjects', 'rescanCodex', 'retryBackend',
     'retryMicrophone', 'set',
   ])
   assert.ok(Object.isFrozen(exposed.settings))
 
   await exposed.settings.get()
-  await exposed.settings.set({ palette: 'graphite' })
+  await exposed.settings.set({settingsPatch: {palette: 'graphite'}})
   await exposed.settings.rescanCodex()
   await exposed.settings.repairProjects('state')
   await exposed.settings.retryMicrophone()
@@ -79,7 +80,7 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   await exposed.settings.clearAllManagedWorkspaces()
   assert.deepEqual(invokes, [
     { channel: 'nova:settings:get', payload: undefined },
-    { channel: 'nova:settings:set', payload: { palette: 'graphite' } },
+    { channel: 'nova:settings:set', payload: {settingsPatch: {palette: 'graphite'}} },
     { channel: 'nova:codex:rescan', payload: undefined },
     { channel: 'nova:projects:repair', payload: 'state' },
     { channel: 'nova:microphone:retry', payload: undefined },

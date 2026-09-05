@@ -517,6 +517,7 @@ export interface DesktopEntryOptions {
   ) => Promise<void>
   readonly onDiagnostic: (line: string) => void
   readonly cleanupGraceMs?: number
+  readonly onStartupFailure?: (error: unknown) => void
 }
 
 /** Run the production entry without leaking configuration or dependency errors to stderr. */
@@ -548,6 +549,7 @@ export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 |
   } catch (error) {
     await ownership?.rollback()
     try {
+      options.onStartupFailure?.(error)
       options.onDiagnostic(`[runtime-diagnostic] ${desktopEntryFailureCode(error)}`)
     } catch {
       // A diagnostic sink must not convert a bounded entry failure into an unhandled rejection.

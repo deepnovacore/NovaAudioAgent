@@ -1,3 +1,4 @@
+import {createCapabilitiesEditor} from './capabilities-editor.mjs'
 // Settings are edited as one local transaction. Public drafts live in the
 // controller; secret plaintext remains only in password inputs until Save.
 import {
@@ -96,6 +97,11 @@ const cascadedTtsVoiceCustom = document.querySelector('#cascadedTtsVoiceCustom')
 const clarificationDepth = document.querySelector('#clarificationDepth')
 const plannerModel = document.querySelector('#plannerModel')
 
+const capabilityEditor = createCapabilitiesEditor({root: document.querySelector('#capabilities-editor'),
+  stateLabel: document.querySelector('#capabilities-state'), problemsLabel: document.querySelector('#capabilities-problems'),
+  stage: patch => controller.stage(patch), probe: payload => api.probeCapabilities(payload)})
+const capabilitySettings = ['embeddingProvider', 'embeddingModel', 'knowledgePath', 'capabilitiesConfigPath'].map(key => document.getElementById(key))
+
 function populateVoiceOptions(select, presets) {
   for (const preset of presets) {
     const option = document.createElement('option')
@@ -181,6 +187,8 @@ function updateButtons() {
 function render(view, _drafts, state) {
   if (!view) return
   currentView = view
+  capabilityEditor.render(view)
+  for (const input of capabilitySettings) input.value = view[input.id] ?? ''
   controllerState = state
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
@@ -251,7 +259,10 @@ function updateRestartNotice(phase) {
 }
 
 const controller = createSettingsController({
-  api, render,
+  api: {...api, set: patch => {
+    const {capabilitiesDocument, ...settingsPatch} = patch
+    return api.set({settingsPatch, ...(capabilitiesDocument === undefined ? {} : {capabilitiesDocument})})
+  }}, render,
   status: note => { statusLabel.textContent = note },
   notice: updateRestartNotice,
 })
@@ -273,6 +284,7 @@ for (const input of progressBubblesInputs) {
 }
 bindStage(clarificationDepth, 'change', () => ({clarificationDepth: clarificationDepth.value}))
 bindStage(plannerModel, 'input', () => ({plannerModel: plannerModel.value}))
+for (const input of capabilitySettings) bindStage(input, 'change', () => ({[input.id]: input.value}))
 heartbeat.addEventListener('input', () => {
   heartbeatValue.textContent = `${heartbeat.value} 秒`
   controller.stage({codexHeartbeatSeconds: Number(heartbeat.value)})

@@ -679,6 +679,7 @@ test('publicSettings never carries the secrets object', () => {
   const view = publicSettings(settings)
 
   assert.deepEqual(Object.keys(view).sort(), [
+    'capabilitiesConfigPath',
     'cascadedAsrProvider',
     'cascadedEndpointingProvider',
     'cascadedLlmModels',
@@ -692,9 +693,12 @@ test('publicSettings never carries the secrets object', () => {
     'codexHeartbeatSeconds',
     'codexManagedRoot',
     'codexWorkspace',
+    'embeddingModel',
+    'embeddingProvider',
     'integratedModel',
     'integratedProvider',
     'integratedVoice',
+    'knowledgePath',
     'modelBaseUrl',
     'palette',
     'pipelineMode',

@@ -781,6 +781,21 @@ test('the Orb receives one committed palette notification only inside the save t
   assert.equal(notifications.length, 1)
   const handler = mainScript.slice(mainScript.indexOf("ipcMain.handle('nova:settings:set'"))
   const body = handler.slice(0, handler.indexOf('\n  })'))
-  assert.match(body, /publishCommitted: \(\) => sendToOrb\(/)
+  assert.match(body, /publishCommitted: \(\) => \{[\s\S]*sendToOrb\(/)
   assert.ok(body.indexOf('write: async value') < body.indexOf('publishCommitted:'))
+})
+
+test('capability documents replace atomically, preserve original special tool names and server deletion', async () => {
+  const {createSettingsController} = await import('../src/renderer/settings-controller.mjs')
+  let outbound
+  const controller = createSettingsController({api: {set: async patch => {outbound = patch; return {...patch, saved: true, settingsApplyStatus: 'applied'}}}, render: () => {}, status: () => {}})
+  controller.setView({capabilitiesDocument: {version: 1, mcpServers: {old: {tools: {}}}}})
+  const document = JSON.parse('{"version":1,"mcpServers":{"demo":{"tools":{"__proto__":{"enabled":true},"lookup.raw":{"enabled":true}}}}}')
+  controller.stage({capabilitiesDocument: document})
+  await controller.save()
+  assert.deepEqual(outbound.capabilitiesDocument, document)
+  assert.equal(Object.hasOwn(outbound.capabilitiesDocument.mcpServers.demo.tools, '__proto__'), true)
+  controller.stage({capabilitiesDocument: {version: 1, mcpServers: {}}})
+  await controller.save()
+  assert.deepEqual(outbound.capabilitiesDocument.mcpServers, {})
 })

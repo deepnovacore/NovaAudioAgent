@@ -43,7 +43,11 @@ export async function applySettingsTransaction({
     let written
     try {
       written = await write(patch)
-    } catch {
+    } catch (error) {
+      if (error?.code === 'invalid_settings_commit') {
+        publishStatus('invalid')
+        return {...result(false, 'invalid', Object.freeze([])), problems: error.problems}
+      }
       publishStatus('failed')
       return result(false, 'failed', Object.freeze([]))
     }

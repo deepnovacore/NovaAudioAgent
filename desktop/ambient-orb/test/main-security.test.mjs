@@ -27,6 +27,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:bubble-layout',
     'nova:bubbles:reserve',
     'nova:camera:permission',
+    'nova:capabilities:probe',
     'nova:codex:rescan',
     'nova:confirmation-mode',
     'nova:confirmation-placement',
@@ -172,8 +173,8 @@ test('settings IPC is sender-validated and answers from main without an orb rela
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
   assert.match(source, /ipcMain\.handle\('nova:settings:get', async event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
-  assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, patch\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
-  assert.match(source, /publishCommitted: \(\) => sendToOrb\(\s*'nova:settings:changed', orbSettings\(currentSettings\),?\s*\)/)
+  assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, payload\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
+  assert.match(source, /publishCommitted: \(\) => \{[\s\S]*sendToOrb\('nova:settings:changed', orbSettings\(currentSettings\)\)/)
   // No requestId machinery: settings live in main, so nothing round-trips
   // through the orb renderer the way the memory board has to.
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
@@ -308,7 +309,7 @@ test('every settings write goes through one queue so overlapping patches merge',
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
   const handler = set.slice(0, set.indexOf('\n  })'))
   assert.match(handler, /applySettingsTransaction\(\{/)
-  assert.match(handler, /write: async value => \{[\s\S]*await settingsWriter\(value\)/)
+  assert.match(handler, /write: async value => \{[\s\S]*await settingsWriter\(commit\.settingsPatch \?\? \{\}, next =>/)
   assert.match(handler, /coordinator: lifecycleCoordinator/)
   assert.doesNotMatch(
     handler,

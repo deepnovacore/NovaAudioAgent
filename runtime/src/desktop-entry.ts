@@ -1,3 +1,4 @@
+import {installDesktopControl, desktopBudgetFailure, type DesktopCapabilityState} from './desktop-control.js'
 import {loadCapabilityRegistry} from './capability-registry.js'
 import {prepareExternalMcp} from './executors/mcp.js'
 /** The compiled realtime desktop entry Electron launches with `utilityProcess.fork()`. */
@@ -21,12 +22,15 @@ import {
 import {createRealtimeTelemetry} from './realtime/telemetry.js'
 import type {ApprovalView as ExecutorApprovalView} from './approval-port.js'
 
-type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource}
+type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource & {postMessage(message: unknown): void}}
 
 const token = process.env.NOVA_AUDIO_AGENT_DESKTOP_TOKEN ?? ''
 const readyEndpoint = process.env.NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT ?? ''
 const stop = new AbortController()
 const parentPort = (process as UtilityProcess).parentPort
+
+let capabilityView: (() => DesktopCapabilityState | undefined) = () => undefined
+const control = installDesktopControl({...(parentPort === undefined ? {} : {parentPort}), signal: stop.signal, status: () => capabilityView()})
 
 const onDiagnostic = (line: string): void => {
   process.stderr.write(`${line}\n`)
@@ -42,6 +46,11 @@ process.exitCode = await runDesktopEntryWithStopSources({
     {signal},
   ),
   onDiagnostic,
+  onStartupFailure: error => {
+    const status = desktopBudgetFailure(error)
+    capabilityView = () => status
+    control.publish()
+  },
   construct: async ownership => {
     const externalMcp = await prepareExternalMcp(loadCapabilityRegistry(), stop.signal)
     ownership.own(() => externalMcp.close())
@@ -115,6 +124,8 @@ process.exitCode = await runDesktopEntryWithStopSources({
         return buildProductionRealtimeAssembly(realtimeOptions)
       },
     })
+    capabilityView = () => ({...composition.realtime.capabilityStatus, state: 'running'})
+    control.publish()
     publishExecutorApproval = view => { composition.desktop.bridge.onExecutorApproval(view) }
     return {
       ...composition,
@@ -126,3 +137,5 @@ process.exitCode = await runDesktopEntryWithStopSources({
   stdin: process.stdin,
   ...(parentPort === undefined ? {} : {parentPort}),
 })
+
+control.dispose()

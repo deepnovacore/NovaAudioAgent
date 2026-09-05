@@ -147,6 +147,7 @@ export function backendLaunchSpec({
   decryptedSecrets,
   resolvedConfig,
   searchProxyUrl,
+  capabilitiesDocument,
 }) {
   if (backend !== 'node') throw new Error('backend kind is invalid')
   if (typeof nodeEntry !== 'string' || !isAbsolute(nodeEntry)) {
@@ -207,6 +208,9 @@ export function backendLaunchSpec({
     ['NOVA_AUDIO_AGENT_KNOWLEDGE_PATH', settings?.knowledgePath ?? SETTINGS_DEFAULTS.knowledgePath],
   ]) {
     if (typeof value === 'string' && value) env[name] = value
+  }
+  if (env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG && !env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG.startsWith('~/')) {
+    env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG = resolve(env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG)
   }
   const inheritedProxy = parentEnv.HTTPS_PROXY
     ?? parentEnv.https_proxy
@@ -280,31 +284,7 @@ export function backendLaunchSpec({
   // and silently clobber a working parent value with something unusable —
   // and the value actually injected is the trimmed one, so accidental
   // surrounding whitespace in a pasted key is cleaned up too.
-  if (decryptedSecrets && typeof decryptedSecrets === 'object') {
-    const activeSecretKeys = new Set(ALWAYS_ACTIVE_SECRET_KEYS)
-    if (pipelineMode === 'cascaded') {
-      const llmProvider = settings?.cascadedLlmProvider
-        ?? SETTINGS_DEFAULTS.cascadedLlmProvider
-      activeSecretKeys.add(llmProvider === 'ark' ? 'arkApiKey' : 'dashscopeApiKey')
-      activeSecretKeys.add('doubaoBigmodelApiKey')
-      // Optional override only. When absent, the runtime falls back to the
-      // big-model key; Main does not synthesize a duplicate secret value.
-      activeSecretKeys.add('doubaoAsrApiKey')
-    } else {
-      activeSecretKeys.add('dashscopeApiKey')
-    }
-    for (const [secretKey, envName] of Object.entries(SECRET_ENV_MAP)) {
-      if (!activeSecretKeys.has(secretKey)) continue
-      const value = decryptedSecrets[secretKey]
-      if (typeof value !== 'string') continue
-      if (CONTROL_CHARACTERS.test(value)) continue
-      const trimmed = value.trim()
-      // A control character in the value would make Node reject the whole
-      // spawn, so the key is dropped exactly like an empty one: the launch
-      // proceeds, and whatever the parent environment holds keeps winning.
-      if (trimmed) env[envName] = trimmed
-    }
-  }
+  Object.assign(env, capabilityEnvironment(settings, decryptedSecrets, env, capabilitiesDocument))
   return {
     kind: 'node',
     entry: nodeEntry,
@@ -599,4 +579,49 @@ export async function shutdownBackendBestEffort(child, options) {
   } catch {
     return false
   }
+}
+
+/** Shared by registry validation and the actual child launch. */
+export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}, document) {
+  const env = {...parentEnv}
+  const pipelineMode = settings?.pipelineMode ?? SETTINGS_DEFAULTS.pipelineMode
+  if (decryptedSecrets && typeof decryptedSecrets === 'object') {
+    const activeSecretKeys = new Set(ALWAYS_ACTIVE_SECRET_KEYS)
+    if (pipelineMode === 'cascaded') {
+      const llmProvider = settings?.cascadedLlmProvider
+        ?? SETTINGS_DEFAULTS.cascadedLlmProvider
+      activeSecretKeys.add(llmProvider === 'ark' ? 'arkApiKey' : 'dashscopeApiKey')
+      activeSecretKeys.add('doubaoBigmodelApiKey')
+      // Optional override only. When absent, the runtime falls back to the
+      // big-model key; Main does not synthesize a duplicate secret value.
+      activeSecretKeys.add('doubaoAsrApiKey')
+    } else {
+      activeSecretKeys.add('dashscopeApiKey')
+    }
+    const search = document?.modules?.search
+    const provider = parentEnv.NOVA_AUDIO_AGENT_SEARCH_PROVIDER?.trim() || search?.provider || 'tavily'
+    const consumers = Object.values(document?.mcpServers ?? {}).filter(server => server?.enabled !== false)
+    if (search?.enabled !== false && provider === 'mcp') {
+      const preset = !parentEnv.NOVA_AUDIO_AGENT_SEARCH_MCP_URL?.trim() && search?.mcp?.url === undefined
+      consumers.push({...search?.mcp, headers: search?.mcp?.headers ?? (preset ? {authorization: '${DASHSCOPE_API_KEY}'} : {})})
+    }
+    const references = JSON.stringify(consumers)
+    if (document?.modules?.knowledge?.enabled === true
+      && (settings?.embeddingProvider ?? 'dashscope') === 'dashscope') activeSecretKeys.add('dashscopeApiKey')
+    for (const [key, name] of Object.entries(SECRET_ENV_MAP)) {
+      if (references.includes('${' + name + '}') || (search?.enabled !== false && provider === 'tavily' && search?.tavily?.apiKeyEnv === name)) activeSecretKeys.add(key)
+    }
+    for (const [secretKey, envName] of Object.entries(SECRET_ENV_MAP)) {
+      if (!activeSecretKeys.has(secretKey)) continue
+      const value = decryptedSecrets[secretKey]
+      if (typeof value !== 'string') continue
+      if (CONTROL_CHARACTERS.test(value)) continue
+      const trimmed = value.trim()
+      // A control character in the value would make Node reject the whole
+      // spawn, so the key is dropped exactly like an empty one: the launch
+      // proceeds, and whatever the parent environment holds keeps winning.
+      if (trimmed) env[envName] = trimmed
+    }
+  }
+  return env
 }

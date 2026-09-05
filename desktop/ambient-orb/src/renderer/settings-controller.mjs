@@ -7,7 +7,7 @@ export function mergePatch(base, next) {
     const existing = merged[field]
     const bothObjects = value !== null && typeof value === 'object' && !Array.isArray(value)
       && existing !== null && typeof existing === 'object' && !Array.isArray(existing)
-    merged[field] = bothObjects ? mergePatch(existing, value) : value
+    merged[field] = bothObjects && field !== 'capabilitiesDocument' ? mergePatch(existing, value) : value
   }
   return merged
 }
@@ -62,6 +62,7 @@ const MAIN_LIVE_VIEW_FIELDS = [
   'settingsApplyStatus',
   'microphoneStatus',
   'effectivePaths',
+  'capabilities',
 ]
 
 function isRecord(value) {
@@ -73,7 +74,7 @@ function publicValue(value) {
     const safe = []
     for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
       if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) continue
-      safe[key] = publicValue(descriptor.value)
+      Object.defineProperty(safe, key, {value: publicValue(descriptor.value), enumerable: true, configurable: true, writable: true})
     }
     return safe
   }
@@ -81,7 +82,7 @@ function publicValue(value) {
   const safe = {}
   for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
     if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) continue
-    safe[key] = publicValue(descriptor.value)
+    Object.defineProperty(safe, key, {value: publicValue(descriptor.value), enumerable: true, configurable: true, writable: true})
   }
   return safe
 }
@@ -144,7 +145,7 @@ function leafEntries(value, prefix = []) {
     if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) continue
     const path = [...prefix, field]
     const current = descriptor.value
-    if (isRecord(current)) leaves.push(...leafEntries(current, path))
+    if (isRecord(current) && field !== 'capabilitiesDocument') leaves.push(...leafEntries(current, path))
     else leaves.push([path, publicValue(current)])
   }
   return leaves
@@ -209,7 +210,9 @@ export function createSettingsController({ api, render, status, notice = () => {
     for (const [field, submitted] of Object.entries(publicPatch(patch))) {
       const path = [...prefix, field]
       const received = isRecord(remote) ? remote[field] : undefined
-      if (isRecord(submitted)) rejected.push(...publicRejectionPaths(submitted, received, path))
+      if (field === 'capabilitiesDocument') {
+        if (JSON.stringify(received) !== JSON.stringify(submitted)) rejected.push(path)
+      } else if (isRecord(submitted)) rejected.push(...publicRejectionPaths(submitted, received, path))
       else if (!Object.is(received, submitted)) rejected.push(path)
     }
     return rejected
@@ -270,11 +273,11 @@ export function createSettingsController({ api, render, status, notice = () => {
       }
       renderCurrent()
       const failurePhase = applyFailurePhase()
-      status(!persisted ? '保存失败'
+      status(!persisted ? remoteView?.operationStatus === 'busy' ? '另一项操作进行中，草稿未保存' : remoteView?.operationStatus === 'invalid' ? '配置校验失败，草稿未保存' + (Array.isArray(remoteView.problems) && remoteView.problems.length ? '：' + remoteView.problems.join(' · ') : '') : '保存失败'
         : rejectedPublicFields.length > 0 ? '部分设置未保存'
         : failurePhase === 'restart_failed' ? '已保存·后端未启动'
         : failurePhase === 'failed' ? '已保存·未生效'
-        : '设置已保存')
+        : confirmedView?.settingsApplyStatus === 'applied' ? '已生效' : '设置已保存')
       if (
         persisted
         && rejectedPublicFields.length === 0

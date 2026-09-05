@@ -1,3 +1,6 @@
+import {createBackendControl} from './backend-control.mjs'
+import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, invalidCommit} from './capabilities-settings.mjs'
+import {parseCapabilityRegistry} from '@nova-audio-agent/runtime/desktop'
 import {
   app,
   BrowserWindow,
@@ -147,6 +150,10 @@ let backendStatus = Object.freeze({
   state: 'stopped', connection: null, retryInMs: null, diagnostic: null,
 })
 let backendGeneration = 0
+let settingsGeneration = 0
+let launchGeneration = 0
+let runtimeCapabilities = null
+let backendControl = null
 let settingsApplyStatus = 'idle'
 let mainWindow = null
 let boardWindow = null
@@ -229,7 +236,15 @@ function managedWorkspacesView() {
 // while no keyring existed is still readable by anyone, so the warning stays up
 // until the next save re-seals it.
 function settingsView() {
+  let capabilities
+  try {
+    const document = readCapabilityDocument(currentSettings, process.env)
+    const secrets = decryptSecretsForSpawn(currentSettings, secretCodec)
+    capabilities = readCapabilityEditor(currentSettings, capabilityEnvironment(currentSettings, secrets, process.env, document), Object.values(secrets))
+  } catch { capabilities = {document: null, problems: ['file_unreadable_or_invalid_json']} }
   return {
+    capabilitiesDocument: capabilities.document,
+    capabilities: {...capabilities, document: undefined, diskGeneration: settingsGeneration, runtime: runtimeCapabilities},
     ...publicSettings(currentSettings),
     codexStatus,
     backendStatus: backendStatus.state,
@@ -615,10 +630,12 @@ const workspaceActions = createWorkspaceActions({
 })
 
 async function launchBackend(backendKind, smokeChannel, onExit) {
-  const configurationCode = desktopConfig?.codexConfigurationError
-    ?? desktopConfig?.modelConfigurationError
+  const launchDocument = readCapabilityDocument(currentSettings, process.env)
+  const codingEnabled = launchDocument?.modules?.coding?.enabled !== false
+  const configurationCode = codingEnabled ? desktopConfig?.codexConfigurationError
+    ?? desktopConfig?.modelConfigurationError : null
   if (configurationCode) throw classifyBackendFailure(configurationCode)
-  if (codexStatus.status !== 'ready') throw classifyBackendFailure('codex_unavailable')
+  if (codingEnabled && codexStatus.status !== 'ready') throw classifyBackendFailure('codex_unavailable')
   const token = randomBytes(16).toString('hex')
   const workspace = desktopConfig?.workspace || process.cwd()
   let spawnedBackend = null
@@ -634,6 +651,10 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
   const diagnostic = createBackendDiagnosticCollector()
   try {
     const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
+    const capabilitiesDocument = launchDocument
+    const diskGeneration = settingsGeneration
+    const generation = ++launchGeneration
+    runtimeCapabilities = null
     let searchProxyUrl = ''
     try {
       const proxyRules = await mainWindow?.webContents.session.resolveProxy(
@@ -659,6 +680,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       parentEnv: process.env,
       settings: currentSettings,
       decryptedSecrets,
+      capabilitiesDocument,
       resolvedConfig: desktopConfig,
       searchProxyUrl,
     })
@@ -669,6 +691,12 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       serviceName: 'Nova Audio Agent Runtime',
     })
     backend = spawnedBackend
+    backendControl?.close()
+    backendControl = createBackendControl(spawnedBackend, {onStatus: status => {
+      if (backend !== spawnedBackend || launchGeneration !== generation) return
+      runtimeCapabilities = {...status, generation, diskGeneration, state: backendStatus.state === 'connected' ? 'running' : status.state}
+      sendToSettings('nova:settings:changed', settingsView())
+    }})
     spawnedBackend.stderr?.on('data', chunk => {
       const code = diagnostic.push(chunk.toString('utf8'))
       if (code) console.error(`[backend-diagnostic] ${code}`)
@@ -967,7 +995,21 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     }
     return workspaceActionReply(() => workspaceActions.clearAll())
   })
-  ipcMain.handle('nova:settings:set', async (event, patch) => {
+  ipcMain.handle('nova:capabilities:probe', async (event, payload) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) throw new Error('capability probe rejected')
+    try {
+      if (!payload || typeof payload !== 'object' || Object.keys(payload).sort().join(',') !== 'document,server' || typeof payload.server !== 'string') throw new Error('invalid')
+      const secrets = decryptSecretsForSpawn(currentSettings, secretCodec)
+      assertEditorSafe(payload.document, Object.values(secrets))
+      const environment = capabilityEnvironment(currentSettings, secrets, process.env, payload.document)
+      const registry = parseCapabilityRegistry(payload.document, environment)
+      const config = payload.server === '$search' ? {...registry.modules.search.mcp, enabled: true, transport: 'streamable-http', tools: {}, exposeTo: {frontbrain: false, codex: false}} : registry.mcpServers[payload.server]
+      if (!config || config.enabled === false) return {status: 'disabled', tools: []}
+      const coordinated = await lifecycleCoordinator.run('capabilities_probe', () => publicCapabilityProbe(config, undefined, [...Object.values(secrets), ...referencedCapabilitySecrets(payload.document, environment)]))
+      return coordinated.status === 'busy' ? {status: 'busy', tools: []} : coordinated.value
+    } catch { return {status: 'failed', reason: 'invalid_capabilities_configuration', tools: []} }
+  })
+  ipcMain.handle('nova:settings:set', async (event, payload) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings update rejected')
     }
@@ -976,18 +1018,28 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // configuration, and every reply contains secret key names only.
     const applied = await applySettingsTransaction({
       coordinator: lifecycleCoordinator,
-      patch,
+      patch: payload,
       write: async value => {
         try {
-          return await settingsWriter(value)
+          const commit = parseSettingsCommit(value)
+          return await settingsWriter(commit.settingsPatch ?? {}, next => {
+            validatePreparedSettings(commit.settingsPatch, publicSettings(next))
+            if (capabilityPath(next, process.env) === resolve(settingsFile())) throw invalidCommit('capability_settings_path_conflict')
+            const document = commit.capabilitiesDocument ?? readCapabilityDocument(next, process.env)
+            const secrets = decryptSecretsForSpawn(next, secretCodec)
+            return prepareCapabilityCommit({settings: next, document: commit.capabilitiesDocument,
+              environment: capabilityEnvironment(next, secrets, process.env, document), knownSecrets: Object.values(secrets)})
+          })
         } catch (error) {
           console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
           throw error
         }
       },
-      publishCommitted: () => sendToOrb(
-        'nova:settings:changed', orbSettings(currentSettings),
-      ),
+      publishCommitted: () => {
+        settingsGeneration += 1
+        sendToOrb('nova:settings:changed', orbSettings(currentSettings))
+        sendToSettings('nova:settings:changed', settingsView())
+      },
       prepareConfiguration: async () => {
         try {
           return await prepareDesktopConfiguration()
@@ -1148,6 +1200,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   backendSupervisor = createBackendSupervisor({
     start: onExit => launchBackend(backendKind, smokeChannel, onExit),
     stopBackend: async child => {
+      backendControl?.close()
       await shutdownBackend(child)
       if (backend === child) backend = null
     },
@@ -1156,6 +1209,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       backendStatus = status
       if (status.state === 'connected' && status.connection !== previousConnection) {
         backendGeneration += 1
+        if (runtimeCapabilities) runtimeCapabilities = {...runtimeCapabilities, state: 'running'}
       }
       if (status.state === 'connected' && settingsApplyStatus === 'restarting') {
         settingsApplyStatus = 'applied'
@@ -1166,6 +1220,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       ) {
         settingsApplyStatus = 'restart_failed'
       }
+      if (runtimeCapabilities?.state === 'running' && status.state !== 'connected') runtimeCapabilities = {...runtimeCapabilities, state: 'stopped'}
       sendToSettings('nova:settings:changed', settingsView())
       sendToOrb('nova:backend-status', status)
       if (smokeChannel === null && status.state === 'connected' && status.connection) {

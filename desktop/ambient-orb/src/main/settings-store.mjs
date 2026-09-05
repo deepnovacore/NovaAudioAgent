@@ -449,6 +449,10 @@ export function publicSettings(settings) {
     planReadback: normalized.planReadback,
     plannerModel: normalized.plannerModel,
     progressBubbles: normalized.progressBubbles,
+    embeddingProvider: normalized.embeddingProvider,
+    embeddingModel: normalized.embeddingModel,
+    capabilitiesConfigPath: normalized.capabilitiesConfigPath,
+    knowledgePath: normalized.knowledgePath,
   }
 }
 
@@ -643,10 +647,16 @@ export function applySettingsUpdate(current, patch, codec) {
 // nothing, and leaves the queue usable for whatever is behind it.
 export function createSettingsWriter({ getCurrent, commit, save, codec }) {
   let queue = Promise.resolve()
-  return patch => {
+  return (patch, prepare) => {
     const write = queue.then(async () => {
       const next = applySettingsUpdate(getCurrent(), patch, codec)
-      await save(next)
+      const prepared = await prepare?.(next)
+      try {
+        await save(next)
+      } catch (error) {
+        await prepared?.rollback?.()
+        throw error
+      }
       commit(next)
       return next
     })
