@@ -1182,6 +1182,9 @@ export class FrontbrainToolBudgetError extends AssemblyError {
 /** Apply the role gate before any concrete resource/controller composition, including injected builders. */
 export function filterDisabledCoding<T extends AssemblyOptions & Pick<RealtimeAssemblyOptions,
   'codexResource' | 'codingAgentControllerFactory' | 'intake' | 'projectAdapter'>>(options: T): T {
+  if (options.capabilities === undefined && options.externalMcp !== undefined) {
+    options = {...options, capabilities: options.externalMcp.capabilities}
+  }
   if (options.capabilities?.modules.coding.enabled !== false) return options
   const disabled = new Set([
     ...(options.executors ?? []).filter(adapter => adapter.manifest.roles.includes('coding')).map(adapter => adapter.manifest.name),

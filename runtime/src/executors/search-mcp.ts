@@ -2,7 +2,8 @@
 import {Client} from '@modelcontextprotocol/sdk/client/index.js'
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js'
-import type {CallToolResult, Tool} from '@modelcontextprotocol/sdk/types.js'
+import {ListToolsResultSchema, type CallToolResult, type Tool} from '@modelcontextprotocol/sdk/types.js'
+import {boundedMcpFetch} from '../mcp-client.js'
 import {validateMcpEndpoint, type SearchMcpConfig} from '../capability-registry.js'
 import {TavilyTransportFailure, type SearchTransport} from './search.js'
 
@@ -24,32 +25,11 @@ export class McpSearchTransport implements SearchTransport {
     const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
       requestInit: {headers: this.config.headers},
       reconnectionOptions: {maxRetries: 0, maxReconnectionDelay: 0, initialReconnectionDelay: 0, reconnectionDelayGrowFactor: 1},
-      fetch: async (url, init) => {
-        // Search is request/response only: do not open the SDK's optional background notification stream.
-        if (init?.method === 'GET') return new Response(null, {status: 405})
-        const signal = AbortSignal.any([cleanupSignal ?? controller.signal, ...(init?.signal ? [init.signal] : [])])
-        const response = await fetch(url, {...init, redirect: 'manual', signal})
-        if (!response.ok) {
-          await response.body?.cancel()
-          const code = response.status === 401 || response.status === 403 ? 'authentication'
-            : response.status === 429 ? 'rate_limited'
-            : response.status >= 300 && response.status < 400 ? 'redirect' : 'upstream'
-          throw new TavilyTransportFailure(code)
-        }
-        if (Number(response.headers.get('content-length')) > this.config.maxResultBytes) {
-          await response.body?.cancel()
-          throw new TavilyTransportFailure('response_too_large')
-        }
-        let bytes = 0
-        const body = response.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-          transform: (chunk, stream) => {
-            bytes += chunk.byteLength
-            if (bytes > this.config.maxResultBytes) throw new TavilyTransportFailure('response_too_large')
-            stream.enqueue(chunk)
-          },
-        }))
-        return new Response(body ?? null, {status: response.status, headers: response.headers})
-      },
+      fetch: (url, init) => boundedMcpFetch(url, init, {
+        signal: cleanupSignal ?? controller.signal,
+        maxBytes: this.config.maxResultBytes,
+        failure: code => new TavilyTransportFailure(code),
+      }),
     })
     try {
       const request = {signal: controller.signal, timeout: this.config.timeoutMs}
@@ -59,7 +39,8 @@ export class McpSearchTransport implements SearchTransport {
       let tool: Tool | undefined
       // Discovery pagination is bounded as well as each HTTP response.
       for (let page = 0; page < 8; page += 1) {
-        const listed = await client.listTools(cursor === undefined ? {} : {cursor}, request)
+        // Metadata only: the SDK convenience listTools() compiles even unselected output schemas.
+        const listed = await client.request({method: 'tools/list', params: cursor === undefined ? {} : {cursor}}, ListToolsResultSchema, request)
         tool = listed.tools.find(item => item.name === this.config.tool)
         if (tool !== undefined || listed.nextCursor === undefined) break
         cursor = listed.nextCursor

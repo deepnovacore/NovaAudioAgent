@@ -1,4 +1,5 @@
 import {loadCapabilityRegistry} from './capability-registry.js'
+import {prepareExternalMcp} from './executors/mcp.js'
 /** The compiled realtime desktop entry Electron launches with `utilityProcess.fork()`. */
 
 import {randomUUID} from 'node:crypto'
@@ -42,7 +43,9 @@ process.exitCode = await runDesktopEntryWithStopSources({
   ),
   onDiagnostic,
   construct: async ownership => {
-    const capabilities = loadCapabilityRegistry()
+    const externalMcp = await prepareExternalMcp(loadCapabilityRegistry(), stop.signal)
+    ownership.own(() => externalMcp.close())
+    const capabilities = externalMcp.capabilities
     const loadedSettings = loadSettings()
     // This entry owns the concrete Codex package; core gates injected adapters by their declared role.
     const settings = capabilities.modules.coding.enabled ? loadedSettings : {
@@ -100,6 +103,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
         const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
           settings,
           capabilities,
+          externalMcp,
           telemetry,
           onDiagnostic,
           clock,

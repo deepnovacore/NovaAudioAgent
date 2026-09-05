@@ -135,6 +135,9 @@ export const executorManifestSchema = z.object({
   approvals: z.boolean().default(false),
   /** Hidden executors retain runtime bindings but their raw operations never reach the provider. */
   model_visibility: executorModelVisibilitySchema.default('direct'),
+  probe_policy: z.enum(['readonly_ops', 'none']).default('readonly_ops'),
+  /** External MCP aliases only; calls use the original remote name. */
+  tool_aliases: z.record(z.string(), z.string()).optional(),
   ops: z.array(opSpecSchema),
   policy: handoffPolicySchema,
 }).strict().superRefine((value, context) => {

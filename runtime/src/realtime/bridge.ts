@@ -17,7 +17,7 @@
 
 import { createHmac, randomBytes } from 'node:crypto'
 import { canonicalJson } from '../canonical-json.js'
-import type {ExecutorAdmission} from '../causal-runtime.js'
+import type {ExecutorAdmission, UserTurnAuthority} from '../causal-runtime.js'
 import type { JsonValue } from '../events.js'
 import { USER_PRIORITY } from '../memory.js'
 import type { DelegateRequest } from '../ports.js'
@@ -48,6 +48,7 @@ export interface BridgeRuntime {
   dispatchExternal(
     request: DelegateRequest,
     reason: WakeReason,
+    userTurn?: UserTurnAuthority,
   ): {readonly accepted: boolean; readonly delegate_id: string | null}
 }
 
@@ -159,7 +160,7 @@ export class RealtimeRuntimeBridge {
    */
   acceptToolCall(
     call: ToolCallReady,
-    options: {readonly originRef?: string | null} = {},
+    options: {readonly originRef?: string | null; readonly userTurn?: UserTurnAuthority} = {},
   ): ToolAcceptance {
     const originRef = options.originRef ?? null
     const binding = this.#tools.bindings.get(call.name)
@@ -240,6 +241,7 @@ export class RealtimeRuntimeBridge {
         origin_ref: resolvedOriginRef,
       },
       reason,
+      options.userTurn,
     )
     if (!admission.accepted || admission.delegate_id === null) {
       return this.#refused(call, 'runtime_rejected')

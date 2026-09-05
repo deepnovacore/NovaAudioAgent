@@ -164,6 +164,8 @@ export function parseCapabilityRegistry(input, environment = {}) {
         try {
             if (!SERVER_NAME.test(name))
                 invalid('invalid_server_name');
+            if (name === 'nova_camera' || name === 'nova_knowledge')
+                invalid('reserved_server_name');
             const server = parseServer(value, environment);
             mcpServers[name] = server;
             serverStatuses.push({ name, status: server.enabled ? 'configured' : 'disabled' });

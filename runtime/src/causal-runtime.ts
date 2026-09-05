@@ -42,12 +42,21 @@ export interface ExecutorHandoff {
   readonly refs?: readonly string[]
 }
 
+/** Host-only, non-serializable authority. Never placed in Delegate, Event or Memory. */
+export interface UserTurnAuthority {
+  readonly originRef: string
+  readonly sessionEpoch: number
+  readonly acceptedUserInputRevision: number
+  readonly stillWanted: () => boolean
+}
+
 export interface ExecutorDispatchContext {
   readonly clock: Clock
   readonly delegate: Delegate
   readonly signal: AbortSignal
   readonly progress: (payload: ExecutorProgress) => void
   readonly observe?: (payload: ExecutorObservation) => void
+  readonly userTurn?: UserTurnAuthority
 }
 
 /** Result of an adapter's own admission hook; `null` from the hook means "apply the defaults". */
@@ -111,6 +120,7 @@ export class CausalRuntime {
   readonly #observers = new Set<RuntimeObserver>()
   readonly #pendingUserInputs = new Map<number, PendingUserInput>()
   readonly #hostExecutorCapabilities = new Map<string, object>()
+  readonly #userTurns = new Map<string, UserTurnAuthority>()
   readonly #shutdownGrace: number
   #state: 'new' | 'serving' | 'closed' = 'new'
   #acceptCompletions = true
@@ -197,10 +207,12 @@ export class CausalRuntime {
   dispatchExternal(
     request: DelegateRequest,
     reason: WakeReason,
+    userTurn?: UserTurnAuthority,
   ): RuntimeDispatchResult {
     if (this.#state === 'closed') return {accepted: false, delegate_id: null, problem: 'closed'}
     const admission = this.core.dispatchExternal(request, reason)
     if (admission.accepted) {
+      if (admission.delegate_id !== null && userTurn !== undefined) this.#userTurns.set(admission.delegate_id, userTurn)
       this.#notifyWork()
     }
     return admission
@@ -311,6 +323,7 @@ export class CausalRuntime {
       this.#pendingUserInputs.clear()
       await this.#shutdownTasks()
       this.#hostExecutorCapabilities.clear()
+      this.#userTurns.clear()
     }
     if (this.#failure !== undefined) throw this.#failure
   }
@@ -347,7 +360,10 @@ export class CausalRuntime {
     if (adapter === undefined) throw new Error(`executor adapter is not connected: ${delegate.executor}`)
     this.#ownTask(
       signal => {
+        const userTurn = this.#userTurns.get(delegate.delegate_id)
+        this.#userTurns.delete(delegate.delegate_id)
         const context: ExecutorDispatchContext = {
+        ...(userTurn === undefined ? {} : {userTurn}),
         clock: this.#clock,
         delegate: structuredClone(delegate),
         signal,

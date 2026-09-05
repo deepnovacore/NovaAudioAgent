@@ -11,14 +11,14 @@ import {SearchAdapter} from '../src/executors/search.js'
 import {VirtualClock} from '../src/clock.js'
 import type {ExecutorDispatchContext} from '../src/causal-runtime.js'
 
-async function localMcp(result: (args: unknown) => CallToolResult | Promise<CallToolResult>, name = 'web_search', hangDelete = false) {
+async function localMcp(result: (args: unknown) => CallToolResult | Promise<CallToolResult>, name = 'web_search', hangDelete = false, invalidUnselectedOutput = false) {
   const server = new Server({name: 'local-search-test', version: '1'}, {capabilities: {tools: {}}})
   let listed = 0
   let called = 0
   let deleted = 0
   server.setRequestHandler(ListToolsRequestSchema, () => {
     listed += 1
-    return {tools: [{name, inputSchema: {type: 'object', properties: {search_query: {type: 'string'}, top_k: {type: 'integer'}}, required: ['search_query']}}]}
+    return {tools: [{name, inputSchema: {type: 'object', properties: {search_query: {type: 'string'}, top_k: {type: 'integer'}}, required: ['search_query']}}, ...(invalidUnselectedOutput ? [{name: 'omitted', inputSchema: {type: 'object' as const}, outputSchema: {type: 'object' as const, properties: {value: {type: 'string', pattern: '['}}}}] : [])]}
   })
   server.setRequestHandler(CallToolRequestSchema, request => { called += 1; return result(request.params.arguments) })
   const transport = new StreamableHTTPServerTransport({sessionIdGenerator: randomUUID, enableJsonResponse: true})
@@ -111,4 +111,13 @@ test('remote session termination has its own bound and never masks the primary s
     assert.ok(Date.now() - started < 1500)
     assert.equal(local.stats().deleted, 1)
   } finally { await local.close() }
+})
+
+test('search metadata discovery ignores unselected remote output schemas', async () => {
+  const local = await localMcp(() => ({content: [], structuredContent: {results: [{url: 'https://example.com', title: 'Source', content: 'Evidence'}]}}), 'web_search', false, true)
+  try {
+    const result = await transport(local.url).search('query', {maxResults: 1})
+    assert.equal((result.results as {url: string}[])[0]?.url, 'https://example.com')
+    assert.deepEqual(local.stats(), {listed: 1, called: 1, deleted: 1})
+  } finally {await local.close()}
 })

@@ -106,7 +106,7 @@ function compileProbes(
   const output: Affordance[] = []
   for (const channel of channels) {
     const manifest = manifestsByName.get(channel.name)
-    if (manifest === undefined) continue
+    if (manifest === undefined || manifest.probe_policy === 'none') continue
     for (const item of channel.recent) {
       if (item.outcome !== 'unknown') continue
       for (const operation of manifest.ops) {

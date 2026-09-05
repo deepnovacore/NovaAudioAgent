@@ -332,7 +332,7 @@ const SHUTDOWN_GRACE_MS = 250
 export class RealtimeService {
   readonly session: RealtimeSession
   readonly #intake: IntakeEventPort | undefined
-  #intakeUser: {text: string; origin_ref: string; epoch: number} | null = null
+  #intakeUser: {text: string; origin_ref: string; epoch: number; inputRevision: number; localOnsetRevision: number} | null = null
   #localSpeechOnsetRevision = 0
   #lastLocalSpeechOnsetId: string | null = null
 
@@ -2858,6 +2858,8 @@ export class RealtimeService {
 
     if (event.kind === 'user_transcript_final') {
       if (accepted) {
+        const localOnsetRevision = this.#localSpeechOnsetRevision
+        const inputRevision = this.session.userInputRevision
         if (this.#providerEpochNeedingActivation === event.session_epoch) {
           this.#providerEpochNeedingActivation = null
         }
@@ -2876,7 +2878,7 @@ export class RealtimeService {
         await this.#approvalHost.maybeRequestFreshExecutorApprovalResponse()
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
         this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
-        this.#intakeUser = {text: event.text, origin_ref: originRef, epoch: event.session_epoch}
+        this.#intakeUser = {text: event.text, origin_ref: originRef, epoch: event.session_epoch, inputRevision, localOnsetRevision}
         this.#intake?.userTurn(event.text, originRef, String(event.session_epoch))
         this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
           event.session_epoch,
@@ -3426,10 +3428,9 @@ export class RealtimeService {
       acceptance = this.#refusalAcceptance(event, 'unknown_tool', '{"code":"unknown_tool","state":"refused"}')
     } else {
       try {
+        const userTurn = this.#currentUserTurn(event, originRef)
         acceptance = await this.#interceptHost(event, originRef)
-          ?? (originRef === null
-            ? this.#bridge.acceptToolCall(event)
-            : this.#bridge.acceptToolCall(event, {originRef}))
+          ?? this.#bridge.acceptToolCall(event, {originRef, ...(userTurn === null ? {} : {userTurn})})
       } catch (cause) {
         // The reservation was taken on the assumption the admission would happen. It did not, and a
         // reservation nobody releases is a slot permanently unavailable to every later call.
@@ -3607,6 +3608,20 @@ export class RealtimeService {
     return typeof value === 'string' && this.#agentControllers.has(value) ? value : null
   }
 
+  /** Same current-user fence for controller actions and direct external MCP effects. */
+  #currentUserTurn(event: ToolCallReady, originRef: string | null) {
+    const user = this.#intakeUser
+    if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref
+      || user.localOnsetRevision !== this.#localSpeechOnsetRevision || user.inputRevision !== this.session.userInputRevision) return null
+    const revision = this.session.userInputRevision
+    const localOnsetRevision = this.#localSpeechOnsetRevision
+    return {originRef, sessionEpoch: event.session_epoch, acceptedUserInputRevision: revision,
+      stillWanted: (): boolean => this.session.sessionEpoch === event.session_epoch
+        && this.session.userInputRevision === revision
+        && this.#localSpeechOnsetRevision === localOnsetRevision
+        && this.#intakeUser?.origin_ref === originRef}
+  }
+
   /**
    * The host tools. A controller receives the fenced public request and returns structured facts;
    * RealtimeService alone maps those facts to provider-facing result language.
@@ -3635,11 +3650,10 @@ export class RealtimeService {
     if (controller === undefined) return this.#refusalAcceptance(event, 'unsupported_tool', '{"code":"unsupported_tool"}')
     // A user turn that supersedes an async controller operation makes its result informational only;
     // the controller must re-check this fence before it changes executor state.
-    const revision = this.session.userInputRevision
-    const localOnsetRevision = this.#localSpeechOnsetRevision
-    const fence = (): boolean => this.session.sessionEpoch === event.session_epoch
-      && this.session.userInputRevision === revision
-      && this.#localSpeechOnsetRevision === localOnsetRevision
+    const authority = this.#currentUserTurn(event, originRef)
+    if (authority === null) return this.#refusalAcceptance(event, 'superseded', '{"code":"superseded"}')
+    const revision = authority.acceptedUserInputRevision
+    const fence = authority.stillWanted
     const rawResult = event.name === DISPATCH_TOOL
       ? await controller.dispatch({
         instruction: instruction!, originalUserText: user.text, origin_ref: user.origin_ref,

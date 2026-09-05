@@ -510,11 +510,6 @@ test('desktop entry leaves Codex prewarm to the realtime owner instead of blocki
   assert.doesNotMatch(entry, /await codexResource\.start\(\)/u)
 })
 
-test('desktop entry loads and forwards the capability registry to production assembly', async () => {
-  const entry = await readFile(resolve(import.meta.dirname, '../../src/desktop-entry.ts'), 'utf8')
-  assert.match(entry, /const capabilities = loadCapabilityRegistry\(\)/u)
-})
-
 test('Qwen factory preserves resource identity, explicit Guard settings, and one start path', async () => {
   const connector = recordingConnector()
   const clock = new VirtualClock(10)

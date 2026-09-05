@@ -320,7 +320,7 @@ controller and never enters coding intake.
 | Discovery | At assembly; an allowlisted tool missing from `tools/list` → that server `failed`, others load |
 | Op names | `mcp__<server>__<alias>` (alias rules below) |
 | Trust | Always `untrusted_external` on handoff |
-| Channel | `mcp:<server>` |
+| Channel | `mcp__<server>` (same as manifest name, preserving the runtime routing invariant) |
 | Priority / wake | 40 / surrogate (same band as search) |
 | Sync | `sync_result: true` when `timeoutMs ≤ 10000`; otherwise async handoff with progress |
 | Bounds | per-tool `timeoutMs`, `maxResultBytes`, `maxCallsPerTurn` enforced by the adapter |
@@ -493,3 +493,36 @@ No MCP SDK in the sandboxed renderer.
 Add “Capability extension” and “Search transport” rows from
 [00-overview.md](00-overview.md). Getting Started: Tavily remains default until
 the 03a-flip PR; document DashScope MCP search as opt-in until then.
+
+### M3 implementation transport policy
+
+External server keys `nova_camera` and `nova_knowledge` are reserved individually
+for the host-owned endpoints; another `nova_` name is allowed. A reserved external
+entry reports `reserved_server_name` without preventing other servers from loading.
+
+Startup uses bounded metadata-only discovery before the synchronous assembly
+compiler. Frontend-disabled servers are not connected or spawned by this path.
+The entry owns each prepared connection, including rollback if final compilation
+or the exact tool budget fails. A stopped runtime never reuses these clients.
+Unexpected connection closure changes that server's status to `failed`.
+
+Stdio follows MCP SDK 1.30's platform default environment allowlist, then overlays
+explicit configured `env`. On Unix the inherited keys are `HOME`, `LOGNAME`,
+`PATH`, `SHELL`, `TERM`, and `USER`; Windows uses the SDK's documented system and
+profile path keys. Other ambient values (including provider credentials and
+`NODE_OPTIONS`) are not inherited. Stderr is piped and discarded. Protocol input
+is bounded before JSON parsing. HTTP redirects and background notification streams
+are disabled, and every concurrent request has its own deadline and byte bound.
+
+External input schemas support typed objects/arrays/scalars, declared properties,
+required keys, boolean additionalProperties, enums, numeric bounds and string/array
+length bounds, with depth at most 8. Unsupported keywords (including references,
+patterns and schema unions) fail the whole server's frontend exposure. The SDK's
+AJV validator enforces accepted constraints before the call; native schemas keep
+their existing contract. Missing descriptions use the specified fixed fallback.
+
+The host's current user snapshot supplies origin, accepted input revision, local
+speech-onset revision and session epoch. A nonreadonly call checks these again at
+the transport send boundary. These callbacks remain in private runtime context,
+not persisted delegates or memory. Tool results always remain untrusted external
+content; `probe_policy: none` never promises verification after an unknown result.

@@ -49,7 +49,7 @@ export interface CapabilityModules {
 }
 export interface McpServerStatus {
   readonly name: string
-  readonly status: 'configured' | 'disabled' | 'failed'
+  readonly status: 'configured' | 'ok' | 'disabled' | 'failed'
   readonly reason?: string
 }
 export interface CapabilityRegistry {
@@ -182,6 +182,7 @@ export function parseCapabilityRegistry(input: unknown, environment: Environment
     const safeName = SERVER_NAME.test(name) ? name : `invalid_server_${index + 1}`
     try {
       if (!SERVER_NAME.test(name)) invalid('invalid_server_name')
+      if (name === 'nova_camera' || name === 'nova_knowledge') invalid('reserved_server_name')
       const server = parseServer(value, environment)
       mcpServers[name] = server
       serverStatuses.push({name, status: server.enabled ? 'configured' : 'disabled'})

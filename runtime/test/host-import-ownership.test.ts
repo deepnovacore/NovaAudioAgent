@@ -28,7 +28,7 @@ test('desktop entry reaches coding-disabled composition without importing or con
   }
   export function buildDesktopRealtimeComposition() { throw new Error('disabled-composition-reached'); }`
   const config = `export function loadSettings() { return {executors: ['codex']}; }`
-  const registry = `export function loadCapabilityRegistry() { return {modules: {coding: {enabled: false}}, overrides: []}; }`
+  const registry = `export function loadCapabilityRegistry() { return {modules: {coding: {enabled: false}}, overrides: [], mcpServers: {}, serverStatuses: []}; }`
   const telemetry = `export function createRealtimeTelemetry() { return {close() {}}; }`
   const replacements = {'./desktop-service.js': desktop, './config.js': config, './capability-registry.js': registry, './realtime/telemetry.js': telemetry}
   const hook = `export async function resolve(specifier, context, next) {

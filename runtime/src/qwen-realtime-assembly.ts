@@ -124,6 +124,7 @@ export function buildQwenRealtimeAssembly(
     ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
     ...(options.capabilities === undefined ? {} : {capabilities: options.capabilities}),
+    ...(options.externalMcp === undefined ? {} : {externalMcp: options.externalMcp}),
     ...(options.cameraModuleEnabled === undefined ? {} : {cameraModuleEnabled: options.cameraModuleEnabled}),
     ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
   })

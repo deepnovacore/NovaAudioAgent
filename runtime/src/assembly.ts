@@ -1,5 +1,6 @@
 import {capabilityStatus, type CapabilityRegistry, type CapabilityStatus} from './capability-registry.js'
 import {McpSearchTransport} from './executors/search-mcp.js'
+import type {PreparedExternalMcp} from './executors/mcp.js'
 /**
  * Production assembly: settings in, a serving runtime out.
  *
@@ -64,6 +65,8 @@ export class AssemblyError extends Error {
 export interface AssemblyOptions {
   readonly settings: Settings
   readonly capabilities?: CapabilityRegistry
+  /** Discovery is async and owned by the production entry before synchronous compilation. */
+  readonly externalMcp?: PreparedExternalMcp
   readonly clock?: Clock
   readonly ids?: IdFactory
   readonly gateway?: ModelGateway
@@ -176,7 +179,12 @@ function isAdmissionGatedFrameSource(source: FrameSource): source is AdmissionGa
  */
 export function buildAssembly(options: AssemblyOptions): Assembly {
   const {settings} = options
-  const loadedCapabilities = options.capabilities ?? capabilitiesFromSettings(settings)
+  const loadedCapabilities = options.capabilities ?? options.externalMcp?.capabilities ?? capabilitiesFromSettings(settings)
+  if (Object.values(loadedCapabilities.mcpServers).some(server => server.enabled && server.exposeTo.frontbrain)
+    && options.externalMcp === undefined) throw new AssemblyError('external_mcp_discovery_required')
+  if (options.externalMcp !== undefined && options.externalMcp.capabilities !== loadedCapabilities) {
+    throw new AssemblyError('external_mcp_configuration_mismatch')
+  }
   const capabilities = options.cameraModuleEnabled === undefined ? loadedCapabilities : {
     ...loadedCapabilities, modules: {...loadedCapabilities.modules, camera: {enabled: options.cameraModuleEnabled}},
   }
@@ -255,6 +263,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   }) : undefined
   const configuredExecutors = resolveExecutors(settings, options.executors ?? [], capabilities.modules.coding.enabled)
   const executors = [
+    ...options.externalMcp?.adapters ?? [],
     ...(search === undefined ? [] : [search]),
     ...(camera === undefined || watch === undefined || guard === undefined ? [] : [camera, watch, guard]),
     ...configuredExecutors,
@@ -377,6 +386,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     },
     stop(): Promise<void> {
       return serializeLifecycle(async () => {
+        await options.externalMcp?.close()
         await searchTransport?.close?.()
         if (!started) return
         if (cameraModuleEnabled) {
