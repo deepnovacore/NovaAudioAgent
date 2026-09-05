@@ -1,5 +1,5 @@
 {
-  "startedAt": "2026-09-05T13:54:03.287Z",
+  "startedAt": "2026-09-05T14:22:25.655Z",
   "cases": [
     {
       "name": "configuration",
@@ -11,13 +11,13 @@
     {
       "name": "tts_input_generation",
       "status": "passed",
-      "inputAudioMs": 2787
+      "inputAudioMs": 2790
     },
     {
       "name": "audio_asr_llm_tts",
       "status": "passed",
-      "elapsedMs": 7035,
-      "audioBytes": 75896
+      "elapsedMs": 7251,
+      "audioBytes": 86000
     },
     {
       "name": "cancel_live_response",
@@ -35,31 +35,17 @@
         "interrupted",
         "spoken"
       ]
+    },
+    {
+      "name": "host_fact_attribution_and_queue_reuse",
+      "status": "passed",
+      "spokenEvents": [
+        "host-fact-1",
+        "host-fact-2"
+      ]
     }
   ],
   "scope": "digital audio; no microphone or speaker playback",
-  "endpointing": [
-    {
-      "seq": 1,
-      "ts": 1788616450.179,
-      "kind": "volcengine.endpointing.capability",
-      "payload": {
-        "mode": "bounded_silence",
-        "eot_reason": "executor_unavailable",
-        "vad_reason": "ready",
-        "platform": "darwin",
-        "arch": "arm64"
-      }
-    },
-    {
-      "seq": 2,
-      "ts": 1788616450.179,
-      "kind": "volcengine.endpointing.fallback",
-      "payload": {
-        "eot_reason": "executor_unavailable",
-        "vad_reason": "ready"
-      }
-    }
-  ],
-  "finishedAt": "2026-09-05T13:54:47.861Z"
+  "endpointing": [],
+  "finishedAt": "2026-09-05T14:23:18.250Z"
 }

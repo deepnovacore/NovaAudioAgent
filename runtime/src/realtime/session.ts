@@ -630,12 +630,7 @@ export class RealtimeSession {
     if (options.responseAllowed !== undefined && !options.responseAllowed()) {
       return {accepted: false, injectionEpoch}
     }
-    await this.#createResponse(intent, [item.event_id])
-    this.#state.queuePendingResponse({
-      intents: [intent],
-      provider_intent: intent,
-      user_input_revision: this.userInputRevision,
-    })
+    await this.#createResponse(intent, [intent])
     return {accepted: true, injectionEpoch}
   }
 
@@ -685,6 +680,9 @@ export class RealtimeSession {
       if (admitted === false && this.#userResponseRequest === request) {
         this.#userResponseRequest = null
         this.#awaitingUserResponse = false
+        // false proves this request never owned a generation. Its pre-start fence has no target.
+        if (this.#providerResponseId === null && this.#state.pendingResponseCount === 0
+          && this.#state.premapResponseId === null) this.#fenceNextResponse = false
         if (pending !== null && this.userInputRevision === pending.revision) {
           this.#pendingUserResponse ??= pending
         }
@@ -694,6 +692,9 @@ export class RealtimeSession {
       if (this.#userResponseRequest === request) {
         this.#userResponseRequest = null
         this.#awaitingUserResponse = false
+        if (pending !== null && this.userInputRevision === pending.revision) {
+          this.#pendingUserResponse ??= pending
+        }
       }
       throw new RealtimeDeliveryError(`user response request failed: ${String(cause)}`)
     }
@@ -765,10 +766,15 @@ export class RealtimeSession {
     return true
   }
 
-  async #createResponse(intent: HostResponseIntent, eventIds: readonly string[]): Promise<void> {
+  async #createResponse(intent: HostResponseIntent, intents: readonly HostResponseIntent[]): Promise<void> {
+    const pending = {intents: [...intents], provider_intent: intent, user_input_revision: this.userInputRevision}
+    // A provider may publish its start before the command promise resolves. Register ownership first.
+    this.#state.queuePendingResponse(pending)
+    const eventIds = intents.map(candidate => candidate.item.event_id)
     try {
       await this.#provider.createResponse(intent)
     } catch (cause) {
+      this.#state.discardPendingResponse(pending)
       throw new RealtimeDeliveryError(`response request failed: ${String(cause)}`)
     }
     for (const eventId of eventIds) this.#state.markEventResponded(eventId)
@@ -1679,12 +1685,7 @@ export class RealtimeSession {
       }
     }
     const providerIntent = this.#mergeContinuationIntents(intents, options.originSpoken ?? false)
-    await this.#createResponse(providerIntent, intents.map(intent => intent.item.event_id))
-    this.#state.queuePendingResponse({
-      intents: [...intents],
-      provider_intent: providerIntent,
-      user_input_revision: this.userInputRevision,
-    })
+    await this.#createResponse(providerIntent, intents)
     return 'requested'
   }
 

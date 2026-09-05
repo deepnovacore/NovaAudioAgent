@@ -2040,3 +2040,51 @@ test('cancel timeout fails and retires the epoch instead of leaving a permanentl
     await adapter.close()
   }
 })
+
+
+test('aborting before admission preserves selected context for both user and host retries', async () => {
+  for (const mode of ['user', 'host']) {
+    const llm = new FakeLlm([
+      {kind: 'response_started', response_id: 'wire-retry'},
+      {kind: 'response_completed', response_id: 'wire-retry'},
+    ])
+    const adapter = new CascadedRealtimeAdapter({
+      endpointing: new ScriptedEndpointing(
+        [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}], [{kind: 'speech_end', commit: true}],
+      ),
+      asr: new FakeAsrClient(new FakeAsrSession({text: 'user question', final: true})),
+      llm, tts: new FakeTtsClient(new FakeTtsSession()),
+      idFactory: ids('session', 'speech', 'user-item', 'recovery-provider', 'host-provider'),
+    })
+    const signal = new AbortController().signal
+    await adapter.connect({tools: [], signal})
+    const events: RealtimeProviderEvent[] = []
+    const reader = (async () => {
+      for await (const event of adapter.events(signal)) events.push(event)
+    })()
+    try {
+      await adapter.sendAudio(new Uint8Array([0, 0]), signal)
+      await adapter.sendAudio(new Uint8Array([0, 0]), signal)
+      await waitFor('stored user input', () => events.some(event => event.kind === 'user_transcript_final'))
+      const recovery = {...hostItem('retry-context', 'context-must-survive'), kind: 'recovery' as const}
+      const item = hostItem('retry-target')
+      await adapter.injectHostItem(recovery, directOptions())
+      await adapter.injectHostItem(item, directOptions())
+      const request = (requestSignal: AbortSignal): Promise<unknown> => mode === 'user'
+        ? adapter.ensureResponse(requestSignal, 'user-item')
+        : adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false}, requestSignal)
+      const abort = new AbortController()
+      const cancelled = request(abort.signal)
+      abort.abort()
+      await assert.rejects(cancelled)
+      assert.equal(llm.calls.length, 0)
+      await request(signal)
+      await waitFor('retry response', () => events.some(event => event.kind === 'response_terminal'))
+      assert.ok(llm.calls[0]?.inputs.some(input => input.kind === 'host_context'
+        && input.content.includes('context-must-survive')))
+    } finally {
+      await adapter.close()
+      await reader
+    }
+  }
+})

@@ -532,3 +532,43 @@ test('adapter-connect failure closes each constructed owner once in reverse orde
   ])
   assert.equal(llm.closed, true)
 })
+
+
+test('real provider starts bind host facts and continuations before createResponse returns', async () => {
+  for (const mode of ['host', 'continuation']) {
+    let nextId = 0
+    const ids = (): string => `admission-${++nextId}`
+    const port = new RealtimeProviderSession(providerFor({
+      llms: [new EpochLlm([
+        {kind: 'response_started', response_id: 'wire-fast'},
+        {kind: 'response_completed', response_id: 'wire-fast'},
+      ])], idFactory: ids,
+    }))
+    const session = new RealtimeSession({provider: port, idFactory: ids, clock: new VirtualClock(),
+      playback: new PlaybackRegistry({idFactory: ids, onFrame: () => undefined, onClear: () => undefined}),
+      onDiagnostic: () => undefined})
+    await session.connect({tools: []})
+    const bound: string[][] = []
+    const reader = (async () => {
+      for await (const event of port.events()) {
+        await session.accept(event)
+        if (event.kind === 'response_started') bound.push([...session.responseEventIds(event.response_id)])
+        if (event.kind === 'response_terminal') return
+      }
+    })()
+    try {
+      if (mode === 'host') {
+        await session.deliverHostItem({kind: 'progress', host_item_id: 'host-fast', event_id: 'event-fast',
+          content: 'fact', call_id: null})
+      } else {
+        const item: HostContextItem = {kind: 'tool_output', host_item_id: 'host-fast', event_id: 'event-fast',
+          content: '{"value":"ok"}', call_id: 'call-fast'}
+        await session.injectToolOutput(item)
+        await session.requestToolContinuation([{kind: 'tool_result', item, task_summary: null, origin_spoken: false}])
+      }
+      await settleWithin('fast admitted response', reader)
+      assert.deepEqual(bound, [['event-fast']])
+      assert.equal(session.providerIdle, true)
+    } finally { await port.close() }
+  }
+})

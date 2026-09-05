@@ -523,11 +523,12 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         await Promise.resolve()
         return
       }
-      const inputs = this.#takeResponseInputs(owner, intent)
+      const {inputs, hostIds} = this.#selectResponseInputs(owner, intent)
       if (inputs.length === 0) throw new CascadedRealtimeError('missing_host_input')
       await this.#resolvePendingToolCall(owner, inputs)
       if (!this.#isCurrent(owner)) throw new CascadedRealtimeError('state')
       throwIfAborted(combineSignals(owner.controller.signal, signal))
+      for (const id of hostIds) owner.pending.delete(id)
       this.#startResponse(owner, inputs, {kind: 'host_request', host_item_id: intent.item.host_item_id})
       await Promise.resolve()
     })
@@ -817,11 +818,12 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       const input = owner.userInput
       if (owner.response !== null || input === null
         || (userItemId !== undefined && input.itemId !== userItemId)) return false
-      const {inputs, consumedIds} = this.#takeUserResponseInputs(owner)
-      this.#markConsumed(owner, consumedIds)
+      const {inputs, hostIds} = this.#selectResponseInputs(owner, null)
       await this.#resolvePendingToolCall(owner, inputs)
       if (!this.#isCurrent(owner)) throw new CascadedRealtimeError('state')
       throwIfAborted(combineSignals(owner.controller.signal, signal))
+      if (owner.userInput !== input) return false
+      this.#markConsumed(owner, hostIds)
       // A retry continues the same conversation; appending the transcript again invents a user turn.
       if (!input.submitted) inputs.push({kind: 'user_text', text: input.text})
       this.#startResponse(owner, inputs, {kind: 'user_item', item_id: input.itemId})
@@ -1189,40 +1191,30 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     this.#record('volcengine.response.terminal', {status})
   }
 
-  #takeResponseInputs(owner: EpochOwner, intent: HostResponseIntent): CascadedLlmInput[] {
-    if (!owner.pending.has(intent.item.host_item_id)) return []
-    const selected: CascadedLlmInput[] = []
-    for (const [hostId, pending] of [...owner.pending]) {
-      let include = hostId === intent.item.host_item_id
-        || pending.item.kind === 'recovery' || pending.item.kind === 'dialogue_context'
-      if (intent.item.kind === 'tool_output' && pending.item.kind === 'tool_output') include = true
-      if (!include) continue
-      selected.push(structuredClone(pending.input))
-      owner.pending.delete(hostId)
-    }
-    return selected
-  }
-
-  #takeUserResponseInputs(owner: EpochOwner): {
+  #selectResponseInputs(owner: EpochOwner, intent: HostResponseIntent | null): {
     readonly inputs: CascadedLlmInput[]
-    readonly consumedIds: string[]
+    readonly hostIds: string[]
   } {
     const inputs: CascadedLlmInput[] = []
-    const consumedIds: string[] = []
-    for (const [hostId, pending] of [...owner.pending]) {
-      if (pending.item.kind !== 'recovery' && pending.item.kind !== 'dialogue_context'
-        && pending.item.kind !== 'tool_output') continue
+    const hostIds: string[] = []
+    if (intent !== null && !owner.pending.has(intent.item.host_item_id)) return {inputs, hostIds}
+    for (const [hostId, pending] of owner.pending) {
+      const include = pending.item.kind === 'recovery' || pending.item.kind === 'dialogue_context'
+        || (intent === null ? pending.item.kind === 'tool_output'
+          : hostId === intent.item.host_item_id
+            || (intent.item.kind === 'tool_output' && pending.item.kind === 'tool_output'))
+      if (!include) continue
       inputs.push(structuredClone(pending.input))
-      consumedIds.push(hostId)
-      owner.pending.delete(hostId)
+      hostIds.push(hostId)
     }
-    return {inputs, consumedIds}
+    return {inputs, hostIds}
   }
 
   #markConsumed(owner: EpochOwner, hostIds: readonly string[]): void {
     if (hostIds.length === 0) return
     owner.consumptionGeneration += 1
     for (const hostId of hostIds) {
+      owner.pending.delete(hostId)
       owner.consumed.delete(hostId)
       owner.consumed.set(hostId, owner.consumptionGeneration)
     }

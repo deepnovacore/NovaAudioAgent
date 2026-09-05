@@ -26,16 +26,18 @@ requested 宿主发起应答]
 
 `response_started.origin` 为严格的 user_item / host_request / unknown。级联提供确定来源；Qwen 省略来源时继续经过宿主的保守关联防御。来源只是证据，不是授权：普通工具、项目确认重试、执行器审批都核对 item/revision；明确错误来源不能进入“等下一段转录”的兜底。已修复“错误来源回复 → 真实用户转录 → confirm”的 provisional 审批旁路。
 
+宿主回复先登记待处理记录再调用 provider，避免 response_started 早于命令返回时丢失归属；命令失败只撤销自己的记录，工具结果续接使用同一路径。
+
 宿主事实和工具结果的播报提供空工具列表；用户回复才提供动作工具。共享前台提示词、活动项目/执行器上下文渲染、宿主激活常量已移入 `frontend-instructions.ts`。Qwen 保留旧导出，宿主和级联组装直接使用共享模块。
 
 ## 验证
 
-- 最终完整实时专项：785 通过，0 失败。覆盖 Qwen/级联、schema、session/service、审批、取消交错、epoch、生产组装及旧协议 oracle。
+- 最终完整实时专项：790 通过，0 失败。覆盖 Qwen/级联、schema、session/service、审批、取消交错、epoch、生产组装及旧协议 oracle。
 - `npm run check`：类型、lint、环境契约、Unicode/数值语义审计、执行器边界、capability 检查通过。新增两个数值审计项仅对应本地 response ID 的 epoch/序号，并指向可运行的取消回归。
 - 桌面构建及测试：811 通过，3 项平台跳过；真实 Electron utility-process 级联启动、WebSocket 握手及正常退出通过。
 - 真实 Qwen：连接、宿主消息确认、生成音频、terminal 通过，收到 3 段音频。
-- 真实火山：ASR → Ark → TTS 问答、来源关联、正在生成时精确取消、重连后由真实语音触发工具及结果播报、生产宿主打断清空和下一轮恢复，全部通过。报告见 `2026-09-05-provider-contract-live-report.json`。
-- 扩大 runtime 回归：2255 通过、5 跳过、5 失败。失败名称与此前已在基线复现的 5 项一致：package root 导出快照、生产 schema probe 两项、camera manifest 快照、Codex 普通 adapter 结果。最终两个附加回归由上面的 785 项专项覆盖；没有宣称全库全绿。
+- 真实火山：ASR → Ark → TTS 问答、来源关联、正在生成时精确取消、重连后由真实语音触发工具及结果播报、生产宿主打断清空和下一轮恢复、连续两条宿主事实的 spoken_event_ids 归属及队列复用，全部通过。报告见 `2026-09-05-provider-contract-live-report.json`。
+- 最终完整 runtime 回归：2272 项，2262 通过、5 跳过、5 失败。失败名称与此前已在基线复现的 5 项一致：package root 导出快照、生产 schema probe 两项、camera manifest 快照、Codex 普通 adapter 结果。没有新增失败，也没有宣称全库全绿。
 
 旧 Python oracle 的调度由测试宿主显式模拟； opaque response ID 做一一重命名；新增 origin 由专门契约测试覆盖；宿主 tools=[] 先断言，再与旧 wire payload 的其余字段比较。这些是明确记录的契约迁移，并非将原始 oracle 全部原样通过。
 
@@ -44,6 +46,10 @@ requested 宿主发起应答]
 取消用例曾等待首音频超时。保留的诊断报告显示当时实际上是 `response_started → tool_call_ready → completed`，没有进入 TTS。收掉宿主播报的工具列表后，两次完整 live 复跑通过。此前更早一次超时没有足够事件证据，不能追溯断言为相同原因。
 
 Sol 复核发现旧帧检查起点过晚：现已在 `onAudioClear` 同步记录帧索引，清空回调之后的所有旧 generation 帧都纳入断言。取消超时的非配合实现也有独立回归。Terra/Sol 发现的上述问题均已修复并复核。
+
+Claude `claude-fable-5-1[1m]` 的 high 档代码审查发现未接受请求遗留 fence、异常丢失待答输入、提前消费上下文三点；前两点均有 RED/GREEN，第三点对用户及宿主两条路径都验证了 abort 后重试保留上下文。仅明确 false（未接受请求）才清除无目标 fence；异常保守保留取消防御。xhigh 的大上下文审查未及时返回，未计为通过；采用实际返回的 high 档静态结论。本地测试全部由本任务实际执行，不采信外部模型关于自行运行工具或测试的文字声称。
+
+补充真实 provider 包装与会话并发联跑后，复现并修复了宿主 pending 在开始事件之后才登记的竞态；宿主事实和工具结果续接均有真实适配器回归。Terra 对修复复核无新增问题，外部 `claude-fable-5-1[1m]` 最终静态复核也未发现具体阻塞项；真实云服务连续两条宿主事实均归属正确，终结后队列恢复空闲。
 
 ## 使用与边界
 

@@ -237,6 +237,17 @@ try {
   assert.ok(frames.slice(afterClear).every(frame => frame.utteranceId !== interrupted.utteranceId), 'stale_audio_after_clear')
   assert.ok(frames.slice(afterClear).some(frame => frame.bytes > 0), 'missing_recovery_audio')
   passed(phase, {clears: clears.length, deliveries: deliveries.map(delivery => delivery.disposition)})
+
+  phase = 'host_fact_attribution_and_queue_reuse'
+  for (let index = 1; index <= 2; index++) {
+    const eventId = `host-fact-${index}`
+    const item = {kind: 'final', host_item_id: eventId, event_id: eventId, call_id: null,
+      content: `第${index}条系统测试结果已经就绪。`}
+    assembly.service.queueHostItem({kind: 'host_fact', item, task_summary: null, origin_spoken: false})
+    await waitFor(phase, () => assembly.service.session.snapshot().spoken_event_ids.includes(eventId))
+  }
+  assert.equal(assembly.service.session.providerIdle, true, 'host_queue_must_release_after_terminal')
+  passed(phase, {spokenEvents: assembly.service.session.snapshot().spoken_event_ids.filter(id => id.startsWith('host-fact-'))})
 } catch (error) {
   // Error messages from transports may contain URLs or headers. Emit only stable codes.
   report.eventSummary = events.map(event => ({kind: event.kind,

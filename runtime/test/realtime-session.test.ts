@@ -23,7 +23,7 @@ function noop(): void {
   // Intentionally empty: these tests do not observe frames or diagnostics.
 }
 
-function makeSession(options: {readonly ids?: readonly string[]; readonly requested?: boolean} = {}): {
+function makeSession(options: {readonly ids?: readonly string[]; readonly requested?: boolean; readonly ensureResponse?: () => Promise<void | boolean>; readonly failCreate?: boolean} = {}): {
   readonly session: RealtimeSession
   readonly actions: string[]
 } {
@@ -58,11 +58,11 @@ function makeSession(options: {readonly ids?: readonly string[]; readonly reques
     },
     createResponse: (intent: HostResponseIntent) => {
       actions.push(`create_response:${intent.kind}`)
-      return Promise.resolve()
+      return options.failCreate === true ? Promise.reject(new Error('create failed')) : Promise.resolve()
     },
     ensureResponse: itemId => {
       actions.push(options.requested === true ? `ensure_response:${itemId}` : 'ensure_response')
-      return Promise.resolve()
+      return options.ensureResponse?.() ?? Promise.resolve()
     },
     cancelResponse: (responseId: string) => {
       actions.push(`cancel:${responseId}`)
@@ -874,4 +874,44 @@ test('an unrelated terminal cannot free an outstanding targeted user request', a
       status: 'completed', reason: ''})
     assert.equal(session.providerIdle, true)
   }
+})
+
+
+test('a refused request releases its own pre-start fence without cancelling the next input', async () => {
+  let settle: (accepted: boolean) => void = () => undefined
+  const gate = new Promise<boolean>(resolve => { settle = resolve })
+  let calls = 0
+  const {session, actions} = makeSession({requested: true,
+    ensureResponse: () => ++calls === 1 ? gate : Promise.resolve(true)})
+  await session.connect({tools: []})
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+  const first = session.requestPendingUserResponse()
+  await session.localSpeechOnset('new-onset')
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'B', text: 'next'})
+  settle(false)
+  assert.equal(await first, false)
+  assert.equal(await session.requestPendingUserResponse(), true)
+  assert.equal(await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-B',
+    origin: {kind: 'user_item', item_id: 'B'}}), true)
+  assert.equal(actions.includes('cancel:response-B'), false)
+})
+
+test('a thrown user request preserves the queued input for an explicit retry', async () => {
+  let calls = 0
+  const {session} = makeSession({requested: true, ensureResponse: () => ++calls === 1
+    ? Promise.reject(new Error('request failed')) : Promise.resolve(true)})
+  await session.connect({tools: []})
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+  await assert.rejects(session.requestPendingUserResponse(), /user response request failed/u)
+  assert.equal(session.providerIdle, false)
+  assert.equal(await session.requestPendingUserResponse(), true)
+})
+
+
+test('a failed host command releases its pending admission', async () => {
+  const {session} = makeSession({failCreate: true})
+  await session.connect({tools: []})
+  await assert.rejects(session.deliverHostItem({kind: 'progress', host_item_id: 'host-failed',
+    event_id: 'event-failed', content: 'fact', call_id: null}), /response request failed/u)
+  assert.equal(session.providerIdle, true)
 })

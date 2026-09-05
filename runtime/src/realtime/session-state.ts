@@ -691,6 +691,12 @@ export class RealtimeSessionState {
     this.#pendingResponses.push(pending)
   }
 
+  /** Roll back only this command's unconsumed admission; a later request is a different owner. */
+  discardPendingResponse(pending: PendingResponse): void {
+    const index = this.#pendingResponses.indexOf(pending)
+    if (index >= 0) this.#pendingResponses.splice(index, 1)
+  }
+
   /** Remove the head, whether it started or was given up on. */
   popPendingResponse(): PendingResponse | undefined {
     return this.#pendingResponses.shift()
