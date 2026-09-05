@@ -57,6 +57,15 @@ function context(signal = new AbortController().signal): ExecutorDispatchContext
   }
 }
 
+function structured(result: unknown): Record<string, unknown> {
+  assert.equal(typeof result, 'object')
+  assert.notEqual(result, null)
+  const value = result as {readonly structuredContent?: unknown}
+  assert.equal(typeof value.structuredContent, 'object')
+  assert.notEqual(value.structuredContent, null)
+  return value.structuredContent as Record<string, unknown>
+}
+
 test('knowledge adapter calls recall through its actual local MCP SDK client', async () => {
   const adapter = new KnowledgeMcpAdapter(backend())
   try {
@@ -83,11 +92,94 @@ test('knowledge MCP exposes only readonly tools and rejects invalid or unknown c
     assert.equal((await peer.client.callTool({name: 'write', arguments: {}})).isError, true)
     assert.equal((await peer.client.callTool({name: 'recall', arguments: {query: '', k: 1}})).isError, true)
     assert.equal((await peer.client.callTool({name: 'recall', arguments: {query: 'ok', k: 6}})).isError, true)
+    assert.equal((await peer.client.callTool({name: 'recall', arguments: {query: 'ok', unexpected: true}})).isError, true)
     const chunk = await peer.client.callTool({name: 'get_chunk', arguments: {locator: 'chunk:one'}})
     assert.equal(chunk.isError, undefined)
     assert.ok(Array.isArray(chunk.content))
     assert.match((chunk.content[0] as {text: string}).text, /untrusted_external/u)
   } finally { await peer.close() }
+})
+
+test('get_chunk validates every status branch and stale carries current bounded text', async () => {
+  const malicious = await local({
+    recall: () => Promise.resolve([]),
+    getChunk: () => Promise.resolve({status: 'token: private-value'} as never),
+  })
+  try { assert.equal((await malicious.client.callTool({name: 'get_chunk', arguments: {locator: 'chunk:one'}})).isError, true) }
+  finally { await malicious.close() }
+  const peer = await local({
+    recall: () => Promise.resolve([]),
+    getChunk: () => Promise.resolve({status: 'stale' as const, text: 'Current\ntext', title: 'Source', heading_path: 'Root', source_id: 'source:one'}),
+  })
+  try {
+    const stale = structured(await peer.client.callTool({name: 'get_chunk', arguments: {locator: 'chunk:one'}}))
+    assert.deepEqual(stale, {trust: 'untrusted_external', status: 'stale', locator: 'chunk:one', source_id: 'source:one', title: 'Source', heading_path: 'Root', text: 'Current\ntext', note: 'source_reindexed'})
+  } finally { await peer.close() }
+  const gone = await local({
+    recall: () => Promise.resolve([]), getChunk: () => Promise.resolve({status: 'gone' as const, title: 'Retained source'}),
+  })
+  try { assert.deepEqual(structured(await gone.client.callTool({name: 'get_chunk', arguments: {locator: 'chunk:one'}})), {trust: 'untrusted_external', status: 'gone', title: 'Retained source'}) }
+  finally { await gone.close() }
+})
+
+test('recall validates strict encoded SDK input but leaves sensitive query handling to its backend', async () => {
+  let received = ''
+  const adapter = new KnowledgeMcpAdapter({
+    recall: query => { received = query; return Promise.resolve([{locator: 'chunk:one', source_id: 'source:one', title: 'Title', heading_path: 'Root', text: 'Line one\n\tLine two', score: 1}]) },
+    getChunk: () => Promise.resolve({status: 'gone' as const}),
+  })
+  try {
+    const handoff = await adapter.dispatch('recall', {query: '/etc/hosts'}, context())
+    assert.equal(handoff.outcome, 'ok')
+    assert.equal(received, '/etc/hosts')
+    assert.deepEqual(handoff.content.hits, [{locator: 'chunk:one', source_id: 'source:one', title: 'Title', heading_path: 'Root', text: 'Line one\n\tLine two', score: 1}])
+  } finally { await adapter.close() }
+})
+
+test('a failed connect never replaces a successor opened after close', async () => {
+  const original = Client.prototype.connect
+  let rejectFirst!: (error: Error) => void
+  let first = true
+  Object.defineProperty(Client.prototype, 'connect', {configurable: true, value: function (this: Client, ...args: Parameters<Client['connect']>) {
+    if (first) { first = false; return new Promise<void>((_resolve, reject) => { rejectFirst = reject }) }
+    return original.apply(this, args)
+  }})
+  const adapter = new KnowledgeMcpAdapter(backend())
+  try {
+    const initial = adapter.connect()
+    await Promise.resolve()
+    await adapter.close()
+    const successor = adapter.connect()
+    await Promise.resolve()
+    const client = adapter.clientForTest()
+    rejectFirst(new Error('initial failure'))
+    await assert.rejects(initial)
+    await successor
+    assert.equal(adapter.clientForTest(), client)
+  } finally {
+    Object.defineProperty(Client.prototype, 'connect', {configurable: true, value: original})
+    await adapter.close()
+  }
+})
+
+test('loopback uses an absolute deadline for a continuously dripping request body', async () => {
+  const loopback = await startKnowledgeMcpHttpServer(backend())
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const endpoint = new URL(loopback.url)
+      const request = httpRequest(endpoint, {method: 'POST', headers: {
+        Authorization: `Bearer ${loopback.token}`, 'content-type': 'application/json',
+      }})
+      const drip = setInterval(() => { if (!request.destroyed) request.write(' ') }, 100)
+      const deadline = setTimeout(() => { request.destroy(); reject(new Error('absolute request deadline did not settle')) }, 6_500)
+      request.once('error', () => { clearInterval(drip); clearTimeout(deadline); resolve() })
+      request.once('response', response => {
+        clearInterval(drip); clearTimeout(deadline); response.resume()
+        response.once('end', () => { assert.equal(response.statusCode, 408); resolve() })
+      })
+      request.write('{')
+    })
+  } finally { await loopback.close() }
 })
 
 test('knowledge adapter fails closed for malformed, oversized, secret-bearing, and aborted backend recall', async () => {

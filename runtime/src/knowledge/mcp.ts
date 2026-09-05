@@ -21,11 +21,14 @@ const MAX_LOCATOR_POINTS = 256
 const MAX_TEXT_POINTS = 600
 const MAX_CHUNK_POINTS = 3200
 const MAX_METADATA_POINTS = 256
+const MAX_QUERY_UNITS = MAX_QUERY_POINTS * 4
+const MAX_LOCATOR_UNITS = MAX_LOCATOR_POINTS * 4
 const MAX_BODY_BYTES = 64 * 1024
 const MAX_REQUESTS = 8
 const REQUEST_TIMEOUT_MS = 5000
 const credentialLike = /(?:\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|credential)\b\s*(?:=|:)|-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----)/iu
 const opaqueLocator = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u
+const knowledgeLocator = /^knowledge:\/\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\?d=[a-f0-9]{12}$/u
 const rawSourcePath = /(?:^|[\s"'])(?:\/|[A-Za-z]:[\\/])/u
 
 export interface KnowledgeRecallHit {
@@ -58,18 +61,22 @@ export const KNOWLEDGE_MCP_MANIFEST: ExecutorManifest = executorManifestSchema.p
 
 function points(value: string): number { return Array.from(value).length }
 
-function safeText(value: unknown, limit: number): string | null {
+function safeOutputText(value: unknown, limit: number): string | null {
   return typeof value === 'string' && value.length > 0 && points(value) <= limit
-    && !/[\u0000-\u001f\u007f]/u.test(value) && !credentialLike.test(value) && !rawSourcePath.test(value) ? value : null
+    && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
+    && !credentialLike.test(value) && !rawSourcePath.test(value) ? value : null
 }
 
 function safeLocator(value: unknown): string | null {
-  return typeof value === 'string' && points(value) <= MAX_LOCATOR_POINTS && opaqueLocator.test(value) && !credentialLike.test(value) ? value : null
+  return typeof value === 'string' && value.length <= MAX_LOCATOR_UNITS && points(value) <= MAX_LOCATOR_POINTS
+    && (opaqueLocator.test(value) || knowledgeLocator.test(value)) && !credentialLike.test(value) ? value : null
 }
 
 function recallArgs(value: unknown): {readonly query: string; readonly k: number} | null {
   if (!plain(value) || Object.keys(value).some(key => key !== 'query' && key !== 'k')) return null
-  const query = safeText(value.query, MAX_QUERY_POINTS)
+  // Query sensitivity belongs to the embedding provider's pre-embedding gate. This MCP boundary
+  // only preserves its schema contract, so users can ask about paths or paste multiline text.
+  const query = typeof value.query === 'string' && value.query.length <= MAX_QUERY_UNITS && points(value.query) <= MAX_QUERY_POINTS ? value.query : null
   const k = value.k === undefined ? 3 : value.k
   return query !== null && typeof k === 'number' && Number.isInteger(k) && k >= 1 && k <= 5 ? {query, k} : null
 }
@@ -88,9 +95,9 @@ function safeHit(value: unknown, textLimit = MAX_TEXT_POINTS): KnowledgeRecallHi
   if (!plain(value) || Object.keys(value).length !== 6) return null
   const locator = safeLocator(value.locator)
   const source_id = safeLocator(value.source_id)
-  const title = safeText(value.title, MAX_METADATA_POINTS)
-  const heading_path = safeText(value.heading_path, MAX_METADATA_POINTS)
-  const text = safeText(value.text, textLimit)
+  const title = safeOutputText(value.title, MAX_METADATA_POINTS)
+  const heading_path = safeOutputText(value.heading_path, MAX_METADATA_POINTS)
+  const text = safeOutputText(value.text, textLimit)
   return locator !== null && source_id !== null && title !== null && heading_path !== null && text !== null
     && typeof value.score === 'number' && Number.isFinite(value.score)
     ? {locator, source_id, title, heading_path, text, score: value.score} : null
@@ -115,11 +122,35 @@ function toolError(code: 'invalid_params' | 'unavailable' | 'cancelled'): CallTo
   return {isError: true, content: [{type: 'text', text: code}]}
 }
 
+function exactKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[]): boolean {
+  const allowed = new Set([...required, ...optional])
+  return required.every(key => Object.hasOwn(value, key)) && Object.keys(value).every(key => allowed.has(key))
+}
+
+function safeChunk(value: unknown, locator: string): Record<string, JsonValue> | null {
+  if (!plain(value) || !Object.hasOwn(value, 'status') || typeof value.status !== 'string') return null
+  if (value.status === 'gone') {
+    if (!exactKeys(value, ['status'], ['title'])) return null
+    if (!Object.hasOwn(value, 'title')) return {trust: 'untrusted_external', status: 'gone'}
+    const title = safeOutputText(value.title, MAX_METADATA_POINTS)
+    return title === null ? null : {trust: 'untrusted_external', status: 'gone', title}
+  }
+  if (value.status !== 'ok' && value.status !== 'stale' || !exactKeys(value, ['status', 'text', 'title', 'heading_path'], ['source_id'])) return null
+  const text = safeOutputText(value.text, MAX_CHUNK_POINTS)
+  const title = safeOutputText(value.title, MAX_METADATA_POINTS)
+  const heading_path = safeOutputText(value.heading_path, MAX_METADATA_POINTS)
+  if (text === null || title === null || heading_path === null) return null
+  const source_id = Object.hasOwn(value, 'source_id') ? safeLocator(value.source_id) : undefined
+  if (Object.hasOwn(value, 'source_id') && source_id === null) return null
+  return {trust: 'untrusted_external', status: value.status, locator, title, heading_path, text,
+    ...(source_id === undefined ? {} : {source_id}), ...(value.status === 'stale' ? {note: 'source_reindexed'} : {})}
+}
+
 export function createKnowledgeMcpServer(backend: KnowledgeRecallBackend): McpServer {
   const server = new McpServer({name: 'nova-knowledge', version: '0.2.0'})
   server.registerTool(MCP_KNOWLEDGE_RECALL, {
     description: '检索本地知识库。',
-    inputSchema: {query: z.string(), k: z.number().optional()}, annotations: {readOnlyHint: true},
+    inputSchema: z.object({query: z.string().min(1).max(MAX_QUERY_UNITS), k: z.number().int().min(1).max(5).optional()}).strict(), annotations: {readOnlyHint: true},
   }, async (input, extra) => {
     const args = recallArgs(input)
     if (args === null) return toolError('invalid_params')
@@ -131,15 +162,13 @@ export function createKnowledgeMcpServer(backend: KnowledgeRecallBackend): McpSe
     } catch { return extra.signal.aborted ? toolError('cancelled') : toolError('unavailable') }
   })
   server.registerTool(MCP_KNOWLEDGE_GET_CHUNK, {
-    description: '读取已检索知识片段。', inputSchema: {locator: z.string()}, annotations: {readOnlyHint: true},
+    description: '读取已检索知识片段。', inputSchema: z.object({locator: z.string().min(1).max(MAX_LOCATOR_UNITS)}).strict(), annotations: {readOnlyHint: true},
   }, async input => {
     const args = chunkArgs(input)
     if (args === null) return toolError('invalid_params')
     try {
-      const chunk = await backend.getChunk(args.locator)
-      if (chunk.status !== 'ok') return toolResult({trust: 'untrusted_external', status: chunk.status})
-      const hit = safeHit({locator: args.locator, source_id: chunk.source_id, title: chunk.title, heading_path: chunk.heading_path, text: chunk.text, score: 0}, MAX_CHUNK_POINTS)
-      return hit === null ? toolError('unavailable') : toolResult({trust: 'untrusted_external', status: 'ok', ...hit})
+      const chunk = safeChunk(await backend.getChunk(args.locator), args.locator)
+      return chunk === null ? toolError('unavailable') : toolResult(chunk)
     } catch { return toolError('unavailable') }
   })
   return server
@@ -189,12 +218,22 @@ export class KnowledgeMcpAdapter implements ExecutorAdapter {
       if (this.#closed === closed) { this.#closed = undefined; this.#replaceClosedConnection() }
     }
     if (this.#connection !== undefined) return await this.#connection
-    const pending = (async () => {
-      try { await this.#server.connect(this.#serverTransport); await this.#client.connect(this.#clientTransport) }
-      catch (error) { await Promise.allSettled([this.#client.close(), this.#server.close()]); this.#connection = undefined; this.#replaceClosedConnection(); throw error }
+    const server = this.#server
+    const client = this.#client
+    const pending: {attempt: Promise<void> | undefined} = {attempt: undefined}
+    pending.attempt = (async () => {
+      try { await server.connect(this.#serverTransport); await client.connect(this.#clientTransport) }
+      catch (error) {
+        await Promise.allSettled([client.close(), server.close()])
+        if (pending.attempt !== undefined && this.#connection === pending.attempt) {
+          this.#connection = undefined
+          if (this.#server === server && this.#client === client) this.#replaceClosedConnection()
+        }
+        throw error
+      }
     })()
-    this.#connection = pending
-    return await pending
+    this.#connection = pending.attempt
+    return await pending.attempt
   }
 
   close(): Promise<void> {
@@ -202,6 +241,9 @@ export class KnowledgeMcpAdapter implements ExecutorAdapter {
     this.#connection = undefined
     return this.#closed
   }
+
+  /** Test-only inspection of the real, linked client. */
+  clientForTest(): unknown { return this.#client }
 
   async dispatch(op: string, request: Readonly<Record<string, JsonValue>>, context: ExecutorDispatchContext): Promise<ExecutorHandoff> {
     if (op !== MCP_KNOWLEDGE_RECALL) return handoffFailure('unknown_op', 'refused')
@@ -255,6 +297,25 @@ async function parseBody(request: IncomingMessage): Promise<unknown> {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown } catch { throw new Error('body') }
 }
 
+/** Drain rejected bodies only up to our request deadline; a peer cannot retain a socket forever. */
+function discard(request: IncomingMessage): void {
+  let size = 0
+  const timer = setTimeout(() => { request.destroy() }, REQUEST_TIMEOUT_MS)
+  const done = () => { clearTimeout(timer) }
+  request.once('end', done)
+  request.once('close', done)
+  request.on('data', chunk => {
+    size += Buffer.isBuffer(chunk) ? chunk.byteLength : Buffer.byteLength(chunk)
+    if (size > MAX_BODY_BYTES) request.destroy()
+  })
+  request.resume()
+}
+
+function bodyPresent(request: IncomingMessage): boolean {
+  const length = request.headers['content-length']
+  return request.headers['transfer-encoding'] !== undefined || typeof length === 'string' && length !== '0'
+}
+
 function reject(response: ServerResponse, status: number): void {
   response.writeHead(status, {'content-type': 'application/json'})
   response.end('{"error":"request_rejected"}')
@@ -270,27 +331,38 @@ export async function startKnowledgeMcpHttpServer(backend: KnowledgeRecallBacken
     void (async () => {
       if (active >= MAX_REQUESTS) { reject(response, 503); return }
       active += 1
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      let mcp: McpServer | undefined
+      let cleaned: Promise<void> | undefined
+      const cleanup = () => cleaned ??= (async () => {
+        if (mcp === undefined) return
+        mcpServers.delete(mcp)
+        await mcp.close().catch(() => undefined)
+      })()
       try {
-        request.setTimeout(REQUEST_TIMEOUT_MS, () => { request.destroy() })
-        if (!authorized(request, token)) { reject(response, 401); return }
-        if (request.url !== '/mcp' || !loopbackHost(request.headers.host) || !localOrigin(request.headers.origin, port)) { reject(response, 403); return }
-        if (request.method !== 'GET' && request.method !== 'POST' && request.method !== 'DELETE') { reject(response, 405); return }
+        timeout = setTimeout(() => { if (!response.writableEnded) reject(response, 408); request.destroy() }, REQUEST_TIMEOUT_MS)
+        if (!authorized(request, token)) { discard(request); reject(response, 401); return }
+        if (request.url !== '/mcp' || !loopbackHost(request.headers.host) || !localOrigin(request.headers.origin, port)) { discard(request); reject(response, 403); return }
+        if (request.method !== 'GET' && request.method !== 'POST' && request.method !== 'DELETE') { discard(request); reject(response, 405); return }
+        if (request.method !== 'POST' && bodyPresent(request)) { discard(request); reject(response, 413); return }
         let body: unknown
         if (request.method === 'POST') {
-          try { body = await parseBody(request) } catch { reject(response, 413); return }
+          const declared = request.headers['content-length']
+          if (typeof declared === 'string' && (!/^\d+$/u.test(declared) || Number(declared) > MAX_BODY_BYTES)) { discard(request); reject(response, 413); return }
+          try { body = await parseBody(request) } catch { discard(request); reject(response, 413); return }
         }
         // The SDK's stateless transport is explicitly single-request. A fresh server+transport
         // pair keeps callers from sharing session or request-id state.
-        const mcp = createKnowledgeMcpServer(backend)
+        mcp = createKnowledgeMcpServer(backend)
         const transport = new StreamableHTTPServerTransport({enableJsonResponse: true})
         mcpServers.add(mcp)
+        response.once('close', () => { void cleanup() })
         await mcp.connect(transport as Transport)
         if (request.method === 'POST') await transport.handleRequest(request, response, body)
         else await transport.handleRequest(request, response)
-        if (request.method !== 'GET') { await mcp.close(); mcpServers.delete(mcp) }
-        else response.once('close', () => { void mcp.close(); mcpServers.delete(mcp) })
-      } catch { if (!response.writableEnded) reject(response, 400) }
-      finally { active -= 1 }
+        if (request.method !== 'GET') await cleanup()
+      } catch { await cleanup(); if (!response.writableEnded) reject(response, 400) }
+      finally { if (timeout !== undefined) clearTimeout(timeout); active -= 1 }
     })()
   }
   const http: Server = createServer(listener)
