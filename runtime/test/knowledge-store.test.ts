@@ -117,6 +117,21 @@ test('recall combines lexical FTS and vector hits without exposing source locato
   assert.equal(vector[0]?.text, 'orb playback lifecycle')
 })
 
+test('recall falls back to bounded lexical matching without FTS5', async t => {
+  const client = await store(t)
+  await client.replaceSource({
+    source: source(),
+    provider_id: 'embed-a',
+    dims: 2,
+    chunks: [
+      {heading_path: 'Portable', text: 'portable lexical fallback result', token_estimate: 4, vector: [1, 0]},
+      {heading_path: 'Other', text: 'unrelated document', token_estimate: 2, vector: [0, 1]},
+    ],
+  })
+  const lexical = await client.recall('portable fallback', [0, 1], 'embed-b', 1)
+  assert.equal(lexical[0]?.text, 'portable lexical fallback result')
+})
+
 test('invalid replacement rolls back and leaves the prior source recallable', async t => {
   const client = await store(t)
   await client.replaceSource({
@@ -156,6 +171,30 @@ test('source byte cap rejects replacement without changing stored chunks', async
     (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'STORE_INVALID_INPUT',
   )
   assert.equal((await client.recall('original', [1, 0], 'embed-a', 1))[0]?.text, 'original chunk')
+})
+
+test('maxSources refuses a second source but permits reindexing the existing source', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-max-sources-'))
+  const client = new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite'), maxSources: 1})
+  t.after(async () => {
+    await client.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await client.open()
+  await client.replaceSource({
+    source: source(), provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'First', text: 'first durable result', token_estimate: 3, vector: [1, 0]}],
+  })
+  await assert.rejects(client.replaceSource({
+    source: source('source-b'), provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Second', text: 'second refused result', token_estimate: 3, vector: [0, 1]}],
+  }), (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'STORE_CAPACITY')
+  await client.replaceSource({
+    source: {...source(), updated_at: 2}, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Updated', text: 'updated durable result', token_estimate: 3, vector: [0, 1]}],
+  })
+  assert.deepEqual((await client.listSources()).map(item => item.id), ['source-a'])
+  assert.equal((await client.recall('updated', [0, 1], 'embed-a', 1))[0]?.text, 'updated durable result')
 })
 
 test('reindex makes old chunk locators gone and detects wrong digests as stale', async t => {

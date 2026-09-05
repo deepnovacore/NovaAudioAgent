@@ -57,6 +57,7 @@ const data = parseWorkerData(workerData)
 const paths = new SensitivePathPolicy()
 const content = new SensitiveContentPolicy()
 let database: DatabaseSync | undefined
+let ftsAvailable = false
 
 port.on('message', message => {
   const request = parseRequest(message)
@@ -97,6 +98,7 @@ function execute(request: Request): unknown {
 
 function open(): null {
   if (database !== undefined) throw new StoreError('STORE_ALREADY_OPEN')
+  ftsAvailable = false
   let opened: DatabaseSync | undefined
   try {
     const path = preparePrivateDatabasePath(data.path)
@@ -120,13 +122,11 @@ function open(): null {
         id TEXT PRIMARY KEY, source_id TEXT NOT NULL, state TEXT NOT NULL,
         error_code TEXT, updated_at INTEGER NOT NULL
       );
-      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-        chunk_id UNINDEXED, source_id UNINDEXED, text, heading_path
-      );
       CREATE INDEX IF NOT EXISTS chunks_source_idx ON chunks(source_id);
       CREATE INDEX IF NOT EXISTS embeddings_model_idx ON embeddings(provider_id, dims);
       CREATE INDEX IF NOT EXISTS jobs_updated_idx ON jobs(updated_at DESC, id DESC);
     `)
+    ftsAvailable = enableFts(opened)
     secureSidecar(path, '-wal')
     secureSidecar(path, '-shm')
     database = opened
@@ -135,6 +135,7 @@ function open(): null {
   } catch (error) {
     try { opened?.close() } catch { /* stable error only */ }
     database = undefined
+    ftsAvailable = false
     if (error instanceof StoreError) throw error
     throw new StoreError('STORE_WRITE_FAILED')
   }
@@ -149,6 +150,35 @@ function close(): null {
     return null
   } catch {
     throw new StoreError('STORE_WRITE_FAILED')
+  }
+}
+
+function enableFts(opened: DatabaseSync): boolean {
+  if (!supportsFts5(opened)) return false
+  try {
+    opened.exec('BEGIN IMMEDIATE')
+    opened.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+        chunk_id UNINDEXED, source_id UNINDEXED, text, heading_path
+      );
+      DELETE FROM chunks_fts;
+      INSERT INTO chunks_fts(chunk_id, source_id, text, heading_path)
+      SELECT id, source_id, text, heading_path FROM chunks;
+      COMMIT;
+    `)
+    return true
+  } catch {
+    try { opened.exec('ROLLBACK') } catch { /* no active transaction */ }
+    return false
+  }
+}
+
+function supportsFts5(opened: DatabaseSync): boolean {
+  try {
+    opened.prepare('SELECT fts5(?) AS available').get('knowledge')
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -171,7 +201,7 @@ function replaceSource(value: unknown): null {
 
   try {
     opened.exec('BEGIN IMMEDIATE')
-    opened.prepare('DELETE FROM chunks_fts WHERE source_id = ?').run(input.source.id)
+    if (ftsAvailable) opened.prepare('DELETE FROM chunks_fts WHERE source_id = ?').run(input.source.id)
     opened.prepare('DELETE FROM sources WHERE id = ?').run(input.source.id)
     opened.prepare(`
       INSERT INTO sources(id, title, kind, locator, mime, fingerprint, bytes, created_at, updated_at, status)
@@ -187,14 +217,14 @@ function replaceSource(value: unknown): null {
     const embeddingStatement = opened.prepare(`
       INSERT INTO embeddings(chunk_id, provider_id, dims, vector) VALUES (?, ?, ?, ?)
     `)
-    const ftsStatement = opened.prepare(`
+    const ftsStatement = ftsAvailable ? opened.prepare(`
       INSERT INTO chunks_fts(chunk_id, source_id, text, heading_path) VALUES (?, ?, ?, ?)
-    `)
+    `) : undefined
     for (const chunk of input.chunks) {
       const id = randomUUID()
       chunkStatement.run(id, input.source.id, chunk.heading_path, chunk.text, chunk.token_estimate)
       embeddingStatement.run(id, input.provider_id, input.dims, vectorBlob(chunk.vector))
-      ftsStatement.run(id, input.source.id, chunk.text, chunk.heading_path)
+      ftsStatement?.run(id, input.source.id, chunk.text, chunk.heading_path)
     }
     opened.exec('COMMIT')
     return null
@@ -210,7 +240,7 @@ function removeSource(value: unknown): null {
   const opened = db()
   try {
     opened.exec('BEGIN IMMEDIATE')
-    opened.prepare('DELETE FROM chunks_fts WHERE source_id = ?').run(id)
+    if (ftsAvailable) opened.prepare('DELETE FROM chunks_fts WHERE source_id = ?').run(id)
     opened.prepare('DELETE FROM sources WHERE id = ?').run(id)
     opened.exec('COMMIT')
     return null
@@ -242,19 +272,10 @@ function recall(queryValue: unknown, vectorValue: unknown, providerValue: unknow
   }
   const byId = new Map(vectors.map(row => [textValue(row, 'id'), row]))
 
-  const fts = safeFtsQuery(query)
-  if (fts !== '') {
-    const lexical = opened.prepare(`
-      SELECT c.id, c.source_id, s.title, c.heading_path, c.text
-      FROM chunks_fts f JOIN chunks c ON c.id = f.chunk_id JOIN sources s ON s.id = c.source_id
-      WHERE chunks_fts MATCH ?
-      ORDER BY bm25(chunks_fts), f.chunk_id ASC LIMIT 50
-    `).all(fts) as Row[]
-    for (const [index, row] of lexical.entries()) {
-      const id = textValue(row, 'id')
-      byId.set(id, row)
-      candidates.set(id, {...candidates.get(id), lexicalRank: index + 1})
-    }
+  for (const [index, row] of lexicalCandidates(opened, query).entries()) {
+    const id = textValue(row, 'id')
+    byId.set(id, row)
+    candidates.set(id, {...candidates.get(id), lexicalRank: index + 1})
   }
   if (candidates.size === 0) return []
   return [...candidates.entries()]
@@ -493,8 +514,35 @@ function cosine(left: readonly number[], right: readonly number[]): number {
 }
 
 function safeFtsQuery(query: string): string {
+  return lexicalTerms(query).map(token => `"${token.replaceAll('"', '""')}"`).join(' ')
+}
+
+function lexicalTerms(query: string): readonly string[] {
   return [...new Set(query.match(/[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 24)
-    .map(token => `"${token.replaceAll('"', '""')}"`).join(' ')
+}
+
+function lexicalCandidates(opened: DatabaseSync, query: string): readonly Row[] {
+  const terms = lexicalTerms(query)
+  if (terms.length === 0) return []
+  if (ftsAvailable) {
+    return opened.prepare(`
+      SELECT c.id, c.source_id, s.title, c.heading_path, c.text
+      FROM chunks_fts f JOIN chunks c ON c.id = f.chunk_id JOIN sources s ON s.id = c.source_id
+      WHERE chunks_fts MATCH ?
+      ORDER BY bm25(chunks_fts), f.chunk_id ASC LIMIT 50
+    `).all(safeFtsQuery(query)) as Row[]
+  }
+  const clauses = terms.map(() => '(c.text LIKE ? ESCAPE \'\\\' OR c.heading_path LIKE ? ESCAPE \'\\\')').join(' AND ')
+  const values = terms.flatMap(term => {
+    const pattern = `%${term.replace(/[\\%_]/gu, character => `\\${character}`)}%`
+    return [pattern, pattern]
+  })
+  return opened.prepare(`
+    SELECT c.id, c.source_id, s.title, c.heading_path, c.text
+    FROM chunks c JOIN sources s ON s.id = c.source_id
+    WHERE ${clauses}
+    ORDER BY c.source_id ASC, c.id ASC LIMIT 50
+  `).all(...values) as Row[]
 }
 
 function locatorDigest(sourceId: string, chunkId: string): string {
