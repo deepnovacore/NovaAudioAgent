@@ -57,6 +57,8 @@ interface Pending<Result> {
   readonly reject: (error: KnowledgeStoreClientError) => void
 }
 
+const CLOSE_GRACE_MS = 250
+
 export class KnowledgeStoreClient {
   readonly #worker: KnowledgeStoreWorker
   readonly #pending = new Map<number, Pending<unknown>>()
@@ -82,7 +84,15 @@ export class KnowledgeStoreClient {
   close(): Promise<void> {
     if (this.#closing !== undefined) return this.#closing
     this.#closed = true
-    this.#closing = this.#close()
+    this.#expectedExit = true
+    this.#rejectPending('CLIENT_CLOSED')
+    this.#closing = new Promise(resolve => {
+      const timer = setTimeout(resolve, CLOSE_GRACE_MS)
+      void this.#worker.terminate().then(
+        () => { clearTimeout(timer); resolve() },
+        () => { clearTimeout(timer); resolve() },
+      )
+    })
     return this.#closing
   }
 
@@ -108,17 +118,6 @@ export class KnowledgeStoreClient {
   async recordJob(input: KnowledgeJob): Promise<void> { await this.#request('record_job', {input}) }
 
   listJobs(): Promise<readonly KnowledgeJob[]> { return this.#request('list_jobs', {}) }
-
-  async #close(): Promise<void> {
-    try {
-      if (!this.#failed) await this.#send('close', {})
-    } catch {
-      // Termination below is the lifecycle boundary; callers only need pending calls settled.
-    }
-    this.#expectedExit = true
-    try { await this.#worker.terminate() } catch { /* already exited */ }
-    this.#rejectPending('CLIENT_CLOSED')
-  }
 
   #request<Result>(operation: string, payload: Record<string, unknown>): Promise<Result> {
     if (this.#closed || this.#failed) return Promise.reject(new KnowledgeStoreClientError('CLIENT_CLOSED'))

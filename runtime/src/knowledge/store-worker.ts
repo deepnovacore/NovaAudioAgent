@@ -1,10 +1,11 @@
 import {createHash, randomUUID} from 'node:crypto'
-import {chmodSync, lstatSync, mkdirSync} from 'node:fs'
-import {dirname, isAbsolute} from 'node:path'
+import {chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, realpathSync} from 'node:fs'
+import {basename, dirname, isAbsolute, join, resolve} from 'node:path'
 import {isMainThread, parentPort, workerData} from 'node:worker_threads'
 import {DatabaseSync} from 'node:sqlite'
 
 import {SensitiveContentPolicy, SensitivePathPolicy} from '../workspace-graph/sensitivity.js'
+import {hostProjectRootFromConfig} from '../project-store.js'
 import type {
   KnowledgeChunkInput,
   KnowledgeChunkResult,
@@ -87,9 +88,10 @@ function execute(request: Request): unknown {
 
 function open(): null {
   if (database !== undefined) throw new StoreError('STORE_ALREADY_OPEN')
+  let opened: DatabaseSync | undefined
   try {
-    preparePrivateDatabasePath(data.path)
-    const opened = new DatabaseSync(data.path, {allowExtension: false, enableForeignKeyConstraints: true})
+    const path = preparePrivateDatabasePath(data.path)
+    opened = new DatabaseSync(path, {allowExtension: false, enableForeignKeyConstraints: true})
     opened.exec('PRAGMA busy_timeout=1000; PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL')
     opened.exec(`
       CREATE TABLE IF NOT EXISTS sources (
@@ -116,11 +118,13 @@ function open(): null {
       CREATE INDEX IF NOT EXISTS embeddings_model_idx ON embeddings(provider_id, dims);
       CREATE INDEX IF NOT EXISTS jobs_updated_idx ON jobs(updated_at DESC, id DESC);
     `)
+    secureSidecar(path, '-wal')
+    secureSidecar(path, '-shm')
     database = opened
-    chmodSync(data.path, 0o600)
+    opened = undefined
     return null
   } catch (error) {
-    try { database?.close() } catch { /* stable error only */ }
+    try { opened?.close() } catch { /* stable error only */ }
     database = undefined
     if (error instanceof StoreError) throw error
     throw new StoreError('STORE_WRITE_FAILED')
@@ -227,22 +231,23 @@ function recall(queryValue: unknown, vectorValue: unknown, providerValue: unknow
   for (const [index, candidate] of scored.entries()) {
     candidates.set(textValue(candidate.row, 'id'), {vectorRank: index + 1})
   }
+  const byId = new Map(vectors.map(row => [textValue(row, 'id'), row]))
 
   const fts = safeFtsQuery(query)
   if (fts !== '') {
     const lexical = opened.prepare(`
-      SELECT f.chunk_id
-      FROM chunks_fts f JOIN embeddings e ON e.chunk_id = f.chunk_id
-      WHERE chunks_fts MATCH ? AND e.provider_id = ? AND e.dims = ?
+      SELECT c.id, c.source_id, s.title, c.heading_path, c.text
+      FROM chunks_fts f JOIN chunks c ON c.id = f.chunk_id JOIN sources s ON s.id = c.source_id
+      WHERE chunks_fts MATCH ?
       ORDER BY bm25(chunks_fts), f.chunk_id ASC LIMIT 50
-    `).all(fts, providerId, dims) as Row[]
+    `).all(fts) as Row[]
     for (const [index, row] of lexical.entries()) {
-      const id = textValue(row, 'chunk_id')
+      const id = textValue(row, 'id')
+      byId.set(id, row)
       candidates.set(id, {...candidates.get(id), lexicalRank: index + 1})
     }
   }
   if (candidates.size === 0) return []
-  const byId = new Map(vectors.map(row => [textValue(row, 'id'), row]))
   return [...candidates.entries()]
     .map(([id, ranks]) => {
       const row = byId.get(id)
@@ -265,8 +270,8 @@ function getChunk(value: unknown): KnowledgeChunkResult {
   if (row === undefined) return {status: 'gone'}
   if (locatorDigest(parsed.sourceId, parsed.chunkId) !== parsed.digest) return {status: 'stale'}
   return {
-    status: 'ok', text: textValue(row, 'text'), title: textValue(row, 'title'),
-    heading_path: textValue(row, 'heading_path'), source_id: textValue(row, 'source_id'),
+    status: 'ok', text: redactOutput(textValue(row, 'text')), title: redactOutput(textValue(row, 'title')),
+    heading_path: redactOutput(textValue(row, 'heading_path')), source_id: textValue(row, 'source_id'),
   }
 }
 
@@ -355,7 +360,7 @@ function sourceFrom(row: Row): KnowledgeSource {
   const status = textValue(row, 'status')
   if ((kind !== 'file' && kind !== 'url' && kind !== 'folder_child') || (status !== 'ready' && status !== 'failed')) throw new StoreError('STORE_READ_FAILED')
   return {
-    id: textValue(row, 'id'), title: textValue(row, 'title'), kind, locator: textValue(row, 'locator'),
+    id: textValue(row, 'id'), title: redactOutput(textValue(row, 'title')), kind, locator: '[private]',
     mime: textValue(row, 'mime'), fingerprint: textValue(row, 'fingerprint'), bytes: numberValue(row, 'bytes'),
     created_at: numberValue(row, 'created_at'), updated_at: numberValue(row, 'updated_at'), status,
   }
@@ -374,19 +379,20 @@ function hitFrom(row: Row, score: number): KnowledgeRecallHit {
   const id = textValue(row, 'id')
   return {
     locator: `knowledge://${sourceId}/${id}?d=${locatorDigest(sourceId, id)}`,
-    source_id: sourceId, title: textValue(row, 'title'), heading_path: textValue(row, 'heading_path'),
-    text: truncateCodePoints(textValue(row, 'text'), 600), score,
+    source_id: sourceId, title: redactOutput(textValue(row, 'title')), heading_path: redactOutput(textValue(row, 'heading_path')),
+    text: redactOutput(truncateCodePoints(textValue(row, 'text'), 600)), score,
   }
 }
 
-function preparePrivateDatabasePath(path: string): void {
-  if (!isAbsolute(path) || path.includes('\0')) throw new StoreError('STORE_INVALID_INPUT')
-  const parent = dirname(path)
-  mkdirSync(parent, {recursive: true, mode: 0o700})
-  const info = lstatSync(parent)
-  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
-  if (!info.isDirectory() || info.isSymbolicLink() || (uid !== undefined && info.uid !== uid)) throw new StoreError('STORE_WRITE_FAILED')
-  chmodSync(parent, 0o700)
+function preparePrivateDatabasePath(path: string): string {
+  if (!isAbsolute(path) || path.includes('\0') || resolve(path) !== path) throw new StoreError('STORE_INVALID_INPUT')
+  const file = basename(path)
+  if (file === '' || file === '.' || file === '..') throw new StoreError('STORE_INVALID_INPUT')
+  const parent = ensurePrivateParent(dirname(path))
+  const databasePath = join(parent, file)
+  if (databasePath !== path) throw new StoreError('STORE_WRITE_FAILED')
+  ensurePrivateDatabaseFile(databasePath)
+  return databasePath
 }
 
 function db(): DatabaseSync {
@@ -441,7 +447,9 @@ function numericVector(value: unknown): readonly number[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 4096) throw new StoreError('STORE_INVALID_INPUT')
   const vector = value.map(item => {
     if (typeof item !== 'number' || !Number.isFinite(item)) throw new StoreError('STORE_INVALID_INPUT')
-    return item
+    const float = Math.fround(item)
+    if (!Number.isFinite(float)) throw new StoreError('STORE_INVALID_INPUT')
+    return float
   })
   if (!vector.some(item => item !== 0)) throw new StoreError('STORE_INVALID_INPUT')
   return vector
@@ -510,6 +518,81 @@ function numberValue(row: Row, key: string): number {
 
 function truncateCodePoints(value: string, max: number): string {
   return [...value].slice(0, max).join('')
+}
+
+function ensurePrivateParent(parent: string): string {
+  const missing: string[] = []
+  let ancestor = parent
+  while (true) {
+    try {
+      lstatSync(ancestor)
+      break
+    } catch {
+      const next = dirname(ancestor)
+      if (next === ancestor) throw new StoreError('STORE_WRITE_FAILED')
+      missing.unshift(basename(ancestor))
+      ancestor = next
+    }
+  }
+  try { hostProjectRootFromConfig(ancestor) } catch { throw new StoreError('STORE_WRITE_FAILED') }
+  let current = realpathSync(ancestor)
+  for (const child of missing) {
+    const next = join(current, child)
+    try { mkdirSync(next, {mode: 0o700}) } catch { /* an existing child is validated below */ }
+    try { hostProjectRootFromConfig(next) } catch { throw new StoreError('STORE_WRITE_FAILED') }
+    current = realpathSync(next)
+    if (current !== next) throw new StoreError('STORE_WRITE_FAILED')
+  }
+  return current
+}
+
+function ensurePrivateDatabaseFile(path: string): void {
+  let descriptor: number | undefined
+  try {
+    try {
+      const info = lstatSync(path)
+      if (info.isSymbolicLink() || !info.isFile() || !privateFile(info)) throw new StoreError('STORE_WRITE_FAILED')
+      descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW)
+    } catch (error) {
+      if (error instanceof StoreError) throw error
+      descriptor = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    }
+    const fromDescriptor = fstatSync(descriptor)
+    const fromPath = lstatSync(path)
+    if (!fromDescriptor.isFile() || !privateFile(fromDescriptor) || fromDescriptor.dev !== fromPath.dev || fromDescriptor.ino !== fromPath.ino) {
+      throw new StoreError('STORE_WRITE_FAILED')
+    }
+  } catch (error) {
+    if (error instanceof StoreError) throw error
+    throw new StoreError('STORE_WRITE_FAILED')
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
+  }
+}
+
+function secureSidecar(databasePath: string, suffix: '-wal' | '-shm'): void {
+  const path = `${databasePath}${suffix}`
+  try {
+    const info = lstatSync(path)
+    if (info.isSymbolicLink() || !info.isFile() || !ownedByCurrentUser(info.uid)) throw new StoreError('STORE_WRITE_FAILED')
+    // SQLite creates these with the process umask; they live in the already-admitted private parent.
+    // Tightening their mode prevents a later reopen from leaving document bytes world-readable.
+    chmodSync(path, 0o600)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
+function privateFile(info: {readonly isFile: () => boolean; readonly mode: number; readonly uid: number}): boolean {
+  return info.isFile() && ownedByCurrentUser(info.uid) && (info.mode & 0o7777) === 0o600
+}
+
+function ownedByCurrentUser(uid: number): boolean {
+  return process.platform === 'win32' || typeof process.getuid !== 'function' || uid === process.getuid()
+}
+
+function redactOutput(value: string): string {
+  return value.replace(/(^|[\s<>"'`()\[\]{},;!?=:])(?:[A-Za-z]:[\\/]|\/)[^\s<>"'`()\[\]{},;!?]*/gu, '$1[path]')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
