@@ -394,6 +394,15 @@ inferred:
 | `steer` / `cancel` | Adapter resolver, intake closes |
 | `unclear` | Ask one clarifying question |
 
+For `steer` / `cancel`, routing preserves the opening request and subsequent
+question/answer turns in chronological order; an affirmation never replaces
+the original instruction. The hidden project `steer` op and its underlying live
+adapter accept up to 24,000 code points to cover the bounded intake (4,000
+opening, up to eight 2,000-code-point answers and 300-code-point questions, plus
+labels). The JSON-RPC request limit is 160 KiB to accommodate JSON escaping and
+UTF-8 encoding plus the request envelope. Public `dispatch` still limits each
+instruction to 4,000 code points.
+
 ### Create
 
 `create` sets the intake target to

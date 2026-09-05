@@ -108,6 +108,7 @@
     "runtime/src/executors/index.ts",
     "runtime/src/executors/mcp-camera.ts",
     "runtime/src/executors/search.ts",
+    "runtime/src/executors/vision.ts",
     "runtime/src/executors/vision/controller-core.ts",
     "runtime/src/executors/vision/controller.ts",
     "runtime/src/executors/vision/lifecycle.ts",

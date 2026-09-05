@@ -8,6 +8,7 @@ import {intakeModels, type IntakeModels, type IntakeSlots} from '../src/executor
 import {ProjectConfirmationController} from '../src/project-confirmation.js'
 import {renderWorkOrder, workOrderSchema} from '../src/executors/coding/work-order.js'
 import {ProjectResolutionError, type CoordinatorDecision, type IntakeTarget} from '../src/coding-executor.js'
+import {validateCodexRequest} from '../src/executors/codex/contract.js'
 
 const stated = (note: string) => ({state: 'stated' as const, note})
 const missing = {state: 'missing' as const, note: ''}
@@ -379,6 +380,51 @@ test('coordinator: unclear asks the model question; a resolution error routes wi
   assert.ok(unknown.records.includes('intake.resolution_error'))
   assert.match(unknown.facts.at(-1)!, /^code=unknown_project：没有叫“blgo”的项目，相近的有：blog。/)
   assert.equal(unknown.dispatched.length, 0)
+})
+
+test('coordinator: steer preserves the request and amendments after project clarification', async () => {
+  const h = harness({models: {
+    assess: input => Promise.resolve(assessment(input, {kind: 'steer', project: 'blog'})),
+  }})
+  h.intake.open(request, '把博客那个正在做的页面字体再调大', 'u1', 'e')
+  await h.intake.settled()
+  assert.equal(h.steered.length, 0)
+  assert.match(h.facts.at(-1)!, /是在 blog 里做吗/)
+  h.intake.userTurn('仅调整正文，不改标题', 'u2', 'e')
+  await h.intake.settled()
+  assert.equal(h.steered.length, 0)
+  h.intake.userTurn('是的', 'u3', 'e')
+  await h.intake.settled()
+  assert.equal(h.steered.length, 1)
+  assert.match(h.steered[0]!, /把博客那个正在做的页面字体再调大/)
+  assert.match(h.steered[0]!, /仅调整正文，不改标题/)
+  assert.equal(h.intake.view?.outcome, 'routed')
+  assert.equal(h.planned(), 0)
+})
+
+test('coordinator: the complete bounded intake fits the real project steer contract', async () => {
+  let delivered = ''
+  const h = harness({
+    models: {assess: input => Promise.resolve(assessment(input, input.revision === 9
+      ? {kind: 'steer'}
+      : {kind: 'unclear', candidate_question: {owner: 'user', text: 'Which scope?'.padEnd(300, '?')}}))},
+    steer: (_current, project, instruction) => {
+      const validated = validateCodexRequest('project', 'steer', {project, instruction})
+      if (validated.ok) delivered = instruction
+      return {accepted: validated.ok, delegate_id: validated.ok ? 'd-steer' : null}
+    },
+  })
+  const opening = 'Opening:'.padEnd(4000, '目')
+  h.intake.open(request, opening, 'u1', 'e')
+  await h.intake.settled()
+  const answers = Array.from({length: 8}, (_, i) => `Amendment ${i}:`.padEnd(2000, '约'))
+  for (const [index, answer] of answers.entries()) {
+    h.intake.userTurn(answer, `answer-${index}`, 'e')
+  }
+  await h.intake.settled()
+  assert.ok(delivered.includes(opening), 'the original request reaches the real steer boundary intact')
+  for (const answer of answers) assert.ok(delivered.includes(answer), 'each amendment is preserved')
+  assert.equal(validateCodexRequest('project', 'steer', {instruction: '字'.repeat(24_001)}).ok, false)
 })
 
 test('coordinator: create always confirms — with a goal it plans first, bare create proposes with a null work order', async () => {

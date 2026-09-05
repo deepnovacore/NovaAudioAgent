@@ -305,7 +305,11 @@ export class IntakeController {
         this.#options.fact(current, '需求已记录，等待用户明确要求开始；不要继续追问或声称已执行。')
         return
       }
-      const userText = current.turns.at(-1)?.answer ?? current.opening
+      // Keep the user's request and later corrections together. A project affirmation is target
+      // evidence, not a replacement instruction. The executor still enforces its input bound.
+      const userText = [current.opening, ...current.turns.map(turn => turn.question === null
+        ? `用户补充：${turn.answer}`
+        : `宿主追问：${turn.question}\n用户补充：${turn.answer}`)].join('\n')
       if (kind === 'cancel') {
         const outcome = await this.#options.cancel(userText, () => this.#live(snapshot.intake_id, snapshot.revision) !== null)
         current = this.#current(snapshot.intake_id, snapshot.revision)

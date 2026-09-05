@@ -1168,7 +1168,7 @@ export class ProjectStore {
 
   async rollbackManagedCreate(
     workspaceId: string,
-    options?: ProjectTransactionWaitOptions,
+    options?: ProjectTransactionWaitOptions & {readonly previousWorkspaceId?: string | null},
   ): Promise<boolean> {
     const rollback: {removed: {
       readonly name: string
@@ -1206,7 +1206,12 @@ export class ProjectStore {
         }
         state.workspaces.delete(workspaceId)
         if (state.activeWorkspaceId === workspaceId) {
-          state.activeWorkspaceId = mostRecentlyUsed(state.workspaces.values())?.workspace_id ?? null
+          // Restore only while deleting the active binding, under the same transaction. A later
+          // selection owns its binding even when this old create still needs resource cleanup.
+          const previous = options?.previousWorkspaceId
+          state.activeWorkspaceId = previous != null && state.workspaces.has(previous)
+            ? previous
+            : mostRecentlyUsed(state.workspaces.values())?.workspace_id ?? null
           bumpActiveBindingRevision(state)
         }
         return [true, true]

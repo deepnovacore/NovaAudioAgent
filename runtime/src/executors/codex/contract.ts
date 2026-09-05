@@ -11,6 +11,8 @@ import {executorManifestSchema, type ExecutorManifest, type OpSpec} from '../../
 export const INTERNAL_CODEX_RUN_DEADLINE = 540
 export const MAX_CODEX_EVENTS = 16_384
 export const MAX_CODEX_EVIDENCE_COUNTER = 1_048_576
+// Intake retains a 4000-code-point opening and at most 8 answers (2000 each), plus questions (300).
+const MAX_CODEX_STEER_INSTRUCTION = 24_000
 
 const CODEX_POLICY = {
   channel: 'codex',
@@ -58,7 +60,7 @@ const STEER: OpSpec = {
   description: '向当前仍在执行的 Codex turn 追加约束；不终止、不重启、不创建下一轮。',
   params: {
     type: 'object',
-    properties: {instruction: {type: 'string', minLength: 1, maxLength: 2000}},
+    properties: {instruction: {type: 'string', minLength: 1, maxLength: MAX_CODEX_STEER_INSTRUCTION}},
     required: ['instruction'],
     additionalProperties: false,
   },
@@ -98,7 +100,7 @@ const STEER_PROJECT: OpSpec = {
   params: {
     type: 'object',
     properties: {
-      instruction: {type: 'string', minLength: 1, maxLength: 2000},
+      instruction: {type: 'string', minLength: 1, maxLength: MAX_CODEX_STEER_INSTRUCTION},
       project: PROJECT,
     },
     required: ['instruction'],
@@ -184,7 +186,7 @@ function validateCodexRequestChecked(
   }
   if (variant !== 'project') {
     const name = op === 'steer' ? 'instruction' : 'work_order'
-    const value = exactBoundedString(requestSnapshot, name, op === 'steer' ? 2000 : 4000)
+    const value = exactBoundedString(requestSnapshot, name, op === 'steer' ? MAX_CODEX_STEER_INSTRUCTION : 4000)
     return value === null ? failure('invalid_params', op) : success({[name]: value})
   }
   return op === 'steer' ? validateProjectSteer(requestSnapshot) : validateProjectRun(requestSnapshot)
@@ -220,7 +222,7 @@ function validateProjectRun(request: Record<string, unknown>): CodexRequestValid
 function validateProjectSteer(request: Record<string, unknown>): CodexRequestValidation {
   const allowed = new Set(['instruction', 'project'])
   if (Object.keys(request).some(key => !allowed.has(key))) return failure('invalid_params', 'steer')
-  const instruction = normalizedString(request.instruction, 2000)
+  const instruction = normalizedString(request.instruction, MAX_CODEX_STEER_INSTRUCTION)
   if (instruction === null) return failure('invalid_params', 'steer')
   const result: Record<string, unknown> = {instruction}
   if (!projectField(request, result)) return failure('invalid_params', 'steer')

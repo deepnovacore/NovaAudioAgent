@@ -26,7 +26,7 @@ import {
   VisionAgentControllerCore,
   VisionLifecycleBridge,
   VISION_AGENT_DESCRIPTOR,
-} from './executors/index.js'
+} from './executors/vision.js'
 import { DisabledFrameSource } from './executors/frame-source.js'
 import {
   SearchAdapter,

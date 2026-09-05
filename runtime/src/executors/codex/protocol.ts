@@ -2,7 +2,8 @@ import {snapshotJsonValue} from './safe-json.js'
 
 export const MAX_JSONL_LINE = 256 * 1024
 export const MAX_STDOUT = 2 * 1024 * 1024
-export const MAX_REQUEST = 64 * 1024
+// A 24,000-code-point steer can require six JSON bytes per character, plus its RPC envelope.
+export const MAX_REQUEST = 160 * 1024
 export const MAX_FINAL_TEXT_INPUT = 65_536
 export const MAX_INTERNAL_ACTIVITY = 1_048_576
 export const WORKING_INTERVAL = 30

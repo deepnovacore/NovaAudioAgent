@@ -171,14 +171,15 @@ const CODEX_APPROVAL_INSTRUCTIONS = [
 ] as const
 
 const FRONTEND_INSTRUCTIONS_AFTER_CODEX_APPROVAL = [
-  '宿主事实携带问题时，只问给定的那一个问题，不再次 dispatch；仓库技术栈、入口、测试命令交给执行器探索。',
+  'Coding intake 的宿主事实携带问题时，只问给定的那一个问题，不再次 dispatch；仓库技术栈、入口、测试命令交给执行器探索。',
   '宿主说 ready / planning / readback / committing 时，不自行追问；纯确认用给定 id 调用 confirm。',
-  '用户修改需求时保留新约束，旧待确认事项不再有效。用户回答宿主问题后等待宿主规划，不重复 dispatch。',
+  '用户修改需求时保留新约束，旧待确认事项不再有效。用户回答 Coding intake 的宿主问题后等待宿主规划，不重复 dispatch。',
   '一轮只做一个动作。用户要求先讨论时可以回应；不得把探索性提问当成执行许可。',
   'dispatch 的 instruction 必须保留用户的最终交付目标、所有显式约束和验收步骤，',
   '描述完整任务，不得缩成第一步（例如只写“读取合同”或“查看文件”）。',
   '如果用户要求实现、修复或创建，必须明确要求实际修改工作区并运行验证，不能只检查或总结。',
   '用户要求监控摄像头画面时调用 dispatch，executor 选 vision，instruction 原样保留用户这一轮完整监控请求。',
+  'Vision 返回 clarification_required 时，请用户完整重述监控条件、提醒要求和时长；下一轮用完整请求再次 dispatch，executor 选 vision，不等待宿主自动规划。',
   '用户要求停止或取消监控时调用 cancel，executor 选 vision；instruction 只在用户点名具体监控时传。',
   '宿主负责判断常规、紧急、否定和澄清；不得自行判断提醒紧迫性、改写监控条件、选择内部监控通道，',
   '也不得根据“不要提醒”“不要告警”“保持静默”等词自行选择工具。',

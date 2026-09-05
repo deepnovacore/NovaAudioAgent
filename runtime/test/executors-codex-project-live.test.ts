@@ -455,6 +455,50 @@ test('new-run missing thread rolls back provisional session and failed confirmed
   }
 })
 
+for (const ending of ['cancel', 'abort'] as const) {
+  test(`confirmed create ${ending} preserves a later confirmed project selection`, async () => {
+    const value = await fixture()
+    const stop = new AbortController()
+    let started!: () => void
+    const entered = new Promise<void>(resolve => { started = resolve })
+    value.factory.reportThread = false
+    value.factory.runGate = new Promise(() => { /* held until the run is cancelled */ })
+    value.factory.onRun = started
+    try {
+      const beta = await value.store.createManaged('beta')
+      await value.store.selectWorkspace('alpha')
+      const operation = confirmed(value, {
+        action: 'create', workspace_display_name: 'newproject', workspace_id: null,
+        session_title: null, session_id: null, work_order: 'Build page',
+      })
+      await value.adapter.commitConfirmed(operation, () => ({accepted: true, delegate_id: 'create-1'}))
+      const request = {work_order: 'Build page'}
+      const work = value.adapter.dispatch('run', request, context('run', request, value.clock, {
+        private: operation, delegateId: 'create-1', signal: stop.signal,
+      })).then(result => result.outcome, (error: Error) => error.name)
+      await settleWithin('create starts', entered)
+      const selection = confirmed(value, {
+        action: 'select', workspace_display_name: 'beta', workspace_id: beta.workspace_id,
+        session_title: null, session_id: null, work_order: null,
+      })
+      assert.deepEqual(await value.adapter.commitConfirmed(selection, () => {
+        throw new Error('selection must not dispatch')
+      }), {accepted: true, code: 'committed'})
+      assert.equal((await value.adapter.activeCommittedWorkspace())?.display_name, 'beta')
+      if (ending === 'abort') stop.abort()
+      else await value.adapter.cancel(undefined, {resolveCancelTarget: () => Promise.resolve(null)})
+      assert.equal(await settleWithin('create ends', work), ending === 'abort' ? 'AbortError' : 'cancelled')
+      assert.equal((await value.adapter.activeCommittedWorkspace())?.display_name, 'beta')
+      assert.equal(value.adapter.publicProjectView(false).workspace_display_name, 'beta')
+      assert.deepEqual((await value.store.listWorkspaces()).map(item => item.display_name).sort(), ['alpha', 'beta'])
+    } finally {
+      stop.abort()
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+}
+
 test('a residual create race is recoverably refused before effects', async () => {
   const value = await fixture()
   try {

@@ -122,12 +122,15 @@ test('steer writes while turn/start response is delayed and reverse response ord
     {expiresAtMs: Date.now() + 5000},
   )
   await owner.turnStartReceived.promise
+  const instruction = '😀\u0000'.repeat(12_000)
   const steered = await transport.steer(
-    {instruction: 'apply the bounded correction'},
+    {instruction},
     {expiresAtMs: Date.now() + 5000},
   )
   assert.deepEqual(steered, {code: 'accepted', written: true})
   assert.equal(methods.at(-1), 'turn/steer')
+  assert.deepEqual(owner.received.find(message => message.method === 'turn/steer')?.params.input,
+    [{type: 'text', text: instruction}])
   owner.completeDelayedTurn()
   const outcome = await running
   assert.equal(outcome.classification, 'completed')

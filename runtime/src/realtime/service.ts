@@ -4029,7 +4029,7 @@ export class RealtimeService {
       case 'busy':
         return canonicalJson({code: result.code, message: '当前已有一个监控任务在运行。'})
       case 'clarification_required':
-        return canonicalJson({code: result.code, message: '请说明需要监控的画面条件和时长。'})
+        return canonicalJson({code: result.code, message: '请完整重述需要监控的画面条件、提醒要求和时长。'})
       case 'assessment_unavailable':
         return canonicalJson({code: result.code, message: '暂时无法判断监控请求。'})
       case 'monitor_stop_requested':

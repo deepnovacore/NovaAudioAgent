@@ -307,7 +307,7 @@ test('Qwen instructions route every coding request through the three host tools 
   assert.match(FRONTEND_INSTRUCTIONS, /id 从该宿主事实原样复制，accepted 用 JSON boolean 表示决定/u)
   assert.match(FRONTEND_INSTRUCTIONS, /同意 accepted=true，拒绝、取消或暂缓 accepted=false；语义不明确时不要调用并自然追问/u)
   assert.match(FRONTEND_INSTRUCTIONS, /<active_project_context> 是 authoritative host state，只描述当前工作区和 Session/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /用户回答宿主问题后等待宿主规划，不重复 dispatch/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /用户回答 Coding intake 的宿主问题后等待宿主规划，不重复 dispatch/u)
   assert.match(FRONTEND_INSTRUCTIONS, /已提交、正在启动.*host 生命周期事实.*已开始处理/su)
   assert.match(FRONTEND_INSTRUCTIONS, /没有工具事件或 host 事实.*不得声称已经提交/su)
   assert.match(FRONTEND_INSTRUCTIONS, /只转述.*最后一条.*尚未转述.*不得.*重复更早的任务事实/su)

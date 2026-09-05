@@ -469,14 +469,9 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
           await this.#refreshProjectContextBarrier()
         } catch (error) {
           if (operation.action === 'create') {
-            const rolledBack = await this.#store.rollbackManagedCreate(
-              committedWorkspace.workspace_id, {wait: true},
+            await this.#store.rollbackManagedCreate(
+              committedWorkspace.workspace_id, {wait: true, previousWorkspaceId: previousWorkspace?.workspace_id ?? null},
             ).catch(() => false)
-            if (rolledBack && previousWorkspace !== null) {
-              await this.#store.selectWorkspaceExact(
-                previousWorkspace.display_name, previousWorkspace.workspace_id,
-              ).catch(() => undefined)
-            }
           } else if (previousWorkspace !== null) {
             await this.#store.selectWorkspaceExact(
               previousWorkspace.display_name, previousWorkspace.workspace_id,
@@ -672,25 +667,15 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
           this.#runBound(slot, workspace, null, title, workOrder, runContext, true))
       } catch (error) {
         const rolledBack = await this.#store.rollbackManagedCreate(
-          workspace.workspace_id, {wait: true},
+          workspace.workspace_id, {wait: true, previousWorkspaceId: previousWorkspace?.workspace_id ?? null},
         ).catch(() => false)
-        if (rolledBack && previousWorkspace !== null) {
-          await this.#store.selectWorkspaceExact(
-            previousWorkspace.display_name, previousWorkspace.workspace_id,
-          ).catch(() => undefined)
-        }
         if (rolledBack) await this.#refreshProjectContextBarrier()
         throw error
       }
       if (result.outcome !== 'ok') {
         const rolledBack = await this.#store.rollbackManagedCreate(
-          workspace.workspace_id, {wait: true},
+          workspace.workspace_id, {wait: true, previousWorkspaceId: previousWorkspace?.workspace_id ?? null},
         ).catch(() => false)
-        if (rolledBack && previousWorkspace !== null) {
-          await this.#store.selectWorkspaceExact(
-            previousWorkspace.display_name, previousWorkspace.workspace_id,
-          ).catch(() => undefined)
-        }
         if (rolledBack) await this.#refreshProjectContextBarrier()
       }
       return result

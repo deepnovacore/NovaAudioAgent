@@ -160,7 +160,7 @@ test('live validation rejects before transport and uses Python strip/code-point 
   const invalid: unknown[] = [
     {},
     {instruction: '\u001c\u0085'},
-    {instruction: '😀'.repeat(2001)},
+    {instruction: '😀'.repeat(24_001)},
     {instruction: new String('boxed')},
     {instruction: '\ud800'},
     {instruction: 'ok', extra: true},
@@ -176,7 +176,7 @@ test('live validation rejects before transport and uses Python strip/code-point 
 
   const transport = new LiveTransport()
   const noTurn = await new CodexLiveAdapter(transport).dispatch(
-    'steer', {instruction: `\u001c${'😀'.repeat(2000)}\u0085`}, context('steer', {}),
+    'steer', {instruction: `\u001c${'😀'.repeat(24_000)}\u0085`}, context('steer', {}),
   )
   assert.deepEqual(noTurn.content, {op: 'steer', worker: 'codex', code: 'no_active_turn'})
   assert.deepEqual(transport.instructions, [])

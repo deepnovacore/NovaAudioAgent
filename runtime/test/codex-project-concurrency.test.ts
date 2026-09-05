@@ -238,10 +238,12 @@ test('steer targets the named project slot; idle projects report no_active_turn'
   const gates = gateProjects(value, ['alpha'])
   try {
     const work = run(value, 'alpha work', {project: 'alpha', title: 'Alpha', delegateId: 'work-alpha'})
+    void work.catch(() => { /* cleanup may cancel the run after a failed steer assertion */ })
     await settleWithin('alpha starts', gates.get('alpha')!.started)
+    const instruction = '😀'.repeat(24_000)
     const steerAlpha = await value.adapter.dispatch(
-      'steer', {instruction: 'also lint', project: 'alpha'},
-      context('steer', {instruction: 'also lint', project: 'alpha'}, value.clock),
+      'steer', {instruction, project: 'alpha'},
+      context('steer', {instruction, project: 'alpha'}, value.clock),
     )
     assert.equal(steerAlpha.content.code, 'accepted')
     const steerBeta = await value.adapter.dispatch(

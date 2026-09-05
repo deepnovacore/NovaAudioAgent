@@ -1,10 +1,8 @@
 /**
  * Executor package registry.
  *
- * The only module through which core-adjacent code (the barrel, `desktop.ts`) and composition
- * roots reach a concrete executor package. Adding an executor means adding one line here.
+ * Aggregate public exports for the barrel and `desktop.ts`. Compositions may use an executor's
+ * dedicated entry point to avoid eagerly loading unrelated packages.
  */
 export * from './codex/index.js'
-export * from './vision/controller.js'
-export * from './vision/controller-core.js'
-export * from './vision/lifecycle.js'
+export * from './vision.js'

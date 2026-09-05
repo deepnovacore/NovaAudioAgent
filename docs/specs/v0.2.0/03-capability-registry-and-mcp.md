@@ -183,6 +183,12 @@ side-VLM invocation policy, and delivery mode. Watch/guard cannot alter those
 policies through model output, and both remain behind the same camera-module
 assembly gate.
 
+Vision clarification is a new dispatch, not a Coding intake continuation.
+On `clarification_required`, the frontend asks the user to restate the complete
+condition, notification preference, and duration. That next complete user
+request is sent through `dispatch(executor: 'vision', instruction: ...)` with
+its own origin and revision; Vision does not retain a pending clarification.
+
 The Camera MCP is deliberately in-process and in-memory. It supports exactly
 one image result per snapshot, with supported MIME types limited to
 `image/jpeg`, `image/png`, and `image/webp`. The boundary validates canonical
@@ -245,8 +251,10 @@ the registry (see [06](06-settings-and-config.md) for the coordinated commit).
 4. Disabled search requires neither Tavily nor MCP credentials.
 
 Disabling the unique coding-role adapter is a supported configuration, not an
-assembly error: coding intake is absent, and `dispatch` / `cancel` are not
-compiled. Other direct tools, including allowlisted MCP tools, remain available.
+assembly error: its controller and coding intake are absent. The host tools
+`dispatch` / `cancel` / `confirm` remain while any other controller (such as
+Vision) is registered, and are omitted only when no controllers remain.
+Other direct tools, including allowlisted MCP tools, remain available.
 An enabled coding role with duplicate coding-role adapters remains an
 `AssemblyError`; role identity is never guessed from an executor name.
 

@@ -115,7 +115,9 @@ Definitions:
   `runtime/src/desktop-entry.ts`, `runtime/src/production-realtime-assembly.ts`,
   and `runtime/src/executors/index.ts` (the registry).
 - **Executor package**: `runtime/src/executors/<name>/**` with exactly one
-  public module `index.ts`.
+  public entry point: `<name>/index.ts`, or a flat `<name>.ts` composition
+  entry point. The latter is used by Vision so `assembly.ts` can load it
+  independently; the aggregate `executors/index.ts` re-exports that same entry.
 
 Rules (each is machine-checked; see Enforcement):
 
@@ -155,9 +157,11 @@ export const executorManifestSchema = z.object({
 
 - `roles` is the only way the host finds a coding executor. At most one
   manifest may claim `coding`; more than one is an `AssemblyError`. Disabling
-  the unique coding-role module is supported: coding intake is absent and the
-  host does not compile `dispatch` / `cancel`; this is not an assembly error,
-  and direct tools from other manifests remain available. An enabled coding
+  the unique coding-role module is supported: its controller and coding intake
+  are absent; this is not an assembly error. The host still compiles
+  `dispatch` / `cancel` / `confirm` when another controller (such as Vision)
+  remains, and omits them only when no controllers remain. Direct tools from
+  other manifests remain available. An enabled coding
   intake with no matching role is an assembly error only when the host has
   explicitly requested that intake.
 - `model_visibility: 'hidden'` keeps the executor's runtime bindings but omits
