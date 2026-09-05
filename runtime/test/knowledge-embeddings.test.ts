@@ -5,8 +5,8 @@ import {
   EmbeddingProviderFailure,
 } from '../src/knowledge/embeddings.js'
 
-function embeddingResponse(data: unknown): Response {
-  return new Response(JSON.stringify({object: 'list', model: 'text-embedding-v4', data}), {
+function embeddingResponse(data: unknown, model: string | null = 'text-embedding-v4'): Response {
+  return new Response(JSON.stringify({object: 'list', ...(model === null ? {} : {model}), data}), {
     headers: {'content-type': 'application/json'},
   })
 }
@@ -47,6 +47,28 @@ test('batches ten inputs and restores vectors to exact provider index order', as
   assert.deepEqual([...vectors[0] ?? []], [1, 0.5, -0.5])
   assert.deepEqual([...vectors[9] ?? []], [10, 0.5, -0.5])
   assert.deepEqual([...vectors[10] ?? []], [1, 0.5, -0.5])
+})
+
+test('binds model identity while preserving a host-configured local compatible gateway', async () => {
+  const mismatched = new DashScopeEmbeddingProvider({
+    baseUrl: 'http://127.0.0.1:9000/v1', apiKey: 'key', model: 'configured-model', dims: 2,
+    fetch: () => Promise.resolve(embeddingResponse([
+      {object: 'embedding', index: 0, embedding: [1, 2]},
+    ], 'different-model')),
+  })
+  await assert.rejects(mismatched.embed(['safe']),
+    error => error instanceof EmbeddingProviderFailure && error.code === 'model_mismatch')
+
+  const absent = new DashScopeEmbeddingProvider({
+    baseUrl: 'http://127.0.0.1:9000/v1', apiKey: 'key', model: 'configured-model', dims: 2,
+    fetch: input => {
+      assert.equal(input, 'http://127.0.0.1:9000/v1/embeddings')
+      return Promise.resolve(embeddingResponse([
+        {object: 'embedding', index: 0, embedding: [1, 2]},
+      ], null))
+    },
+  })
+  assert.deepEqual([...await absent.embed(['safe']).then(vectors => vectors[0] ?? [])], [1, 2])
 })
 
 test('rejects duplicate, missing, malformed, non-finite, and wrong-sized vectors', async () => {

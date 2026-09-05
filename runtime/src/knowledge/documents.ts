@@ -1,8 +1,9 @@
 import {createHash} from 'node:crypto'
 import {lookup as dnsLookup} from 'node:dns/promises'
+import {constants} from 'node:fs'
 import {basename, extname, isAbsolute} from 'node:path'
 import {BlockList, isIP, type LookupFunction} from 'node:net'
-import {open, realpath} from 'node:fs/promises'
+import {lstat, open, realpath} from 'node:fs/promises'
 import {Worker} from 'node:worker_threads'
 import {Agent, fetch as undiciFetch} from 'undici'
 import {SensitiveContentPolicy, SensitivePathPolicy} from '../workspace-graph/sensitivity.js'
@@ -103,15 +104,23 @@ export async function readKnowledgeFile(path: string, signal?: AbortSignal): Pro
 
   const format = fileFormat(canonical)
   if (format === null) throw new KnowledgeDocumentFailure('unsupported_mime')
-  let handle: Awaited<ReturnType<typeof open>>
-  try { handle = await open(canonical, 'r') } catch {
-    signal?.throwIfAborted()
+  let admitted: Awaited<ReturnType<typeof lstat>>
+  try { admitted = await lstat(canonical, {bigint: true}) } catch {
     throw new KnowledgeDocumentFailure('file_unavailable')
+  }
+  if (!admitted.isFile() || admitted.isSymbolicLink()) throw new KnowledgeDocumentFailure('invalid_file')
+  signal?.throwIfAborted()
+  let handle: Awaited<ReturnType<typeof open>>
+  try { handle = await open(canonical, constants.O_RDONLY | constants.O_NOFOLLOW) } catch {
+    signal?.throwIfAborted()
+    throw new KnowledgeDocumentFailure('file_changed')
   }
   let bytes: Uint8Array
   try {
     const info = await handle.stat({bigint: true})
-    if (!info.isFile() || info.size < 1n) throw new KnowledgeDocumentFailure('invalid_file')
+    if (!info.isFile() || !sameIdentity(info, admitted)) throw new KnowledgeDocumentFailure('file_changed')
+    await verifyPathIdentity(path, canonical, info)
+    if (info.size < 1n) throw new KnowledgeDocumentFailure('invalid_file')
     if (info.size > BigInt(MAX_FILE_BYTES)) throw new KnowledgeDocumentFailure('file_too_large')
     signal?.throwIfAborted()
     bytes = new Uint8Array(Number(info.size))
@@ -126,6 +135,7 @@ export async function readKnowledgeFile(path: string, signal?: AbortSignal): Pro
     if (!after.isFile() || after.size !== info.size || after.mtimeNs !== info.mtimeNs) {
       throw new KnowledgeDocumentFailure('file_changed')
     }
+    await verifyPathIdentity(path, canonical, after)
   } catch (cause) {
     signal?.throwIfAborted()
     if (cause instanceof KnowledgeDocumentFailure) throw cause
@@ -243,6 +253,31 @@ const extensionFormats = new Map<string, DocumentFormat>([
 
 function fileFormat(path: string): DocumentFormat | null {
   return extensionFormats.get(extname(path).toLowerCase()) ?? null
+}
+
+async function verifyPathIdentity(
+  input: string,
+  canonical: string,
+  descriptor: {readonly dev: bigint; readonly ino: bigint},
+): Promise<void> {
+  let pathInfo: Awaited<ReturnType<typeof lstat>>
+  let currentCanonical: string
+  try {
+    [pathInfo, currentCanonical] = await Promise.all([lstat(canonical, {bigint: true}), realpath(input)])
+  } catch {
+    throw new KnowledgeDocumentFailure('file_changed')
+  }
+  if (!pathInfo.isFile() || pathInfo.isSymbolicLink() || !sameIdentity(pathInfo, descriptor)
+    || currentCanonical !== canonical || !pathPolicy.allows(currentCanonical)) {
+    throw new KnowledgeDocumentFailure('file_changed')
+  }
+}
+
+function sameIdentity(
+  left: {readonly dev: bigint; readonly ino: bigint},
+  right: {readonly dev: bigint; readonly ino: bigint},
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino
 }
 
 function responseFormat(url: URL, header: string | null): DocumentFormat {
@@ -389,7 +424,7 @@ for (const [network, prefix, family] of [
   ['192.0.0.0', 24, 'ipv4'], ['192.0.2.0', 24, 'ipv4'], ['192.168.0.0', 16, 'ipv4'],
   ['198.18.0.0', 15, 'ipv4'], ['198.51.100.0', 24, 'ipv4'], ['203.0.113.0', 24, 'ipv4'],
   ['224.0.0.0', 4, 'ipv4'], ['240.0.0.0', 4, 'ipv4'],
-  ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'],
+  ['::', 96, 'ipv6'], ['::1', 128, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'],
   ['ff00::', 8, 'ipv6'], ['2001:db8::', 32, 'ipv6'],
   ['::ffff:0:0', 96, 'ipv6'], ['64:ff9b::', 96, 'ipv6'], ['64:ff9b:1::', 48, 'ipv6'],
   ['fec0::', 10, 'ipv6'], ['2001::', 23, 'ipv6'], ['2002::', 16, 'ipv6'],

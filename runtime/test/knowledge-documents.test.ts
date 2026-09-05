@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {renameSync, symlinkSync} from 'node:fs'
 import {mkdtemp, open, realpath, symlink, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -70,6 +71,28 @@ test('rejects relative, empty, binary, oversized, sensitive, and symlink-sensiti
   }
 })
 
+test('rejects a final-component symlink swapped after canonical admission', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-knowledge-'))
+  t.after(async () => { await import('node:fs/promises').then(fs => fs.rm(directory, {recursive: true})) })
+  const path = join(directory, 'admitted.txt')
+  const original = join(directory, 'original.txt')
+  const replacement = join(directory, 'replacement.txt')
+  await writeFile(path, 'admitted content')
+  await writeFile(replacement, 'replacement marker')
+  let checks = 0
+  const swapSignal = {
+    throwIfAborted: () => {
+      checks += 1
+      if (checks !== 3) return
+      renameSync(path, original)
+      symlinkSync(replacement, path)
+    },
+  } as unknown as AbortSignal
+
+  await assert.rejects(readKnowledgeFile(path, swapSignal),
+    error => error instanceof KnowledgeDocumentFailure && error.code === 'file_changed')
+})
+
 test('parses PDF and DOCX through the bounded worker', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-knowledge-'))
   t.after(async () => { await import('node:fs/promises').then(fs => fs.rm(directory, {recursive: true})) })
@@ -86,6 +109,16 @@ test('parses PDF and DOCX through the bounded worker', async t => {
   assert.equal(docx.mime, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
 })
 
+test('rejects a DOCX whose compressed entries expand past the archive bound', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-knowledge-'))
+  t.after(async () => { await import('node:fs/promises').then(fs => fs.rm(directory, {recursive: true})) })
+  const path = join(directory, 'bomb.docx')
+  await writeFile(path, await makeDocx('Small document', 'A'.repeat(33 * 1_024 * 1_024)))
+
+  await assert.rejects(readKnowledgeFile(path),
+    error => error instanceof KnowledgeDocumentFailure && error.code === 'parse_failed')
+})
+
 test('rejects URL credentials, private destinations, unsupported MIME, and cancellation', async () => {
   const values = [
     'https://user:password@example.com/file.txt',
@@ -93,10 +126,12 @@ test('rejects URL credentials, private destinations, unsupported MIME, and cance
     'http://127.0.0.1/file.txt',
     'http://[::1]/file.txt',
     'http://[::ffff:127.0.0.1]/file.txt',
+    'http://[::7f00:1]/file.txt',
     'ftp://example.com/file.txt',
   ]
   for (const value of values) {
-    await assert.rejects(fetchKnowledgeUrl(value), error => error instanceof KnowledgeDocumentFailure)
+    await assert.rejects(fetchKnowledgeUrl(value),
+      error => error instanceof KnowledgeDocumentFailure && error.code === 'url_denied')
   }
 
   const stopped = new AbortController()
@@ -126,12 +161,12 @@ function makePdf(text: string): Uint8Array {
   return new TextEncoder().encode(source)
 }
 
-async function makeDocx(text: string): Promise<Uint8Array> {
+async function makeDocx(text: string, extra?: string): Promise<Uint8Array> {
   const moduleName = 'jszip'
   const imported = await import(moduleName) as {
     default: new () => {
       file(path: string, value: string): void
-      generateAsync(options: {readonly type: 'uint8array'}): Promise<Uint8Array>
+      generateAsync(options: {readonly type: 'uint8array'; readonly compression?: 'DEFLATE'}): Promise<Uint8Array>
     }
   }
   const zip = new imported.default()
@@ -149,5 +184,6 @@ async function makeDocx(text: string): Promise<Uint8Array> {
     <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
       <w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body>
     </w:document>`)
-  return await zip.generateAsync({type: 'uint8array'})
+  if (extra !== undefined) zip.file('word/unused.bin', extra)
+  return await zip.generateAsync({type: 'uint8array', compression: 'DEFLATE'})
 }

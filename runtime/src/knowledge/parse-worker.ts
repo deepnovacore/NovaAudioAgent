@@ -2,6 +2,9 @@ import {Buffer} from 'node:buffer'
 import {parentPort} from 'node:worker_threads'
 
 const MAX_TEXT_BYTES = 10 * 1_024 * 1_024
+const MAX_DOCX_ENTRY_BYTES = 16 * 1_024 * 1_024
+const MAX_DOCX_EXPANDED_BYTES = 32 * 1_024 * 1_024
+const MAX_DOCX_ENTRIES = 4_096
 
 interface ParseRequest {
   readonly kind: 'pdf' | 'docx'
@@ -65,6 +68,7 @@ async function parsePdf(bytes: Uint8Array): Promise<string> {
 }
 
 async function parseDocx(bytes: Uint8Array): Promise<string> {
+  await verifyDocxArchive(bytes)
   const moduleName = 'mammoth'
   const mammoth = await import(moduleName) as {
     extractRawText(input: {readonly buffer: Buffer}): Promise<{readonly value: string}>
@@ -72,6 +76,73 @@ async function parseDocx(bytes: Uint8Array): Promise<string> {
   const result = await mammoth.extractRawText({buffer: Buffer.from(bytes)})
   if (Buffer.byteLength(result.value, 'utf8') > MAX_TEXT_BYTES) throw new Error('too_large')
   return result.value
+}
+
+interface ZipEntry {
+  readonly dir: boolean
+  readonly _data?: {readonly uncompressedSize?: number}
+  nodeStream(type: 'nodebuffer'): ZipStream
+}
+
+interface ZipStream {
+  destroy(): void
+  on(event: 'data', listener: (value: unknown) => void): ZipStream
+  once(event: 'end', listener: () => void): ZipStream
+  once(event: 'error', listener: (error: unknown) => void): ZipStream
+}
+
+async function verifyDocxArchive(bytes: Uint8Array): Promise<void> {
+  const moduleName = 'jszip'
+  const imported = await import(moduleName) as {
+    default: {
+      loadAsync(data: Buffer): Promise<{readonly files: Readonly<Record<string, ZipEntry>>}>
+    }
+  }
+  const archive = await imported.default.loadAsync(Buffer.from(bytes))
+  const entries = Object.values(archive.files)
+  if (entries.length > MAX_DOCX_ENTRIES) throw new Error('too_large')
+  let declaredTotal = 0
+  for (const entry of entries) {
+    if (entry.dir) continue
+    const declared = entry._data?.uncompressedSize
+    if (!Number.isSafeInteger(declared) || declared === undefined || declared < 0
+      || declared > MAX_DOCX_ENTRY_BYTES) throw new Error('too_large')
+    declaredTotal += declared
+    if (declaredTotal > MAX_DOCX_EXPANDED_BYTES) throw new Error('too_large')
+  }
+
+  let actualTotal = 0
+  for (const entry of entries) {
+    if (entry.dir) continue
+    actualTotal = await verifyZipEntry(entry, actualTotal)
+  }
+}
+
+function verifyZipEntry(entry: ZipEntry, previousTotal: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const stream = entry.nodeStream('nodebuffer')
+    let entryBytes = 0
+    let total = previousTotal
+    let settled = false
+    const fail = (): void => {
+      if (settled) return
+      settled = true
+      stream.destroy()
+      reject(new Error('too_large'))
+    }
+    stream.on('data', value => {
+      if (!(value instanceof Uint8Array)) { fail(); return }
+      entryBytes += value.byteLength
+      total += value.byteLength
+      if (entryBytes > MAX_DOCX_ENTRY_BYTES || total > MAX_DOCX_EXPANDED_BYTES) fail()
+    })
+    stream.once('error', () => fail())
+    stream.once('end', () => {
+      if (settled) return
+      settled = true
+      resolve(total)
+    })
+  })
 }
 
 parentPort?.once('message', (request: ParseRequest) => {

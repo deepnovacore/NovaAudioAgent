@@ -116,7 +116,7 @@ export class DashScopeEmbeddingProvider implements EmbeddingProvider {
       try { parsed = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(bytes)) } catch {
         throw new EmbeddingProviderFailure('malformed_response')
       }
-      return parseVectors(parsed, texts.length, this.dims)
+      return parseVectors(parsed, texts.length, this.dims, this.#model)
     } catch (cause) {
       if (signal?.aborted === true) signal.throwIfAborted()
       if (cause instanceof EmbeddingProviderFailure) throw cause
@@ -172,9 +172,13 @@ async function readBounded(response: Response): Promise<Uint8Array> {
   return result
 }
 
-function parseVectors(value: unknown, count: number, dims: number): Float32Array[] {
+function parseVectors(value: unknown, count: number, dims: number, model: string): Float32Array[] {
   if (!plainObject(value) || !Array.isArray(value.data) || value.data.length !== count) {
     throw new EmbeddingProviderFailure('malformed_response')
+  }
+  if (Object.hasOwn(value, 'model')) {
+    if (typeof value.model !== 'string') throw new EmbeddingProviderFailure('malformed_response')
+    if (value.model !== model) throw new EmbeddingProviderFailure('model_mismatch')
   }
   const vectors = new Array<Float32Array | undefined>(count)
   for (const item of value.data) {
