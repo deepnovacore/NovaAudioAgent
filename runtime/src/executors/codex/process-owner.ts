@@ -1,3 +1,4 @@
+import {managedMcpEnvironment, type ManagedCodexMcp} from './managed-mcp.js'
 import {statSync} from 'node:fs'
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
 import {isAbsolute} from 'node:path'
@@ -121,11 +122,12 @@ export function createApprovedCodexSpawnSpec(input: {
   readonly codexHome: HostCodexHome
   readonly environment: Readonly<Record<string, string>>
   readonly launchProfile?: CodexLaunchProfile
+  readonly managedMcp?: ManagedCodexMcp
 }): ApprovedSpawnSpec {
   const binary = hostBinaryPath(input.binary)
   const cwd = hostWorkspacePath(input.workspace)
   const home = hostHomeValue(input.codexHome)
-  const environment = validateChildEnvironment(input.environment, home.path)
+  const environment = validateChildEnvironment(input.environment, home.path, managedMcpEnvironment(input.managedMcp))
   const spec = Object.freeze({[approvedSpawnBrand]: true as const})
   spawnValues.set(spec, Object.freeze({
     binary,
@@ -133,7 +135,7 @@ export function createApprovedCodexSpawnSpec(input: {
       ...validateBinaryPrefixArgs(input.prefixArgs),
       ...codexAppServerArgv(input.launchProfile ?? resolveCodexLaunchProfile({
         approvalMode: 'ask', project: false, foregroundBroker: false,
-      })),
+      }), input.managedMcp !== undefined),
     ]),
     cwd,
     environment,
@@ -423,11 +425,14 @@ class FailingWindowsCodexProcessOwnerFactory implements CodexProcessOwnerFactory
 function validateChildEnvironment(
   value: Readonly<Record<string, string>>,
   expectedCodexHome: string,
+  managedEnvironment: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
+  const prototype = Object.getPrototypeOf(value) as object | null
+  if (prototype !== Object.prototype && prototype !== null) throw new CodexProcessOwnerError('spawn_failed')
   const descriptors = Object.getOwnPropertyDescriptors(value)
   const result: Record<string, string> = {}
   for (const key of Reflect.ownKeys(descriptors)) {
-    if (typeof key !== 'string' || !CHILD_ENVIRONMENT_KEYS.has(key)) {
+    if (typeof key !== 'string' || (!CHILD_ENVIRONMENT_KEYS.has(key) && !Object.hasOwn(managedEnvironment, key))) {
       throw new CodexProcessOwnerError('spawn_failed')
     }
     const descriptor = descriptors[key]
@@ -441,7 +446,8 @@ function validateChildEnvironment(
     Object.defineProperty(result, key, {value: field, enumerable: true})
   }
   if (
-    result.PATH === undefined
+    Object.entries(managedEnvironment).some(([key, value]) => CHILD_ENVIRONMENT_KEYS.has(key) || result[key] !== value)
+    || result.PATH === undefined
     || result.HOME === undefined
     || result.CODEX_HOME !== expectedCodexHome
     || result.CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED !== '1'

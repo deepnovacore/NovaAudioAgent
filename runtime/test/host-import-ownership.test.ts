@@ -47,3 +47,35 @@ test('desktop entry reaches coding-disabled composition without importing or con
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, 'disabled-composition-reached')
 })
+
+test('actual desktop entry passes prepared external managed MCP into the concrete resource', () => {
+  const target = new URL('../src/desktop-entry.js', import.meta.url).href
+  const managedModule = new URL('../src/executors/codex/managed-mcp.js', import.meta.url).href
+  const registryModule = new URL('../src/capability-registry.js', import.meta.url).href
+  const desktop = `export async function runDesktopEntryWithStopSources({construct}) {
+    try { await construct({own() {}}); throw new Error('missing boundary'); }
+    catch (error) { if (error.message !== 'managed-resource-reached') throw error; }
+    process.stdout.write('managed-resource-reached'); return 0;
+  }
+  export function buildDesktopRealtimeComposition() { throw new Error('unexpected composition'); }`
+  const host = `export {prepareManagedCodexMcp} from ${JSON.stringify(managedModule)};
+    export function createProductionCodexHost() { return {catalog: {}, transportFactory: {}, projectHost: null}; }
+    export function resolveCodexHostConfig() { return {}; }
+    export function createCodexAssemblyResource({managedMcp}) {
+      if (JSON.stringify(managedMcp.servers.docs.enabled_tools) !== '["look-up.raw"]') throw new Error('missing managed allowlist');
+      if (Object.keys(managedMcp.servers).join() !== 'docs') throw new Error('host server leak');
+      throw new Error('managed-resource-reached');
+    }`
+  const registry = `import {parseCapabilityRegistry} from ${JSON.stringify(registryModule)};
+    export function loadCapabilityRegistry() { return parseCapabilityRegistry({version: 1, mcpServers: {docs: {transport: 'stdio', command: '/usr/bin/false', tools: {'look-up.raw': {enabled: true}}}}}); }`
+  const replacements = {'./desktop-service.js': desktop, './config.js': `export function loadSettings() { return {executors: ['codex']}; }`, './capability-registry.js': registry, './realtime/telemetry.js': `export function createRealtimeTelemetry() { return {close() {}}; }`, './executors/codex/host.js': host}
+  const hook = `export async function resolve(specifier, context, next) {
+    const replacements = ${JSON.stringify(replacements)};
+    if (context.parentURL?.endsWith('/desktop-entry.js') && replacements[specifier]) return {url: 'data:text/javascript,' + encodeURIComponent(replacements[specifier]), shortCircuit: true};
+    return next(specifier, context);
+  }`
+  const script = `import {register} from 'node:module'; register('data:text/javascript,' + encodeURIComponent(${JSON.stringify(hook)}), import.meta.url); await import(${JSON.stringify(target)});`
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding: 'utf8'})
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, 'managed-resource-reached')
+})

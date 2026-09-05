@@ -59,7 +59,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
     const codexResource = !capabilities.modules.coding.enabled || !settings.executors.includes('codex')
       ? null
       : await (async () => {
-        const {createCodexAssemblyResource, createProductionCodexHost, resolveCodexHostConfig} = await import('./executors/codex/host.js')
+        const {createCodexAssemblyResource, createProductionCodexHost, resolveCodexHostConfig, prepareManagedCodexMcp} = await import('./executors/codex/host.js')
         const sourceResourcesPath = process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH
         const codexHost = createProductionCodexHost(settings, {
           ...(sourceResourcesPath === undefined ? {} : {resourcesPath: sourceResourcesPath}),
@@ -69,6 +69,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
         return codexConfig === null
           ? null
           : await createCodexAssemblyResource({
+              managedMcp: prepareManagedCodexMcp(capabilities),
               config: codexConfig,
               composition: 'realtime',
               transportFactory: codexHost.transportFactory,

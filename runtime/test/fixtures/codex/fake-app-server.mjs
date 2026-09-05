@@ -143,6 +143,10 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       send({id: message.id, result: effectiveConfig(process.cwd(), isApprovalScenario() ? 'on-request' : 'never')})
       return
     }
+    if (message.method === 'mcpServerStatus/list') {
+      send({id: message.id, result: {data: [], nextCursor: null}})
+      return
+    }
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
       const approvalScenario = isApprovalScenario()
       if (params.approvalPolicy !== (approvalScenario ? 'on-request' : 'never')) fail('invalid_thread')

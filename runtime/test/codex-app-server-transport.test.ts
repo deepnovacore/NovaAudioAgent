@@ -1,3 +1,5 @@
+import {prepareManagedCodexMcp, managedMcpEnvironment, type ManagedCodexMcp} from '../src/executors/codex/managed-mcp.js'
+import {parseCapabilityRegistry} from '../src/capability-registry.js'
 /* eslint-disable @typescript-eslint/require-await -- deterministic fakes implement async host contracts */
 /* eslint-disable @typescript-eslint/no-empty-function -- inert fake callbacks model blocked/no-op resources */
 import assert from 'node:assert/strict'
@@ -63,7 +65,7 @@ test('a cold run follows the app-server handshake and returns bounded internal c
   )
 
   assert.deepEqual(methods, [
-    'initialize', 'initialized', 'config/read', 'thread/start', 'turn/start',
+    'initialize', 'initialized', 'config/read', 'thread/start', 'mcpServerStatus/list', 'turn/start',
   ])
   assert.deepEqual(owner.received[0]?.params.capabilities, {experimentalApi: true})
   assert.equal(outcome.classification, 'completed')
@@ -349,7 +351,7 @@ test('config widening and thread bind mismatch are safe pre-turn protocol refusa
       {expiresAtMs: Date.now() + 5000},
     )
     assert.equal(result.classification, 'refused')
-    assert.equal(result.code, 'unsupported_protocol')
+    assert.equal(result.code, scenario === 'config' ? 'config_not_isolated' : 'unsupported_protocol')
     assert.equal(result.turnStartWritten, false)
     assert.equal(owner.received.some(message => message.method === 'turn/start'), false)
     assert.equal(JSON.stringify(result).includes('renderer-selected-root'), false)
@@ -2508,6 +2510,8 @@ class MemoryAppServerOwner {
     readonly failTurnWriteBeforeDrain: boolean
     readonly persistent: boolean
     readonly rejectResume: boolean
+    readonly managedMcp: ManagedCodexMcp | undefined
+    readonly inventory: (() => unknown) | undefined
     readonly configWidening: boolean
     readonly bindWorkspace: string | null
     readonly echoSteerInFinal: boolean
@@ -2529,6 +2533,8 @@ class MemoryAppServerOwner {
     readonly failTurnWriteBeforeDrain?: boolean
     readonly persistent?: boolean
     readonly rejectResume?: boolean
+    readonly managedMcp?: ManagedCodexMcp
+    readonly inventory?: () => unknown
     readonly configWidening?: boolean
     readonly bindWorkspace?: string | null
     readonly echoSteerInFinal?: boolean
@@ -2550,6 +2556,8 @@ class MemoryAppServerOwner {
       failTurnWriteBeforeDrain: options.failTurnWriteBeforeDrain ?? false,
       persistent: options.persistent ?? false,
       rejectResume: options.rejectResume ?? false,
+      managedMcp: options.managedMcp,
+      inventory: options.inventory,
       configWidening: options.configWidening ?? false,
       bindWorkspace: options.bindWorkspace ?? null,
       echoSteerInFinal: options.echoSteerInFinal ?? false,
@@ -2690,8 +2698,12 @@ class MemoryAppServerOwner {
     if (message.method === 'config/read') {
       this.#send({
         id: message.id,
-        result: effectiveConfig(process.cwd(), this.#options.configWidening),
+        result: effectiveConfig(process.cwd(), this.#options.configWidening, this.#options.managedMcp),
       })
+      return
+    }
+    if (message.method === 'mcpServerStatus/list') {
+      this.#send({id: message.id, result: this.#options.inventory?.() ?? {data: [], nextCursor: null}})
       return
     }
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
@@ -2772,7 +2784,7 @@ class MemoryAppServerOwner {
   }
 }
 
-function effectiveConfig(workspace: string, widened = false): Record<string, unknown> {
+function effectiveConfig(workspace: string, widened = false, managed?: ManagedCodexMcp): Record<string, unknown> {
   return {
     config: {
       approval_policy: 'never',
@@ -2792,7 +2804,7 @@ function effectiveConfig(workspace: string, widened = false): Record<string, unk
         hooks: false, apps: false, multi_agent: false, plugins: false,
         remote_plugin: false, plugin_sharing: false, tool_suggest: false, remote_control: false,
       },
-      mcp_servers: {},
+      mcp_servers: managed?.servers ?? {},
       model_instructions_file: null,
     },
     origins: {},
@@ -2831,6 +2843,9 @@ function createTransport(
       readonly clock: {now(): number; sleep(milliseconds: number): Promise<void>}
       yieldIo(): Promise<void>
     }
+    readonly managedMcp?: ManagedCodexMcp
+    readonly persistent?: boolean
+    readonly resumeThreadId?: string
     readonly developerInstructions?: string | null
     readonly prepare?: (input: {readonly apiKey: string | null}) => Promise<never>
     readonly removeEphemeralHome?: () => Promise<void>
@@ -2844,11 +2859,12 @@ function createTransport(
     config: {
       binary: hostBinaryForTest(process.execPath),
       workspace: hostWorkspaceForTest(workspace),
-      codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
+      codexHome: hostCodexHomeForTest(workspace, {ephemeral: !overrides.persistent}),
       apiKey: 'api-key-sentinel',
+      ...(overrides.managedMcp === undefined ? {} : {managedMcp: overrides.managedMcp}),
       developerInstructions: overrides.developerInstructions ?? null,
-      resumeThreadId: null,
-      persistent: false,
+      resumeThreadId: overrides.resumeThreadId ?? null,
+      persistent: overrides.persistent ?? false,
       ...(overrides.approvalPolicy === undefined
         ? {}
         : {approvalPolicy: overrides.approvalPolicy}),
@@ -2863,6 +2879,7 @@ function createTransport(
     credentialSnapshotter: {
       prepare: overrides.prepare ?? (async () => ({} as never)),
       environment: () => ({
+        ...managedMcpEnvironment(overrides.managedMcp),
         PATH: '/safe-path', HOME: '/safe-home', CODEX_HOME: workspace,
         CODEX_API_KEY: 'api-key-sentinel',
         CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
@@ -2901,3 +2918,95 @@ function testDeferred<T>(): {readonly promise: Promise<T>; readonly resolve: (va
   let resolve!: (value: T) => void
   return {promise: new Promise<T>(done => { resolve = done }), resolve: value => { resolve(value) }}
 }
+
+function managedForTransport() {
+  const capabilities = parseCapabilityRegistry({version: 1, mcpServers: {docs: {
+    transport: 'stdio', command: '/usr/bin/false', tools: {'look-up.raw': {enabled: true}, unused: {enabled: true}},
+  }}})
+  return {capabilities, managed: prepareManagedCodexMcp(capabilities)}
+}
+function inventory(tools: readonly string[], name = 'docs') {
+  return {data: [{name, runtimeStatus: 'connected', tools: Object.fromEntries(tools.map(name => [name, {name}]))}], nextCursor: null}
+}
+test('managed inventory uses original names and permits only a subset before turn/start', async () => {
+  for (const extra of [false, true]) {
+    const {capabilities, managed} = managedForTransport()
+    const methods: string[] = []
+    const owner = new MemoryAppServerOwner(methods, {managedMcp: managed, inventory: () => inventory(extra ? ['look-up.raw', 'rogue'] : ['look-up.raw'])})
+    const transport = createTransport({spawn: async () => owner}, {managedMcp: managed})
+    const outcome = await transport.run({workOrder: 'metadata fixture'}, {}, {expiresAtMs: Date.now() + 5000})
+    assert.equal(outcome.code, extra ? 'mcp_tools_not_isolated' : 'completed')
+    assert.equal(outcome.turnStartWritten, !extra)
+    assert.deepEqual(owner.received.find(message => message.method === 'mcpServerStatus/list')?.params, {threadId: 'thread-1', detail: 'toolsAndAuthOnly', limit: 100})
+    assert.deepEqual(methods.slice(methods.indexOf('thread/start'), methods.indexOf('mcpServerStatus/list') + 1), ['thread/start', 'mcpServerStatus/list'])
+    if (extra) assert.equal(methods.includes('turn/start'), false)
+    assert.equal(capabilities.serverStatuses[0]?.codex?.status, extra ? 'failed' : 'ok')
+  }
+})
+test('warm sessions recheck thread-scoped tools immediately before the turn', async () => {
+  const {managed} = managedForTransport()
+  let current = ['look-up.raw']
+  const owner = new MemoryAppServerOwner([], {managedMcp: managed, inventory: () => inventory(current)})
+  const transport = createTransport({spawn: async () => owner}, {managedMcp: managed})
+  await transport.prewarm({expiresAtMs: Date.now() + 5000})
+  current = ['rogue']
+  const outcome = await transport.run({workOrder: 'must not start'}, {}, {expiresAtMs: Date.now() + 5000})
+  assert.equal(outcome.code, 'mcp_tools_not_isolated')
+  assert.equal(outcome.turnStartWritten, false)
+})
+test('unexpected servers, mismatched raw names, and repeating inventory cursors abort before a turn', async () => {
+  for (const response of [inventory([], 'host_leak'), {data: [{name: 'docs', tools: {'look-up.raw': {name: 'rogue'}}}], nextCursor: null}, {data: [], nextCursor: 'repeat'}]) {
+    const {managed} = managedForTransport()
+    const owner = new MemoryAppServerOwner([], {managedMcp: managed, inventory: () => response})
+    const transport = createTransport({spawn: async () => owner}, {managedMcp: managed})
+    const outcome = await transport.run({workOrder: 'must not start'}, {}, {expiresAtMs: Date.now() + 5000})
+    assert.equal(outcome.code, 'mcp_tools_not_isolated')
+    assert.equal(outcome.turnStartWritten, false)
+  }
+})
+test('concurrent sessions validate their own thread inventory; one failure cannot authorize its sibling', async () => {
+  const {managed, capabilities} = managedForTransport()
+  const owners = [false, true].map(extra => new MemoryAppServerOwner([], {persistent: true, threadId: extra ? 'thread-bad' : 'thread-good', managedMcp: managed, inventory: () => inventory(extra ? ['rogue'] : ['look-up.raw'])}))
+  const transports = owners.map(owner => createTransport({spawn: async () => owner}, {managedMcp: managed, persistent: true}))
+  const outcomes = await Promise.all(transports.map(transport => transport.run({workOrder: 'concurrent fixture'}, {}, {expiresAtMs: Date.now() + 5000})))
+  await Promise.all(transports.map(transport => transport.close()))
+  assert.deepEqual(outcomes.map(outcome => outcome.code), ['completed', 'mcp_tools_not_isolated'])
+  assert.deepEqual(owners.map(owner => owner.received.find(message => message.method === 'mcpServerStatus/list')?.params.threadId), ['thread-good', 'thread-bad'])
+  assert.equal(capabilities.serverStatuses[0]?.codex?.status, 'failed')
+})
+
+test('resumed persistent sessions check every turn, and inventory pagination reaches the final page', async () => {
+  const {managed} = managedForTransport()
+  let pages = 0
+  let rogue = false
+  const owners: MemoryAppServerOwner[] = []
+  const makeOwner = () => new MemoryAppServerOwner([], {threadId: 'resumed-thread', persistent: true, managedMcp: managed, inventory: () => {
+    pages += 1
+    return pages % 2 === 1 ? {data: [], nextCursor: 'page-two'} : inventory(rogue ? ['rogue'] : ['look-up.raw'])
+  }})
+  const transport = createTransport({spawn: async () => { const owner = makeOwner(); owners.push(owner); return owner }}, {managedMcp: managed, persistent: true, resumeThreadId: 'resumed-thread'})
+  try {
+    const first = await transport.run({workOrder: 'first turn'}, {}, {expiresAtMs: Date.now() + 5000})
+    assert.equal(first.code, 'completed')
+    rogue = true
+    const second = await transport.run({workOrder: 'second turn'}, {}, {expiresAtMs: Date.now() + 5000})
+    assert.equal(second.code, 'mcp_tools_not_isolated')
+    assert.equal(second.turnStartWritten, false)
+    const requests = owners.flatMap(owner => owner.received).filter(message => message.method === 'mcpServerStatus/list')
+    assert.equal(requests.length, 4)
+    assert.ok(requests.every(request => request.params.threadId === 'resumed-thread'))
+    assert.equal(requests[1]?.params.cursor, 'page-two')
+    assert.equal(owners.flatMap(owner => owner.received).filter(message => message.method === 'thread/resume').length, 2)
+  } finally { await transport.close() }
+})
+test('managed credentials never reach preflight probes or bounded final output', async () => {
+  const capabilities = parseCapabilityRegistry({version: 1, mcpServers: {docs: {transport: 'stdio', command: '/usr/bin/false', env: {DOCS_TOKEN: 'dummy-mcp-secret'}, tools: {'look-up.raw': {enabled: true}}}}})
+  const managed = prepareManagedCodexMcp(capabilities)
+  const owner = new MemoryAppServerOwner([], {managedMcp: managed, inventory: () => inventory(['look-up.raw']), finalText: 'echo dummy-mcp-secret'})
+  const probes: unknown[] = []
+  const transport = createTransport({spawn: async () => owner}, {managedMcp: managed, preflightRunner: {run: async config => { probes.push(config); return safePreflightReport() }}, schemaProbe: {generate: async config => { probes.push(config); return supportedSchemaBundle() }}})
+  const outcome = await transport.run({workOrder: 'private fixture'}, {}, {expiresAtMs: Date.now() + 5000})
+  assert.equal(outcome.code, 'completed')
+  assert.equal(JSON.stringify(outcome).includes('dummy-mcp-secret'), false)
+  assert.ok(probes.every(config => !Object.hasOwn(config as object, 'managedMcp')))
+})

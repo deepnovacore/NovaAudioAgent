@@ -1,3 +1,4 @@
+import {validateManagedMcpConfig, type ManagedCodexMcp} from './managed-mcp.js'
 import {resolve} from 'node:path'
 import {CodexProtocolError} from './protocol.js'
 import {snapshotJsonRecord} from './safe-json.js'
@@ -65,6 +66,7 @@ export const APP_SERVER_METHOD_SCHEMAS: Readonly<Record<string, MethodSchemaSpec
   }, ['threadId'], ['approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'], {
     approvalPolicy: ['string', 'object', 'null'],
   }),
+  'mcpServerStatus/list': method('v2/ListMcpServerStatusParams.json', {threadId: 'string', detail: 'string', cursor: 'string', limit: 'integer'}, [], ['threadId', 'detail', 'cursor', 'limit']),
   'turn/start': method('v2/TurnStartParams.json', {threadId: 'string', input: 'array'}, [
     'threadId', 'input',
   ]),
@@ -91,6 +93,7 @@ const TURN_NESTED = deepFreeze({
 })
 
 export const APP_SERVER_INBOUND_SCHEMAS: readonly InboundSchemaSpec[] = deepFreeze([
+  method('v2/ListMcpServerStatusResponse.json', {data: 'array', nextCursor: 'string'}, ['data'], ['nextCursor']),
   method('v2/ConfigReadResponse.json', {config: 'object', origins: 'object'}, ['config', 'origins']),
   {...method('v2/ThreadStartResponse.json', {
     approvalPolicy: 'string', approvalsReviewer: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
@@ -679,7 +682,7 @@ export interface EffectiveCodexConfigReport {
   readonly web_search: 'disabled'
   readonly shell_environment: 'core_include_only'
   readonly extensions: 'disabled'
-  readonly mcp: 'empty'
+  readonly mcp: 'empty' | 'managed'
   readonly instructions: 'builtin' | 'replacement'
 }
 
@@ -704,7 +707,7 @@ const SAFE_OPTIONAL_FEATURES: ReadonlySet<string> = new Set([
 export function validateEffectiveCodexConfig(
   response: unknown,
   workspace: string,
-  options: {readonly allowReplacementInstructions: boolean; readonly launchProfile?: CodexLaunchProfile},
+  options: {readonly allowReplacementInstructions: boolean; readonly launchProfile?: CodexLaunchProfile; readonly managedMcp?: ManagedCodexMcp},
 ): EffectiveCodexConfigReport {
   try {
     const envelope = snapshotJsonRecord(response)
@@ -762,9 +765,7 @@ export function validateEffectiveCodexConfig(
         throw new TypeError('feature')
       }
     }
-    if (!isPlainObject(config.mcp_servers) || Object.keys(config.mcp_servers).length !== 0) {
-      throw new TypeError('mcp')
-    }
+    validateManagedMcpConfig(config.mcp_servers, options.managedMcp)
     const replacement = config.model_instructions_file
     if (!options.allowReplacementInstructions && replacement !== null && replacement !== undefined) {
       throw new TypeError('instructions')
@@ -780,7 +781,7 @@ export function validateEffectiveCodexConfig(
       web_search: 'disabled',
       shell_environment: 'core_include_only',
       extensions: 'disabled',
-      mcp: 'empty',
+      mcp: Object.keys(options.managedMcp?.servers ?? {}).length === 0 ? 'empty' : 'managed',
       instructions: options.allowReplacementInstructions ? 'replacement' : 'builtin',
     })
   } catch {

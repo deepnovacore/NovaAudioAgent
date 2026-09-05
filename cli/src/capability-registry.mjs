@@ -209,7 +209,7 @@ function parseServer(value, environment) {
         const url = enabled ? interpolateCapabilityValue(rawUrl, environment) : rawUrl;
         if (enabled)
             validateMcpEndpoint(url, headers);
-        return { enabled, transport, url, headers, tools, exposeTo };
+        return { enabled, transport, url, urlInterpolated: /\$\{[A-Za-z_][A-Za-z0-9_]*\}/u.test(rawUrl), headers, tools, exposeTo };
     }
     if (config.url !== undefined || config.headers !== undefined)
         invalid('server.transport_fields');

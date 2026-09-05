@@ -1,3 +1,5 @@
+import {prepareManagedCodexMcp} from '../src/executors/codex/managed-mcp.js'
+import {parseCapabilityRegistry} from '../src/capability-registry.js'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {resolve} from 'node:path'
@@ -45,6 +47,7 @@ const METHOD_SPECS = {
     nullable: ['approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'],
     allowedTypes: {approvalPolicy: ['string', 'object', 'null']},
   },
+  'mcpServerStatus/list': {file: 'v2/ListMcpServerStatusParams.json', fields: {threadId: 'string', detail: 'string', cursor: 'string', limit: 'integer'}, required: [], nullable: ['threadId', 'detail', 'cursor', 'limit']},
   'turn/start': {
     file: 'v2/TurnStartParams.json',
     fields: {threadId: 'string', input: 'array'},
@@ -78,6 +81,7 @@ const TURN_NESTED = {
   required: ['id', 'items', 'status'],
 } as const
 const INBOUND_SPECS = [
+  {file: 'v2/ListMcpServerStatusResponse.json', fields: {data: 'array', nextCursor: 'string'}, required: ['data'], nullable: ['nextCursor']},
   {
     file: 'v2/ConfigReadResponse.json', fields: {config: 'object', origins: 'object'},
     required: ['config', 'origins'],
@@ -250,6 +254,7 @@ test('the exact supported request and inbound schema bundle validates', () => {
   assert.deepEqual(validateCodexSchemaBundle(supportedBundle()), {
     initialize: true,
     'config/read': true,
+    'mcpServerStatus/list': true,
     'thread/start': true,
     'thread/resume': true,
     'turn/start': true,
@@ -816,4 +821,29 @@ test('replacement instructions require the explicit opt-in and change only the r
   assert.equal(validateEffectiveCodexConfig(effectiveConfig(), '/workspace', {
     allowReplacementInstructions: true,
   }).instructions, 'replacement')
+})
+
+
+test('effective config closure admits pinned local normalization and rejects every managed policy widening', () => {
+  const managedMcp = prepareManagedCodexMcp(parseCapabilityRegistry({version: 1, mcpServers: {docs: {
+    transport: 'stdio', command: '/usr/bin/false', env: {DOCS_TOKEN: 'dummy'}, tools: {'look-up.raw': {enabled: true}},
+  }}}))
+  const response = effectiveConfig()
+  nested(response, 'config').mcp_servers = {docs: {...managedMcp.servers.docs, environment_id: 'local'}}
+  assert.equal(validateEffectiveCodexConfig(response, '/workspace', {allowReplacementInstructions: false, managedMcp}).mcp, 'managed')
+  for (const change of [
+    (entry: Record<string, unknown>) => { delete entry.enabled_tools },
+    (entry: Record<string, unknown>) => { entry.enabled_tools = ['look_up_raw'] },
+    (entry: Record<string, unknown>) => { entry.disabled_tools = ['look-up.raw'] },
+    (entry: Record<string, unknown>) => { entry.environment_id = 'remote' },
+    (entry: Record<string, unknown>) => { entry.env = {DOCS_TOKEN: 'dummy'} },
+    (entry: Record<string, unknown>) => { entry.default_tools_approval_mode = 'prompt' },
+    (entry: Record<string, unknown>) => { entry.command = '/unmanaged' },
+  ]) {
+    const bad = structuredClone(response)
+    change(nested(nested(nested(bad, 'config'), 'mcp_servers'), 'docs'))
+    assert.throws(() => validateEffectiveCodexConfig(bad, '/workspace', {allowReplacementInstructions: false, managedMcp}), /config_not_isolated/u)
+  }
+  nested(nested(response, 'config'), 'mcp_servers').host_leak = {}
+  assert.throws(() => validateEffectiveCodexConfig(response, '/workspace', {allowReplacementInstructions: false, managedMcp}), /config_not_isolated/u)
 })

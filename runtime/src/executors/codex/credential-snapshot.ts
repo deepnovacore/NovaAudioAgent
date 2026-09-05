@@ -1,3 +1,4 @@
+import {managedMcpEnvironment, managedMcpConfigToml, type ManagedCodexMcp} from './managed-mcp.js'
 import {constants as fsConstants, realpathSync, type BigIntStats} from 'node:fs'
 import {
   chmod,
@@ -90,6 +91,7 @@ export class CredentialSnapshotter {
   async prepare(input: {
     readonly codexHome: HostCodexHome
     readonly apiKey: string | null
+    readonly managedMcp?: ManagedCodexMcp
   }): Promise<CredentialSnapshot> {
     let phase: CredentialPreparationPhase = 'private_home'
     try {
@@ -102,8 +104,12 @@ export class CredentialSnapshotter {
       if (apiKey === null) await this.#syncSavedLogin(home.path)
       phase = 'environment'
       const environment = this.#childEnvironment(home.path, apiKey)
+      const managedEnvironment = managedMcpEnvironment(input.managedMcp)
+      if (Object.keys(managedEnvironment).some(key => Object.hasOwn(environment, key))) throw new CodexCredentialError()
+      const childEnvironment = Object.freeze({...environment, ...managedEnvironment})
+      await atomicOwnerWrite(join(home.path, 'config.toml'), new TextEncoder().encode(managedMcpConfigToml(input.managedMcp)))
       const snapshot = Object.freeze({[credentialSnapshotBrand]: true as const})
-      snapshotValues.set(snapshot, Object.freeze({environment}))
+      snapshotValues.set(snapshot, Object.freeze({environment: childEnvironment}))
       return snapshot
     } catch {
       this.#emitDiagnostic(credentialDiagnosticForPhase(phase))

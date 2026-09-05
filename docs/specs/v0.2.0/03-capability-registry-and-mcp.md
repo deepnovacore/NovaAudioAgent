@@ -526,3 +526,43 @@ speech-onset revision and session epoch. A nonreadonly call checks these again a
 the transport send boundary. These callbacks remain in private runtime context,
 not persisted delegates or memory. Tool results always remain untrusted external
 content; `probe_policy: none` never promises verification after an unknown result.
+
+### Pinned Codex 0.152 managed projection contract
+
+The desktop entry prepares managed entries inside the enabled concrete Codex
+boundary. The same prepared authority follows every ordinary, startup and project
+transport. `prepareManagedCodexMcp(capabilities, trustedEntries)` is the host-only
+seam for the fixed `nova_knowledge` entry; it does not relax external registry
+validation. A sole `Authorization: Bearer …` header uses `bearer_token_env_var`;
+other headers use `env_http_headers`. Values remain in the private child environment.
+
+Codex 0.152 `env_vars` inherits original variable names; its object `source` means
+`local` or `remote`, not an alias. Nova therefore supports credential variable names
+`KEY`, `TOKEN`, `SECRET`, `PASSWORD` and application-prefixed versions, excluding
+host/launcher namespaces. Unsupported settings fail only that server's Codex
+exposure with `codex_env_unrepresentable`. Conflicting values for the same original
+name fail every affected server with `codex_env_conflict`; Windows matching is
+case-insensitive. Nova keeps its existing host environment allowlist. A future
+scoped launcher adapter is needed for noncredential stdio settings.
+
+URLs containing interpolation, recognized credential parameters, userinfo or fragments cannot be
+projected safely and fail with `codex_secret_url_unrepresentable`. Move credentials
+to header references. Codex has one native timeout per server: all enabled tools
+must have equal `ceil(timeoutMs / 1000)`, otherwise Codex exposure reports
+`codex_timeout_unrepresentable`. No tool is silently removed or timeout enlarged.
+
+`McpServerStatus.codex` separately reports `configured | ok | disabled | failed`
+and a fixed, secret-free reason. FrontBrain status remains independent. `ok` means
+one thread-scoped inventory check observed a connected server and only allowed raw
+names; it is not a live tool execution claim. Any observed project visibility
+failure stays visible until registry restart, even if a concurrent project passes.
+Missing/disconnected servers report failed while other isolated tools remain usable.
+Every run, including warm or resumed sessions, enumerates all status pages with its
+own thread ID immediately before `turn/start`; unknown servers or tool names abort
+the turn with `mcp_tools_not_isolated`. Effective config discrepancies use
+`config_not_isolated`, admitting only the verified `environment_id = "local"`
+normalization. Tool approval is `auto`, supported by the pinned schema.
+
+UI must state: `maxCallsPerTurn` and `maxResultBytes` apply only to FrontBrain.
+Codex uses its native timeout and context handling. Generated private TOML contains
+references only, and host MCP configuration is never copied.

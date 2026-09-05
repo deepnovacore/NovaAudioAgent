@@ -96,6 +96,7 @@
     "runtime/src/executors/codex/index.ts",
     "runtime/src/executors/codex/jsonl.ts",
     "runtime/src/executors/codex/launch-profile.ts",
+    "runtime/src/executors/codex/managed-mcp.ts",
     "runtime/src/executors/codex/process-owner.ts",
     "runtime/src/executors/codex/production-host.ts",
     "runtime/src/executors/codex/protocol.ts",
@@ -1391,6 +1392,72 @@
       "disposition": "host_only_unicode",
       "behavior": "host resolver is lazy without Codex and brands one allowlisted launch tuple",
       "test": "runtime/test/codex-host-config.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/codex/managed-mcp.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 0,
+      "line": 64,
+      "snippet": "name.toUpperCase()",
+      "snippet_sha256": "c9938dbdf8cd237a11e3c49a74330148253441547cb6e8a1873a09273b8dd848",
+      "disposition": "host_only_unicode",
+      "behavior": "private MCP config serializes only references and exact original tools; no host MCP or ambient env",
+      "test": "runtime/test/codex-managed-mcp.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/codex/managed-mcp.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 65,
+      "snippet": "'Bearer '.length",
+      "snippet_sha256": "e997f6cda100bea2d60432aa4f17bed4d831ebfb9a827b3b23713cddfbfd6a5d",
+      "disposition": "intentional_utf16",
+      "behavior": "trusted host knowledge entry uses the same allowlist/reference path while external name stays reserved",
+      "test": "runtime/test/codex-managed-mcp.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/codex/managed-mcp.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 2,
+      "line": 69,
+      "snippet": "name.toUpperCase()",
+      "snippet_sha256": "c9938dbdf8cd237a11e3c49a74330148253441547cb6e8a1873a09273b8dd848",
+      "disposition": "host_only_unicode",
+      "behavior": "private MCP config serializes only references and exact original tools; no host MCP or ambient env",
+      "test": "runtime/test/codex-managed-mcp.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/codex/managed-mcp.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "line": 69,
+      "snippet": "index",
+      "snippet_sha256": "1bc04b5291c26a46d918139138b992d2de976d6851d0893b0476b85bfbdfc6e6",
+      "disposition": "wire_json",
+      "behavior": "private MCP config serializes only references and exact original tools; no host MCP or ambient env",
+      "test": "runtime/test/codex-managed-mcp.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/codex/managed-mcp.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 4,
+      "line": 79,
+      "snippet": "key.toUpperCase()",
+      "snippet_sha256": "0b53af296116eb2ace99b702bf02073df19853cd0e13bbb724cc8f7c2e2fccce",
+      "disposition": "host_only_unicode",
+      "behavior": "stdio env conflicts fail all affected servers independently of order and Windows case",
+      "test": "runtime/test/codex-managed-mcp.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/codex/managed-mcp.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 5,
+      "line": 112,
+      "snippet": "key.toUpperCase()",
+      "snippet_sha256": "0b53af296116eb2ace99b702bf02073df19853cd0e13bbb724cc8f7c2e2fccce",
+      "disposition": "host_only_unicode",
+      "behavior": "stdio env conflicts fail all affected servers independently of order and Windows case",
+      "test": "runtime/test/codex-managed-mcp.test.ts"
     },
     {
       "file": "runtime/src/executors/codex/process-owner.ts",

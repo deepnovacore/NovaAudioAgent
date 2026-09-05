@@ -20,6 +20,7 @@ const METHODS = {
   }, ['threadId'], ['approvalPolicy', 'approvalsReviewer', 'permissions', 'sandbox', 'developerInstructions', 'cwd'], {
     approvalPolicy: ['string', 'object', 'null'],
   }],
+  'mcpServerStatus/list': ['v2/ListMcpServerStatusParams.json', {threadId: 'string', detail: 'string', cursor: 'string', limit: 'integer'}, [], ['threadId', 'detail', 'cursor', 'limit'], {}],
   'turn/start': [
     'v2/TurnStartParams.json', {threadId: 'string', input: 'array'}, ['threadId', 'input'], [], {},
   ],
@@ -35,6 +36,7 @@ const METHODS = {
 } as const
 
 const INBOUND = [
+  ['v2/ListMcpServerStatusResponse.json', {data: 'array', nextCursor: 'string'}, ['data'], null],
   ['v2/ConfigReadResponse.json', {config: 'object', origins: 'object'}, ['config', 'origins'], null],
   ['v2/ThreadStartResponse.json', {
     approvalPolicy: 'string', approvalsReviewer: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
@@ -70,6 +72,7 @@ const INBOUND = [
 ] as const
 
 const INBOUND_NULLABLE: Readonly<Record<string, readonly string[]>> = {
+  'v2/ListMcpServerStatusResponse.json': ['nextCursor'],
   'v2/ThreadNameUpdatedNotification.json': ['threadName'],
 }
 

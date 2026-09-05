@@ -1,3 +1,4 @@
+import type {ManagedCodexMcp} from './managed-mcp.js'
 import type {CodingExecutorResource} from '../../coding-executor.js'
 import {codexAgentDescriptor, codingAgentControllerFactory} from './controller.js'
 import {
@@ -55,6 +56,7 @@ export type CodexAssemblyMode = 'ordinary' | 'live' | 'project'
 export type CodexApprovalPolicy = 'never' | 'on-request'
 
 export interface CodexTransportBinding {
+  readonly managedMcp?: ManagedCodexMcp
   readonly mode: CodexAssemblyMode
   readonly binary: HostBinary
   readonly binaryPrefixArgs: readonly string[]
@@ -96,6 +98,7 @@ export class OwnedCodexBackendTransportFactory implements CodexBackendTransportF
     if (codexHome === null) throw new CodexHostConfigurationError('codex_host_unavailable')
     const transport = new OwnedCodexAppServerTransport({
       config: {
+        ...(binding.managedMcp === undefined ? {} : {managedMcp: binding.managedMcp}),
         binary: binding.binary,
         prefixArgs: binding.binaryPrefixArgs,
         workspace: binding.workspace,
@@ -187,6 +190,7 @@ export interface CodexAssemblyResource extends CodingExecutorResource {
 }
 
 export interface CreateCodexAssemblyResourceOptions {
+  readonly managedMcp?: ManagedCodexMcp
   readonly config: ResolvedCodexHostConfig
   readonly composition: 'ordinary' | 'realtime'
   readonly transportFactory: CodexBackendTransportFactory
@@ -217,6 +221,7 @@ export async function createCodexAssemblyResource(
     return await createProjectResource(options)
   }
   const binding: CodexTransportBinding = Object.freeze({
+    ...(options.managedMcp === undefined ? {} : {managedMcp: options.managedMcp}),
     mode: 'ordinary',
     binary: options.config.binary,
     binaryPrefixArgs: options.config.binaryPrefixArgs,
@@ -286,6 +291,7 @@ async function createProjectResource(
   let startupTransport: CodexAppServerTransport | null = null
   try {
     startupTransport = options.transportFactory.create(Object.freeze({
+      ...(options.managedMcp === undefined ? {} : {managedMcp: options.managedMcp}),
       mode: 'live',
       binary: options.config.binary,
       binaryPrefixArgs: options.config.binaryPrefixArgs,
@@ -324,6 +330,7 @@ async function createProjectResource(
       transportFactory: {
         create: binding => {
           const transport = options.transportFactory.create(Object.freeze({
+            ...(options.managedMcp === undefined ? {} : {managedMcp: options.managedMcp}),
             mode: 'project',
             binary: options.config.binary,
             binaryPrefixArgs: options.config.binaryPrefixArgs,

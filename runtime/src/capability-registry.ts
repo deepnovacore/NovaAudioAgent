@@ -22,6 +22,8 @@ export interface McpServerConfig {
   readonly enabled: boolean
   readonly transport: 'streamable-http' | 'stdio'
   readonly url?: string
+  /** Host-only provenance: Codex cannot safely persist an interpolated URL. */
+  readonly urlInterpolated?: boolean
   readonly headers?: Readonly<Record<string, string>>
   readonly command?: string
   readonly args?: readonly string[]
@@ -48,6 +50,8 @@ export interface CapabilityModules {
   readonly knowledge: {readonly enabled: boolean; readonly exposeToCodex: boolean}
 }
 export interface McpServerStatus {
+  /** Codex uses native timeout/context bounds; maxCallsPerTurn/maxResultBytes apply only to FrontBrain. */
+  readonly codex?: {readonly status: 'configured' | 'ok' | 'disabled' | 'failed'; readonly reason?: string}
   readonly name: string
   readonly status: 'configured' | 'ok' | 'disabled' | 'failed'
   readonly reason?: string
@@ -221,7 +225,7 @@ function parseServer(value: unknown, environment: Environment): McpServerConfig 
     const headers = enabled ? interpolateMap(rawHeaders, environment) : rawHeaders
     const url = enabled ? interpolateCapabilityValue(rawUrl, environment) : rawUrl
     if (enabled) validateMcpEndpoint(url, headers)
-    return {enabled, transport, url, headers, tools, exposeTo}
+    return {enabled, transport, url, urlInterpolated: /\$\{[A-Za-z_][A-Za-z0-9_]*\}/u.test(rawUrl), headers, tools, exposeTo}
   }
   if (config.url !== undefined || config.headers !== undefined) invalid('server.transport_fields')
   const command = string(config.command, 'server.command')

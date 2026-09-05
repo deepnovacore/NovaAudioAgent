@@ -1,3 +1,5 @@
+import {prepareManagedCodexMcp} from '../src/executors/codex/managed-mcp.js'
+import {parseCapabilityRegistry} from '../src/capability-registry.js'
 import assert from 'node:assert/strict'
 import {
   chmodSync,
@@ -334,10 +336,12 @@ test('ordinary composition keeps the non-realtime Codex adapter', async t => {
   const config = hostConfig(t)
   assert.ok(config !== null)
 
+  const managedMcp = prepareManagedCodexMcp(parseCapabilityRegistry({version: 1}))
   const ordinaryFactory = new RecordingTransportFactory()
   const ordinary = await createCodexAssemblyResource({
     config,
     composition: 'ordinary',
+    managedMcp,
     transportFactory: ordinaryFactory,
     clock: new VirtualClock(),
     idFactory: () => 'ordinary-id',
@@ -348,6 +352,7 @@ test('ordinary composition keeps the non-realtime Codex adapter', async t => {
   ])
   assert.equal(ordinaryFactory.calls.length, 1)
   assert.equal(ordinaryFactory.calls[0]?.mode, 'ordinary')
+  assert.equal(ordinaryFactory.calls[0]?.managedMcp, managedMcp)
   await ordinary.start()
   assert.equal(ordinaryFactory.transports[0]?.preflights, 1)
   assert.equal(ordinaryFactory.transports[0]?.prewarms, 0)
@@ -441,7 +446,9 @@ test('realtime mode always opens one project store and exposes only project tool
   const {config, stateRoot, managedRoot} = projectHostConfig(t)
   const transportFactory = new RecordingTransportFactory()
   const views: unknown[] = []
+  const managedMcp = prepareManagedCodexMcp(parseCapabilityRegistry({version: 1}))
   const factoryOptions = {
+    managedMcp,
     config,
     composition: 'realtime' as const,
     transportFactory,
@@ -474,6 +481,7 @@ test('realtime mode always opens one project store and exposes only project tool
   assert.equal(Object.values(state.workspaces)[0]?.created_at, 123)
   assert.equal(transportFactory.calls.length, 1, 'startup owns one fixed preflight transport')
   assert.equal(transportFactory.calls[0]?.mode, 'live')
+  assert.equal(transportFactory.calls[0]?.managedMcp, managedMcp)
   const projectStart = resource.start()
   assert.equal(resource.start(), projectStart)
   await projectStart

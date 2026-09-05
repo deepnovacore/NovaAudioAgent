@@ -14,3 +14,5 @@ export {
 export * from './factory.js'
 export * from './host-config.js'
 export * from './production-host.js'
+
+export {prepareManagedCodexMcp, type ManagedCodexMcp} from './managed-mcp.js'

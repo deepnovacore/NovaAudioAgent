@@ -133,7 +133,7 @@ export async function prepareExternalMcp(capabilities: CapabilityRegistry, signa
   const statuses = [...capabilities.serverStatuses]
   const updateStatus = (status: McpServerStatus): void => {
     const index = statuses.findIndex(value => value.name === status.name)
-    if (index < 0) statuses.push(status); else statuses[index] = status
+    if (index < 0) statuses.push(status); else statuses[index] = {...statuses[index], ...status}
   }
   for (const [name, config] of Object.entries(capabilities.mcpServers)) {
     if (!config.enabled || !config.exposeTo.frontbrain) continue

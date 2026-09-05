@@ -1,3 +1,4 @@
+import {managedMcpEnvironment, recordManagedMcpVisibility, type ManagedCodexMcp} from './managed-mcp.js'
 import {Readable, Writable} from 'node:stream'
 
 import {
@@ -58,6 +59,8 @@ export const CODEX_FINAL_TEXT_LIMIT = 4000
 
 export type CodexTransportCode =
   | 'completed'
+  | 'config_not_isolated'
+  | 'mcp_tools_not_isolated'
   | 'adapter_timeout'
   | 'binary_missing'
   | 'credential_missing'
@@ -80,6 +83,7 @@ export type CodexTransportCode =
   | 'busy'
 
 export interface CodexAppServerLaunchConfig {
+  readonly managedMcp?: ManagedCodexMcp
   readonly binary: HostBinary
   readonly prefixArgs?: readonly string[]
   readonly workspace: HostWorkspace
@@ -160,7 +164,7 @@ export interface CodexLiveSchemaProbe {
 }
 
 interface CredentialProvider {
-  prepare(input: {readonly codexHome: HostCodexHome; readonly apiKey: string | null}): Promise<CredentialSnapshot>
+  prepare(input: {readonly codexHome: HostCodexHome; readonly apiKey: string | null; readonly managedMcp?: ManagedCodexMcp}): Promise<CredentialSnapshot>
   environment(snapshot: CredentialSnapshot): Readonly<Record<string, string>>
   removeEphemeralHome(home: HostCodexHome): Promise<void>
 }
@@ -419,6 +423,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           threadId, name: input.threadName,
         }, deadline).catch(() => undefined)
       }
+      await this.#validateMcpVisibility(session, threadId, deadline)
       await this.#scheduler.yieldIo()
       const turnResponse = await this.#requestPreparedWithin(
         session,
@@ -621,10 +626,9 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   async #performPreflight(deadline: TransportDeadline): Promise<SafePreflightReport> {
     const hardDeadline = Math.min(deadline.expiresAtMs, Date.now() + CODEX_PREFLIGHT_LIMIT_MS)
     const bounded = {...deadline, expiresAtMs: hardDeadline}
-    const probeConfig: ValidatedCodexAppServerLaunchConfig = Object.freeze({
-      ...this.#config,
-      apiKey: null,
-    })
+    const probeConfig = {...this.#config, apiKey: null}
+    delete probeConfig.managedMcp
+    Object.freeze(probeConfig)
     let report: unknown
     try {
       report = await runWithin(
@@ -669,6 +673,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       .then(() => this.#credentials.prepare({
         codexHome: this.#config.codexHome,
         apiKey: this.#config.apiKey,
+        ...(this.#config.managedMcp === undefined ? {} : {managedMcp: this.#config.managedMcp}),
       }))
       .finally(() => { this.#credentialPreparations -= 1 })
     try {
@@ -714,6 +719,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         workspace: this.#config.workspace,
         codexHome: this.#config.codexHome,
         environment,
+        ...(this.#config.managedMcp === undefined ? {} : {managedMcp: this.#config.managedMcp}),
         launchProfile: this.#config.launchProfile,
       })
       const spawnController = new AbortController()
@@ -809,6 +815,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       }, deadline)
       validateEffectiveCodexConfig(configResponse, hostWorkspacePath(this.#config.workspace), {
         allowReplacementInstructions: false,
+        ...(this.#config.managedMcp === undefined ? {} : {managedMcp: this.#config.managedMcp}),
         launchProfile: this.#config.launchProfile,
       })
       const thread = this.#threadRequest()
@@ -827,6 +834,42 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       const cleanup = await this.#cleanup(session, true)
       if (cleanup.complete && this.#session === session) this.#session = null
       throw safeTransportError(error, 'transport_lost')
+    }
+  }
+
+  async #validateMcpVisibility(session: Session, threadId: string, deadline: TransportDeadline): Promise<void> {
+    const managed = this.#config.managedMcp
+    const expected = managed?.servers ?? {}
+    const seen = new Set<string>()
+    const cursors = new Set<string>()
+    let cursor: string | undefined
+    try {
+      do {
+        const response = snapshotJsonRecord(await this.#requestWithin(session, 'mcpServerStatus/list', {
+          threadId, detail: 'toolsAndAuthOnly', limit: 100, ...(cursor === undefined ? {} : {cursor}),
+        }, deadline))
+        if (!Array.isArray(response.data)) throw new TypeError('inventory')
+        for (const value of response.data) {
+          const server = snapshotJsonRecord(value)
+          const name = server.name
+          if (typeof name !== 'string' || !Object.hasOwn(expected, name) || seen.has(name)) throw new TypeError('server')
+          seen.add(name)
+          const tools = snapshotJsonRecord(server.tools)
+          for (const [nameOfTool, metadata] of Object.entries(tools)) {
+            if (!expected[name]!.enabled_tools.includes(nameOfTool)
+              || snapshotJsonRecord(metadata).name !== nameOfTool) throw new TypeError('tool')
+          }
+          recordManagedMcpVisibility(managed, name, server.runtimeStatus === 'connected')
+        }
+        if (response.nextCursor === null || response.nextCursor === undefined) cursor = undefined
+        else if (typeof response.nextCursor !== 'string' || response.nextCursor === '' || cursors.has(response.nextCursor)) throw new TypeError('cursor')
+        else { cursor = response.nextCursor; cursors.add(cursor) }
+      } while (cursor !== undefined)
+      for (const name of Object.keys(expected)) if (!seen.has(name)) recordManagedMcpVisibility(managed, name, false)
+    } catch (error) {
+      for (const name of Object.keys(expected)) recordManagedMcpVisibility(managed, name, false)
+      if (error instanceof CodexTransportError || error instanceof CodexProtocolError) throw error
+      throw new CodexTransportError('mcp_tools_not_isolated')
     }
   }
 
@@ -1289,6 +1332,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     let normalized = normalizeNfcPinned([...text].slice(0, CODEX_WORK_ORDER_LIMIT).join(''))
     const secrets = [
       ...this.#sensitiveInputs.map(value => normalizeNfcPinned(value)),
+      ...Object.values(managedMcpEnvironment(this.#config.managedMcp)),
       this.#config.apiKey,
       this.#config.developerInstructions,
       hostWorkspacePath(this.#config.workspace),
@@ -1483,6 +1527,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
 
 function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCodexAppServerLaunchConfig {
   hostWorkspacePath(config.workspace)
+  managedMcpEnvironment(config.managedMcp)
   const home = hostCodexHomeValue(config.codexHome)
   if (home.ephemeral === config.persistent) throw new CodexTransportError('workspace_invalid')
   const apiKey = config.apiKey === null
@@ -1516,6 +1561,7 @@ function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCode
     throw new CodexTransportError('workspace_invalid')
   }
   return Object.freeze({
+    ...(config.managedMcp === undefined ? {} : {managedMcp: config.managedMcp}),
     binary: config.binary,
     prefixArgs: Object.freeze([...(config.prefixArgs ?? [])]),
     workspace: config.workspace,
@@ -1729,7 +1775,7 @@ function mapProtocolFailure(error: unknown): CodexTransportError {
   if (error.code === 'stdout_too_large' || error.code === 'stdout_line_too_large') {
     return new CodexTransportError('transport_lost')
   }
-  if (error.code === 'config_not_isolated') return new CodexTransportError('unsupported_protocol')
+  if (error.code === 'config_not_isolated') return new CodexTransportError('config_not_isolated')
   if (error.code === 'stream_failure' || error.code === 'transport_lost') {
     return new CodexTransportError('transport_lost')
   }
@@ -1764,7 +1810,7 @@ const TRANSPORT_CODES: ReadonlySet<CodexTransportCode> = new Set([
   'preflight_timeout', 'sandbox_failed', 'spawn_failed', 'stderr_too_large', 'transport_lost',
   'unsupported_protocol', 'unsupported_version', 'workspace_invalid', 'workspace_root_mismatch',
   'resume_unavailable', 'server_rejected', 'turn_failed', 'missing_terminal', 'nonzero_exit',
-  'unexpected_server_request', 'busy',
+  'unexpected_server_request', 'busy', 'config_not_isolated', 'mcp_tools_not_isolated',
 ])
 
 function remainingMilliseconds(expiresAtMs: number): number {
