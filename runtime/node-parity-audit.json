@@ -1800,28 +1800,6 @@
       "behavior": "real HTTP discovers exact frontend allowlist, calls original alias, classifies only explicit readonly and closes"
     },
     {
-      "file": "runtime/src/executors/mcp.ts",
-      "kind": "numeric_template",
-      "occurrence_index": 7,
-      "line": 95,
-      "snippet": "authority.sessionEpoch",
-      "snippet_sha256": "2ac08b31821727bfaa18c8c3b8d9ffe61e31af113353e9bba3ccf0805c8d098f",
-      "test": "runtime/test/executors-mcp.test.ts",
-      "disposition": "wire_json",
-      "behavior": "real service carries private origin through queued dispatch; local onset during async delay prevents write and fresh transcript restores it"
-    },
-    {
-      "file": "runtime/src/executors/mcp.ts",
-      "kind": "numeric_template",
-      "occurrence_index": 8,
-      "line": 95,
-      "snippet": "authority.acceptedUserInputRevision",
-      "snippet_sha256": "f6c898e5d680baa595f428248979042c4edb06525d038e90a584ef2b23885363",
-      "test": "runtime/test/executors-mcp.test.ts",
-      "disposition": "wire_json",
-      "behavior": "real service carries private origin through queued dispatch; local onset during async delay prevents write and fresh transcript restores it"
-    },
-    {
       "file": "runtime/src/executors/search-mcp.ts",
       "kind": "string_trim",
       "occurrence_index": 0,

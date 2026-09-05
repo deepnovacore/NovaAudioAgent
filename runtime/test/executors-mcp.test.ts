@@ -162,6 +162,48 @@ test('SDK schema validator enforces nested types and numeric/string bounds befor
   } finally {await prepared.close(); await local.close()}
 })
 
+for (const authorityFirst of [true, false]) {
+  test(`readonly quota shares the same origin with authority ${authorityFirst ? 'first' : 'second'}`, async () => {
+    const config = registry('http://127.0.0.1/mcp', {lookup: {...enabled, maxCallsPerTurn: 1}}).mcpServers.external!
+    const connection = new McpConnection(config)
+    let called = 0
+    connection.call = () => {called += 1; return Promise.resolve({content: []})}
+    const adapter = new McpExecutorAdapter('external', config, connection, [tool()])
+    const unscoped = context()
+    const authorized = {...unscoped, userTurn: {originRef: unscoped.delegate.origin_ref, sessionEpoch: 1, acceptedUserInputRevision: 1, stillWanted: () => true}}
+    try {
+      const first = await adapter.dispatch('lookup', {value: 'x'}, authorityFirst ? authorized : unscoped)
+      const second = await adapter.dispatch('lookup', {value: 'x'}, authorityFirst ? unscoped : authorized)
+      assert.equal(first.outcome, 'ok')
+      assert.deepEqual({outcome: second.outcome, code: second.content.code, called}, {outcome: 'refused', code: 'max_calls_per_turn', called: 1})
+    } finally {await connection.close()}
+  })
+}
+
+test('readonly quota survives fresh authority retirement while bounded history admits a fresh user turn', async () => {
+  const config = registry('http://127.0.0.1/mcp', {lookup: {...enabled, maxCallsPerTurn: 1}}).mcpServers.external!
+  const connection = new McpConnection(config)
+  let called = 0
+  connection.call = () => {called += 1; return Promise.resolve({content: []})}
+  const adapter = new McpExecutorAdapter('external', config, connection, [tool()])
+  const authorized = (origin: string, revision: number): ExecutorDispatchContext => ({...context('lookup', origin),
+    userTurn: {originRef: origin, sessionEpoch: 1, acceptedUserInputRevision: revision, stillWanted: () => true}})
+  try {
+    assert.equal((await adapter.dispatch('lookup', {value: 'x'}, authorized('conversation:old', 1))).outcome, 'ok')
+    for (let index = 0; index < 1023; index += 1) {
+      assert.equal((await adapter.dispatch('lookup', {value: 'x'}, context('lookup', `conversation:pending-${index}`))).outcome, 'ok')
+    }
+    assert.equal((await adapter.dispatch('lookup', {value: 'x'}, context('lookup', 'conversation:overflow'))).content.code, 'turn_history_full')
+    const fresh = authorized('conversation:pending-1022', 2)
+    const replay = await adapter.dispatch('lookup', {value: 'x'}, fresh)
+    assert.deepEqual({outcome: replay.outcome, code: replay.content.code, called}, {outcome: 'refused', code: 'max_calls_per_turn', called: 1024})
+    assert.equal((await adapter.dispatch('lookup', {value: 'x'}, context('lookup', fresh.delegate.origin_ref))).content.code, 'max_calls_per_turn')
+    assert.equal((await adapter.dispatch('lookup', {value: 'x'}, authorized('conversation:fresh', 3))).outcome, 'ok')
+    assert.equal((await adapter.dispatch('lookup', {value: 'x'}, context('lookup', 'conversation:fresh'))).content.code, 'max_calls_per_turn')
+    assert.equal(called, 1025)
+  } finally {await connection.close()}
+})
+
 test('per-turn quotas, call deadline, result bytes, errors and concurrent HTTP cancellation remain independent', async () => {
   const local = await localMcp([tool()], async (_name, args) => {
     const value = (args as {value: string}).value

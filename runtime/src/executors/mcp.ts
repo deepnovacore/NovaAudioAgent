@@ -92,13 +92,14 @@ export class McpExecutorAdapter implements ExecutorAdapter {
     const authority = context.userTurn
     const wanted = (): boolean => authority?.originRef === context.delegate.origin_ref && authority.stillWanted()
     if (!operation.readonly && !wanted()) return failure('stale_user_origin')
-    const turn = authority === undefined ? context.delegate.origin_ref : `${authority.sessionEpoch}:${authority.acceptedUserInputRevision}:${authority.originRef}`
-    if (authority?.stillWanted() === true && this.#currentTurn !== turn) {
-      this.#counts.clear(); this.#currentTurn = turn
-    }
+    const turn = context.delegate.origin_ref
     let counts = this.#counts.get(turn)
-    // Host-authorized turns retire old counters. Unscoped readonly callers have a bounded
-    // history and cannot evict a turn to restore its quota.
+    if (wanted() && this.#currentTurn !== turn) {
+      this.#counts.clear(); this.#currentTurn = turn
+      if (counts !== undefined) this.#counts.set(turn, counts)
+    }
+    // Authority retires other turns, preserving any readonly calls already charged to
+    // this origin. Unscoped callers cannot evict history to restore their quota.
     if (counts === undefined) {
       if (this.#counts.size >= 1024) return failure('turn_history_full')
       counts = new Map(); this.#counts.set(turn, counts)
