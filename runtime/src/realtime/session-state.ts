@@ -16,7 +16,7 @@
 
 import { z } from 'zod'
 import { PROGRESS_SUMMARY_LIMIT } from '../events.js'
-import type { HostResponseIntent } from './protocol.js'
+import type { HostResponseIntent, RealtimeProviderEvent } from './protocol.js'
 
 export const MAX_TRACKED_USER_TRANSCRIPTS = 4_096
 export const MAX_CAPTION_CHARS = 160
@@ -149,6 +149,7 @@ export interface PendingResponse {
 }
 
 export interface ProviderTurn {
+  origin?: Extract<RealtimeProviderEvent, {kind: 'response_started'}>['origin']
   phase: ProviderTurnPhase
   readonly user_input_revision: number
   locally_fenced: boolean
@@ -361,12 +362,12 @@ export class RealtimeSessionState {
    * revive a `cancel_requested` or terminal turn as `active` and would re-date a stale turn
    * against the current input revision. Only the eviction position moves.
    */
-  openProviderTurn(responseId: string): ProviderTurn {
+  openProviderTurn(responseId: string, userInputRevision = this.#userInputRevision): ProviderTurn {
     const composite = key(this.#epoch, responseId)
     const known = this.#providerTurns.get(composite)
     const entry: ProviderTurn = known ?? {
       phase: 'active',
-      user_input_revision: this.#userInputRevision,
+      user_input_revision: userInputRevision,
       locally_fenced: false,
       defer_playback_fence: false,
     }
@@ -693,6 +694,14 @@ export class RealtimeSessionState {
   /** Remove the head, whether it started or was given up on. */
   popPendingResponse(): PendingResponse | undefined {
     return this.#pendingResponses.shift()
+  }
+
+  /** Exact provider evidence must not consume another host request's slot. */
+  takePendingResponse(hostItemId: string): PendingResponse | undefined {
+    const index = this.#pendingResponses.findIndex(
+      pending => pending.provider_intent.item.host_item_id === hostItemId,
+    )
+    return index < 0 ? undefined : this.#pendingResponses.splice(index, 1)[0]
   }
 
   /** Every queued response, oldest first, for a caller that has to give all of them up. */

@@ -194,6 +194,7 @@ async function collectTerminal(session: RealtimeProviderSession): Promise<Realti
   const events: RealtimeProviderEvent[] = []
   for await (const event of session.events()) {
     events.push(event)
+    if (event.kind === 'user_transcript_final') await session.ensureResponse(event.item_id)
     if (event.kind === 'response_terminal') return events
   }
   throw new Error('provider-session stream ended before terminal')
@@ -277,7 +278,7 @@ async function guardReconnectInputs(historyMode: 'none' | 'packed'): Promise<{
   return {inputs, outcome}
 }
 
-test('formal provider session reconnect closes the epoch LLM, swaps streams, and deep-copies tools',
+test('formal provider session reconnect closes the epoch LLM, swaps streams, and restricts host tools',
   async () => {
     const firstLlm = new EpochLlm()
     const secondLlm = new EpochLlm([
@@ -320,9 +321,7 @@ test('formal provider session reconnect closes the epoch LLM, swaps streams, and
     const events = await settleWithin('second epoch response', collecting)
 
     assert.deepEqual(events.map(event => event.session_epoch), [2, 2])
-    assert.deepEqual(secondLlm.calls[0]?.tools, [
-      {name: 'weather__get', parameters: {type: 'object'}},
-    ])
+    assert.deepEqual(secondLlm.calls[0]?.tools, [])
     await session.close()
     assert.equal(secondLlm.closed, true)
   })
@@ -351,7 +350,7 @@ test('formal provider cancellation resets a terminal-window continuation before 
       origin_spoken: false})
     await llm.committed.promise
 
-    const cancelling = session.cancelResponse('provider-window')
+    const cancelling = session.cancelResponse('cascaded-response-1-1')
     await llm.aborted.promise
     llm.releaseTerminal()
     await cancelling

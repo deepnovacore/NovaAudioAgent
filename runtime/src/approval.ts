@@ -951,6 +951,7 @@ export class ApprovalHost {
       || revision === undefined
       || revision !== reservation.userRevision
       || revision !== this.#port.session.userInputRevision
+      || !this.#port.session.responseMatchesUserItem(responseId, reservation.itemId, revision)
     ) return false
     await this.#refuseExecutorApprovalCalls(this.#executorApprovalIsolation.takeAbandonedCalls({
       sessionEpoch,
@@ -1228,6 +1229,7 @@ export class ApprovalHost {
         && revision === reservation.userRevision
         && revision > authority.createdUserRevision
         && revision === this.#port.session.userInputRevision
+        && this.#port.session.responseMatchesUserItem(responseId, reservation.itemId, revision)
         && this.#executorApprovalIsolation.isAuthorizationCarrier({
           sessionEpoch: event.session_epoch,
           userRevision: revision,
@@ -1372,6 +1374,7 @@ export class ApprovalHost {
       && this.#port.session.userInputRevision
         > (this.#executorApprovalIsolation.authority?.createdUserRevision ?? Number.MAX_SAFE_INTEGER)
     const provisionalCandidate = event.kind === 'response_started'
+      && event.origin === undefined
       && event.session_epoch === this.#port.session.sessionEpoch
       && !executorFencePendingAtStart
       && this.#port.controller?.pending === true

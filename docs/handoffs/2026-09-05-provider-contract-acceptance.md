@@ -1,0 +1,58 @@
+# 通用语音 Provider：实现与验收
+
+交付 worktree：`.worktrees/voice-focus`，分支 `feature/voice-focus`，基于 v0.2.0dev 开发线的 `4b90c99`。沿用已有 RealtimeProvider / RealtimeProviderSession，不新增包装层、依赖或声纹 SDK。
+
+## 最终架构
+
+```mermaid
+flowchart TD
+  Orb[桌面采集与播放] --> Host[RealtimeService / RealtimeSession
+话轮、授权、调度、播放 fence]
+  Host --> Boundary[RealtimeProviderSession
+严格事件验证与连接 epoch]
+  Boundary --> Provider[RealtimeProvider 通用契约]
+  Provider --> Qwen[Integrated / Qwen
+automatic 原生自动应答]
+  Provider --> Cascade[Cascaded
+requested 宿主发起应答]
+  Cascade --> ASR[火山 ASR]
+  ASR --> LLM[Ark 或 Qwen LLM]
+  LLM --> TTS[火山 TTS]
+```
+
+宿主不再依赖级联 ASR 自行取消旧回复并启动 LLM。级联 ASR 每个 item 只上报第一次 final，保存输入，等宿主调用 `ensureResponse`。宿主分别保留待发起的输入和已经发起的请求：旧 terminal 不清除新输入；重复 delivery pass 不多发；旁路回复的 terminal 不释放已请求的用户回复。`ensureResponse` 返回 false 表示忙或目标已过时，没有接受新生成。
+
+级联在接受生成命令时建立本 epoch 内唯一回复 ID，先上报 `response_started`，再等待 LLM。宿主因此能在上游首包前取消。LLM 自己的 wire ID 只在实现内部校验。取消不配合的 LLM/TTS 在超时后产生明确 failed terminal 和 `cascaded_cancel_timeout`，旧 epoch 被撤销并有界清理，避免永久 busy 或复用失控推理；这是明确失败，需要新连接恢复。
+
+`response_started.origin` 为严格的 user_item / host_request / unknown。级联提供确定来源；Qwen 省略来源时继续经过宿主的保守关联防御。来源只是证据，不是授权：普通工具、项目确认重试、执行器审批都核对 item/revision；明确错误来源不能进入“等下一段转录”的兜底。已修复“错误来源回复 → 真实用户转录 → confirm”的 provisional 审批旁路。
+
+宿主事实和工具结果的播报提供空工具列表；用户回复才提供动作工具。共享前台提示词、活动项目/执行器上下文渲染、宿主激活常量已移入 `frontend-instructions.ts`。Qwen 保留旧导出，宿主和级联组装直接使用共享模块。
+
+## 验证
+
+- 最终完整实时专项：785 通过，0 失败。覆盖 Qwen/级联、schema、session/service、审批、取消交错、epoch、生产组装及旧协议 oracle。
+- `npm run check`：类型、lint、环境契约、Unicode/数值语义审计、执行器边界、capability 检查通过。新增两个数值审计项仅对应本地 response ID 的 epoch/序号，并指向可运行的取消回归。
+- 桌面构建及测试：811 通过，3 项平台跳过；真实 Electron utility-process 级联启动、WebSocket 握手及正常退出通过。
+- 真实 Qwen：连接、宿主消息确认、生成音频、terminal 通过，收到 3 段音频。
+- 真实火山：ASR → Ark → TTS 问答、来源关联、正在生成时精确取消、重连后由真实语音触发工具及结果播报、生产宿主打断清空和下一轮恢复，全部通过。报告见 `2026-09-05-provider-contract-live-report.json`。
+- 扩大 runtime 回归：2255 通过、5 跳过、5 失败。失败名称与此前已在基线复现的 5 项一致：package root 导出快照、生产 schema probe 两项、camera manifest 快照、Codex 普通 adapter 结果。最终两个附加回归由上面的 785 项专项覆盖；没有宣称全库全绿。
+
+旧 Python oracle 的调度由测试宿主显式模拟； opaque response ID 做一一重命名；新增 origin 由专门契约测试覆盖；宿主 tools=[] 先断言，再与旧 wire payload 的其余字段比较。这些是明确记录的契约迁移，并非将原始 oracle 全部原样通过。
+
+## Live 验收发现并修复的问题
+
+取消用例曾等待首音频超时。保留的诊断报告显示当时实际上是 `response_started → tool_call_ready → completed`，没有进入 TTS。收掉宿主播报的工具列表后，两次完整 live 复跑通过。此前更早一次超时没有足够事件证据，不能追溯断言为相同原因。
+
+Sol 复核发现旧帧检查起点过晚：现已在 `onAudioClear` 同步记录帧索引，清空回调之后的所有旧 generation 帧都纳入断言。取消超时的非配合实现也有独立回归。Terra/Sol 发现的上述问题均已修复并复核。
+
+## 使用与边界
+
+选择生产级联：`NOVA_AUDIO_AGENT_PIPELINE_MODE=cascaded`，`NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER=ark`。凭证使用已有 `ARK_API_KEY`、`DOUBAO_BIGMODEL_API_KEY`，ASR 可另配 `DOUBAO_ASR_API_KEY`。可运行：
+
+```sh
+npm run smoke:cascaded --workspace @nova-audio-agent/runtime -- --env-file /path/to/.env --output /tmp/cascaded-live.json
+```
+
+桌面用户的持久配置没有修改；默认 integrated 及两种 pipeline 的选择机制保留。上述 live 是数字 PCM 与播放确认回调的生产链路验收，没有录制真实麦克风、没有物理扬声器回放。保留浏览器 AEC/NS/AGC，未接声纹或额外降噪 SDK；不能据此声称能识别主人，或旁人说话、真实环境噪声不再触发打断。
+
+Qwen 的原生自动应答仍可能早于 ASR final，通用宿主需要保留这类因果与授权防御。已移走对 Qwen 实现的共享代码依赖并将 wire 处理留在下游，不声称服务商的实际事件顺序完全相同。

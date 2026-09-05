@@ -4,9 +4,7 @@ import type { JsonObject } from '../protocol.js'
 export const MAX_CASCADED_LLM_HISTORY_ITEMS = 64
 export const MAX_CASCADED_LLM_HISTORY_CODEPOINTS = 131_072
 /** Marks host-provided activation context; it never represents a user instruction. */
-export const HOST_ACTIVATION_PREFIX = 'Nova Audio Agent 宿主激活事实：'
-/** @deprecated Compatibility alias; new host-activation paths use `HOST_ACTIVATION_PREFIX`. */
-export const GUARD_ACTIVATION_PREFIX = HOST_ACTIVATION_PREFIX
+export {HOST_ACTIVATION_PREFIX, GUARD_ACTIVATION_PREFIX} from '../frontend-instructions.js'
 
 export type CascadedLlmInput =
   | {readonly kind: 'user_text'; readonly text: string}

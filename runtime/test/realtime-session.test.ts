@@ -23,7 +23,7 @@ function noop(): void {
   // Intentionally empty: these tests do not observe frames or diagnostics.
 }
 
-function makeSession(options: {readonly ids?: readonly string[]} = {}): {
+function makeSession(options: {readonly ids?: readonly string[]; readonly requested?: boolean} = {}): {
   readonly session: RealtimeSession
   readonly actions: string[]
 } {
@@ -38,6 +38,7 @@ function makeSession(options: {readonly ids?: readonly string[]} = {}): {
   }
   let epoch = 0
   const provider: SessionProvider = {
+    userResponseMode: options.requested === true ? 'requested' : 'automatic',
     connect: () => {
       epoch += 1
       actions.push(`connect:${epoch}`)
@@ -59,8 +60,8 @@ function makeSession(options: {readonly ids?: readonly string[]} = {}): {
       actions.push(`create_response:${intent.kind}`)
       return Promise.resolve()
     },
-    ensureResponse: () => {
-      actions.push('ensure_response')
+    ensureResponse: itemId => {
+      actions.push(options.requested === true ? `ensure_response:${itemId}` : 'ensure_response')
       return Promise.resolve()
     },
     cancelResponse: (responseId: string) => {
@@ -775,4 +776,102 @@ test('waiting for a stale hold sleeps past the deadline, then the release succee
   assert.equal(await waiting, true)
   assert.equal(session.releaseStaleUserHold(10), true, 'the deadline has now passed')
   assert.equal(session.floor.state, 'idle')
+})
+
+for (const origin of [
+  {kind: 'user_item', item_id: 'user-1'},
+  {kind: 'unknown'},
+  {kind: 'host_request', host_item_id: 'different-host'},
+] as const) {
+  test(`explicit ${origin.kind} does not steal a pending host request`, async () => {
+    const {session} = makeSession()
+    await session.connect({tools: []})
+    await session.deliverHostResponse({
+      kind: 'host_fact',
+      item: {kind: 'final', host_item_id: 'host-1', event_id: 'final:1', content: '完成了。', call_id: null},
+      task_summary: null, origin_spoken: false,
+    })
+    assert.equal(await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'other', origin}), true)
+    assert.deepEqual(session.responseEventIds('other'), [])
+    if (origin.kind !== 'user_item') {
+      assert.equal(await session.accept({kind: 'tool_call_ready', session_epoch: 1, response_id: 'other', call_id: 'call', item_id: 'tool-1', name: 'dispatch', arguments: {}}), false)
+    }
+    await session.accept({kind: 'response_terminal', session_epoch: 1, response_id: 'other', status: 'completed', reason: 'completed'})
+    assert.equal(await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'host', origin: {kind: 'host_request', host_item_id: 'host-1'}}), true)
+    assert.deepEqual(session.responseEventIds('host'), ['final:1'])
+    assert.equal(await session.accept({kind: 'tool_call_ready', session_epoch: 1, response_id: 'host', call_id: 'call-host', item_id: 'tool-host', name: 'dispatch', arguments: {}}), false)
+  })
+}
+
+test('explicit user origin requires both matching item and captured revision', async () => {
+  const {session} = makeSession()
+  await session.connect({tools: []})
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-1', text: '你好'})
+  const revision = session.userInputRevision
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'user', origin: {kind: 'user_item', item_id: 'user-1'}})
+  assert.equal(session.responseMatchesUserItem('user', 'user-1', revision), true)
+  assert.equal(session.responseMatchesUserItem('user', 'user-2', revision), false)
+  assert.equal(session.responseMatchesUserItem('user', 'user-1', revision + 1), false)
+  await session.localSpeechOnset('interrupt')
+  assert.equal(await session.accept({kind: 'tool_call_ready', session_epoch: 1, response_id: 'user', call_id: 'late-call', item_id: 'tool-late', name: 'dispatch', arguments: {}}), false)
+})
+
+
+test('requested provider keeps the latest user debt across old cancellation and duplicate drives', async () => {
+  const {session, actions} = makeSession({requested: true})
+  await session.connect({tools: []})
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+  await session.requestPendingUserResponse()
+  await session.requestPendingUserResponse()
+  assert.equal(actions.filter(action => action === 'ensure_response:A').length, 1)
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-A',
+    origin: {kind: 'user_item', item_id: 'A'}})
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'B', text: 'next'})
+  assert.ok(actions.includes('cancel:response-A'))
+  assert.equal(await session.requestPendingUserResponse(), false)
+  await session.accept({kind: 'response_terminal', session_epoch: 1, response_id: 'response-A',
+    status: 'cancelled', reason: ''})
+  assert.equal(session.providerIdle, false, 'old terminal cannot erase the new input')
+  assert.equal(await session.requestPendingUserResponse(), true)
+  assert.equal(await session.requestPendingUserResponse(), false)
+  assert.equal(actions.filter(action => action === 'ensure_response:B').length, 1)
+  assert.equal(await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-B',
+    origin: {kind: 'user_item', item_id: 'B'}}), true, 'queued input must not arm a phantom fence')
+})
+
+test('a requested response fenced before start does not consume the next user input', async () => {
+  const {session, actions} = makeSession({requested: true})
+  await session.connect({tools: []})
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+  await session.requestPendingUserResponse()
+  await session.localSpeechOnset('local-new')
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'B', text: 'next'})
+  assert.equal(await session.requestPendingUserResponse(), false)
+  assert.equal(await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-A',
+    origin: {kind: 'user_item', item_id: 'A'}}), false)
+  assert.ok(actions.includes('cancel:response-A'))
+  await session.accept({kind: 'response_terminal', session_epoch: 1, response_id: 'response-A',
+    status: 'cancelled', reason: ''})
+  assert.equal(await session.requestPendingUserResponse(), true)
+  assert.equal(actions.filter(action => action === 'ensure_response:B').length, 1)
+})
+
+
+test('an unrelated terminal cannot free an outstanding targeted user request', async () => {
+  for (const origin of [{kind: 'unknown'} as const, {kind: 'host_request', host_item_id: 'host-other'} as const]) {
+    const {session} = makeSession({requested: true})
+    await session.connect({tools: []})
+    await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+    await session.requestPendingUserResponse()
+    await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'unrelated', origin})
+    await session.accept({kind: 'response_terminal', session_epoch: 1, response_id: 'unrelated',
+      status: 'completed', reason: ''})
+    assert.equal(session.providerIdle, false)
+    assert.equal(await session.requestUserResponse(), false)
+    await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-A',
+      origin: {kind: 'user_item', item_id: 'A'}})
+    await session.accept({kind: 'response_terminal', session_epoch: 1, response_id: 'response-A',
+      status: 'completed', reason: ''})
+    assert.equal(session.providerIdle, true)
+  }
 })

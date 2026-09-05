@@ -259,3 +259,20 @@ test('uncertain delivery preserves the Python correlation surface without payloa
   assert.equal(error.provider_item_id, 'provider-1')
   assert.equal(error.item_kind, 'progress')
 })
+
+
+test('response origin carries exact provider evidence without accepting business authorization', () => {
+  const started = {kind: 'response_started', session_epoch: 1, response_id: 'response-1'}
+  for (const origin of [
+    {kind: 'user_item', item_id: 'user-1'},
+    {kind: 'host_request', host_item_id: 'host-1'},
+    {kind: 'unknown'},
+  ]) assert.deepEqual(realtimeProviderEventSchema.parse({...started, origin}), {...started, origin})
+  assert.deepEqual(realtimeProviderEventSchema.parse(started), started)
+  for (const origin of [
+    {kind: 'user_item', item_id: ''},
+    {kind: 'host_request', item_id: 'wrong-namespace'},
+    {kind: 'user_item', item_id: 'user-1', authorized: true},
+    {kind: 'unknown', item_id: 'guessed'},
+  ]) assert.equal(realtimeProviderEventSchema.safeParse({...started, origin}).success, false)
+})

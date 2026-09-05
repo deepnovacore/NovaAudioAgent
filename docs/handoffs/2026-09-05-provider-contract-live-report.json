@@ -1,0 +1,65 @@
+{
+  "startedAt": "2026-09-05T13:54:03.287Z",
+  "cases": [
+    {
+      "name": "configuration",
+      "status": "passed",
+      "ignoredRetiredKeys": [
+        "NOVA_AUDIO_AGENT_REALTIME_PROVIDER"
+      ]
+    },
+    {
+      "name": "tts_input_generation",
+      "status": "passed",
+      "inputAudioMs": 2787
+    },
+    {
+      "name": "audio_asr_llm_tts",
+      "status": "passed",
+      "elapsedMs": 7035,
+      "audioBytes": 75896
+    },
+    {
+      "name": "cancel_live_response",
+      "status": "passed"
+    },
+    {
+      "name": "reconnect_and_tool_continuation",
+      "status": "passed"
+    },
+    {
+      "name": "host_playback_barge_in_and_recovery",
+      "status": "passed",
+      "clears": 1,
+      "deliveries": [
+        "interrupted",
+        "spoken"
+      ]
+    }
+  ],
+  "scope": "digital audio; no microphone or speaker playback",
+  "endpointing": [
+    {
+      "seq": 1,
+      "ts": 1788616450.179,
+      "kind": "volcengine.endpointing.capability",
+      "payload": {
+        "mode": "bounded_silence",
+        "eot_reason": "executor_unavailable",
+        "vad_reason": "ready",
+        "platform": "darwin",
+        "arch": "arm64"
+      }
+    },
+    {
+      "seq": 2,
+      "ts": 1788616450.179,
+      "kind": "volcengine.endpointing.fallback",
+      "payload": {
+        "eot_reason": "executor_unavailable",
+        "vad_reason": "ready"
+      }
+    }
+  ],
+  "finishedAt": "2026-09-05T13:54:47.861Z"
+}

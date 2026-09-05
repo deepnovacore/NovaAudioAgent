@@ -316,8 +316,19 @@ export const userTranscriptFinalSchema = sessionEvent(
   z.literal('user_transcript_final'),
   itemTextShape,
 )
+/** Provider evidence, never a host turn identity or an authorization decision.
+ * Omission preserves legacy correlation; explicit unknown must not claim a user item.
+ */
+export const responseOriginSchema = z.discriminatedUnion('kind', [
+  z.object({kind: z.literal('user_item'), item_id: realtimeIdentifierSchema}).strict(),
+  z.object({kind: z.literal('host_request'), host_item_id: realtimeIdentifierSchema}).strict(),
+  z.object({kind: z.literal('unknown')}).strict(),
+])
+export type ResponseOrigin = z.infer<typeof responseOriginSchema>
+
 export const responseStartedSchema = sessionEvent(z.literal('response_started'), {
   response_id: realtimeIdentifierSchema,
+  origin: responseOriginSchema.optional(),
 })
 /**
  * Inbound provider audio is bounded by alignment, not by size.
@@ -389,6 +400,11 @@ export type RealtimeProviderEvent = z.infer<typeof realtimeProviderEventSchema>
 export type JsonObject = Readonly<Record<string, JsonValue>>
 
 export interface RealtimeProvider {
+  /** Automatic providers may start before transcript final; requested providers wait for the host.
+   * Omission preserves existing third-party adapters' automatic contract. Production adapters declare it.
+   */
+  readonly userResponseMode?: 'automatic' | 'requested'
+
   /** Absent and false both prohibit original-media injection. */
   readonly mediaCapability?: RealtimeProviderMediaCapability
   connect(options: {
@@ -414,8 +430,11 @@ export interface RealtimeProvider {
   /** Remove a previously confirmed host item from the provider conversation, when supported. */
   retireHostItem?(providerItemId: string, signal: AbortSignal): Promise<void>
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void>
-  /** Ask the provider to finish the current user turn with normal tool availability. */
-  ensureResponse?(signal: AbortSignal): Promise<void>
+  /** Request normal tool availability for an exact user item (or the current item for retries).
+   * false means no work was admitted (busy or stale input); void/true means one request was admitted.
+   * A requested provider must never preempt another response inside this command.
+   */
+  ensureResponse?(signal: AbortSignal, userItemId?: string): Promise<void | boolean>
   cancelResponse(responseId: string, signal: AbortSignal): Promise<void>
   events(signal: AbortSignal): AsyncIterable<unknown>
   close(): Promise<void>
