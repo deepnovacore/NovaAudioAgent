@@ -172,8 +172,9 @@ export class IntakeController {
     this.#userInputPending = false
     const current = this.#session
     if (current === null || !this.active) return
-    if (current.session_id !== sessionId || stripLikePython(text) === '') { this.cancel(); return }
+    if (current.session_id !== sessionId) { this.cancel(); return }
     if (current.state === 'committing' || current.origin_ref === originRef) return
+    if (stripLikePython(text) === '') { this.cancel(); return }
     if (current.proposal_id !== null && isPurePlanDecision(text)) return
     if (/^(取消|不用了|算了|cancel)[。！!.，\s]*$/iu.test(text.trim())) { this.cancel(); return }
     current.turns.push({question: current.pending_question, answer: limit(text, 2000)})

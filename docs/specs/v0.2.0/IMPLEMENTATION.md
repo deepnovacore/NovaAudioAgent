@@ -453,8 +453,9 @@ This verifies rendering and interaction, not OS DPI behavior or live audio.
 - Intake effect admission and the asynchronous cancel `stillWanted` predicate now
   honor pending user input as well as the existing intake ID/revision fence.
   A cancel resolver superseded before final ASR leaves the intake amendable.
-  Accepted empty final transcripts cancel intake like failed transcripts; a new
-  valid request can reopen it. No local-end or timeout authorizes old effects.
+  Accepted empty final transcripts cancel pre-commit intake; an already-authorized
+  commit retains its settlement. Failed-transcript handling remains unchanged, and
+  a new valid request can reopen cancelled intake. No local-end or timeout authorizes old effects.
 - Desktop retention is keyed by `work_id = delegate_id`, with 64 session slots.
   New entries evict the oldest retained terminal slot, never a live slot; if all
   64 slots are live, additional tracking is refused with

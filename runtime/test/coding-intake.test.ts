@@ -654,3 +654,24 @@ test('intake planning result waits for an in-progress utterance; failed transcri
   h.intake.cancel()
   assert.equal(h.intake.view?.outcome, 'cancelled')
 })
+
+test('blank final during an authorized confirmed commit preserves its eventual settlement', async () => {
+  let invalidations = 0
+  const h = harness({
+    settings: {clarification_depth: 'balanced', plan_readback: 'confirm'},
+    invalidateProposal: () => { invalidations++ },
+  })
+  h.intake.open(request, 'Fix empty password', 'u1', 'e')
+  await h.intake.settled()
+  const operation = h.confirmation.acceptDirectDecision({proposalId: h.intake.view!.proposal_id!, confirmed: true}).operation!
+  assert.equal(h.intake.beginConfirmed(operation), true)
+  h.intake.userInputStarted()
+  h.intake.userTurn('   ', 'u2', 'e')
+  assert.equal(h.intake.view?.state, 'committing')
+  assert.equal(h.intake.view?.revision, 1)
+  assert.equal(invalidations, 0)
+  h.intake.settleConfirmed({accepted: true, delegate_id: 'confirmed-work'})
+  assert.equal(h.intake.view?.outcome, 'dispatched')
+  assert.equal(h.intake.view?.delegate_id, 'confirmed-work')
+  assert.equal(h.records.filter(kind => kind === 'intake.dispatch').length, 1)
+})
