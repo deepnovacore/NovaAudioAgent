@@ -136,8 +136,46 @@ test('recall validates strict encoded SDK input but leaves sensitive query handl
   } finally { await adapter.close() }
 })
 
+test('adapter refuses an empty direct recall request before backend dispatch', async () => {
+  let calls = 0
+  const adapter = new KnowledgeMcpAdapter({
+    recall: () => { calls += 1; return Promise.resolve([]) }, getChunk: () => Promise.resolve({status: 'gone' as const}),
+  })
+  try {
+    assert.equal((await adapter.dispatch('recall', {query: ''}, context())).outcome, 'refused')
+    assert.equal(calls, 0)
+  } finally { await adapter.close() }
+})
+
+test('loopback closes excess slow request bodies instead of leaving them outside its request bound', async () => {
+  const loopback = await startKnowledgeMcpHttpServer(backend())
+  const requests: ReturnType<typeof httpRequest>[] = []
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      const request = httpRequest(loopback.url, {method: 'POST', headers: {Authorization: `Bearer ${loopback.token}`, 'content-type': 'application/json'}})
+      request.on('error', () => undefined)
+      request.write('{')
+      requests.push(request)
+    }
+    const excess = await new Promise<'closed' | 'open'>(resolve => {
+      const request = httpRequest(loopback.url, {method: 'POST', headers: {Authorization: `Bearer ${loopback.token}`, 'content-type': 'application/json'}})
+      const deadline = setTimeout(() => { resolve('open') }, 250)
+      request.once('error', () => { clearTimeout(deadline); resolve('closed') })
+      request.once('response', response => { response.resume() })
+      request.once('close', () => { clearTimeout(deadline); resolve('closed') })
+      request.write('{')
+    })
+    assert.equal(excess, 'closed')
+  } finally {
+    for (const request of requests) request.destroy()
+    await loopback.close()
+  }
+})
+
 test('a failed connect never replaces a successor opened after close', async () => {
-  const original = Client.prototype.connect
+  const descriptor = Object.getOwnPropertyDescriptor(Client.prototype, 'connect')
+  assert.ok(descriptor !== undefined && typeof descriptor.value === 'function')
+  const original = descriptor.value as Client['connect']
   let rejectFirst!: (error: Error) => void
   let first = true
   Object.defineProperty(Client.prototype, 'connect', {configurable: true, value: function (this: Client, ...args: Parameters<Client['connect']>) {

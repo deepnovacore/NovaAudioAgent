@@ -42,6 +42,7 @@ export interface KnowledgeRecallHit {
 
 export interface KnowledgeRecallBackend {
   recall(query: string, k: number, signal?: AbortSignal): Promise<readonly KnowledgeRecallHit[]>
+  /** A `stale` result must carry current bounded text, title, and heading_path; callers receive a fixed reindex note. */
   getChunk(locator: string): Promise<{readonly status: 'ok' | 'stale' | 'gone'; readonly text?: string; readonly title?: string; readonly heading_path?: string; readonly source_id?: string}>
 }
 
@@ -76,7 +77,7 @@ function recallArgs(value: unknown): {readonly query: string; readonly k: number
   if (!plain(value) || Object.keys(value).some(key => key !== 'query' && key !== 'k')) return null
   // Query sensitivity belongs to the embedding provider's pre-embedding gate. This MCP boundary
   // only preserves its schema contract, so users can ask about paths or paste multiline text.
-  const query = typeof value.query === 'string' && value.query.length <= MAX_QUERY_UNITS && points(value.query) <= MAX_QUERY_POINTS ? value.query : null
+  const query = typeof value.query === 'string' && value.query.length > 0 && value.query.length <= MAX_QUERY_UNITS && points(value.query) <= MAX_QUERY_POINTS ? value.query : null
   const k = value.k === undefined ? 3 : value.k
   return query !== null && typeof k === 'number' && Number.isInteger(k) && k >= 1 && k <= 5 ? {query, k} : null
 }
@@ -297,20 +298,6 @@ async function parseBody(request: IncomingMessage): Promise<unknown> {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown } catch { throw new Error('body') }
 }
 
-/** Drain rejected bodies only up to our request deadline; a peer cannot retain a socket forever. */
-function discard(request: IncomingMessage): void {
-  let size = 0
-  const timer = setTimeout(() => { request.destroy() }, REQUEST_TIMEOUT_MS)
-  const done = () => { clearTimeout(timer) }
-  request.once('end', done)
-  request.once('close', done)
-  request.on('data', chunk => {
-    size += Buffer.isBuffer(chunk) ? chunk.byteLength : Buffer.byteLength(chunk)
-    if (size > MAX_BODY_BYTES) request.destroy()
-  })
-  request.resume()
-}
-
 function bodyPresent(request: IncomingMessage): boolean {
   const length = request.headers['content-length']
   return request.headers['transfer-encoding'] !== undefined || typeof length === 'string' && length !== '0'
@@ -321,6 +308,12 @@ function reject(response: ServerResponse, status: number): void {
   response.end('{"error":"request_rejected"}')
 }
 
+/** Rejection never starts a background drain. A consumed request keeps its reusable socket. */
+function rejectAndClose(request: IncomingMessage, response: ServerResponse, status: number): void {
+  reject(response, status)
+  if (!request.readableEnded && !request.destroyed) request.destroy()
+}
+
 export async function startKnowledgeMcpHttpServer(backend: KnowledgeRecallBackend): Promise<{readonly url: string; readonly token: string; close(): Promise<void>}> {
   const token = randomBytes(32).toString('hex')
   const sockets = new Set<Socket>()
@@ -329,8 +322,12 @@ export async function startKnowledgeMcpHttpServer(backend: KnowledgeRecallBacken
   let port = 0
   const listener = (request: IncomingMessage, response: ServerResponse): void => {
     void (async () => {
-      if (active >= MAX_REQUESTS) { reject(response, 503); return }
+      if (active >= MAX_REQUESTS) { rejectAndClose(request, response, 503); return }
       active += 1
+      let released = false
+      const release = () => { if (!released) { released = true; active -= 1 } }
+      response.once('finish', release)
+      response.once('close', release)
       let timeout: ReturnType<typeof setTimeout> | undefined
       let mcp: McpServer | undefined
       let cleaned: Promise<void> | undefined
@@ -341,15 +338,15 @@ export async function startKnowledgeMcpHttpServer(backend: KnowledgeRecallBacken
       })()
       try {
         timeout = setTimeout(() => { if (!response.writableEnded) reject(response, 408); request.destroy() }, REQUEST_TIMEOUT_MS)
-        if (!authorized(request, token)) { discard(request); reject(response, 401); return }
-        if (request.url !== '/mcp' || !loopbackHost(request.headers.host) || !localOrigin(request.headers.origin, port)) { discard(request); reject(response, 403); return }
-        if (request.method !== 'GET' && request.method !== 'POST' && request.method !== 'DELETE') { discard(request); reject(response, 405); return }
-        if (request.method !== 'POST' && bodyPresent(request)) { discard(request); reject(response, 413); return }
+        if (!authorized(request, token)) { rejectAndClose(request, response, 401); return }
+        if (request.url !== '/mcp' || !loopbackHost(request.headers.host) || !localOrigin(request.headers.origin, port)) { rejectAndClose(request, response, 403); return }
+        if (request.method !== 'GET' && request.method !== 'POST' && request.method !== 'DELETE') { rejectAndClose(request, response, 405); return }
+        if (request.method !== 'POST' && bodyPresent(request)) { rejectAndClose(request, response, 413); return }
         let body: unknown
         if (request.method === 'POST') {
           const declared = request.headers['content-length']
-          if (typeof declared === 'string' && (!/^\d+$/u.test(declared) || Number(declared) > MAX_BODY_BYTES)) { discard(request); reject(response, 413); return }
-          try { body = await parseBody(request) } catch { discard(request); reject(response, 413); return }
+          if (typeof declared === 'string' && (!/^\d+$/u.test(declared) || Number(declared) > MAX_BODY_BYTES)) { rejectAndClose(request, response, 413); return }
+          try { body = await parseBody(request) } catch { rejectAndClose(request, response, 413); return }
         }
         // The SDK's stateless transport is explicitly single-request. A fresh server+transport
         // pair keeps callers from sharing session or request-id state.
@@ -362,7 +359,7 @@ export async function startKnowledgeMcpHttpServer(backend: KnowledgeRecallBacken
         else await transport.handleRequest(request, response)
         if (request.method !== 'GET') await cleanup()
       } catch { await cleanup(); if (!response.writableEnded) reject(response, 400) }
-      finally { if (timeout !== undefined) clearTimeout(timeout); active -= 1 }
+      finally { if (timeout !== undefined) clearTimeout(timeout) }
     })()
   }
   const http: Server = createServer(listener)
