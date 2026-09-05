@@ -717,6 +717,9 @@ test('entry wrapper always disposes stop sources after construction failure and 
 test('entry construction emits only stable failure classes without raw messages', async () => {
   for (const fixture of [
     {error: Object.assign(new Error('private config path'), {name: 'ConfigurationError'}), code: 'configuration_required'},
+    {error: Object.assign(new Error('private tool names'), {
+      code: 'frontbrain_tool_budget_exceeded', toolCount: 2, toolBudget: 1,
+    }), code: 'configuration_required'},
     {error: Object.assign(new Error('private credential'), {code: 'credential_missing'}), code: 'authentication_failed'},
     {error: Object.assign(new Error('private binary'), {code: 'codex_host_unavailable'}), code: 'backend_unavailable'},
     {error: new Error('private unknown'), code: 'assembly_failed'},

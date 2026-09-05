@@ -130,6 +130,59 @@ test('an edit made while save is in flight remains dirty after the older respons
   assert.deepEqual(calls, [{integratedModel: 'first'}])
 })
 
+test('a capability edit made during save rebases only to its own accepted revision', async () => {
+  const response = deferred()
+  const calls = []
+  const controller = createSettingsController({
+    api: {set: patch => { calls.push(structuredClone(patch)); return response.promise }},
+    render: () => {}, status: () => {},
+  })
+  controller.setView(publicView({capabilitiesDocument: {version: 1, frontbrainToolBudget: 4}, capabilitiesRevision: 'base-revision'}))
+  controller.stage({capabilitiesDocument: {version: 1, frontbrainToolBudget: 5}})
+  const first = controller.save()
+  controller.stage({capabilitiesDocument: {version: 1, frontbrainToolBudget: 6}})
+  response.resolve(publicView({capabilitiesDocument: {version: 1, frontbrainToolBudget: 5}, capabilitiesRevision: 'saved-revision'}))
+  await first
+  await controller.save()
+  assert.deepEqual(calls.map(call => [call.capabilitiesDocument.frontbrainToolBudget, call.capabilitiesBaseRevision]), [[5, 'base-revision'], [6, 'saved-revision']])
+})
+
+test('the Main committed-settings push during save does not block a matching response rebase', async () => {
+  const response = deferred()
+  const calls = []
+  const controller = createSettingsController({
+    api: {set: patch => { calls.push(structuredClone(patch)); return response.promise }},
+    render: () => {}, status: () => {},
+  })
+  controller.setView(publicView({capabilitiesDocument: {version: 1, frontbrainToolBudget: 4}, capabilitiesRevision: 'base-revision'}))
+  controller.stage({capabilitiesDocument: {version: 1, frontbrainToolBudget: 5}})
+  const first = controller.save()
+  controller.stage({capabilitiesDocument: {version: 1, frontbrainToolBudget: 6}})
+  controller.syncView(publicView({capabilitiesDocument: {version: 1, frontbrainToolBudget: 5}, capabilitiesRevision: 'saved-revision'}))
+  response.resolve(publicView({capabilitiesDocument: {version: 1, frontbrainToolBudget: 5}, capabilitiesRevision: 'saved-revision'}))
+  await first
+  await controller.save()
+  assert.equal(calls[1].capabilitiesBaseRevision, 'saved-revision')
+})
+
+test('a capability response replaced by an external document never rebases the retained draft', async () => {
+  const response = deferred()
+  const calls = []
+  const controller = createSettingsController({
+    api: {set: patch => { calls.push(structuredClone(patch)); return response.promise }},
+    render: () => {}, status: () => {},
+  })
+  controller.setView(publicView({capabilitiesDocument: {version: 1, frontbrainToolBudget: 4}, capabilitiesRevision: 'base-revision'}))
+  controller.stage({capabilitiesDocument: {version: 1, frontbrainToolBudget: 5}})
+  const first = controller.save()
+  controller.stage({capabilitiesDocument: {version: 1, frontbrainToolBudget: 6}})
+  controller.syncView(publicView({capabilitiesDocument: {version: 1, frontbrainToolBudget: 7}, capabilitiesRevision: 'external-revision'}))
+  response.resolve(publicView({capabilitiesDocument: {version: 1, frontbrainToolBudget: 7}, capabilitiesRevision: 'external-revision'}))
+  await first
+  await controller.save()
+  assert.equal(calls[1].capabilitiesBaseRevision, 'base-revision')
+})
+
 test('the complete successful apply sequence clears only the submitted draft', async () => {
   const response = deferred()
   const notices = []
@@ -499,7 +552,7 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })
 
-test('M1 settings expose approval, planning, and progress controls with no registry editor', () => {
+test('settings preserve approval, planning, and progress controls alongside the capability editor', () => {
   for (const value of ['ask', 'yolo']) {
     assert.match(html, new RegExp(`<input type="radio" name="codexApprovalMode" value="${value}"`))
   }
@@ -789,13 +842,29 @@ test('capability documents replace atomically, preserve original special tool na
   const {createSettingsController} = await import('../src/renderer/settings-controller.mjs')
   let outbound
   const controller = createSettingsController({api: {set: async patch => {outbound = patch; return {...patch, saved: true, settingsApplyStatus: 'applied'}}}, render: () => {}, status: () => {}})
-  controller.setView({capabilitiesDocument: {version: 1, mcpServers: {old: {tools: {}}}}})
+  controller.setView({capabilitiesDocument: {version: 1, mcpServers: {old: {tools: {}}}}, capabilitiesRevision: 'original-revision'})
   const document = JSON.parse('{"version":1,"mcpServers":{"demo":{"tools":{"__proto__":{"enabled":true},"lookup.raw":{"enabled":true}}}}}')
   controller.stage({capabilitiesDocument: document})
+  controller.syncView({capabilitiesDocument: {version: 1, mcpServers: {external: {tools: {}}}}, capabilitiesRevision: 'newer-revision'})
   await controller.save()
   assert.deepEqual(outbound.capabilitiesDocument, document)
+  assert.equal(outbound.capabilitiesBaseRevision, 'original-revision')
   assert.equal(Object.hasOwn(outbound.capabilitiesDocument.mcpServers.demo.tools, '__proto__'), true)
   controller.stage({capabilitiesDocument: {version: 1, mcpServers: {}}})
   await controller.save()
   assert.deepEqual(outbound.capabilitiesDocument.mcpServers, {})
+})
+
+test('a stale capability document keeps its draft and asks the user to reopen settings', async () => {
+  const {createSettingsController} = await import('../src/renderer/settings-controller.mjs')
+  let note = ''
+  const controller = createSettingsController({
+    api: {set: async () => ({saved: false, operationStatus: 'invalid', problems: ['capabilities_document_changed']})},
+    render: () => {}, status: value => {note = value},
+  })
+  controller.setView({capabilitiesDocument: {version: 1}, capabilitiesRevision: 'original-revision'})
+  controller.stage({capabilitiesDocument: {version: 1, frontbrainToolBudget: 6}})
+  assert.equal((await controller.save()).saved, false)
+  assert.equal(controller.snapshot().dirty, true)
+  assert.match(note, /关闭并重新打开设置/u)
 })

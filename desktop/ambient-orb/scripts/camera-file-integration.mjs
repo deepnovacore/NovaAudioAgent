@@ -163,6 +163,14 @@ async function runIntegration() {
     0, 0, 2_500, 5_000, 0, MAX_CAMERA_POSITION_MS,
   ])
   assert.ok(route.requests > 0)
+  // Chromium may buffer this small fixture in full; exercise range forwarding
+  // explicitly instead of depending on its version-specific buffering policy.
+  const rangeResponse = await window.webContents.session.fetch('nova://orb/camera-source', {
+    headers: {range: 'bytes=1-16'},
+  })
+  // Chromium's file fetch may legally answer the forwarded Range with full 200.
+  assert.ok(rangeResponse.ok)
+  await rangeResponse.body?.cancel()
   assert.ok(route.nonzeroRanges > 0)
 
   const visual = await settleWithin(rendererCall('visualEvidence'), MEDIA_DEADLINE_MS,
@@ -329,8 +337,8 @@ async function runIntegration() {
   await connectRenderer({holdSeek: true})
   let heldSettled = false
   const held = source.snapshot().finally(() => { heldSettled = true })
-  await waitUntil(async () => (await rendererCall('requestTrace')).length >= 1,
-    HANDSHAKE_DEADLINE_MS, 'held camera request')
+  await settleWithin(rendererCall('waitForSeekBarrier'), HANDSHAKE_DEADLINE_MS,
+    'held camera request')
   await server.sendText(JSON.stringify({
     type: 'playback.clear', utterance_id: 'camera-test', generation_epoch: 1,
   }))
@@ -357,8 +365,8 @@ async function runIntegration() {
 
   await connectRenderer({holdSeek: true})
   const pendingAtShutdown = source.snapshot()
-  await waitUntil(async () => (await rendererCall('requestTrace')).length >= 1,
-    HANDSHAKE_DEADLINE_MS, 'shutdown held capture')
+  await settleWithin(rendererCall('waitForSeekBarrier'), HANDSHAKE_DEADLINE_MS,
+    'shutdown held capture')
   await server.close()
   await assert.rejects(pendingAtShutdown, CameraError)
   await source.stop()
@@ -438,7 +446,7 @@ function assertGatewayImages(calls) {
     assert.equal(call.images.length, 1)
     assert.equal(call.images[0].ref, 'watch-frame')
     assert.equal(call.images[0].media_type, 'image/jpeg')
-    assertJpeg(call.images[0])
+    assertJpegPayload(call.images[0].payload)
   }
 }
 
@@ -446,11 +454,15 @@ function assertJpeg(frame) {
   assert.equal(frame.media_type, 'image/jpeg')
   assert.equal(frame.width, 1280)
   assert.equal(frame.height, 720)
-  assert.ok(frame.payload instanceof Uint8Array)
-  assert.equal(frame.payload[0], 0xff)
-  assert.equal(frame.payload[1], 0xd8)
-  assert.equal(frame.payload[frame.payload.byteLength - 2], 0xff)
-  assert.equal(frame.payload[frame.payload.byteLength - 1], 0xd9)
+  assertJpegPayload(frame.payload)
+}
+
+function assertJpegPayload(payload) {
+  assert.ok(payload instanceof Uint8Array)
+  assert.equal(payload[0], 0xff)
+  assert.equal(payload[1], 0xd8)
+  assert.equal(payload[payload.byteLength - 2], 0xff)
+  assert.equal(payload[payload.byteLength - 1], 0xd9)
 }
 
 function withoutLandmarks(visual) {
@@ -481,7 +493,7 @@ function makeCameraTimer() {
 
 async function rendererCall(method, ...args) {
   const allowed = new Set([
-    'start', 'supportsFileCodec', 'waitForControl', 'releaseSeek', 'waitForEncodeBarrier',
+    'start', 'supportsFileCodec', 'waitForControl', 'waitForSeekBarrier', 'releaseSeek', 'waitForEncodeBarrier',
     'releaseEncode', 'requestTrace', 'visualEvidence', 'cleanup',
   ])
   if (!allowed.has(method)) throw new CameraFileIntegrationError('renderer call rejected')
@@ -526,22 +538,38 @@ function waitForAppReady() {
   return Promise.race([app.whenReady(), timeout]).finally(() => clearTimeout(handle))
 }
 
-const complete = settleWithin(runIntegration(), RUNNER_DEADLINE_MS, 'camera integration')
-let result
-try {
-  result = await settleIntegrationOperation(() => complete)
-} finally {
+// Electron emits ready only after its main module finishes evaluation.
+// Keep the runner's awaits inside a function, not at module top level.
+async function finishIntegration() {
+  const complete = settleWithin(runIntegration(), RUNNER_DEADLINE_MS, 'camera integration')
+  let result
   try {
-    await settleWithin(server?.close() ?? Promise.resolve(), HANDSHAKE_DEADLINE_MS,
-      'desktop server cleanup')
-  } catch { /* bounded owner cleanup */ }
-  try {
-    await settleWithin(source?.stop() ?? Promise.resolve(), HANDSHAKE_DEADLINE_MS,
-      'camera source cleanup')
-  } catch { /* bounded owner cleanup */ }
-  window?.destroy()
+    result = await settleIntegrationOperation(async () => {
+      try { return await complete }
+      catch (error) {
+        if (error instanceof ChromiumCapabilityError) process.stderr.write(`camera capability: ${error.reason}\n`)
+        else console.error(error)
+        throw error
+      }
+    })
+  } finally {
+    try {
+      await settleWithin(server?.close() ?? Promise.resolve(), HANDSHAKE_DEADLINE_MS,
+        'desktop server cleanup')
+    } catch { /* bounded owner cleanup */ }
+    try {
+      await settleWithin(source?.stop() ?? Promise.resolve(), HANDSHAKE_DEADLINE_MS,
+        'camera source cleanup')
+    } catch { /* bounded owner cleanup */ }
+    window?.destroy()
+  }
+
+  const exitCode = integrationExitCode(result)
+  process.stdout.write(`${integrationResultLine(result)}\n`)
+  app.exit(exitCode)
 }
 
-const exitCode = integrationExitCode(result)
-process.stdout.write(`${integrationResultLine(result)}\n`)
-app.exit(exitCode)
+void finishIntegration().catch(() => {
+  process.stdout.write('{"ok":false,"classification":"product_failure"}\n')
+  app.exit(1)
+})

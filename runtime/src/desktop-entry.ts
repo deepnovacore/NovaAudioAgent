@@ -36,7 +36,7 @@ const onDiagnostic = (line: string): void => {
   process.stderr.write(`${line}\n`)
 }
 
-process.exitCode = await runDesktopEntryWithStopSources({
+const exitCode = await runDesktopEntryWithStopSources({
   token,
   readyEndpoint,
   stop,
@@ -139,3 +139,8 @@ process.exitCode = await runDesktopEntryWithStopSources({
 })
 
 control.dispose()
+process.exitCode = exitCode
+if (exitCode !== 0) {
+  await new Promise<void>(resolve => process.stderr.write('', () => resolve()))
+  process.exit(exitCode)
+}

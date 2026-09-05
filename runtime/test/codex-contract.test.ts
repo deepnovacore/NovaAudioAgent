@@ -96,15 +96,13 @@ test('base, live, and project manifests pin exact immutable public operations an
   assert.equal(INTERNAL_CODEX_RUN_DEADLINE, 540)
 })
 
-test('the runtime package root adds adapters without exposing process authority', () => {
+test('the generic runtime package root does not load concrete Codex ownership', () => {
   const exports = runtimeIndex as Readonly<Record<string, unknown>>
-  assert.equal(exports.CODEX_BASE_MANIFEST, CODEX_BASE_MANIFEST)
-  assert.equal(exports.JsonRpcConnection !== undefined, true)
-  assert.equal(exports.CodexJsonlParser !== undefined, true)
-  assert.equal(exports.AppServerTurnProjection !== undefined, true)
-  assert.equal(typeof exports.CodexAdapter, 'function')
-  assert.equal(typeof exports.CodexLiveAdapter, 'function')
-  for (const forbidden of ['CodexProcess', 'CodexTransport', 'spawnCodex']) {
+  for (const forbidden of [
+    'CODEX_BASE_MANIFEST', 'CODEX_MANIFEST', 'JsonRpcConnection',
+    'CodexJsonlParser', 'AppServerTurnProjection', 'CodexAdapter',
+    'CodexLiveAdapter', 'CodexProcess', 'CodexTransport', 'spawnCodex',
+  ]) {
     assert.equal(Object.hasOwn(exports, forbidden), false)
   }
 })

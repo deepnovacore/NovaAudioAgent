@@ -231,7 +231,7 @@ test('visual oracle requires reference baselines, boundary proximity, and moving
     referenceSelfLast: {meanAbsoluteError: 0, maxAbsoluteError: 0, within48Ratio: 1},
     capture0ToFirst: {meanAbsoluteError: 17.9, maxAbsoluteError: 60, within48Ratio: 0.96},
     capturePastEndToLast: {meanAbsoluteError: 18, maxAbsoluteError: 70, within48Ratio: 0.95},
-    capture0To2500: {meanAbsoluteError: 12},
+    capture0To2500: {meanAbsoluteError: 6},
     capture0To5000: {meanAbsoluteError: 12},
     capture2500To5000: {meanAbsoluteError: 8},
   }
@@ -239,7 +239,7 @@ test('visual oracle requires reference baselines, boundary proximity, and moving
   for (const [field, patch] of [
     ['capture0ToFirst', {meanAbsoluteError: 18.01}],
     ['capturePastEndToLast', {within48Ratio: 0.949}],
-    ['capture0To2500', {meanAbsoluteError: 11.99}],
+    ['capture0To2500', {meanAbsoluteError: 5.99}],
     ['capture0To5000', {meanAbsoluteError: 11.99}],
     ['capture2500To5000', {meanAbsoluteError: 7.99}],
   ]) {

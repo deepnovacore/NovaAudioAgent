@@ -37,6 +37,8 @@ jobs:
       # cache. The pinned install script is idempotent and closes that gap.
       - run: node desktop/ambient-orb/node_modules/electron/install.js
       - run: npm run test:desktop
+      - run: npm run smoke:capability-status --workspace @nova-audio-agent/ambient-orb
+        if: runner.os == 'macOS'
       - run: npm run build
 
   package:

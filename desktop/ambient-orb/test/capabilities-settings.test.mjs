@@ -3,7 +3,7 @@ import test from 'node:test'
 import {mkdtemp, readFile, writeFile, rm} from 'node:fs/promises'
 import {join} from 'node:path'
 import {createSettingsWriter, DEFAULT_SETTINGS as SETTINGS_DEFAULTS} from '../src/main/settings-store.mjs'
-import {prepareCapabilityCommit, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment} from '../src/main/capabilities-settings.mjs'
+import {prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, capabilityDocumentRevision} from '../src/main/capabilities-settings.mjs'
 
 const codec = {available: () => false}
 const document = {version: 1, modules: {search: {enabled: false}}, mcpServers: {}}
@@ -26,6 +26,65 @@ test('prepared writer rolls back exact proposed-path bytes when settings save fa
   const absent = join(root, 'absent.json')
   await assert.rejects(writer({capabilitiesConfigPath: absent}, next => prepareCapabilityCommit({settings: next, document, environment: {}})))
   await assert.rejects(readFile(absent), {code: 'ENOENT'})
+})
+test('capability commit rejects a stale editor revision without replacing an external edit', async t => {
+  const root = await fixture(t), path = join(root, 'cap.json')
+  const base = {version: 1, frontbrainToolBudget: 4}
+  const external = {version: 1, frontbrainToolBudget: 5}
+  await writeFile(path, JSON.stringify(base))
+  const revision = capabilityDocumentRevision({capabilitiesConfigPath: path})
+  await writeFile(path, JSON.stringify(external))
+  await assert.rejects(
+    prepareCapabilityCommit({settings: {capabilitiesConfigPath: path}, document: {version: 1, frontbrainToolBudget: 6}, expectedRevision: revision}),
+    error => error?.code === 'invalid_settings_commit' && error.problems?.includes('capabilities_document_changed'),
+  )
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), external)
+})
+test('capability commit moves a displayed registry to a new missing path without overwriting an existing target', async t => {
+  const root = await fixture(t)
+  const sourcePath = join(root, 'source.json'), missingPath = join(root, 'missing.json'), existingPath = join(root, 'existing.json')
+  const sourceSettings = {capabilitiesConfigPath: sourcePath}
+  const document = {version: 1, modules: {search: {enabled: false}}, frontbrainToolBudget: 6}
+  await writeFile(sourcePath, JSON.stringify({version: 1, modules: {search: {enabled: false}}, frontbrainToolBudget: 4}))
+  const revision = capabilityDocumentRevision(sourceSettings)
+  await prepareCapabilityCommit({settings: {capabilitiesConfigPath: missingPath}, sourceSettings, document, expectedRevision: revision})
+  assert.deepEqual(JSON.parse(await readFile(missingPath, 'utf8')), document)
+  assert.equal(JSON.parse(await readFile(sourcePath, 'utf8')).frontbrainToolBudget, 4)
+  await writeFile(existingPath, JSON.stringify({version: 1, modules: {search: {enabled: false}}, frontbrainToolBudget: 5}))
+  await assert.rejects(
+    prepareCapabilityCommit({settings: {capabilitiesConfigPath: existingPath}, sourceSettings, document, expectedRevision: revision}),
+    error => error?.code === 'invalid_settings_commit' && error.problems?.includes('capabilities_document_changed'),
+  )
+  assert.equal(JSON.parse(await readFile(existingPath, 'utf8')).frontbrainToolBudget, 5)
+})
+test('capability commit accepts a revision for malformed prior bytes and replaces them deliberately', async t => {
+  const root = await fixture(t), path = join(root, 'cap.json')
+  await writeFile(path, '{not json')
+  const revision = capabilityDocumentRevision({capabilitiesConfigPath: path})
+  const editor = readCapabilityEditor({capabilitiesConfigPath: path})
+  assert.equal(editor.document, null)
+  assert.equal(editor.revision, revision)
+  await prepareCapabilityCommit({settings: {capabilitiesConfigPath: path}, document: {version: 1, modules: {search: {enabled: false}}}, expectedRevision: revision})
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), {version: 1, modules: {search: {enabled: false}}})
+})
+test('capability commit screens referenced environment credentials before writing', async t => {
+  const root = await fixture(t), path = join(root, 'cap.json')
+  const environment = {TOKEN: 'unlabelled-credential-value'}
+  await assert.rejects(
+    prepareCapabilityCommit({settings: {capabilitiesConfigPath: path}, document: {version: 1, modules: {search: {enabled: false}}, mcpServers: {demo: {enabled: false, transport: 'stdio', command: 'tool', args: ['--key', '${TOKEN}', environment.TOKEN], tools: {}}}}, environment}),
+    error => error?.code === 'invalid_settings_commit' && error.problems?.includes('inline_credentials_use_env'),
+  )
+})
+test('capability commit writes compact bytes when pretty formatting would exceed the registry limit', async t => {
+  const root = await fixture(t), path = join(root, 'cap.json')
+  let document
+  for (let length = 4000; length <= 4200; length++) {
+    const candidate = {version: 1, modules: {search: {enabled: false}}, mcpServers: {demo: {enabled: false, transport: 'stdio', command: 'tool', args: Array.from({length: 64}, () => 'x'.repeat(length)), tools: {}}}}
+    if (Buffer.byteLength(JSON.stringify(candidate)) <= 256 * 1024 && Buffer.byteLength(JSON.stringify(candidate, null, 2) + '\n') > 256 * 1024) { document = candidate; break }
+  }
+  assert.ok(document)
+  await prepareCapabilityCommit({settings: {capabilitiesConfigPath: path}, document})
+  assert.ok((await readFile(path)).byteLength <= 256 * 1024)
 })
 test('registry validation uses persistable secrets, rejects failed servers before either write', async t => {
   const root = await fixture(t), path = join(root, 'next.json')
@@ -79,12 +138,12 @@ test('combined operation validates settings, returns invalid/busy unchanged and 
   let current = {...SETTINGS_DEFAULTS, capabilitiesConfigPath: path}, saved = 0, published = 0
   const coordinator = createLifecycleCoordinator()
   const writer = createSettingsWriter({getCurrent: () => current, codec, commit: next => {current = next}, save: async () => {saved++}})
-  const commit = {settingsPatch: {capabilitiesConfigPath: path}, capabilitiesDocument: {...document, modules: {...document.modules, camera: {enabled: false}}}}
+  const commit = {settingsPatch: {capabilitiesConfigPath: path}, capabilitiesDocument: {...document, modules: {...document.modules, camera: {enabled: false}}}, capabilitiesBaseRevision: capabilityDocumentRevision({capabilitiesConfigPath: path})}
   const options = {coordinator, patch: commit, write: async payload => {
     const parsed = parseSettingsCommit(payload)
     return writer(parsed.settingsPatch, next => {
       validatePreparedSettings(parsed.settingsPatch, next)
-      return prepareCapabilityCommit({settings: next, document: parsed.capabilitiesDocument, environment: {}})
+      return prepareCapabilityCommit({settings: next, document: parsed.capabilitiesDocument, expectedRevision: capabilityDocumentRevision(next), environment: {}})
     })
   }, publishCommitted: () => {published++}, prepareConfiguration: async () => ({}), commitConfiguration: async () => ({}), restartBackend: async () => {}, publishStatus: () => {}}
   for (const payload of [null, [], {secrets: {}}, {settingsPatch: []}, {capabilitiesDocument: null}, {settingsPatch: {pipelineMode: 'invalid'}, capabilitiesDocument: document}, {settingsPatch: {}, capabilitiesDocument: {...document, mcpServers: {bad: {transport: 'invalid'}}}}]) {
@@ -160,4 +219,37 @@ test('relative registry paths resolve identically for main validation and a diff
   const settings = {...SETTINGS_DEFAULTS, capabilitiesConfigPath: 'config/capabilities.json'}
   const spec = backendLaunchSpec({nodeEntry: '/private/tmp/runtime.js', nodeResourcesPath: '/private/tmp', workspace: '/private/tmp/other-workspace', token: 'a'.repeat(32), readyEndpoint: '127.0.0.1:12345', parentEnv: {}, settings})
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG, capabilityPath(settings))
+})
+
+test('literal harmless HTTP headers remain editable without admitting credential headers', async t => {
+  const root = await fixture(t), path = join(root, 'cap.json')
+  const doc = {...document, mcpServers: {local: {enabled: true, transport: 'streamable-http', url: 'http://127.0.0.1:9999/mcp', headers: {Accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'Nova MCP'}, tools: {}}}}
+  await writeFile(path, JSON.stringify(doc))
+  assert.deepEqual(readCapabilityEditor({capabilitiesConfigPath: path}, {}).document, doc)
+  await writeFile(path, JSON.stringify({...doc, mcpServers: {local: {...doc.mcpServers.local, headers: {authorization: 'Bearer inline-secret'}}}}))
+  assert.equal(readCapabilityEditor({capabilitiesConfigPath: path}, {}).document, null)
+})
+test('HOME and USER references are ordinary data while arbitrary authentication references stay protected', async t => {
+  const {referencedCapabilitySecrets} = await import('../src/main/capabilities-settings.mjs')
+  const root = await fixture(t), path = join(root, 'cap.json')
+  const environment = {HOME: '/home/alice', USER: 'alice', CUSTOM_AUTH: 'arbitrary-credential-value'}
+  const doc = {...document, mcpServers: {local: {enabled: false, transport: 'stdio', command: '/home/alice/bin/mcp', args: ['--user', 'alice'], env: {HOME: '${HOME}', USER: '${USER}'}, tools: {}}, remote: {enabled: false, transport: 'streamable-http', url: 'https://example.com/mcp', headers: {authorization: 'Bearer ${CUSTOM_AUTH}'}, tools: {}}}}
+  await writeFile(path, JSON.stringify(doc))
+  assert.deepEqual(readCapabilityEditor({capabilitiesConfigPath: path}, environment).document, doc)
+  const sensitive = referencedCapabilitySecrets(doc, environment)
+  assert.ok(!sensitive.includes('/home/alice'))
+  assert.ok(!sensitive.includes('alice'))
+  assert.ok(sensitive.includes(environment.CUSTOM_AUTH))
+  assert.deepEqual(referencedCapabilitySecrets({url: 'https://example.com/${HOME}'}, environment), [environment.HOME])
+  assert.deepEqual(referencedCapabilitySecrets({headers: {authorization: 'Bearer ${USER}'}}, environment), [environment.USER])
+  assert.deepEqual(referencedCapabilitySecrets({env: {CUSTOM_AUTH: '${HOME}', USER: '${CUSTOM_AUTH}'}}, environment), [environment.HOME, environment.CUSTOM_AUTH])
+  const leak = {...doc, mcpServers: {...doc.mcpServers, local: {...doc.mcpServers.local, args: [environment.CUSTOM_AUTH]}}}
+  await writeFile(path, JSON.stringify(leak))
+  assert.equal(readCapabilityEditor({capabilitiesConfigPath: path}, environment).document, null)
+  const result = await publicCapabilityProbe({env: {HOME: environment.HOME, USER: environment.USER}, headers: {Accept: 'application/json', authorization: 'Bearer ' + environment.CUSTOM_AUTH}}, async () => ({status: 'ok', tools: [{name: 'alice_lookup', description: 'Home /home/alice; application/json; ' + environment.CUSTOM_AUTH}]}), sensitive)
+  assert.equal(result.status, 'ok')
+  assert.equal(result.tools[0].name, 'alice_lookup')
+  assert.ok(result.tools[0].description.includes('/home/alice'))
+  assert.ok(result.tools[0].description.includes('application/json'))
+  assert.ok(!JSON.stringify(result).includes(environment.CUSTOM_AUTH))
 })

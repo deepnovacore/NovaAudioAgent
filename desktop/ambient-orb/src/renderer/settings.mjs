@@ -260,8 +260,8 @@ function updateRestartNotice(phase) {
 
 const controller = createSettingsController({
   api: {...api, set: patch => {
-    const {capabilitiesDocument, ...settingsPatch} = patch
-    return api.set({settingsPatch, ...(capabilitiesDocument === undefined ? {} : {capabilitiesDocument})})
+    const {capabilitiesDocument, capabilitiesBaseRevision, ...settingsPatch} = patch
+    return api.set({settingsPatch, ...(capabilitiesDocument === undefined ? {} : {capabilitiesDocument, capabilitiesBaseRevision})})
   }}, render,
   status: note => { statusLabel.textContent = note },
   notice: updateRestartNotice,

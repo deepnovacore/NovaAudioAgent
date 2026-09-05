@@ -10,7 +10,7 @@ export function createCapabilitiesEditor({root, stateLabel, problemsLabel, stage
   const probes = new Map()
   let probeBusy = false
   function update(change) {
-    const next = structuredClone(current.capabilitiesDocument)
+    const next = structuredClone(current.capabilitiesDocument ?? {version: 1})
     change(next)
     stage({capabilitiesDocument: next})
   }
@@ -66,17 +66,19 @@ export function createCapabilitiesEditor({root, stateLabel, problemsLabel, stage
     if (view.capabilitiesDocument === null) {
       signature = ''
       root.replaceChildren()
-      node('p', '注册表无法安全显示，请在本机修正文件，凭据改用 ${ENV} 引用。' + (state.path ?? ''), root)
-      return
+      if (typeof view.capabilitiesRevision !== 'string') {
+        node('p', '注册表无法安全显示，请在本机修正文件，凭据改用 ${ENV} 引用。' + (state.path ?? ''), root)
+        return
+      }
     }
     const doc = view.capabilitiesDocument ?? {version: 1}
-    if (!view.capabilitiesDocument) return
     const nextSignature = JSON.stringify([doc, state.runtime?.servers, state.status?.servers])
     if (signature === nextSignature) return
     signature = nextSignature
     const focused = root.contains(document.activeElement) ? document.activeElement.dataset.field : null
     const opened = new Set([...root.querySelectorAll('details[open]')].map(item => item.dataset.server))
     root.replaceChildren()
+    if (view.capabilitiesDocument === null) node('p', '注册表无法安全显示；修改下方草稿并保存可替换该文件，凭据改用 ${ENV} 引用。' + (state.path ?? ''), root)
     const modules = doc.modules ?? {}
     for (const [name, label] of Object.entries(LABELS)) {
       field(root, label, modules[name]?.enabled ?? name !== 'knowledge', enabled => update(next => {

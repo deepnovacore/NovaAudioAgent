@@ -1,6 +1,6 @@
 # v0.2.0 进度说明（给同事 review 用）
 
-> 日期：2026-09-04 · 分支：`v0.2.0dev` · 本轮 review 基线：`1ec5e66`
+> 日期：2026-09-05 · 分支：`v0.2.0dev` · 当前基线：`fd16c5a`（工作区仍有桌面能力修复）
 > 这份文档用大白话讲"我们做到哪了、怎么验的、接下来干什么、想请你们拍板什么"。
 > 细节以各卷 spec 和 [`IMPLEMENTATION.md`](IMPLEMENTATION.md) 为准。
 
@@ -8,7 +8,7 @@
 
 Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0 的核心目标是：**让用户开口就能可靠地让 Codex 干活**——从"帮我把登录页那个 bug 修一下"开始，到必要的追问、生成工作单、审批、执行、看到结果，走通一整条链，并且中途不会因为模型"自作主张"而做错事。
 
-后续再扩到：能力开关 / MCP 接入（M2、M3）、私人知识库（M4）。
+后续再扩到：私人知识库（M4）；能力注册表与 MCP（M2、M3）已有代码实现，仍需 live 验收。
 
 ## 二、里程碑总览
 
@@ -18,8 +18,8 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 | **M1.5a** 执行器边界（spec 07） | Codex 变成一个真正的"插件"，核心代码不再认识 "codex" 这个词，只认角色（coding）；用 lint + 脚本强制 | ✅ 完成并经独立 review |
 | **M1.5b** 项目 / 会话 / 任务（spec 08） | 阶段性三工具前台；"在哪个项目、开不开新会话、停哪个任务"由编码执行器自己判断；支持多项目并发；显式取消；会话有可读标题（阶段性 surface 已被 M1.5c 取代） | 🟡 代码与测试完成，三轮 review 的已知阻断项均已修并带测试；语音端到端与并发审批真机未验，**不勾**（见第四、五节） |
 | **M1.5c** 前台变薄（spec 03 / 07） | 默认六工具面；Camera MCP + side-VLM 投影；Vision controller 持有隐藏 `watch` / `guard`；监控由宿主策略驱动；桌面发布依赖闭包包含 MCP SDK 及其传递依赖 | 🟡 代码与定向确定性覆盖已完成；旧 08 live 行、真人语音、macOS camera、Windows 与完整发布验收仍待做 |
-| **M2** 能力注册表（spec 03a） | `capabilities.json`、模块开关、MCP 搜索可选接入 | ⬜ 未开始 |
-| **M3** 外部 MCP（spec 03b） | 用户自配 MCP 服务器接入，并投影到 Codex | ⬜ 未开始 |
+| **M2** 能力注册表（spec 03a） | `capabilities.json`、模块开关、MCP 搜索可选接入 | 🟡 代码/定向测试完成；live Search 仍待验 |
+| **M3** 外部 MCP（spec 03b） | 用户自配 MCP 服务器接入，并投影到 Codex | 🟡 代码/定向测试完成；live 与发布验收仍待验 |
 | **M4** 知识库（spec 04） | 本地 SQLite 私人知识库 + 混合检索 | ⬜ 未开始，是否随 v0.2.0 发布待定 |
 
 ## 三、最近两天干了什么（07 + 08）
@@ -36,7 +36,7 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 ### 3.2 现在的样子
 
-**当前默认 Nova 前台工具面固定为六个**（当前只有内置 Camera MCP 被装配；外部 MCP 尚不可用，未来 M3 才按用户显式白名单形成额外 direct surface）：
+**当前默认 Nova 前台工具面为六个**（五个宿主工具加内置 Camera MCP）。用户显式启用的外部 MCP 工具可在此基础上增加，并受能力注册表的前台工具预算约束；不会静默截断：
 
 | 工具 | 什么时候用 | 例子 |
 |---|---|---|
@@ -66,8 +66,8 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
   `dispatch` / `cancel` 路由并映射到唯一的隐藏 channel owner；coding intake
   仍是 coding controller 的私有实现，不把它扩写成所有 agent 的公共契约。
   不存在让语音模型直接调用 `watch` / `guard` 的路径。
-- 非 agent 的外部 MCP direct path 尚未装配，属于未来 M3 的用户显式 allowlist
-  surface；当前六工具中的 direct MCP 只有内置 Camera MCP。
+- 非 agent 的外部 MCP direct path 已按用户显式 allowlist 装配；额外 MCP 工具受注册表
+  预算约束，并可按同一 allowlist 投影到 Codex。
 - 桌面 package contract 已按 MCP SDK 的固定版本和锁文件解析出的传递闭包登记；
   这是精确 allowlist，不是放宽成任意依赖，原有 forbidden media/camera 规则仍然有效。
 - 最后一轮 whole-branch review 的三个 Important 已闭合：Camera snapshot 的
@@ -76,11 +76,11 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
   permission 的 late grant
   在 `armed`、snapshot、side-VLM、hit 之前都有同步 fence，未绑定的 raw hidden
   start 直接 fail-closed；production camera gate 现在是
-  `env → Settings → assembly`，registry precedence 明确留给未来 M3。
+  `env → Settings/registry → assembly`；环境覆盖优先于 registry 设置。
 
 本节的“完成”仅指代码和已通过的确定性定向覆盖（工具面、camera gate、Vision
 隐藏 channel、monitor policy、state retirement、package/release closure）。root
-`npm run check`、完整 runtime、desktop、CLI 套件本轮均已复跑并通过；但不把
+`npm run check` 与定向覆盖本轮已复跑并通过；但不把
 确定性通过冒充成真人语音、macOS camera、Windows 或 live 完成。
 
 **编码执行器内部的 intake（跑在便宜的文本模型 `qwen-flash` 上）负责决定**：
@@ -107,23 +107,34 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 
 ## 四、我们是怎么验的
 
-**M1.5c 当前确定性 validation（integration 产品代码 `65a6` + 测试迁移 `83d6`）**
+**当前确定性 validation（2026-09-05）**
 
 | 套件 | 结果 |
 |---|---|
-| root `npm run check`（typecheck、lint、env contract、Node parity、executor boundary） | 全绿；Node parity 审计 195 files / 304 occurrences，executor boundary 15 allowlisted |
-| runtime 完整套件 | 2174 total，2169 pass，0 fail，5 skip |
-| runtime fixtures | 19 scenarios |
-| desktop 完整套件 | 810 total，807 pass，0 fail，3 Windows skip |
-| CLI | 18/18 pass |
+| root `npm run check`（typecheck、lint、env contract、Node parity、executor boundary） | 全绿；Node parity 审计 206 files / 344 occurrences，executor boundary 15 allowlisted |
+| runtime 完整套件 | 2250 total，2245 pass，0 fail，5 skip |
+| runtime fixtures | 19 场景通过 |
+| 定向 desktop capabilities 覆盖 | 68/68 pass |
+| desktop 完整套件 | 843 total，840 pass，0 fail，3 Windows skip；source startup smoke 未运行 |
+| CLI | 21/21 pass |
 
 这些是确定性验证结果。`M1.5c/live/Windows acceptance remains pending`：真人语音
 `dispatch` / `cancel` / `confirm`、macOS camera permission/side-VLM live、Guard
-抢话 live、耳机与并发审批、Windows 仍待验，M1.5c 总体发布门尚未完成。
+抢话/preemption live、耳机与并发审批、macOS 物理摄像头、真人 10 条脚本及
+Windows 仍待验，M1.5c 总体发布门尚未完成。
+
+本轮 live/设备证据也不能扩大上述结论：Qwen 实时 smoke 仅收到 3 个音频 delta，
+证明连接成功（工具为空），不等于真人语音验收；Electron capability-status
+fake-loopback 两个分支通过；预算超限现在无 readiness timeout、无重连，以配置错误
+退出。固定视频 Camera Electron smoke 已通过（修复了 runner 的 ready 死锁、CSP
+和 seek 同步问题），固定 PNG 也通过真实 Camera MCP → MediaStore →
+`qwen3-vl-plus` 旁路描述，结果为 `untrusted_external`。这些不包含物理摄像头权限。
+文件 oracle 覆盖首末参考帧及采样差异，不宣称逐像素证明中间帧身份；42 项 mutation
+runner 本轮未重跑。Search MCP 初始化实测 HTTP 404，原因尚未确定，默认保持 Tavily。
 
 沙箱内出现过的 desktop `EPERM` / `SIGABRT` 属于环境性问题；沙箱外已对同一
-desktop 套件精确复现并通过。这里不把它冒充真人语音、macOS camera、Windows 或
-Search flip 完成。
+desktop 套件精确复现并通过。这里不把它冒充真人语音、物理摄像头或 Windows
+验收；MCP 搜索仍是显式 opt-in，不能宣告 Search flip。
 
 **旧 08 确定性测试（M1.5b/08 历史基线快照；不是 M1.5c 当前验收）**
 
@@ -159,7 +170,7 @@ Search flip 完成。
 | **M1.5c surface rerun** | 六工具和 Camera/Vision 的确定性覆盖已有；08 中适用的真人语音行尚未按新 surface 重跑 | M1.5c 发布验收仍未闭合 |
 | 并发审批 | 两个任务同时向真 app-server 要审批、排队顺序 | 只有单测覆盖 |
 | 新建项目全流程 | 语音说"新建 X" → 确认 → 目录真的建出来 | 只有单测覆盖 |
-| Electron 桌面 smoke | 无头环境下 `app.whenReady()` 挂起，跑不了 | 需要在有桌面的机器上跑 |
+| Electron 桌面 smoke | capability utility 与固定视频 Camera smoke 已通过；source startup smoke 本轮跳过 | 物理摄像头与已安装产品验收仍待做 |
 | yolo 模式 live | 修了 `permissions: null` 后没重跑真机 | 低 |
 | 桌面项目名单 | 已通过现有项目与结果入口展示，双项目和独立结果有确定性 UI 覆盖 | 实现已补齐；不替代真人验收 |
 | 别名 | 用户说"博客"、项目叫 `blog` 会被反问一次（"是在 blog 里做吗？"），这是有意保守 | 体验上多一句话 |
@@ -188,13 +199,14 @@ camera、Windows 和完整发布验收；当前定向确定性测试通过不替
 
 加上：有桌面的机器上跑 Electron smoke；针对状态提问 / 前缀重名出第二版 assess prompt 并换一组新 holdout。
 
-**第二步：M2 能力注册表（spec 03a）**
+**第二步：M2 能力注册表（spec 03a，代码已落地）**
 
 - `capabilities.json` + 桌面模块开关（搜索 / 摄像头 / Codex / 知识库）；
 - MCP 搜索提供方（百炼 / DashScope）作为可选接入，Tavily 保留；
-- 03a/search 默认切到 MCP 以及后续删除 Tavily，仍是后续步骤；**先 live 验证再翻**（03a-flip 是单独一步）。
+- 默认前台六工具 + 用户显式 MCP 工具；显式 MCP 工具计入注册表配置的前台预算，
+  超预算 fail-closed。Search 默认仍为 Tavily，**先 live 验证再翻**（03a-flip 是单独一步）。
 
-**第三步：M3 外部 MCP（spec 03b）**，然后 **M4 知识库（spec 04）**。
+**第三步：M3 外部 MCP（spec 03b，代码已落地但 live 待验）**，然后 **M4 知识库（spec 04）**。
 
 ## 七、想请大家拍板 / 重点 review 的点
 
@@ -202,7 +214,7 @@ camera、Windows 和完整发布验收；当前定向确定性测试通过不替
 
 仍开放：
 
-1. **Agent 契约**：AgentController registry 统一拥有公开的 `dispatch` / `cancel` 路由；coding intake 仍是 coding controller 的私有编排实现。非 agent 的 MCP direct path 尚未装配，未来 M3 再按用户显式 allowlist 定义。接 AutoGLM 前再评估是否把更多 executor 端口（roster / running / resolve）抽成通用契约。
+1. **Agent 契约**：AgentController registry 统一拥有公开的 `dispatch` / `cancel` 路由；coding intake 仍是 coding controller 的私有编排实现。非 agent 的 MCP direct path 已按用户显式 allowlist 装配，并可投影到 Codex。接 AutoGLM 前再评估是否把更多 executor 端口（roster / running / resolve）抽成通用契约。
 2. **发布门槛**建议定为：M1.5 全绿 + 真人语音链路（上面 10 条）+ 并发审批真机。M2/M3 不作为 v0.2 发布前置？
 3. **holdout 的两类系统性失分**（状态提问→steer、前缀重名）：安全副作用已由宿主兜底；是接受当前模型体验，还是要求 prompt 第二版把 holdout 提到 ≥9/10 再进真人验收？
 

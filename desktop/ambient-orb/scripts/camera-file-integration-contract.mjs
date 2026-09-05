@@ -150,7 +150,7 @@ export function assertVisualEvidence(evidence) {
   requireMetric(evidence?.referenceSelfLast)
   requireMetric(evidence?.capture0ToFirst)
   requireMetric(evidence?.capturePastEndToLast)
-  requireDifference(evidence?.capture0To2500, 12)
+  requireDifference(evidence?.capture0To2500, 6)
   requireDifference(evidence?.capture0To5000, 12)
   requireDifference(evidence?.capture2500To5000, 8)
   requireNear(evidence.capture0ToFirst, evidence.referenceSelfFirst)

@@ -117,8 +117,17 @@ settings step returned `busy`. That ordering is withdrawn.
 Rules:
 
 1. **One coordinated operation.** A panel save produces a single
-   `SettingsCommit = {settingsPatch?, capabilitiesDocument?}` and runs it through
+   `SettingsCommit = {settingsPatch?, capabilitiesDocument?, capabilitiesBaseRevision?}` and runs it through
    one `coordinator.run('settings_save')`. `busy` means neither file changed.
+   A document and its base revision must appear together. Main issues an opaque
+   HMAC revision over the source path and bounded file bytes (or absence); the
+   renderer retains it with the draft, not with subsequent status pushes.
+   A stale revision rejects with `capabilities_document_changed` before writing.
+   A path migration validates the host-owned source revision and only creates a
+   missing target; it never overwrites an existing target. Readable malformed
+   documents can be explicitly replaced; oversized or inaccessible files require
+   local repair. This detects stale drafts, not arbitrary uncoordinated writes
+   racing the filesystem rename.
 2. **Validate before any write.** Inside the operation: validate the settings
    patch (existing rules) **and** the full capabilities document (schema,
    `${VAR}` presence, per-server rules from 03). Any validation failure returns

@@ -561,6 +561,7 @@ export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 |
 function desktopEntryFailureCode(error: unknown): string {
   if (error !== null && typeof error === 'object') {
     const value = error as {readonly name?: unknown; readonly code?: unknown}
+    if (value.code === 'frontbrain_tool_budget_exceeded') return 'configuration_required'
     if (value.code === 'credential_missing') return 'authentication_failed'
     if (new Set([
       'binary_missing', 'spawn_failed', 'codex_host_unavailable',

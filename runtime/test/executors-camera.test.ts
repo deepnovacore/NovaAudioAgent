@@ -65,6 +65,7 @@ test('camera is a registry adapter with the Python snapshot manifest', () => {
     roles: [],
     approvals: false,
     model_visibility: 'direct',
+    probe_policy: 'readonly_ops',
   })
 })
 

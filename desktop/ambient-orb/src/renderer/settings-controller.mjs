@@ -184,6 +184,7 @@ export function createSettingsController({ api, render, status, notice = () => {
   let restartTransitionSeen = false
   const drafts = new Map()
   let draftRevision = 0
+  let capabilitiesBaseRevision = null
 
   function draftSnapshot() {
     const snapshot = {}
@@ -229,7 +230,12 @@ export function createSettingsController({ api, render, status, notice = () => {
   }
 
   function stage(patch) {
-    for (const [path, value] of leafEntries(publicPatch(patch))) {
+    const publicPatchValue = publicPatch(patch)
+    if (Object.hasOwn(publicPatchValue, 'capabilitiesDocument')
+      && !drafts.has(leafPathKey(['capabilitiesDocument']))) {
+      capabilitiesBaseRevision = confirmedView?.capabilitiesRevision ?? null
+    }
+    for (const [path, value] of leafEntries(publicPatchValue)) {
       drafts.set(leafPathKey(path), {path, value, revision: ++draftRevision})
     }
     renderCurrent()
@@ -242,6 +248,9 @@ export function createSettingsController({ api, render, status, notice = () => {
     for (const draft of submitted.values()) setLeaf(publicSubmitted, draft.path, draft.value)
     const secrets = writeOnlySecrets(secretPatch)
     const outbound = writePatch(publicSubmitted)
+    if (Object.hasOwn(outbound, 'capabilitiesDocument')) {
+      outbound.capabilitiesBaseRevision = capabilitiesBaseRevision
+    }
     if (Object.keys(secrets).length > 0) outbound.secrets = secrets
     inFlight = {submitted, restartTransitionSeen: false}
     const syncRevisionAtStart = mainSyncRevision
@@ -254,6 +263,9 @@ export function createSettingsController({ api, render, status, notice = () => {
         ? publicRejectionPaths(publicSubmitted, remoteView)
         : []
       const rejectedPublicFields = rejectedPaths.map(path => path.join('.'))
+      const capabilityDocumentChanged = remoteView?.operationStatus === 'invalid'
+        && Array.isArray(remoteView?.problems)
+        && remoteView.problems.includes('capabilities_document_changed')
       if (persisted) {
         hasAuthoritativeView = true
         const liveMainState = mainSyncRevision === syncRevisionAtStart
@@ -263,6 +275,15 @@ export function createSettingsController({ api, render, status, notice = () => {
       }
       if (persisted) {
         const rejected = new Set(rejectedPaths.map(leafPathKey))
+        const capabilityPath = leafPathKey(['capabilitiesDocument'])
+        const submittedCapability = submitted.get(capabilityPath)
+        const currentCapability = drafts.get(capabilityPath)
+        const acceptedCapabilityDescendant = submittedCapability !== undefined
+          && currentCapability !== undefined
+          && currentCapability.revision > submittedCapability.revision
+          && !rejected.has(capabilityPath)
+          && JSON.stringify(remoteView.capabilitiesDocument) === JSON.stringify(submittedCapability.value)
+          && typeof remoteView.capabilitiesRevision === 'string'
         for (const [key, submittedDraft] of submitted) {
           const current = drafts.get(key)
           if (
@@ -270,10 +291,12 @@ export function createSettingsController({ api, render, status, notice = () => {
             && !rejected.has(leafPathKey(submittedDraft.path))
           ) drafts.delete(key)
         }
+        if (!drafts.has(capabilityPath)) capabilitiesBaseRevision = null
+        else if (acceptedCapabilityDescendant) capabilitiesBaseRevision = remoteView.capabilitiesRevision
       }
       renderCurrent()
       const failurePhase = applyFailurePhase()
-      status(!persisted ? remoteView?.operationStatus === 'busy' ? '另一项操作进行中，草稿未保存' : remoteView?.operationStatus === 'invalid' ? '配置校验失败，草稿未保存' + (Array.isArray(remoteView.problems) && remoteView.problems.length ? '：' + remoteView.problems.join(' · ') : '') : '保存失败'
+      status(!persisted ? remoteView?.operationStatus === 'busy' ? '另一项操作进行中，草稿未保存' : capabilityDocumentChanged ? '能力注册表已在外部修改，请关闭并重新打开设置后重试' : remoteView?.operationStatus === 'invalid' ? '配置校验失败，草稿未保存' + (Array.isArray(remoteView.problems) && remoteView.problems.length ? '：' + remoteView.problems.join(' · ') : '') : '保存失败'
         : rejectedPublicFields.length > 0 ? '部分设置未保存'
         : failurePhase === 'restart_failed' ? '已保存·后端未启动'
         : failurePhase === 'failed' ? '已保存·未生效'

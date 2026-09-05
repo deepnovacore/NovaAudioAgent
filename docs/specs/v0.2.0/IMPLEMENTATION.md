@@ -112,11 +112,12 @@ Live macOS/headset and Windows acceptance remains distinct from deterministic te
 
 ## M1.5c — thin frontend ledger
 
-- [x] The current default Nova surface is exactly six tools:
+- [x] The default Nova surface is six host/native tools plus explicitly selected
+  external MCP tools within the configured frontbrain budget:
   `dispatch`, `cancel`, `confirm`, `memory__recall`, `search__search`, and
-  `mcp__nova_camera__snapshot`. The built-in Camera MCP is the only direct MCP
-  currently assembled. External MCP server tools are not currently available;
-  their explicit user-selected allowlist and future direct surface belong to M3.
+  `mcp__nova_camera__snapshot`. External MCP direct tools are assembled from the
+  explicit user allowlist, counted against the registry budget, and can be
+  projected into Codex through the same allowlist.
 - [x] The old frontend state/update surface is retired: `StructuredState`,
   `update_intent`, `update_goal`, `update_authorization`, and the legacy
   `cam__*`, `watch__*`, and `guard__*` bindings do not form model-facing tools.
@@ -153,26 +154,52 @@ include real voice `dispatch` / `cancel` / `confirm`, macOS camera permission
 and side-VLM live behavior, Guard interruption/takeover behavior, headset and
 concurrent approvals, and Windows acceptance.
 
-## Validation (M1.5c, integration `65a6` + test migration `83d6`)
+## Validation (2026-09-05 integration checkpoint)
 
 | Check | Evidence |
 |---|---|
-| Root `npm run check` | Green: typecheck, lint, environment contract, Node parity (195 files / 304 occurrences), executor boundary (15 allowlisted) |
-| Runtime full suite | 2174 total, 2169 passed, 0 failed, 5 skipped |
-| Runtime fixtures | 19 scenarios |
-| Desktop full suite | 810 total, 807 passed, 0 failed, 3 Windows skips |
-| CLI suite | 18/18 passed |
+| Root `npm run check` | Green: typecheck, lint, environment contract, Node parity (206 files / 344 occurrences), executor boundary (15 allowlisted) |
+| Runtime complete suite | 2250 total, 2245 passed, 0 failed, 5 skipped |
+| Runtime fixtures | 19 scenarios passed |
+| Focused desktop capabilities coverage | 68/68 passed |
+| Desktop complete suite | 843 total, 840 passed, 0 failed, 3 Windows skips; source startup smoke skipped |
+| CLI suite | 21/21 passed |
 
 These results cover deterministic validation only. `M1.5c/live/Windows acceptance
 remains pending`, and the overall M1.5c release gate is not complete.
+
+Current live evidence is bounded: Qwen realtime smoke received three audio
+deltas (connectivity only; no tool call and no human-voice acceptance). Electron
+capability-status fake-loopback passes both branches: over-budget startup exits
+2 with `configuration_required`, no readiness timeout and no reconnect; normal
+startup reaches running. The fixed-video Electron camera runner passes after
+fixing its main-module ready deadlock, same-origin reference-fetch CSP, and seek
+barriers. Its oracle proves boundary-reference proximity and sampled-frame
+differences, not exact middle-frame pixel identity; the 2500ms difference floor
+is calibrated to 6 against three identical measurements of 8.517 on the locked
+fixture. Contract positive/negative tests pass 26/26; the 42-mutation runner was
+not rerun at this checkpoint.
+
+The bundled first-frame PNG also passes real Camera MCP → MediaStore →
+`qwen3-vl-plus` description, returning bounded `untrusted_external` evidence.
+Neither fixture test exercises physical camera permission. Search MCP
+initialization returns HTTP 404 with the available credential at the
+[official documented endpoint](https://help.aliyun.com/zh/model-studio/mcp-external-calls/),
+so Tavily remains the default; the account/service cause is not established.
+
+Terra/Sol reviewed the integration and test-contract updates. External
+`claude-fable-5-1[1m]` review identified and prompted fixes for malformed-file
+repair revisions, symmetric referenced-secret filtering, serialized byte limits,
+and safe new-path creation. Full-document save validation, oversized-input
+rejection and short-secret protection remain intentional fail-closed rules.
 
 The final whole-branch review closed three Important findings: Camera snapshot
 `sync_result` now returns the same provider function output in the same call,
 with failures preserved exactly as `vision_description_unavailable` and no late
 fact; a late camera-permission grant is fenced synchronously before `armed`,
 snapshot, side-VLM, and hit, while an unbound raw hidden start fails closed; and
-the production camera gate is now `env → Settings → assembly`, with registry
-precedence explicitly deferred to the future M3 implementation. These closures
+the production camera gate is now `env → Settings/registry → assembly`, with
+environment overrides taking precedence. These closures
 do not change the live acceptance boundary above.
 
 Desktop `EPERM` / `SIGABRT` observations inside the sandbox were environmental;
@@ -183,7 +210,11 @@ M1.5c live acceptance is still open: rerun the applicable 08 voice rows after
 the surface change, including real voice `dispatch` / `cancel` / `confirm`,
 headset and concurrent approval checks, plus macOS camera and Windows gates.
 
-M2–M4 follow M1.5; no MCP default switch or release cut without their recorded gates.
+M2/M3 code is present (registry, bounded MCP search, external MCP allowlist,
+same-origin quota sharing, and Codex managed-MCP projection). Search defaults to
+Tavily until its live smoke passes; explicit MCP tools remain budgeted and
+fail-closed. Live MCP, voice, camera, headset, concurrency, Windows, and release
+gates remain open. M4 is not in scope for this update.
 
 Implementation and independent reviews used Terra and Luna for launch profiles,
 settings, approval handling and progress presentation. Review fixes cover

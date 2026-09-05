@@ -19,6 +19,26 @@ for (const entry of ['index', 'desktop', 'production-realtime-assembly']) {
   })
 }
 
+test('desktop entry exits with its startup failure code after bounded cleanup', () => {
+  const target = new URL('../src/desktop-entry.js', import.meta.url).href
+  const replacements = {
+    './desktop-service.js': `export async function runDesktopEntryWithStopSources() { setInterval(() => {}, 1000); return 2; }
+      export function buildDesktopRealtimeComposition() { throw new Error('not reached'); }`,
+  }
+  const hook = `export async function resolve(specifier, context, next) {
+    const replacements = ${JSON.stringify(replacements)};
+    if (context.parentURL?.endsWith('/desktop-entry.js') && replacements[specifier]) {
+      return {url: 'data:text/javascript,' + encodeURIComponent(replacements[specifier]), shortCircuit: true};
+    }
+    return next(specifier, context);
+  }`
+  const script = `import {register} from 'node:module';
+    register('data:text/javascript,' + encodeURIComponent(${JSON.stringify(hook)}), import.meta.url);
+    await import(${JSON.stringify(target)});`
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding: 'utf8', timeout: 2_000})
+  assert.equal(result.status, 2, result.stderr)
+})
+
 test('desktop entry reaches coding-disabled composition without importing or constructing Codex', () => {
   const target = new URL('../src/desktop-entry.js', import.meta.url).href
   const desktop = `export async function runDesktopEntryWithStopSources({construct}) {

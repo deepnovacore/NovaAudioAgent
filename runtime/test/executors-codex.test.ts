@@ -22,7 +22,6 @@ import {CodexTransportError} from '../src/executors/codex/app-server-transport.j
 import {CodexAdapter, CODEX_MANIFEST} from '../src/executors/codex/adapter.js'
 import {delegateSchema} from '../src/ports.js'
 import {compileToolSchema} from '../src/tool-schema.js'
-import * as runtimeIndex from '../src/index.js'
 
 const PREFLIGHT: SafePreflightReport = Object.freeze({
   version: '0.145.0',
@@ -145,19 +144,9 @@ function markTurnStartWritten(observer: TransportObserver): void {
   extended.onTurnStartWritten?.()
 }
 
-type CodexAdapterConstructor = new (transport: CodexAppServerTransport) => ExecutorAdapter
-
 test('ordinary adapter projects a valid app-server run into bounded public evidence', async () => {
   // This fails if 6A/6B remain disconnected or if the adapter copies transport-private state.
-  const Constructor = (runtimeIndex as Readonly<Record<string, unknown>>).CodexAdapter
-  const adapter: ExecutorAdapter = typeof Constructor === 'function'
-    ? new (Constructor as CodexAdapterConstructor)(new ScriptedTransport())
-    : {
-        manifest: CODEX_BASE_MANIFEST,
-        dispatch: (): Promise<ExecutorHandoff> => Promise.resolve({
-          outcome: 'failed', trust: 'trusted_system', content: {error: 'not_implemented'},
-        }),
-      }
+  const adapter: ExecutorAdapter = new CodexAdapter(new ScriptedTransport())
 
   const handoff = await adapter.dispatch('run', {work_order: '  do work  '}, context())
 

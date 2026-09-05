@@ -153,6 +153,7 @@ let backendGeneration = 0
 let settingsGeneration = 0
 let launchGeneration = 0
 let runtimeCapabilities = null
+let capabilityEditorCache = null
 let backendControl = null
 let settingsApplyStatus = 'idle'
 let mainWindow = null
@@ -236,15 +237,29 @@ function managedWorkspacesView() {
 // while no keyring existed is still readable by anyone, so the warning stays up
 // until the next save re-seals it.
 function settingsView() {
-  let capabilities
-  try {
-    const document = readCapabilityDocument(currentSettings, process.env)
-    const secrets = decryptSecretsForSpawn(currentSettings, secretCodec)
-    capabilities = readCapabilityEditor(currentSettings, capabilityEnvironment(currentSettings, secrets, process.env, document), Object.values(secrets))
-  } catch { capabilities = {document: null, problems: ['file_unreadable_or_invalid_json']} }
+  let capabilities = capabilityEditorCache?.view ?? {document: null, problems: []}
+  let capabilityDiskVersion = null
+  if (settingsWindow) {
+    const path = capabilityPath(currentSettings, process.env)
+    try {
+      const stat = statSync(path)
+      capabilityDiskVersion = `${path}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
+    } catch { capabilityDiskVersion = `${path}:missing` }
+  }
+  if (settingsWindow && (capabilityEditorCache?.generation !== settingsGeneration
+    || capabilityEditorCache?.diskVersion !== capabilityDiskVersion)) {
+    try {
+      const document = readCapabilityDocument(currentSettings, process.env)
+      const secrets = decryptSecretsForSpawn(currentSettings, secretCodec)
+      capabilities = readCapabilityEditor(currentSettings, capabilityEnvironment(currentSettings, secrets, process.env, document), Object.values(secrets))
+    } catch { capabilities = {document: null, problems: ['file_unreadable_or_invalid_json']} }
+    // Cache only this examined public projection, never decrypted values or a resolved registry.
+    capabilityEditorCache = {generation: settingsGeneration, diskVersion: capabilityDiskVersion, view: capabilities}
+  }
   return {
     capabilitiesDocument: capabilities.document,
-    capabilities: {...capabilities, document: undefined, diskGeneration: settingsGeneration, runtime: runtimeCapabilities},
+    capabilitiesRevision: capabilities.revision ?? null,
+    capabilities: {...capabilities, document: undefined, revision: undefined, diskGeneration: settingsGeneration, runtime: runtimeCapabilities},
     ...publicSettings(currentSettings),
     codexStatus,
     backendStatus: backendStatus.state,
@@ -355,6 +370,7 @@ function openMemoryBoard(launchId) {
 }
 
 function openSettingsWindow(launchId) {
+  capabilityEditorCache = null
   if (settingsWindow) {
     settingsWindow.show()
     settingsWindow.focus()
@@ -442,18 +458,10 @@ function createTray() {
   return next
 }
 
-// Decrypts only the secrets the panel actually has stored, only for the
-// instant the backend is spawned: the result is a local, passed once into
-// `backendLaunchSpec` below and held nowhere else — never on `this` or any
-// module-level object, so there is nothing left to leak once this call
-// returns. A key present in the store but unreadable (keychain unavailable,
-// entry sealed by another OS user/machine, corrupt ciphertext) is logged by
-// name only — never its value, never even attempted — and simply omitted
-// from the result, which `backendLaunchSpec` treats exactly like "absent". A
-// value that decrypts to something Node would refuse in a child environment (a
-// NUL or other control character, from a store written before that was
-// validated) is dropped the same way rather than allowed to fail the spawn and
-// quit the app before the panel can clear it.
+// Main-only decryption for launch, prepared-save validation, explicit probes,
+// and a settings panel's public projection. Plaintext stays local to those calls;
+// the panel projection caches only examined public data for its settings generation.
+// Unreadable or invalid entries are diagnosed by key name and omitted.
 function decryptSecretsForSpawn(settings, codec) {
   const present = secretsPresent(settings)
   const decrypted = {}
@@ -630,10 +638,13 @@ const workspaceActions = createWorkspaceActions({
 })
 
 async function launchBackend(backendKind, smokeChannel, onExit) {
-  const launchDocument = readCapabilityDocument(currentSettings, process.env)
+  capabilityEditorCache = null
+  let launchDocument
+  try { launchDocument = readCapabilityDocument(currentSettings, process.env) }
+  catch { throw classifyBackendFailure('configuration_required') }
   const codingEnabled = launchDocument?.modules?.coding?.enabled !== false
   const configurationCode = codingEnabled ? desktopConfig?.codexConfigurationError
-    ?? desktopConfig?.modelConfigurationError : null
+    ?? desktopConfig?.modelConfigurationError : desktopConfig?.modelConfigurationError
   if (configurationCode) throw classifyBackendFailure(configurationCode)
   if (codingEnabled && codexStatus.status !== 'ready') throw classifyBackendFailure('codex_unavailable')
   const token = randomBytes(16).toString('hex')
@@ -909,6 +920,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       throw new Error('settings request rejected')
     }
     await refreshManagedWorkspaceCapabilities()
+    capabilityEditorCache = null
     return settingsView()
   })
   ipcMain.handle('nova:codex:rescan', async event => {
@@ -1027,7 +1039,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
             if (capabilityPath(next, process.env) === resolve(settingsFile())) throw invalidCommit('capability_settings_path_conflict')
             const document = commit.capabilitiesDocument ?? readCapabilityDocument(next, process.env)
             const secrets = decryptSecretsForSpawn(next, secretCodec)
-            return prepareCapabilityCommit({settings: next, document: commit.capabilitiesDocument,
+            return prepareCapabilityCommit({settings: next, sourceSettings: currentSettings, document: commit.capabilitiesDocument, expectedRevision: commit.capabilitiesBaseRevision,
               environment: capabilityEnvironment(next, secrets, process.env, document), knownSecrets: Object.values(secrets)})
           })
         } catch (error) {

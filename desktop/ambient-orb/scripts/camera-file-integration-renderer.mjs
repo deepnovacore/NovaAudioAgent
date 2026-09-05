@@ -305,6 +305,16 @@ function releaseSeek() {
   return true
 }
 
+async function waitForSeekBarrier() {
+  if (!active) throw new Error('camera integration renderer not started')
+  const deadline = Date.now() + WAIT_MS
+  while (Date.now() < deadline) {
+    if (active.heldSeekListeners.size > 0) return true
+    await new Promise(resolveWait => setTimeout(resolveWait, 0))
+  }
+  throw new Error('renderer seek barrier timed out')
+}
+
 async function waitForEncodeBarrier() {
   if (!active) throw new Error('camera integration renderer not started')
   const deadline = Date.now() + WAIT_MS
@@ -481,6 +491,7 @@ const api = Object.freeze({
   start,
   supportsFileCodec,
   waitForControl,
+  waitForSeekBarrier,
   releaseSeek,
   waitForEncodeBarrier,
   releaseEncode,

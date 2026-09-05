@@ -7,6 +7,7 @@ export const DEFAULT_CAPABILITIES_PATH = '~/.nova-audio-agent/capabilities.json'
 export const BAILIAN_SEARCH_MCP_URL = 'https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp';
 export const BAILIAN_SEARCH_MCP_TOOL = 'bailian_web_search';
 export const DEFAULT_FRONTBRAIN_TOOL_BUDGET = 24;
+export const MCP_NON_AUTH_HEADERS = ['accept', 'content-type', 'user-agent'];
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 const SERVER_NAME = /^[a-z][a-z0-9_]{0,31}$/u;
 const MAX_CONFIG_BYTES = 256 * 1024;
@@ -92,7 +93,7 @@ export function validateMcpEndpoint(value, headers = {}) {
     }
     const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     // Unknown custom headers may themselves be credentials. Only known non-auth metadata is safe on HTTP.
-    const hasAuth = Object.keys(headers).some(key => !['accept', 'content-type', 'user-agent'].includes(key.toLowerCase()));
+    const hasAuth = Object.keys(headers).some(key => !MCP_NON_AUTH_HEADERS.some(name => name === key.toLowerCase()));
     if (url.username || url.password || url.hash
         || (url.protocol !== 'https:' && (url.protocol !== 'http:' || !loopback || hasAuth)))
         invalid('insecure_mcp_endpoint');
