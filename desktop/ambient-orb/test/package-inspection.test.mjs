@@ -10,6 +10,27 @@ import { createPackage, createPackageWithOptions, extractAll, listPackage } from
 import * as packageInspection from '../scripts/inspect-package.mjs'
 import { generateNativeResourceManifest } from '../scripts/native-resource-contract.mjs'
 import { deriveLockedProductionClosure } from '../scripts/release-dependency-closure.mjs'
+import { replacePackagedAsar } from '../scripts/build-owned-asar.mjs'
+
+test('final owned ASAR retains the sherpa JavaScript and WASM unpack contract', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-owned-asar-'))
+  const sourceRoot = resolve(root, 'source')
+  const archivePath = resolve(root, 'app.asar')
+  const files = ['node_modules/sherpa-onnx/sherpa-onnx.mjs', 'node_modules/sherpa-onnx/sherpa-onnx.wasm', 'node_modules/native/addon.node']
+  try {
+    for (const file of files) {
+      await mkdir(dirname(resolve(sourceRoot, file)), {recursive: true})
+      await writeFile(resolve(sourceRoot, file), file)
+    }
+    await createPackageWithOptions(sourceRoot, archivePath, {unpackDir: ['node_modules', 'sherpa-onnx'].join(sep)})
+    await replacePackagedAsar({sourceRoot, archivePath})
+    for (const file of files) {
+      assert.equal(await readFile(resolve(`${archivePath}.unpacked`, file), 'utf8'), file)
+    }
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
 
 const {
   PackageInspectionError,
