@@ -30,7 +30,6 @@ export type KnowledgeStoreClientErrorCode = KnowledgeStoreErrorCode
   | 'WORKER_ERROR'
   | 'WORKER_EXITED'
   | 'WORKER_PROTOCOL_FAILURE'
-  | 'WORKER_CLOSE_TIMEOUT'
 
 export class KnowledgeStoreClientError extends Error {
   constructor(readonly code: KnowledgeStoreClientErrorCode) {
@@ -96,7 +95,8 @@ export class KnowledgeStoreClient {
       this.#resolveClosing = resolve
       this.#rejectClosing = reject
     })
-    this.#closeTimer = setTimeout(() => this.#terminateClosing(), 2000)
+    // Reserve half of realtime assembly's 1s core shutdown budget for the other core resources.
+    this.#closeTimer = setTimeout(() => this.#terminateClosing(), 500)
     try {
       // This is deliberately not an RPC promise: existing requests were rejected above,
       // while the Worker drains its bounded SQLite call and exits after the close signal.
@@ -161,12 +161,14 @@ export class KnowledgeStoreClient {
     pending.resolve(response.result)
   }
 
-  #terminateClosing(code: KnowledgeStoreClientErrorCode = 'WORKER_CLOSE_TIMEOUT'): void {
+  #terminateClosing(code?: 'WORKER_PROTOCOL_FAILURE'): void {
     if (this.#forcedExit) return
     this.#forcedExit = true
     clearTimeout(this.#closeTimer)
-    // Native SQLite can delay termination. Bound the caller without claiming the worker exited.
-    this.#rejectClosing?.(new KnowledgeStoreClientError(code))
+    // Native SQLite can delay termination. Best-effort detachment lets lifecycle recovery proceed;
+    // reopening still uses SQLite's busy timeout and can fail if a native lock has not cleared.
+    if (code === undefined) this.#resolveClosing?.()
+    else this.#rejectClosing?.(new KnowledgeStoreClientError(code))
     this.#resolveClosing = undefined
     this.#rejectClosing = undefined
     this.#worker.unref()

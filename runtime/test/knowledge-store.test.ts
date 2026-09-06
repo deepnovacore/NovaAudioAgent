@@ -257,7 +257,7 @@ test('close immediately rejects an in-flight Worker write instead of queueing be
   await closing
 })
 
-test('close resolves only after a busy Worker has actually terminated', async t => {
+test('graceful close waits for a busy Worker and the same database can reopen', async t => {
   const {client, path} = await storeWithPath(t)
   const lock = await holdWriteLock(path)
   t.after(() => lock.release().catch(() => undefined))
@@ -276,6 +276,11 @@ test('close resolves only after a busy Worker has actually terminated', async t 
   await lock.release()
   await closing
   await rejected
+  const reopened = temporaryClient(t, path)
+  await reopened.open()
+  await reopened.recordJob({id: 'after-close', source_id: 'source-a', state: 'complete', error_code: null, updated_at: 2})
+  assert.equal((await reopened.listJobs())[0]?.id, 'after-close')
+  await reopened.close()
 })
 
 test('close settles after a Worker has already failed during bootstrap', async () => {
@@ -385,7 +390,7 @@ test('recall and getChunk redact document paths while keeping lexical matches ac
   assert.equal((await client.getChunk(hit.locator)).status, 'gone')
 })
 
-test('close rejects at its deadline even when worker termination never settles', async t => {
+test('close resolves at its deadline even when worker termination never settles', async t => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-close-'))
   const client = new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite')})
   t.after(async () => { await client.close().catch(() => undefined); await rm(directory, {recursive: true, force: true}) })
@@ -404,11 +409,70 @@ test('close rejects at its deadline even when worker termination never settles',
   assert.equal(client.close(), closing)
   try {
     await rejected
-    await settlesWithin('bounded close', assert.rejects(closing, (error: unknown) => (
-      error instanceof KnowledgeStoreClientError && error.code === 'WORKER_CLOSE_TIMEOUT'
-    )), 3000)
+    await settlesWithin('bounded close', closing, 3000)
     assert.equal(terminate.mock.callCount(), 1)
+    assert.notEqual(workers[0]?.threadId, -1)
+    await assert.rejects(client.listJobs(), (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'CLIENT_CLOSED')
   } finally {post.mock.restore(); terminate.mock.restore(); await workers[0]?.terminate(); await closing.catch(() => undefined)}
+})
+
+test('forced close permits immediate reopen and writes to the same real SQLite database', async t => {
+  const {client, path} = await storeWithPath(t)
+  await client.replaceSource({source: source(), provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Saved', text: 'persisted before force close', token_estimate: 4, vector: [1, 0]}]})
+  const hit = (await client.recall('persisted', [1, 0], 'embed-a', 1))[0]!
+  const original = Object.getOwnPropertyDescriptor(Worker.prototype, 'postMessage')!.value as Worker['postMessage']
+  const workers: Worker[] = []
+  const post = t.mock.method(Worker.prototype, 'postMessage', function (this: Worker, value: unknown) {
+    if ((value as {operation: string}).operation === 'close') {workers.push(this); return}
+    original.call(this, value)
+  })
+  try {
+    const closing = client.close()
+    const worker = workers[0]
+    assert.ok(worker)
+    const exited = new Promise<number>(resolve => worker.once('exit', resolve))
+    await settlesWithin('forced close', closing, 3000)
+    post.mock.restore()
+    const reopened = temporaryClient(t, path)
+    await reopened.open()
+    assert.equal((await reopened.getChunk(hit.locator)).status, 'ok')
+    await reopened.removeSource('source-a')
+    assert.deepEqual(await reopened.listSources(), [])
+    await reopened.close()
+    // Observe real termination separately; close() itself only promises bounded detachment.
+    assert.equal(await settlesWithin('real worker exit', exited), 1)
+  } finally {post.mock.restore(); await workers[0]?.terminate()}
+})
+
+test('forced close during a native SQLite lock keeps reopening fail-closed until the lock clears', async t => {
+  const {client, path} = await storeWithPath(t)
+  await client.recordJob({id: 'saved', source_id: 'source-a', state: 'complete', error_code: null, updated_at: 1})
+  const lock = await holdWriteLock(path)
+  const pending = client.recordJob({id: 'blocked', source_id: 'source-a', state: 'running', error_code: null, updated_at: 2})
+  const rejected = assert.rejects(pending, (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'CLIENT_CLOSED')
+  await new Promise(resolve => setTimeout(resolve, 50))
+  // Observe the real termination promise; do not replace Worker.terminate or pretend it has settled.
+  const terminate = t.mock.method(Worker.prototype, 'terminate')
+  const reopened = temporaryClient(t, path)
+  try {
+    await settlesWithin('close during SQLite busy wait', client.close(), 900)
+    await rejected
+    const termination = terminate.mock.calls[0]?.result
+    assert.ok(termination)
+    await assert.rejects(reopened.open(), (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'STORE_WRITE_FAILED')
+    await lock.release()
+    await termination
+    await reopened.open()
+    assert.deepEqual((await reopened.listJobs()).map(job => job.id), ['saved'])
+    await reopened.recordJob({id: 'recovered', source_id: 'source-a', state: 'complete', error_code: null, updated_at: 3})
+    assert.deepEqual((await reopened.listJobs()).map(job => job.id), ['recovered', 'saved'])
+  } finally {
+    terminate.mock.restore()
+    await lock.release()
+    await reopened.close()
+    await client.close()
+  }
 })
 
 async function fixtureSql(path: string, sql: string, mode = 'exec'): Promise<unknown> {
@@ -479,7 +543,7 @@ test('FTS opens reuse a clean index and rebuild after lexical-only mutations', a
   await client.close()
   const initial = temporaryClient(t, path)
   const opened = await initial.open()
-  // Node 22 has no FTS5; forced fallback is tested independently on every runtime.
+  // Some Node builds lack FTS5; forced fallback is tested independently on every runtime.
   if (opened.fts === false) return t.skip('FTS5 unavailable')
   assert.deepEqual(opened, {fts: true})
   const input = {source: source(), provider_id: 'embed-a', dims: 2,

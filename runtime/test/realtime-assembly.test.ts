@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
-import {mkdtemp, rm} from 'node:fs/promises'
+import {mkdtemp, realpath, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import { setImmediate as yieldImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
+import {Worker} from 'node:worker_threads'
+import {parseCapabilityRegistry} from '../src/capability-registry.js'
+import {prepareKnowledge} from '../src/knowledge/assembly.js'
 import {
   AssemblyError,
   buildAssembly as buildAssemblyRaw,
@@ -3426,6 +3429,40 @@ test('service close failure still stops core and preserves the first actual fail
   )
   assert.equal(frame.stops, 1)
   assert.equal(realtime.providerSession.state, 'closed')
+})
+
+test('knowledge forced close fits the outer core shutdown budget without requiring another stop', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'knowledge-realtime-close-'))
+  const capabilities = parseCapabilityRegistry({version: 1, modules: {search: {enabled: false}, coding: {enabled: false}, knowledge: {enabled: true}}}, {})
+  const settings = settingsSchema.parse({executors: [], model_api_key: 'test-key', knowledge_path: join(directory, 'knowledge.sqlite')})
+  const knowledge = await prepareKnowledge(settings, capabilities)
+  assert.ok(knowledge)
+  const frame = new RecordingFrameSource()
+  const core = buildAssembly({settings, capabilities, knowledge, frameSource: frame, gateway: new NeverCalledGateway()})
+  const diagnostics: string[] = []
+  const realtime = buildRealtimeAssembly({core, provider: new AbortAwareProvider(), onDiagnostic: line => diagnostics.push(line)})
+  const stop = t.mock.method(core, 'stop')
+  const original = Object.getOwnPropertyDescriptor(Worker.prototype, 'postMessage')!.value as Worker['postMessage']
+  const workers: Worker[] = []
+  const post = t.mock.method(Worker.prototype, 'postMessage', function (this: Worker, value: unknown) {
+    if ((value as {operation: string}).operation === 'close') {workers.push(this); return}
+    original.call(this, value)
+  })
+  try {
+    await realtime.start()
+    await settleNamed('knowledge deadline inside core budget', realtime.stop(), 1500)
+    assert.ok(workers[0])
+    assert.ok(!diagnostics.some(line => line.includes('assembly_core_stop_abandoned')))
+    assert.equal(frame.stops, 1)
+    await realtime.stop()
+    assert.equal(stop.mock.callCount(), 1)
+  } finally {
+    post.mock.restore()
+    await knowledge.close()
+    await workers[0]?.terminate()
+    await realtime.stop()
+    await rm(directory, {recursive: true, force: true})
+  }
 })
 
 test('outer service and core shutdown timeouts are bounded and content-safe', async () => {
