@@ -52,6 +52,11 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:settings:get',
     'nova:settings:open',
     'nova:settings:set',
+    'nova:wake-word:activity',
+    'nova:wake-word:audio',
+    'nova:wake-word:changed',
+    'nova:wake-word:report',
+    'nova:wake-word:retry',
     'nova:window-drag:end',
     'nova:window-drag:move',
     'nova:window-drag:start',
@@ -689,8 +694,8 @@ test('the mute toggle drops microphone input at both ingress points', async () =
   const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
   // Both PCM ingress gates consult the mute gate before anything is consumed.
-  assert.match(renderer, /if \(!axes\.activated \|\| microphoneGated\(\) \|\| socket\?\.readyState !== WebSocket\.OPEN\) return/)
-  assert.match(renderer, /if \(!nativeReady \|\| microphoneGated\(\)\) return/)
+  assert.match(renderer, /if \(microphoneGated\(\) \|\| event\.data\?\.epoch !== wakeAudio\.epoch\) return/)
+  assert.match(renderer, /if \(!nativeReady \|\| microphoneGated\(\) \|\| event\.wakeEpoch !== wakeAudio\.epoch\) return/)
   // The gate covers mute itself plus a drain window after unmute, so capture
   // batches that straddle the unmute click (or arrive late from a stalled
   // queue) never leak audio that was recorded while muted.
@@ -710,7 +715,7 @@ test('quit bounds a maintenance drain without bypassing backend shutdown', async
   const exits = []
   const context = vm.createContext({
     app: {on: (name, handler) => { if (name === 'before-quit') beforeQuit = handler }, exit: code => exits.push(code)},
-    releaseSmokeChannel: null, globalShortcut: {unregisterAll() {}}, nativeAudio: null,
+    wakeWord: null, releaseSmokeChannel: null, globalShortcut: {unregisterAll() {}}, nativeAudio: null,
     backendSupervisor: {stop: () => new Promise(resolve => { releaseBackend = resolve })}, backend: null,
     managedWorkspaceMaintenance: {close: () => new Promise(() => {})}, quitDrain: null,
     wait: milliseconds => { timeout = milliseconds; return new Promise(resolve => { releaseMaintenanceDeadline = resolve }) },
@@ -724,4 +729,41 @@ test('quit bounds a maintenance drain without bypassing backend shutdown', async
   releaseBackend()
   await context.quitDrain
   assert.deepEqual(exits, [0])
+})
+
+test('settings IPC restarts for capability commits while wake-only updates stay local', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const {default: vm} = await import('node:vm')
+  const {backendSettings, DEFAULT_SETTINGS} = await import('../src/main/settings-store.mjs')
+  const start = source.indexOf("  ipcMain.handle('nova:settings:set'")
+  const handlerSource = source.slice(start, source.indexOf('\n  })', start) + 5)
+  for (const [payload, expectedRestart] of [
+    [{settingsPatch: {wakeWordEnabled: true}}, false],
+    [{settingsPatch: {autoHideSeconds: 120}}, false],
+    [{settingsPatch: {}, capabilitiesDocument: {}}, true],
+    [{settingsPatch: {wakeWordEnabled: true}, capabilitiesDocument: {}}, true],
+    [{settingsPatch: {startListeningOnLaunch: true}}, true],
+  ]) {
+    let handler, restart
+    const sender = {}
+    const context = vm.createContext({
+      ipcMain: {handle: (_name, value) => { handler = value }}, settingsWindow: {webContents: sender},
+      currentSettings: {...DEFAULT_SETTINGS}, backendSettings, lifecycleCoordinator: {},
+      applySettingsTransaction: async options => { await options.write(payload); restart = options.needsBackendRestart(); return {} },
+      parseSettingsCommit: value => value,
+      settingsWriter: async (patch, prepare) => {
+        const next = {...context.currentSettings, ...patch}
+        await prepare(next); context.currentSettings = next; return next
+      },
+      validatePreparedSettings() {}, publicSettings: value => value,
+      capabilityPath: () => '/capabilities.json', resolve: value => value, settingsFile: () => '/settings.json',
+      readCapabilityDocument: () => ({}), decryptSecretsForSpawn: () => ({}), secretCodec: {},
+      capabilityEnvironment: () => ({}), prepareCapabilityCommit() {}, process: {env: {}},
+      commitDesktopConfiguration() {}, discardDesktopConfiguration() {}, publishSettingsApplyStatus() {},
+      settingsView: () => ({}), console,
+    })
+    vm.runInContext(handlerSource, context)
+    await handler({sender}, payload)
+    assert.equal(restart, expectedRestart)
+  }
 })

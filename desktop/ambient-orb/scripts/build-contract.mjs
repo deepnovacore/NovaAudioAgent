@@ -4,6 +4,12 @@ import { resolve } from 'node:path'
 
 const BUILD_JAVASCRIPT_FILES = Object.freeze([
   'src/main/main.mjs',
+  'src/main/wake-word/runtime.mjs',
+  'src/main/wake-word/worker.mjs',
+  'src/main/wake-word/model-manager.mjs',
+  'src/main/wake-word/sherpa-detector.mjs',
+  'src/renderer/wake-audio.mjs',
+  'scripts/wake-word-smoke.mjs',
   'src/main/app-protocol.mjs',
   'src/main/camera-source.mjs',
   'src/main/backend.mjs',

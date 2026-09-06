@@ -1,3 +1,4 @@
+import { WakeAudioRouter, canAutoSleep } from './wake-audio.mjs'
 import {
   activateCaptureMode,
   AlertTone,
@@ -561,6 +562,35 @@ function scheduleNativeFrames() {
 const UNMUTE_DRAIN_MS = 120
 let muteDrainUntil = 0
 
+const wakeAudio = new WakeAudioRouter({
+  upload: pcm => {
+    if (socket?.readyState !== WebSocket.OPEN) return
+    socket.send(pcm)
+    detectLocalOnset(pcm)
+  },
+  detect: value => window.novaAudioAgentDesktop.wakeWord.audio(value),
+})
+let backendIdle = false
+let backendIdleAt = -Infinity
+function reportWakeActivity() {
+  window.novaAudioAgentDesktop.wakeWord.report({
+    epoch: wakeAudio.epoch, activated: axes.activated, muted: axes.muted,
+    idle: canAutoSleep(axes, backendIdle, backendIdleAt, performance.now()),
+  })
+}
+function applyWakeState(value) {
+  wakeAudio.apply(value)
+  onsetTracker.reset()
+  axes.capture = 'idle'
+  // Fence frames already queued in the worklet; the acknowledgement tags subsequent capture.
+  processor?.port.postMessage({epoch: wakeAudio.epoch})
+  if (value?.state === 'blocked') {
+    axes.muted = true
+  }
+  reportWakeActivity()
+  render()
+}
+
 function microphoneGated() {
   return axes.muted || performance.now() < muteDrainUntil
 }
@@ -574,6 +604,7 @@ function toggleMute() {
   } else {
     muteDrainUntil = performance.now() + UNMUTE_DRAIN_MS
   }
+  reportWakeActivity()
   render()
 }
 
@@ -608,6 +639,7 @@ async function activateCapture() {
   } finally {
     axes.activationPending = false
   }
+  reportWakeActivity()
   render()
 }
 
@@ -623,13 +655,12 @@ async function startBrowserCapture() {
     }
     const nextSource = context.createMediaStreamSource(nextMedia)
     const nextProcessor = new AudioWorkletNode(context, 'nova-capture')
+    nextProcessor.port.postMessage({epoch: wakeAudio.epoch})
     nextProcessor.port.onmessage = event => {
-      if (!axes.activated || microphoneGated() || socket?.readyState !== WebSocket.OPEN) return
-      const samples = event.data
+      if (microphoneGated() || event.data?.epoch !== wakeAudio.epoch) return
+      const samples = event.data.samples
       if (!(samples instanceof Float32Array) || !samples.length) return
-      const pcm = floatToPcm16(samples, context.sampleRate)
-      socket.send(pcm)
-      detectLocalOnset(pcm)
+      wakeAudio.accept(floatToPcm16(samples, context.sampleRate), axes)
     }
     nextSource.connect(nextProcessor)
     nextProcessor.connect(context.destination)
@@ -675,6 +706,7 @@ async function deactivateCapture() {
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     onsetTracker.reset()
+    reportWakeActivity()
     return render()
   }
   axes.activationPending = true
@@ -692,6 +724,7 @@ async function deactivateCapture() {
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     axes.activationPending = false
+    reportWakeActivity()
     render()
   }
 }
@@ -805,6 +838,10 @@ async function handleControl(message) {
         message.generation_epoch,
       )
     }
+  } else if (message.type === 'desktop.activity') {
+    backendIdle = message.idle === true
+    backendIdleAt = performance.now()
+    reportWakeActivity()
   } else if (message.type === 'clock.ping') {
     send({ type: 'clock.pong', ping_id: message.ping_id, t_render_ms: performance.now() })
   } else if (message.type === 'caption') {
@@ -986,6 +1023,8 @@ function handleBackendExit() {
 }
 
 function resetRendererConnection(processReplaced, {closeSocket = true} = {}) {
+  backendIdle = false
+  backendIdleAt = -Infinity
   if (closeSocket) {
     activeConnection?.close(false)
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
@@ -1107,6 +1146,12 @@ async function boot() {
     paletteHover.reset(bootstrap.settings?.palette)
     if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
+    window.novaAudioAgentDesktop.wakeWord.onChanged(applyWakeState)
+    applyWakeState(bootstrap.wakeWord)
+    setInterval(reportWakeActivity, 1000)
+    for (const event of ['pointerdown', 'keydown']) {
+      document.addEventListener(event, () => window.novaAudioAgentDesktop.wakeWord.activity())
+    }
     window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
     window.novaAudioAgentDesktop.onBackendReady(connectBackend)
     window.novaAudioAgentDesktop.onBackendStatus?.(status => {
@@ -1122,10 +1167,8 @@ async function boot() {
     window.novaAudioAgentDesktop.settings?.onChanged?.(next => paletteHover.reset(next.palette))
     window.novaAudioAgentDesktop.nativeAudio.onEvent(event => {
       if (event.type === 'audio') {
-        if (!nativeReady || microphoneGated()) return
-        const pcm = new Uint8Array(event.pcm)
-        detectLocalOnset(pcm)
-        if (socket?.readyState === WebSocket.OPEN) socket.send(pcm)
+        if (!nativeReady || microphoneGated() || event.wakeEpoch !== wakeAudio.epoch) return
+        wakeAudio.accept(new Uint8Array(event.pcm), axes)
       } else if (event.type === 'playback.started') {
         axes.playback = 'speaking'
         if (

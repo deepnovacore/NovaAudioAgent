@@ -39,10 +39,14 @@
     "package:mac:candidate": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac dmg --publish never",
     "package:mac:release": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never",
     "package:win": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never",
-    "package:linux": "npm run build && electron-builder --config electron-builder.yml --linux AppImage deb --publish never"
+    "package:linux": "npm run build && electron-builder --config electron-builder.yml --linux AppImage deb --publish never",
+    "smoke:wake-word": "node scripts/wake-word-smoke.mjs"
   },
   "dependencies": {
-    "@nova-audio-agent/runtime": "0.1.1"
+    "@nova-audio-agent/runtime": "0.1.1",
+    "sherpa-onnx": "1.13.4",
+    "tar-stream": "3.1.7",
+    "unbzip2-stream": "1.4.3"
   },
   "devDependencies": {
     "7zip-bin": "5.2.0",

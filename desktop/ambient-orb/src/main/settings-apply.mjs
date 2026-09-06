@@ -23,8 +23,8 @@ function rejectedSecretNames(written) {
   return Object.freeze(written.rejectedSecrets.filter(name => typeof name === 'string'))
 }
 
-function result(saved, operationStatus, rejectedSecrets) {
-  return Object.freeze({saved, operationStatus, rejectedSecrets})
+function result(saved, operationStatus, rejectedSecrets, restarted = false) {
+  return Object.freeze({saved, operationStatus, rejectedSecrets, restarted})
 }
 
 export async function applySettingsTransaction({
@@ -37,6 +37,7 @@ export async function applySettingsTransaction({
   discardConfiguration = async () => {},
   restartBackend,
   publishStatus,
+  needsBackendRestart = () => true,
 }) {
   const coordinated = await coordinator.run('settings_save', async () => {
     publishStatus('saving')
@@ -54,6 +55,10 @@ export async function applySettingsTransaction({
 
     const rejectedSecrets = rejectedSecretNames(written)
     publishCommitted(written)
+    if (!needsBackendRestart()) {
+      publishStatus('applied')
+      return result(true, 'applied', rejectedSecrets)
+    }
     publishStatus('refreshing')
     let prepared
     let preparedOwned = false
@@ -77,7 +82,7 @@ export async function applySettingsTransaction({
       return result(true, 'restart_failed', rejectedSecrets)
     }
     publishStatus('applied')
-    return result(true, 'applied', rejectedSecrets)
+    return result(true, 'applied', rejectedSecrets, true)
   })
   return coordinated.status === 'busy'
     ? result(false, 'busy', Object.freeze([]))

@@ -41,6 +41,7 @@ test('pins BrowserWindow isolation sandbox and ephemeral partition', () => {
   assert.equal(options.webPreferences.contextIsolation, true)
   assert.equal(options.webPreferences.nodeIntegration, false)
   assert.equal(options.webPreferences.sandbox, true)
+  assert.equal(options.webPreferences.backgroundThrottling, false)
   assert.equal(options.webPreferences.partition, 'nova-orb-launch-1')
   assert.equal(options.webPreferences.preload, '/app/preload.cjs')
   assert.equal(options.webPreferences.webSecurity, true)

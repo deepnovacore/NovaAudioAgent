@@ -2,6 +2,7 @@ import {createBackendControl} from './backend-control.mjs'
 import {createKnowledgeActions} from './knowledge-actions.mjs'
 import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, invalidCommit} from './capabilities-settings.mjs'
 import {parseCapabilityRegistry} from '@nova-audio-agent/runtime/desktop'
+import { WakeWordRuntime } from './wake-word/runtime.mjs'
 import {
   app,
   BrowserWindow,
@@ -76,6 +77,7 @@ import {
 import { reportStartupFailure } from './startup-diagnostics.mjs'
 import {
   createSafeStorageCodec,
+  backendSettings,
   createSettingsWriter,
   hasPlaintextSecret,
   loadSettings,
@@ -160,6 +162,7 @@ let settingsApplyStatus = 'idle'
 let mainWindow = null
 let boardWindow = null
 let settingsWindow = null
+let wakeWord = null
 let tray = null
 let bootstrap = null
 let activeLaunchId = null
@@ -269,6 +272,7 @@ function settingsView() {
     settingsApplyStatus,
     managedWorkspaces: managedWorkspacesView(),
     microphoneStatus,
+    wakeWord: wakeWord?.snapshot(),
     effectivePaths: desktopConfig ? Object.freeze({
       stateRoot: desktopConfig.stateRoot,
       managedRoot: desktopConfig.managedRoot,
@@ -447,15 +451,20 @@ function trayImage() {
   )
 }
 
+function hideOrb() {
+  if (wakeWord?.state === 'blocked') wakeWord.wake()
+  else if (!wakeWord?.enabled || !wakeWord.sleep()) mainWindow?.hide()
+}
+
 function createTray() {
   const next = new Tray(trayImage())
   next.setToolTip('Nova Audio Agent Ambient Orb')
   next.setContextMenu(Menu.buildFromTemplate([
-    { label: '显示', click: () => mainWindow?.show() },
+    { label: '显示', click: () => wakeWord?.wake() },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]))
-  next.on('click', () => mainWindow?.isVisible() ? mainWindow.hide() : mainWindow?.show())
+  next.on('click', () => mainWindow?.isVisible() ? hideOrb() : wakeWord?.wake())
   return next
 }
 
@@ -755,6 +764,7 @@ function initializeDesktopBootstrap(cameraSource) {
     binary: nativeBinary,
     onEvent: event => sendToOrb('nova:native-audio:event', event),
   }) : null
+  nativeAudio?.setCaptureEpoch(wakeWord?.epoch ?? 0)
   bootstrap = Object.freeze({
     audioMode: 'inactive',
     nativeAvailable,
@@ -773,6 +783,18 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   activeLaunchId = launchId
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
+  wakeWord = new WakeWordRuntime({
+    modelRoot: resolve(app.getPath('userData'), 'models/wake-word'),
+    show: () => { mainWindow?.show(); mainWindow?.focus() },
+    hide: () => mainWindow?.hide(),
+    changed: value => {
+      nativeAudio?.setCaptureEpoch(value.epoch)
+      sendToOrb('nova:wake-word:changed', value)
+      sendToSettings('nova:settings:changed', settingsView())
+    },
+  })
+  wakeWord.configure(currentSettings)
+
   const windowShown = sourceStartupSmoke
     ? new Promise((resolveShown, rejectShown) => {
         if (mainWindow.isVisible()) {
@@ -1036,6 +1058,20 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       return coordinated.status === 'busy' ? {status: 'busy', tools: []} : coordinated.value
     } catch { return {status: 'failed', reason: 'invalid_capabilities_configuration', tools: []} }
   })
+  ipcMain.on('nova:wake-word:report', (event, value) => {
+    if (event.sender === mainWindow?.webContents) wakeWord?.report(value)
+  })
+  ipcMain.on('nova:wake-word:audio', (event, value) => {
+    if (event.sender === mainWindow?.webContents) wakeWord?.accept(value)
+  })
+  ipcMain.on('nova:wake-word:activity', event => {
+    if (event.sender === mainWindow?.webContents || event.sender === settingsWindow?.webContents) wakeWord?.activity()
+  })
+  ipcMain.handle('nova:wake-word:retry', event => {
+    if (event.sender !== settingsWindow?.webContents) throw new Error('wake word retry rejected')
+    wakeWord?.start()
+    return settingsView()
+  })
   ipcMain.handle('nova:settings:set', async (event, payload) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings update rejected')
@@ -1043,12 +1079,17 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // Plaintext values exist only in the inbound patch and the queued writer.
     // Every later callback receives committed settings or prepared public
     // configuration, and every reply contains secret key names only.
+    const previousSettings = currentSettings
+    let capabilitiesChanged = false
     const applied = await applySettingsTransaction({
+      needsBackendRestart: () => capabilitiesChanged || JSON.stringify(backendSettings(previousSettings))
+        !== JSON.stringify(backendSettings(currentSettings)),
       coordinator: lifecycleCoordinator,
       patch: payload,
       write: async value => {
         try {
           const commit = parseSettingsCommit(value)
+          capabilitiesChanged = commit.capabilitiesDocument !== undefined
           return await settingsWriter(commit.settingsPatch ?? {}, next => {
             validatePreparedSettings(commit.settingsPatch, publicSettings(next))
             if (capabilityPath(next, process.env) === resolve(settingsFile())) throw invalidCommit('capability_settings_path_conflict')
@@ -1063,6 +1104,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
         }
       },
       publishCommitted: () => {
+        wakeWord?.configure(currentSettings)
         settingsGeneration += 1
         sendToOrb('nova:settings:changed', orbSettings(currentSettings))
         sendToSettings('nova:settings:changed', settingsView())
@@ -1098,6 +1140,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // invoke time — the frozen startup payload predates every death it would have to report.
     return {
       ...readBootstrap(event.sender),
+      wakeWord: wakeWord?.snapshot(),
       backend: backendStatus.connection,
       backendStatus: backendStatus.state,
     }
@@ -1217,7 +1260,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   })
   tray = createTray()
   const shortcutRegistered = globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    mainWindow?.isVisible() ? mainWindow.hide() : mainWindow?.show()
+    mainWindow?.isVisible() ? hideOrb() : wakeWord?.wake()
   })
   // Wayland/XWayland sessions may silently refuse global shortcuts; surface
   // that instead of leaving the user to wonder why the hotkey never fires.
@@ -1360,7 +1403,7 @@ if (packagedSourceRollbackUnavailable) {
   )
 } else {
   app.on('second-instance', (_event, argv) => {
-    mainWindow?.show()
+    wakeWord?.wake()
     if (!shouldOpenSettings(argv)) return
     if (activeLaunchId === null) {
       openSettingsRequested = true
@@ -1385,6 +1428,7 @@ app.on('before-quit', event => {
   app.isQuitting = true
   releaseSmokeChannel?.close()
   globalShortcut.unregisterAll()
+  wakeWord?.stop()
   void nativeAudio?.deactivate()
   if (!backendSupervisor && !backend && !managedWorkspaceMaintenance) return
   // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
