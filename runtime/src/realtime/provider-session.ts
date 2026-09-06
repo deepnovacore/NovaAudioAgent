@@ -280,15 +280,16 @@ export class RealtimeProviderSession {
     }
   }
 
-  async ensureResponse(userItemId?: string, signal?: AbortSignal): Promise<boolean> {
+  async ensureResponse(userItemId?: string, signal?: AbortSignal, requestId?: string): Promise<boolean> {
     if (this.#provider.ensureResponse === undefined) {
       throw new RealtimeProtocolError('provider response ensuring is unavailable')
     }
     const owner = this.#requiredConnectionOwner()
     try {
       if (userItemId !== undefined) realtimeIdentifierSchema.parse(userItemId)
+      if (requestId !== undefined) realtimeIdentifierSchema.parse(requestId)
       const accepted = await this.#provider.ensureResponse(
-        combinedSignal(owner.controller.signal, signal), userItemId,
+        combinedSignal(owner.controller.signal, signal), userItemId, requestId,
       )
       this.#assertCurrentConnection(owner)
       return accepted !== false

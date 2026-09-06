@@ -317,10 +317,13 @@ export const userTranscriptFinalSchema = sessionEvent(
   itemTextShape,
 )
 /** Provider evidence, never a host turn identity or an authorization decision.
- * Omission preserves legacy correlation; explicit unknown must not claim a user item.
+ * Omission preserves automatic-provider legacy correlation; explicit unknown must not claim a user item.
+ * Requested responses echo the host's per-attempt request_id on start and terminal. This identity
+ * settles generation ownership, never authorization or the current user-input revision.
  */
 export const responseOriginSchema = z.discriminatedUnion('kind', [
-  z.object({kind: z.literal('user_item'), item_id: realtimeIdentifierSchema}).strict(),
+  z.object({kind: z.literal('user_item'), item_id: realtimeIdentifierSchema,
+    request_id: realtimeIdentifierSchema.optional()}).strict(),
   z.object({kind: z.literal('host_request'), host_item_id: realtimeIdentifierSchema}).strict(),
   z.object({kind: z.literal('unknown')}).strict(),
 ])
@@ -434,8 +437,10 @@ export interface RealtimeProvider {
   /** Request normal tool availability for an exact user item (or the current item for retries).
    * false means no work was admitted (busy or stale input); void/true means one request was admitted.
    * A requested provider must never preempt another response inside this command.
+   * When requestId is supplied, echo it as user_item.request_id on start and terminal, including
+   * a terminal emitted before start; retries for the same item have distinct request IDs.
    */
-  ensureResponse?(signal: AbortSignal, userItemId?: string): Promise<void | boolean>
+  ensureResponse?(signal: AbortSignal, userItemId?: string, requestId?: string): Promise<void | boolean>
   cancelResponse(responseId: string, signal: AbortSignal): Promise<void>
   events(signal: AbortSignal): AsyncIterable<unknown>
   close(): Promise<void>

@@ -145,8 +145,8 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
     return this.#requiredAdapter().createResponse(intent, signal)
   }
 
-  ensureResponse(signal: AbortSignal, userItemId?: string): Promise<boolean> {
-    return this.#requiredAdapter().ensureResponse(signal, userItemId)
+  ensureResponse(signal: AbortSignal, userItemId?: string, requestId?: string): Promise<boolean> {
+    return this.#requiredAdapter().ensureResponse(signal, userItemId, requestId)
   }
 
   cancelResponse(responseId: string, signal: AbortSignal): Promise<void> {

@@ -3522,6 +3522,28 @@
       "file": "runtime/src/realtime/session.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
+      "line": 682,
+      "snippet": "this.sessionEpoch",
+      "snippet_sha256": "d874e117da8207041773ba21a5acfd0f1d5e630317aac79f207cdca1ec935d34",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-session.test.ts",
+      "behavior": "requested response identity rejects old starts and terminals after"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "line": 682,
+      "snippet": "++this.#userResponseSequence",
+      "snippet_sha256": "009dcbc77573f136ac703ab461b12339eb4f17a14eed64d6296fad2beb9043fd",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-session.test.ts",
+      "behavior": "requested response identity rejects old starts and terminals after"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
       "line": 1892,
       "snippet": "sessionEpoch ?? this.#state.sessionEpoch",
       "snippet_sha256": "5221f61bc9c1717f92943cdf2ebbf5a38cbff30a55469e960cb6df7b3fab923a",
@@ -3532,7 +3554,7 @@
     {
       "file": "runtime/src/realtime/session.ts",
       "kind": "numeric_template",
-      "occurrence_index": 1,
+      "occurrence_index": 3,
       "line": 1904,
       "snippet": "snapshot.version",
       "snippet_sha256": "c6dc469ee7762a3634bff95675a73e385d20b773ed5283d1f637a8a2df59219e",
@@ -3543,7 +3565,7 @@
     {
       "file": "runtime/src/realtime/session.ts",
       "kind": "numeric_template",
-      "occurrence_index": 2,
+      "occurrence_index": 4,
       "line": 1905,
       "snippet": "snapshot.active_delegates.length",
       "snippet_sha256": "4a300b5a3d2751cd9fae1bfa0a638e8e0676d468420334175501ec08033d44e1",
@@ -3554,7 +3576,7 @@
     {
       "file": "runtime/src/realtime/session.ts",
       "kind": "numeric_template",
-      "occurrence_index": 3,
+      "occurrence_index": 5,
       "line": 1908,
       "snippet": "snapshot.spoken_event_ids.length",
       "snippet_sha256": "a79b67760cf038b6562d16127e2cd857d2afc5873e1993ff532124bf1f3cfcc0",
@@ -3565,7 +3587,7 @@
     {
       "file": "runtime/src/realtime/session.ts",
       "kind": "numeric_template",
-      "occurrence_index": 4,
+      "occurrence_index": 6,
       "line": 1909,
       "snippet": "snapshot.interrupted_event_ids.length",
       "snippet_sha256": "bb33228ce4eff94dfc84feb8ee7ceabae354a5f2f8a7c4062f79df686ab6d2f7",
@@ -3576,7 +3598,7 @@
     {
       "file": "runtime/src/realtime/session.ts",
       "kind": "numeric_template",
-      "occurrence_index": 5,
+      "occurrence_index": 7,
       "line": 1922,
       "snippet": "remaining",
       "snippet_sha256": "43e3ece73ff8f4eb23096122eaa99c8a8e84945a0b214662f2123bd6b6f0e692",
@@ -3587,7 +3609,7 @@
     {
       "file": "runtime/src/realtime/session.ts",
       "kind": "numeric_template",
-      "occurrence_index": 6,
+      "occurrence_index": 8,
       "line": 1928,
       "snippet": "omitted",
       "snippet_sha256": "f34912a1d0fcc21b27e4c2a11adc67d4fa5de69b5f9d4f3aa5bcb2f405950fea",

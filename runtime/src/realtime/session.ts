@@ -76,7 +76,7 @@ export interface SessionProvider {
   }>
   retireHostItem?(providerItemId: string): Promise<boolean>
   createResponse(intent: HostResponseIntent): Promise<void>
-  ensureResponse?(userItemId?: string): Promise<void | boolean>
+  ensureResponse?(userItemId?: string, signal?: AbortSignal, requestId?: string): Promise<void | boolean>
   cancelResponse(responseId: string): Promise<void>
   close(): Promise<void>
 }
@@ -108,7 +108,8 @@ export class RealtimeSession {
   #awaitingUserResponse = false
   #pendingUserResponse: {readonly itemId: string; readonly revision: number} | null = null
   #latestUserResponse: {readonly itemId: string; readonly revision: number} | null = null
-  #userResponseRequest: {readonly itemId: string | null; readonly revision: number; armedHere: boolean} | null = null
+  #userResponseRequest: {readonly itemId: string | null; readonly revision: number; readonly requestId: string; armedHere: boolean} | null = null
+  #userResponseSequence = 0
   #fenceNextResponse = false
   #fenceInterruption: FenceInterruption | null = null
   #providerResponseId: string | null = null
@@ -677,12 +678,13 @@ export class RealtimeSession {
     const pending = this.#pendingUserResponse
     const target = pending ?? this.#latestUserResponse
     if (this.#provider.userResponseMode === 'requested' && target === null) return false
-    const request = {itemId: target?.itemId ?? null, revision: target?.revision ?? this.userInputRevision, armedHere: false}
+    const request = {itemId: target?.itemId ?? null, revision: target?.revision ?? this.userInputRevision,
+      requestId: `user-response-${this.sessionEpoch}-${++this.#userResponseSequence}`, armedHere: false}
     this.#userResponseRequest = request
     this.#awaitingUserResponse = true
     if (this.#pendingUserResponse === pending) this.#pendingUserResponse = null
     try {
-      const admitted = await this.#provider.ensureResponse(request.itemId ?? undefined)
+      const admitted = await this.#provider.ensureResponse(request.itemId ?? undefined, undefined, request.requestId)
       if (admitted === false && this.#userResponseRequest === request) {
         this.#userResponseRequest = null
         this.#awaitingUserResponse = false
@@ -837,8 +839,10 @@ export class RealtimeSession {
 
   #acceptToolCall(eventResponseId: string | null): boolean {
     const responseId = eventResponseId ?? this.#providerResponseId
+    if (this.#provider.userResponseMode === 'requested' && responseId === null) return false
     if (responseId !== null) {
       const turn = this.#state.providerTurn(responseId)
+      if (this.#provider.userResponseMode === 'requested' && turn?.origin === undefined) return false
       if (turn !== undefined && (turn.locally_fenced || turn.phase !== 'active')) return false
       if (turn?.origin?.kind === 'unknown') return false
       if (turn?.origin?.kind === 'host_request' && !this.responseIsToolContinuation(responseId)) return false
@@ -857,12 +861,23 @@ export class RealtimeSession {
     allowDuringUserSpeech: boolean,
   ): Promise<boolean> {
     const requested = this.#userResponseRequest
-    if (origin === undefined || (origin.kind === 'user_item' && origin.item_id === requested?.itemId)) {
+    let turn = this.#state.providerTurn(responseId)
+    const matchesRequest = this.#matchesUserResponseRequest(origin)
+    if (matchesRequest || (this.#provider.userResponseMode !== 'requested' && origin === undefined)) {
       this.#userResponseRequest = null
       this.#awaitingUserResponse = false
     }
-    let turn = this.#state.providerTurn(responseId)
     if (turn !== undefined && (turn.locally_fenced || turn.phase !== 'active')) return false
+    const knownUserResponse = origin?.kind === 'user_item' && turn?.origin?.kind === 'user_item'
+      && origin.item_id === turn.origin.item_id && origin.request_id === turn.origin.request_id
+    if (this.#provider.userResponseMode === 'requested'
+      && origin?.kind !== 'host_request' && !matchesRequest && !knownUserResponse) {
+      this.#markLocallyFenced(responseId)
+      if (this.#state.premapResponseId === responseId) this.#state.clearPremapAudio()
+      this.#onDiagnostic('[realtime-diagnostic] unmatched_user_response_request')
+      await this.#provider.cancelResponse(responseId)
+      return false
+    }
 
     if (turn !== undefined && this.#fenceNextResponse) {
       // An active recorded turn must not coexist with an armed pre-start fence: the known entry
@@ -900,7 +915,7 @@ export class RealtimeSession {
       return false
     }
     turn ??= this.#state.openProviderTurn(responseId,
-      requested !== null && origin?.kind === 'user_item' && origin.item_id === requested.itemId
+      requested !== null && matchesRequest
         ? requested.revision : this.userInputRevision)
     if (turn.origin === undefined && origin !== undefined) turn.origin = origin
     this.#providerResponseId = responseId
@@ -1014,6 +1029,12 @@ export class RealtimeSession {
     return false
   }
 
+  #matchesUserResponseRequest(origin: Extract<RealtimeProviderEvent, {kind: 'response_started'}>['origin']): boolean {
+    const request = this.#userResponseRequest
+    return request !== null && origin?.kind === 'user_item' && origin.item_id === request.itemId
+      && (this.#provider.userResponseMode !== 'requested' || origin.request_id === request.requestId)
+  }
+
   #releaseUserResponseRequest(): void {
     const request = this.#userResponseRequest
     if (request === null) return
@@ -1030,8 +1051,8 @@ export class RealtimeSession {
   ): boolean {
     const turn = this.#state.providerTurn(responseId)
     if (turn === undefined) {
-      if (origin?.kind === 'user_item' && origin.item_id === this.#userResponseRequest?.itemId) {
-        const ended = this.#state.openProviderTurn(responseId, this.#userResponseRequest.revision)
+      if (this.#matchesUserResponseRequest(origin)) {
+        const ended = this.#state.openProviderTurn(responseId, this.#userResponseRequest!.revision)
         ended.origin = origin
         ended.phase = status
         this.#releaseUserResponseRequest()
@@ -1046,12 +1067,16 @@ export class RealtimeSession {
       }
       return false
     }
+    // Audio may have created a fenced turn before its start event. Its exact request still
+    // needs settlement, even if the provider proceeds directly to a terminal.
+    if (this.#matchesUserResponseRequest(origin)) this.#releaseUserResponseRequest()
     if (turn.phase === 'completed' || turn.phase === 'cancelled' || turn.phase === 'failed') {
       // Applied once. A retransmission must not deliver the utterance twice, and a contradictory
       // status arriving later must not reopen a decided turn.
       return false
     }
-    this.#awaitingUserResponse = false
+    // An unrelated/quarantined terminal cannot disarm the outstanding request's pre-start fence.
+    if (this.#userResponseRequest === null) this.#awaitingUserResponse = false
     turn.phase = status
     if (this.#providerResponseId === responseId) {
       this.#providerResponseId = null

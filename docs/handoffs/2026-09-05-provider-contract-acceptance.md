@@ -28,6 +28,15 @@ requested 宿主发起应答]
 
 宿主回复先登记待处理记录再调用 provider，避免 response_started 早于命令返回时丢失归属；命令失败只撤销自己的记录，工具结果续接使用同一路径。
 
+2026-09-06 I4 复审补充：requested 管线的每次 `ensureResponse` 携带宿主生成的唯一
+`request_id`，级联在 `user_item` origin 的 started / terminal 中原样回传，包括未发出
+started 就终止的情况。匹配 item 与 request_id 后，宿主保留请求创建时捕获的 revision；
+较新的 B 输入不能阻止旧 A 释放自己的生成占位。相同 item 的重试也获得新 request_id，
+因此 transcript / response 有界去重记录淘汰后，旧 A 的重放不能释放新 A。
+不匹配的 started 会隔离对应 response、取消并记录诊断，后续音频和工具不能通过；
+预先被音频 fence 的匹配请求仍可由其 started 或 terminal 释放。automatic provider
+保留原来的无 request_id 来源兼容；origin 与 request_id 都不授予工具或确认权限。
+
 2026-09-06 修订：仅宿主事实播报提供空工具列表；用户回复与已绑定的工具结果续接保留配置工具。续接仍交叉核对原用户证据与 revision，来源本身不授予执行或确认权限。共享前台提示词、活动项目/执行器上下文渲染、宿主激活常量已移入 `frontend-instructions.ts`。Qwen 保留旧导出，宿主和级联组装直接使用共享模块。
 
 ## 验证

@@ -810,9 +810,12 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     await settleWithin(active.task, this.#settleTimeoutMs)
   }
 
-  async ensureResponse(signal: AbortSignal, userItemId?: string): Promise<boolean> {
+  async ensureResponse(signal: AbortSignal, userItemId?: string, requestId?: string): Promise<boolean> {
     const owner = this.#requiredOwner()
     if (userItemId !== undefined && !realtimeIdentifierSchema.safeParse(userItemId).success) {
+      throw new CascadedRealtimeError('configuration')
+    }
+    if (requestId !== undefined && !realtimeIdentifierSchema.safeParse(requestId).success) {
       throw new CascadedRealtimeError('configuration')
     }
     return this.#serializeResponseStart(owner, async () => {
@@ -828,7 +831,8 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       this.#markConsumed(owner, hostIds)
       // A retry continues the same conversation; appending the transcript again invents a user turn.
       if (!input.submitted) inputs.push({kind: 'user_text', text: input.text})
-      this.#startResponse(owner, inputs, {kind: 'user_item', item_id: input.itemId})
+      this.#startResponse(owner, inputs, {kind: 'user_item', item_id: input.itemId,
+        ...(requestId === undefined ? {} : {request_id: requestId})})
       return true
     })
   }

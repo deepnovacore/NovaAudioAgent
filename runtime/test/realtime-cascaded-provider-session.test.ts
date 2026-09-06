@@ -241,6 +241,7 @@ async function guardReconnectInputs(historyMode: 'none' | 'packed'): Promise<{
   await waitFor('old LLM response start', () => firstLlm.calls.length === 1)
   await session.accept({
     kind: 'response_started', session_epoch: 1, response_id: 'response-old',
+    origin: {kind: 'host_request', host_item_id: 'old-host'},
   })
   await session.accept({
     kind: 'response_audio_delta', session_epoch: 1, response_id: 'response-old',
@@ -586,4 +587,43 @@ test('real provider starts bind host facts and continuations before createRespon
       assert.equal(session.providerIdle, true)
     } finally { release.resolve(); await port.close() }
   }
+})
+
+test('host request identity crosses the production cascaded provider and returns on start and terminal', async () => {
+  const llm = new EpochLlm([{kind: 'response_started', response_id: 'wire-response'},
+    {kind: 'response_completed', response_id: 'wire-response'}])
+  let sequence = 0, feeds = 0
+  const nextId = () => `request-proof-${++sequence}`
+  const port = new RealtimeProviderSession(providerFor({llms: [llm], idFactory: nextId,
+    endpointingFactory: () => Promise.resolve({
+      feed: pcm => Promise.resolve(++feeds === 1 ? [{kind: 'speech_start', pcm}] : [{kind: 'speech_end', commit: true}]),
+      reset: () => undefined, close: () => Promise.resolve(),
+    }),
+    asrFactory: () => ({open: () => Promise.resolve({append: () => Promise.resolve(),
+      finish: () => Promise.resolve(), close: () => Promise.resolve(),
+      async *events() {await Promise.resolve(); yield {text: 'request proof', final: true}},
+    })}),
+  }))
+  const session = new RealtimeSession({provider: port,
+    playback: new PlaybackRegistry({idFactory: nextId, onFrame: () => undefined, onClear: () => undefined}),
+    idFactory: nextId, clock: new VirtualClock(), onDiagnostic: () => undefined})
+  await session.connect({tools: []})
+  const origins: unknown[] = []
+  const reader = (async () => {
+    for await (const event of port.events()) {
+      await session.accept(event)
+      if (event.kind === 'response_started' || event.kind === 'response_terminal') origins.push(event.origin)
+      if (event.kind === 'response_terminal') return
+      await session.requestPendingUserResponse()
+    }
+  })()
+  try {
+    await port.sendAudio(new Uint8Array([0, 0]))
+    await port.sendAudio(new Uint8Array([0, 0]))
+    await settleWithin('request identity round trip', reader)
+    assert.equal(origins.length, 2)
+    assert.deepEqual(origins[0], origins[1])
+    assert.match((origins[0] as {request_id: string}).request_id, /^user-response-/u)
+    assert.equal(session.providerIdle, true, 'the formal host accepted the correlated response')
+  } finally {await port.close(); await reader}
 })

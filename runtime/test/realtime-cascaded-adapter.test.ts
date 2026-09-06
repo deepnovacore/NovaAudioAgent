@@ -1946,8 +1946,13 @@ test('ASR final waits for a targeted host request and never preempts provider wo
     assert.equal(llm.calls.length, 0, 'ASR is evidence; only the host may schedule LLM')
     assert.equal(events.filter(event => event.kind === 'user_transcript_final').length, 1)
     assert.equal(await adapter.ensureResponse(signal, 'stale-item'), false)
-    assert.equal(await adapter.ensureResponse(signal, 'requested-item'), true)
+    assert.equal(await adapter.ensureResponse(signal, 'requested-item', 'host-request-1'), true)
     await waitFor('requested terminal', () => events.some(event => event.kind === 'response_terminal'))
+    for (const event of events) {
+      if (event.kind === 'response_started' || event.kind === 'response_terminal') {
+        assert.deepEqual(event.origin, {kind: 'user_item', item_id: 'requested-item', request_id: 'host-request-1'})
+      }
+    }
     assert.deepEqual(llm.calls[0]?.inputs, [{kind: 'user_text', text: 'first final'}])
     assert.deepEqual(llm.calls[0]?.tools, [{name: 'weather', parameters: {type: 'object'}}])
   } finally {

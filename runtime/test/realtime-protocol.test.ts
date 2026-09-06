@@ -268,12 +268,14 @@ test('response origin carries exact provider evidence without accepting business
   ]) {
     for (const origin of [
       {kind: 'user_item', item_id: 'user-1'},
+      {kind: 'user_item', item_id: 'user-1', request_id: 'request-1'},
       {kind: 'host_request', host_item_id: 'host-1'},
       {kind: 'unknown'},
     ]) assert.deepEqual(realtimeProviderEventSchema.parse({...started, origin}), {...started, origin})
     assert.deepEqual(realtimeProviderEventSchema.parse(started), started)
     for (const origin of [
       {kind: 'user_item', item_id: ''},
+      {kind: 'user_item', item_id: 'user-1', request_id: ''},
       {kind: 'host_request', item_id: 'wrong-namespace'},
       {kind: 'user_item', item_id: 'user-1', authorized: true},
       {kind: 'unknown', item_id: 'guessed'},
