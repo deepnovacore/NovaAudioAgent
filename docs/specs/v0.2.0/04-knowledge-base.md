@@ -245,17 +245,36 @@ item. Explicit tool / planner / Codex recall only.
 | Desktop | knowledge panel in settings or a sibling window; main-process dialogs |
 | Deps | bounded compatible embedding HTTP client; `pdfjs-dist`; `mammoth` with `jszip` expansion preflight; MCP SDK (from 03) |
 
+## Store shutdown
+
+`close()` fences the client immediately and rejects pending and future requests.
+It waits up to 500 ms for graceful Worker exit, within the 2-second shutdown
+upper bound. This leaves 500 ms of the outer 1-second core cleanup budget for
+the other resources. At the deadline it unrefs the
+Worker, initiates termination and resolves best-effort. Resolution after that
+deadline does **not** prove native work or SQLite locks have finished. Protocol
+failure and abnormal exit remain errors. A replacement store uses normal database
+admission and can fail closed with `STORE_WRITE_FAILED` if an old native lock
+outlives SQLite's 1000 ms busy timeout; no concurrent write bypass is introduced.
+
 ## Verification checklist
 
-- [x] Worker isolation: main thread tests never open the DB file directly.
+Checked rows record the specific automated or static evidence mapped below, not
+15 human/live acceptances. Real provider evidence is explicitly historical;
+current rerun counts and platform skips belong in [IMPLEMENTATION](IMPLEMENTATION.md).
+
+- [x] Worker isolation: production opens SQLite only in the store Worker;
+      tests may open fixture databases to construct legacy rows or hold locks.
 - [x] Sensitivity gate drops credential-like chunks.
 - [x] Hybrid recall returns stable citations; empty corpus → empty ok handoff.
 - [x] Legacy DB migration retains source/chunk IDs, vectors, jobs and original references;
       unchanged reindex stays `ok`, content/metadata changes become `stale`, removal becomes `gone`.
 - [x] Real file reindex → store Worker → MCP returns current text/title/heading for the original stale reference.
-- [x] Store close rejects pending calls immediately, then terminates an unresponsive Worker after a 2 s grace period.
+- [x] Store close rejects pending calls immediately and initiates best-effort
+      termination after a 500 ms grace period, with the shutdown limits above.
 - [x] Disabled module removes `mcp__nova_knowledge__recall` from schemas.
-- [x] DashScope embed failure marks ingest job failed without crashing runtime.
+- [x] Simulated embedding failure marks the ingest job failed without crashing
+      runtime; DashScope HTTP errors are separately normalized by adapter tests.
 - [x] `local` provider not selectable in the panel; env-forced `local` fails
       assembly with `embedding_provider_unavailable`, no half-written vectors.
 - [x] `nova-knowledge` listens on loopback only; token required; both `recall`
@@ -271,6 +290,30 @@ item. Explicit tool / planner / Codex recall only.
 - [x] Forced LIKE tests exercise substring matching and literal underscore escaping;
       status/panel report fallback, clean FTS reopen preserves the index, and
       fallback writes/removal are reflected after an FTS-capable reopen.
+
+### Checklist evidence map
+
+Test filenames below are under `runtime/test/` unless a desktop path is given.
+Fake embeddings exercise deterministic storage/MCP behavior without claiming a
+DashScope service call or a human voice session.
+
+| Row | Evidence and scope |
+|---|---|
+| 1 | Static client/Worker ownership in `runtime/src/knowledge/`; real Worker use in `knowledge-store.test.ts` |
+| 2 | `knowledge-documents.test.ts`: credential-bearing text/files rejected before ingest |
+| 3 | `knowledge-store.test.ts`: empty corpus and lexical/vector recall; `knowledge-mcp.test.ts`: bounded citations |
+| 4 | `knowledge-store.test.ts`: legacy migration, unchanged/changed reindex and ordinal removal |
+| 5 | `knowledge-mcp.test.ts`: real file → service → store Worker → MCP stale/gone lifecycle, with fake embeddings |
+| 6 | `knowledge-store.test.ts`: busy Worker, unresolved termination and same-database reopen; `knowledge-service.test.ts`: deferred reindex cannot overwrite reopened store; `realtime-assembly.test.ts`: full prepared Knowledge/core/realtime cleanup settles within the outer budget |
+| 7 | `knowledge-assembly.test.ts`: disabled module and exact read-only tool surface |
+| 8 | `knowledge-service.test.ts`: failed reindex preserves old source and records a safe failure; `knowledge-embeddings.test.ts`: simulated HTTP failures |
+| 9 | Static disabled `local` option in `desktop/ambient-orb/src/renderer/settings.html`; `knowledge-assembly.test.ts`: forced local fails before opening store |
+| 10 | `knowledge-mcp.test.ts`: actual SDK/loopback authentication and strict ok/stale/gone branches; `knowledge-assembly.test.ts`: loopback projection |
+| 11 | `knowledge-references.test.ts`: exposure, canonical workspace paths, stale/deleted pre-render references |
+| 12 | Static disclosure table in `desktop/ambient-orb/src/renderer/settings.html`; `desktop/ambient-orb/test/knowledge-panel.test.mjs` and `knowledge-actions.test.mjs`: consent precedes ingest |
+| 13 | Static registry/settings/assembly contract: no `knowledge.autoRecall` setting; explicit recall surfaces only |
+| 14 | 2026-09-05 Node 22/24 FTS probe and synthetic real-provider smoke in IMPLEMENTATION; not rerun by unit tests |
+| 15 | `knowledge-store.test.ts`: forced LIKE escaping and FTS reopen/rebuild; `knowledge-service.test.ts` and desktop `knowledge-panel.test.mjs`: fallback status |
 
 ## Decision-record delta (apply on merge)
 

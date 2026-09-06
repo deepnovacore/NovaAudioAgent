@@ -600,9 +600,10 @@ in [RELEASE-GATE.md](RELEASE-GATE.md). This supersedes earlier proposals to exem
   ownership cleanup, bounded Windows file retries, hidden fallback, heartbeat exception isolation,
   and sherpa WASM unpack configuration. [Spec 11](11-local-wake-word.md) records English-only
   exception and outstanding installed/human acceptance.
-- Dev repairs: maintenance quit drain 3 seconds; knowledge close rejects after 2 seconds even if
-  worker termination stalls; real content-digest migration and stale text through MCP; visible FTS
-  fallback; pending workspace maintenance journal replay on open. Capability writes already used
+- Dev repairs at this checkpoint: maintenance quit drain 3 seconds; knowledge close rejected after
+  2 seconds (superseded by the review follow-up below); real content-digest migration and stale text
+  through MCP; visible FTS fallback; pending workspace maintenance journal replay on open (also
+  narrowed to live-owner startup below). Capability writes already used
   same-directory temporary files plus rename; the roadmap's non-atomic-write finding was disproved.
 - Fixture executor exercises the real host assembly, intake, project confirmation, progress,
   approval and terminal flow. ESM tracing observed 252 loaded modules and no Codex executor load.
@@ -704,11 +705,67 @@ The [runner assessment](../../handoffs/2026-09-06-windows-runner-assessment.md) 
 account isolation and a proposed workflow; no runner was registered. This repository is public:
 standard GitHub-hosted runner minutes are currently free, correcting the earlier cost assumption.
 
-After these changes, the final local serial `check → test:runtime → test:desktop → test:cli` passed:
+For the product/test tree committed as `afc82dd`, the final local serial
+`check → test:runtime → test:desktop → test:cli` passed:
 runtime 2356 pass / 5 skips, desktop 886 pass / 3 skips, CLI 21/21. Windows Node 22.23.2 `check`
 passed, and the final full Windows runtime suite passed 2208 tests / 8 platform skips in 241 seconds.
 The final Windows desktop suite reused the already built application and passed 869 tests / 20
 platform skips in 51 seconds; its real source-window startup smoke passed, followed by CLI 21/21.
-No further GitHub Actions runs were requested. The historical hosted-Windows source startup timeout
+These Alibaba Windows results apply to the same `afc82dd` product/test tree: testing started from
+`860f108` with the final follow-up patches, then the six changed files were compared with the pushed
+dev tree before fast-forwarding the checkout. They are not evidence for later review fixes.
+At that checkpoint no further GitHub Actions runs were requested. The historical hosted-Windows source startup timeout
 remains unclassified; local Windows success does not retroactively make that run green. No main
 merge, release, runner registration, or human acceptance completion was performed.
+
+### Second integration review repairs (2026-09-06)
+
+The [review resolution map](../../handoffs/2026-09-06-integration-review-followup.md)
+records every finding, including proposals not adopted after checking the actual
+call chain and the user's approved decisions. Published history remains intact.
+
+- Journal replay now belongs to live-owner startup; non-live maintenance opens
+  survive corrupt or contended journals and report their unavailable state.
+- Requested responses carry per-attempt identities through the actual cascaded
+  provider. Tests reproduce both bounded-ledger eviction and same-revision retries;
+  comparing only the current revision would not fix them. Pre-start audio and
+  quarantined terminals cannot release or disarm another request.
+- Knowledge close resolves best-effort after a 500 ms graceful-exit budget, inside
+  assembly's 1-second cleanup budget. Real SQLite contention, forced close/reopen
+  and full assembly cleanup are covered; immediate lock release is not promised.
+  Partial HTTP rejection responses now have explicit completion assertions.
+- Corrupt settings recovery records preserve bytes and open the recovery UI while
+  blocking automatic backend startup, Codex rescan and workspace-clear restart
+  bypasses. Manual repair followed by the existing recovery action is covered.
+- All 15 desktop wire types have actual producer coverage; byte drift is part of
+  `npm run check`. Wake hide/helper/extraction gaps, exact dependency membership and
+  equality of both ASAR unpack declarations have regression coverage.
+- Windows candidate runs the narrowed runtime suite. Pending human acceptance no
+  longer blocks candidate artifact construction; main and publication still require
+  the acceptance ledger. No bypass of mandatory release acceptance was added.
+- I5 keeps the approved tool-result continuation permissions; ordinal/legacy digest
+  compatibility remains documented. Spec 04 maps its checklist to concrete evidence.
+  Inline delivery scenarios and necessary test hooks remain; no cosmetic JSON or
+  broad test-API refactor was added.
+
+On the repaired code tree through `154ae6c`, the local serial
+`check → test:runtime → test:desktop → test:cli` passed (Node 24.8.0):
+
+| Gate | Result |
+| --- | --- |
+| `check` | Passed; parity 226 files / 385 reviewed occurrences, boundary 215, generated wire drift check |
+| runtime | 2367 passed / 5 platform skips |
+| desktop | 893 passed / 3 platform skips |
+| CLI | 21/21 |
+| documentation contract | 8/8 |
+
+The final native Electron capability smoke exposed an obsolete source-extraction
+endpoint in the smoke script after the settings startup guard changed. Extraction
+now ends at the supervisor block itself. Scoped lint and the real smoke passed:
+budget 1 yields `configuration_required`, budget 24 connects and shuts down cleanly,
+both have zero readiness timeouts; only dummy loopback services were used.
+
+The desktop command's Windows-only source-startup smoke is skipped on this Mac.
+Earlier Alibaba Windows results remain anchored to `afc82dd` above. The final
+push intentionally has no `[skip ci]`; its hosted CI receipt will be appended
+after completion. No main merge or publication is part of this repair.

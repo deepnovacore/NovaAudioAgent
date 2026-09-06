@@ -4,7 +4,7 @@
 >
 > 修订（2026-09-03）：回应评审 P2-6（两文件提交顺序、busy / 重启失败导致三处状态不一致、search provider 三处来源）。
 
-## Baseline (today)
+## Baseline (before v0.2.0)
 
 - Desktop store: `SETTINGS_VERSION = 3`,
   [`desktop/ambient-orb/src/main/settings-store.mjs`](../../../desktop/ambient-orb/src/main/settings-store.mjs).
@@ -32,7 +32,8 @@
 - Redesigning unrelated existing tabs (palette, pipeline providers) beyond
   necessary links.
 - Live hot-reload of Codex / MCP without backend restart in v0.2.0 (keep
-  transaction + restart).
+  transaction + restart). Desktop-only wake settings in [11](11-local-wake-word.md)
+  apply immediately; a combined capability save still restarts the backend.
 - Storing MCP secrets inside `capabilities.json` plaintext; use `${ENV}` and
   desktop `safeStorage` secrets that populate env for the child.
 
@@ -51,6 +52,8 @@ New persisted fields (desktop `ambient-orb-settings.json`):
 | `embeddingModel` | string | provider default | 04 |
 | `capabilitiesConfigPath` | string | `""` → default `~/.nova-audio-agent/capabilities.json` | [03](03-capability-registry-and-mcp.md) |
 | `knowledgePath` | string | `""` → default knowledge sqlite path | 04 |
+| `wakeWordEnabled` | boolean | `false` | [11](11-local-wake-word.md), desktop-only |
+| `autoHideSeconds` | integer: `0` or `30..3600` | `60` | 11, desktop-only; `0` disables automatic hide |
 
 There is deliberately **no** `searchProvider` key in the desktop store. The
 provider lives only in `capabilities.json` (`modules.search.provider`); the
@@ -92,6 +95,8 @@ embeddings.
 `backendLaunchSpec` must map every desktop v4 field that affects the child
 into the corresponding env var (omit empties so parent `.env` can still win,
 matching current secret behaviour).
+`wakeWordEnabled` and `autoHideSeconds` stay in desktop settings and have no
+backend env mapping or restart requirement for a wake-only save.
 
 ## Capabilities file vs settings
 
@@ -178,8 +183,13 @@ failed secret updates are not acknowledged as saved.
 
 Startup restores a pending record before preparing configuration or spawning the
 backend, so an interrupted transaction cannot replay the rejected settings on the
-next launch. An unreadable recovery record fails startup rather than selecting
-the unconfirmed configuration. A successful save removes the record after
+next launch. An unreadable recovery record blocks backend startup while leaving
+the desktop and Settings recovery entry available. The recovery failure identifies
+the recovery-file problem without exposing sealed secret contents. A native dialog
+can open the configuration folder for manual repair; the existing recovery action
+retries after repair and clears the journal only after successful restoration and
+backend activation. It never silently resets settings or deletes the corrupt
+record. A successful save removes the record after
 activation; desktop-only wake/appearance changes retain their immediate apply
 path without restarting the backend unless a prior recovery remains pending.
 A pending recovery always requires backend activation before clearing its record.
@@ -188,6 +198,9 @@ of the supervisor connection state. The transaction's `publishStatus` callback
 is the sole application-status writer; supervisor connection notifications only
 update backend status. The snapshot preserves the preceding committed settings;
 it does not claim a live provider or hardware acceptance test has passed.
+While recovery is pending, Codex rescan and workspace-maintenance restart paths
+cannot prepare or start a candidate backend. The settings recovery action remains
+the owner of restoration and activation.
 
 ## Panel IA
 
@@ -221,8 +234,9 @@ Land schema + migration stubs early; wire controls as each feature merges:
 
 - [ ] Store migrate 3 → 4 idempotent; defaults applied once.
 - [ ] `check:env-contract` green after new rows.
-- [ ] Each new desktop key round-trips: panel → disk → `backendLaunchSpec` →
-      `loadSettings`.
+- [ ] Each new backend-affecting desktop key round-trips: panel → disk →
+      `backendLaunchSpec` → `loadSettings`; desktop-only wake keys round-trip
+      panel → disk → presence controller and apply without a backend restart.
 - [ ] YOLO warning visible only when mode is yolo (or always visible beside the
       control with stronger emphasis when selected).
 - [ ] Invalid enum values fail closed to defaults without crashing startup.

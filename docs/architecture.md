@@ -101,16 +101,18 @@ from an old capture owner cannot wake a newer session. Linux remains a source-te
 macOS arm64/x64 and Windows x64 are the current release targets.
 
 
-The runtime and desktop client carry win32, darwin, and linux code paths, with per-platform
-packaging targets (macOS, Windows NSIS, Linux AppImage/deb). Native echo-cancelled audio capture
+The runtime and desktop client carry win32, darwin, and linux code paths. Release packaging
+targets macOS and Windows NSIS; retained Linux AppImage/deb scripts do not establish a supported
+release target. Native echo-cancelled audio capture
 (VoiceProcessingIO) exists on macOS only; Windows and Linux use Chromium's audio stack, and both
 camera paths use Chromium's capture pipeline on every platform. Cross-platform CI and hardware
 validation status must remain explicit in release evidence and test results.
 
-Desktop settings apply as a transaction rather than live. Panel edits accumulate as drafts inside
-the Settings window; an explicit save writes them, refreshes resolved configuration, and performs
-exactly one controlled backend restart. The runtime therefore never observes a half-applied
-configuration, and the palette commits on that same boundary instead of mutating a running session.
+Panel edits remain drafts until an explicit save. Backend-affecting settings use one coordinated
+transaction and controlled restart, with a recovery record retaining the last usable configuration
+if activation fails. Saved and applied status are separate. Desktop-only wake and appearance
+changes apply immediately after save; a combined capability save still restarts the backend.
+See [settings and recovery](specs/v0.2.0/06-settings-and-config.md).
 
 ## Realtime path
 

@@ -421,7 +421,7 @@ debt, not a claim that the stricter env-only acceptance checklist is done.
   `**/*-assembly*`.
 - Script `runtime/scripts/check-executor-boundary.mjs --check` (same shape as
   `node-parity-audit.mjs`): scans core for the regex
-  `['"]codex['"]|codex__|Codex[A-Z]` and fails on any hit not in the allowlist
+  `/codex/giu` and fails on any hit not in the allowlist
   file `runtime/scripts/executor-boundary-allowlist.json` (each entry: path,
   pattern, reason). Wired as `check:executor-boundary` in
   `package.json` `check`.

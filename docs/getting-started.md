@@ -174,6 +174,8 @@ recorded here as having run or passed. With an intentionally supplied DashScope 
 DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
 ```
 
+For opt-in live cascaded verification run `npm run smoke:cascaded --workspace @nova-audio-agent/runtime` with the provider credentials. The host controls response admission and request ownership; response origin is evidence, never authorization. Human acceptance remains pending.
+
 ## Workspace memory graph and MyContext provider
 
 The Node runtime's opt-in workspace memory graph is configured with:
@@ -344,5 +346,3 @@ FrontBrain gains only `mcp__nova_knowledge__recall`. To let Codex resolve full c
 Run `npm run smoke:knowledge --workspace @nova-audio-agent/runtime` with model credentials in the
 environment for a synthetic-document smoke. It sends no existing user corpus. macOS real embedding
 and MCP retrieval passed on 2026-09-05; Windows and human-voice acceptance remain separate gates.
-
-For opt-in live cascaded verification run `npm run smoke:cascaded --workspace @nova-audio-agent/runtime` with the provider credentials. The host controls response admission and request ownership; response origin is evidence, never authorization. Human acceptance remains pending.

@@ -205,6 +205,12 @@ I2 的处置方向：按帧 `wakeEpoch === captureEpoch` 即接受，去掉 `ack
 Critical 1–4 全部处理；I2 / I3 / I4 / I9 修复并带测试；删除孤儿诊断 json。**I5 保持现状**（有意设计，handoff 有记录），
 补一个专门测试固定该行为并在文档写明"级联 `tool_output` 续接不提供工具"。
 
+**2026-09-06 后续用户决定（取代上一段 I5 处置）**：仅宿主事实播报使用
+`tools: []`；已绑定用户请求的 `tool_output` 续接保留配置工具，以支持多步工具链。
+每次续接仍须核对原用户 item / revision 与宿主确认归属，`origin` 单独不构成授权。
+上一段保留为审查时的历史方案，不能作为当前实施要求；当前契约及历史数字音频证据见
+[provider-contract acceptance](2026-09-05-provider-contract-acceptance.md)。
+
 ## 4. `v0.2.0dev` 自身审查
 
 ### 4.1 门禁实测（本机 macOS，Node v24.8.0，2026-09-06 10:42）✔

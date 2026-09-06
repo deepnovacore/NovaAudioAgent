@@ -151,6 +151,8 @@ M1.5c 薄前端验收、真实 provider、麦克风/扬声器、Camera、Codex �
 DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
 ```
 
+级联管线的可选真实验证：`npm run smoke:cascaded --workspace @nova-audio-agent/runtime`。需要相应 provider 凭据；宿主控制 response admission 和请求归属，模型 response origin 不是授权。真人验收仍待完成。
+
 ## Workspace 记忆图谱与 MyContext provider
 
 Node runtime 的 opt-in workspace 记忆图谱通过以下变量配置：
@@ -287,5 +289,3 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 凭据已在环境中时，可运行 `npm run smoke:knowledge --workspace @nova-audio-agent/runtime`，仅发送
 脚本内的合成文档，不读取用户知识库。macOS 真实 embedding→检索→MCP 引用已于 2026-09-05 通过；
 Windows 和真人语音验收仍需独立完成。
-
-级联管线的可选真实验证：`npm run smoke:cascaded --workspace @nova-audio-agent/runtime`。需要相应 provider 凭据；宿主控制 response admission 和请求归属，模型 response origin 不是授权。真人验收仍待完成。

@@ -155,9 +155,19 @@ removing the capability restart condition makes that regression fail. No new
 packaged or human-microphone acceptance is implied by these results.
 
 Human microphone tests, distance/noise/echo variation, long standby and actual
-Windows/Linux installed packages remain open. Record device, distance, sample count
+Windows installed packages remain open. Linux releases are deferred; Ubuntu source
+tests remain required, and Linux package evidence is needed before restoring that
+release target. Record device, distance, sample count
 and hit count; also check mute, restored session context and startup readiness.
 Synthetic functional smoke cannot establish false-wake or missed-wake rates.
+
+The 2026-09-06 review follow-up adds deterministic checks for blocked-state
+`hideOrb` and the actual tray/shortcut callbacks, missing/false native epoch
+capability handshakes, compressed USTAR+bzip2 extraction (including malformed and
+truncated input), exact desktop dependency sets, and parity between electron-builder
+`asarUnpack` and the final owned-ASAR layout. These checks address the corresponding
+review test gaps; they do not close hardware or installed Windows acceptance.
+Final integrated rerun results belong in [IMPLEMENTATION](IMPLEMENTATION.md).
 
 ## Deferred review items
 
