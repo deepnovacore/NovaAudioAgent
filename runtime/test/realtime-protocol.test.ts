@@ -262,17 +262,21 @@ test('uncertain delivery preserves the Python correlation surface without payloa
 
 
 test('response origin carries exact provider evidence without accepting business authorization', () => {
-  const started = {kind: 'response_started', session_epoch: 1, response_id: 'response-1'}
-  for (const origin of [
-    {kind: 'user_item', item_id: 'user-1'},
-    {kind: 'host_request', host_item_id: 'host-1'},
-    {kind: 'unknown'},
-  ]) assert.deepEqual(realtimeProviderEventSchema.parse({...started, origin}), {...started, origin})
-  assert.deepEqual(realtimeProviderEventSchema.parse(started), started)
-  for (const origin of [
-    {kind: 'user_item', item_id: ''},
-    {kind: 'host_request', item_id: 'wrong-namespace'},
-    {kind: 'user_item', item_id: 'user-1', authorized: true},
-    {kind: 'unknown', item_id: 'guessed'},
-  ]) assert.equal(realtimeProviderEventSchema.safeParse({...started, origin}).success, false)
+  for (const started of [
+    {kind: 'response_started', session_epoch: 1, response_id: 'response-1'},
+    {kind: 'response_terminal', session_epoch: 1, response_id: 'response-1', status: 'cancelled', reason: 'cancelled'},
+  ]) {
+    for (const origin of [
+      {kind: 'user_item', item_id: 'user-1'},
+      {kind: 'host_request', host_item_id: 'host-1'},
+      {kind: 'unknown'},
+    ]) assert.deepEqual(realtimeProviderEventSchema.parse({...started, origin}), {...started, origin})
+    assert.deepEqual(realtimeProviderEventSchema.parse(started), started)
+    for (const origin of [
+      {kind: 'user_item', item_id: ''},
+      {kind: 'host_request', item_id: 'wrong-namespace'},
+      {kind: 'user_item', item_id: 'user-1', authorized: true},
+      {kind: 'unknown', item_id: 'guessed'},
+    ]) assert.equal(realtimeProviderEventSchema.safeParse({...started, origin}).success, false)
+  }
 })

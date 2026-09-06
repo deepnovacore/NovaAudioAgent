@@ -591,7 +591,8 @@ async function runScenario(spec: Scenario, tools: readonly JsonObject[]): Promis
       ark_calls: llm.calls.map(call => {
         const userRequest = (call.input_items as readonly Row[]).some(item => item.role === 'user'
           && !(String(item.content).startsWith('Nova Audio Agent')))
-        if (userRequest) return call
+        const toolContinuation = (call.input_items as readonly Row[]).some(item => item.type === 'function_call_output')
+        if (userRequest || toolContinuation) return call
         assert.deepEqual(call.tools, [], 'host narration must not offer tools')
         return {...call, tools: tools.map(tool => {
           const fn = tool.function as JsonObject
@@ -608,7 +609,7 @@ async function runScenario(spec: Scenario, tools: readonly JsonObject[]): Promis
 }
 
 function normalizeNodeEvent(event: RealtimeProviderEvent): Row {
-  if (event.kind === 'response_started') {
+  if (event.kind === 'response_started' || event.kind === 'response_terminal') {
     // Python predates provider origin evidence; dedicated contract tests assert the new field.
     const {origin, kind, ...rest} = event
     void origin

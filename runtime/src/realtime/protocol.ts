@@ -365,6 +365,7 @@ export const itemConfirmedSchema = sessionEvent(z.literal('item_confirmed'), {
   provider_item_id: realtimeIdentifierSchema,
 })
 export const responseTerminalSchema = sessionEvent(z.literal('response_terminal'), {
+  origin: responseOriginSchema.optional(),
   response_id: realtimeIdentifierSchema,
   status: z.enum(['completed', 'cancelled', 'failed']),
   reason: boundedText(),

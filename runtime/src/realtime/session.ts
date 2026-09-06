@@ -108,7 +108,7 @@ export class RealtimeSession {
   #awaitingUserResponse = false
   #pendingUserResponse: {readonly itemId: string; readonly revision: number} | null = null
   #latestUserResponse: {readonly itemId: string; readonly revision: number} | null = null
-  #userResponseRequest: {readonly itemId: string | null; readonly revision: number} | null = null
+  #userResponseRequest: {readonly itemId: string | null; readonly revision: number; armedHere: boolean} | null = null
   #fenceNextResponse = false
   #fenceInterruption: FenceInterruption | null = null
   #providerResponseId: string | null = null
@@ -195,7 +195,8 @@ export class RealtimeSession {
 
   responseMatchesUserItem(responseId: string, itemId: string, revision: number): boolean {
     const turn = this.#state.providerTurn(responseId)
-    if (turn?.origin === undefined) return true
+    if (turn === undefined) return this.#provider.userResponseMode !== 'requested'
+    if (turn.origin === undefined) return true
     return turn.origin.kind === 'user_item'
       && turn.origin.item_id === itemId
       && turn.user_input_revision === revision
@@ -212,6 +213,11 @@ export class RealtimeSession {
     if (revision === undefined || revision !== this.userInputRevision) return false
     this.#awaitingUserResponse = false
     return true
+  }
+
+  responseIsToolContinuation(responseId: string): boolean {
+    const items = this.#responseItems.get(this.#turnKey(responseId))
+    return items !== undefined && items.length > 0 && items.every(item => item.kind === 'tool_output')
   }
 
   responseEventIds(responseId: string): readonly string[] {
@@ -671,7 +677,7 @@ export class RealtimeSession {
     const pending = this.#pendingUserResponse
     const target = pending ?? this.#latestUserResponse
     if (this.#provider.userResponseMode === 'requested' && target === null) return false
-    const request = {itemId: target?.itemId ?? null, revision: target?.revision ?? this.userInputRevision}
+    const request = {itemId: target?.itemId ?? null, revision: target?.revision ?? this.userInputRevision, armedHere: false}
     this.#userResponseRequest = request
     this.#awaitingUserResponse = true
     if (this.#pendingUserResponse === pending) this.#pendingUserResponse = null
@@ -681,8 +687,7 @@ export class RealtimeSession {
         this.#userResponseRequest = null
         this.#awaitingUserResponse = false
         // false proves this request never owned a generation. Its pre-start fence has no target.
-        if (this.#providerResponseId === null && this.#state.pendingResponseCount === 0
-          && this.#state.premapResponseId === null) this.#fenceNextResponse = false
+        if (request.armedHere) this.#fenceNextResponse = false
         if (pending !== null && this.userInputRevision === pending.revision) {
           this.#pendingUserResponse ??= pending
         }
@@ -812,7 +817,7 @@ export class RealtimeSession {
       case 'response_transcript_final':
         return this.#acceptTranscriptFinal(event.response_id, event.text)
       case 'response_terminal':
-        return this.#acceptTerminal(event.response_id, event.status, event.session_epoch)
+        return this.#acceptTerminal(event.response_id, event.status, event.session_epoch, event.origin)
       case 'user_speech_started':
         return this.#acceptSpeechStarted(event.speech_id, event.provider_item_id)
       case 'user_speech_ended':
@@ -820,8 +825,11 @@ export class RealtimeSession {
       case 'user_transcript_final':
       case 'user_transcript_failed':
         return this.#acceptTranscriptTerminal(event.item_id, event.kind)
+      case 'provider_error':
+        if (!event.recoverable) this.#releaseUserResponseRequest()
+        return false
       default:
-        // Deltas, confirmations, cancel rejections and provider errors are not this reducer's to
+        // Deltas, confirmations and cancel rejections are not this reducer's to
         // act on. Transcript deltas belong to `captionFor`; the rest belong to the layer above.
         return false
     }
@@ -832,11 +840,12 @@ export class RealtimeSession {
     if (responseId !== null) {
       const turn = this.#state.providerTurn(responseId)
       if (turn !== undefined && (turn.locally_fenced || turn.phase !== 'active')) return false
-      if (turn?.origin?.kind === 'host_request' || turn?.origin?.kind === 'unknown') return false
+      if (turn?.origin?.kind === 'unknown') return false
+      if (turn?.origin?.kind === 'host_request' && !this.responseIsToolContinuation(responseId)) return false
     }
-    if (responseId !== null && this.#responseItems.has(this.#turnKey(responseId))) {
-      // Host-created responses narrate an injected fact or continue an already accepted tool
-      // protocol. They never authorize a new tool.
+    if (responseId !== null && this.#responseItems.has(this.#turnKey(responseId))
+      && !this.responseIsToolContinuation(responseId)) {
+      // Host factual narration cannot propose tools. Continuations still need host authorization.
       return false
     }
     return true
@@ -1005,17 +1014,33 @@ export class RealtimeSession {
     return false
   }
 
+  #releaseUserResponseRequest(): void {
+    const request = this.#userResponseRequest
+    if (request === null) return
+    if (request.armedHere) this.#fenceNextResponse = false
+    this.#userResponseRequest = null
+    this.#awaitingUserResponse = false
+  }
+
   #acceptTerminal(
     responseId: string,
     status: 'completed' | 'cancelled' | 'failed',
     eventEpoch: number,
+    origin?: Extract<RealtimeProviderEvent, {kind: 'response_terminal'}>['origin'],
   ): boolean {
     const turn = this.#state.providerTurn(responseId)
     if (turn === undefined) {
+      if (origin?.kind === 'user_item' && origin.item_id === this.#userResponseRequest?.itemId) {
+        const ended = this.#state.openProviderTurn(responseId, this.#userResponseRequest.revision)
+        ended.origin = origin
+        ended.phase = status
+        this.#releaseUserResponseRequest()
+        return true
+      }
       // A pre-start fence has no provider response id to cancel. If its first observable event is
       // a terminal, it consumes the one-shot fence and releases the fenced pending's inference
       // slot. Without an armed fence an unknown terminal must not touch a live pending response.
-      if (this.#fenceNextResponse) {
+      if (this.#fenceNextResponse && this.#userResponseRequest?.armedHere !== true) {
         this.#fenceNextResponse = false
         this.#state.popPendingResponse()
       }
@@ -1267,6 +1292,7 @@ export class RealtimeSession {
       }
       if (expectedResponseId === null && this.#awaitingUserResponse && !this.#fenceNextResponse) {
         this.#fenceNextResponse = true
+        if (this.#userResponseRequest !== null) this.#userResponseRequest.armedHere = true
         this.#state.advanceSnapshot()
         return true
       }

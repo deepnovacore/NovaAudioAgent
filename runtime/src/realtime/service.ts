@@ -2530,6 +2530,7 @@ export class RealtimeService {
       return
     }
     if (event.kind === 'provider_error') {
+      await this.session.accept(event)
       this.#onDiagnostic(
         `[realtime-diagnostic] provider_error code=${event.code} recoverable=${event.recoverable}`,
       )
@@ -2697,6 +2698,7 @@ export class RealtimeService {
       this.#suppressCancelledSemanticAcknowledgement(event.response_id)
       this.#bindRequestedSemanticAcknowledgement(event.response_id)
       this.#bindContinuation(event.response_id)
+      this.#bindToolContinuationOrigin(event.session_epoch, event.response_id)
       this.#suppressShadowConfirmationResponse(event.session_epoch, event.response_id)
     }
     if (event.kind === 'response_started') {
@@ -3013,9 +3015,15 @@ export class RealtimeService {
     const observedResponseId = event.response_id ?? activeResponseId
 
     const evidence = observedResponseId === null ? undefined : this.session.providerResponseOrigin(observedResponseId)
-    if (evidence !== undefined && (
-      evidence.kind !== 'user_item'
-      || this.#userOrigins.itemForResponse(event.session_epoch, observedResponseId!) !== evidence.item_id
+    const boundItem = observedResponseId === null ? undefined
+      : this.#userOrigins.itemForResponse(event.session_epoch, observedResponseId)
+    const toolContinuation = observedResponseId !== null && evidence?.kind === 'host_request'
+      && this.session.responseIsToolContinuation(observedResponseId)
+      && boundItem !== undefined
+      && this.#userOrigins.revisionForItem(event.session_epoch, boundItem) === this.session.userInputRevision
+      && this.session.providerTurnUserInputRevision(observedResponseId) === this.session.userInputRevision
+    if (evidence !== undefined && !toolContinuation && (
+      evidence.kind !== 'user_item' || boundItem !== evidence.item_id
     )) {
       // Explicit evidence may be rejected, but cannot fall back to the next arriving transcript.
       await this.#handleBoundToolCall(event, {
@@ -3938,6 +3946,30 @@ export class RealtimeService {
   // ---------------------------------------------------------------------------------------------
   // Family M: batching tool results into one turn.
   // ---------------------------------------------------------------------------------------------
+
+  /** A tool continuation inherits evidence only from its confirmed outputs in the current turn. */
+  #bindToolContinuationOrigin(epoch: number, responseId: string): void {
+    if (epoch !== this.session.sessionEpoch || !this.session.responseIsToolContinuation(responseId)) return
+    const revision = this.session.providerTurnUserInputRevision(responseId)
+    if (revision !== this.session.userInputRevision) return
+    let itemId: string | undefined
+    // ponytail: bounded ledger scan; index event ids if large continuation batches become common.
+    for (const eventId of this.session.responseEventIds(responseId)) {
+      const state = [...this.#toolCalls.values(), ...this.#overflowToolCalls.values()].find(current => (
+        current.acceptance.host_item.event_id === eventId
+        && current.provider_session_epoch === epoch
+        && current.output === 'confirmed'
+        && current.continuation !== 'abandoned'
+        && current.observation !== 'superseded'
+      ))
+      if (state?.origin_user_input_revision !== revision) return
+      const sourceItem = this.#userOrigins.itemForResponse(epoch, state.provider_response_id)
+      if (sourceItem === undefined || this.#userOrigins.revisionForItem(epoch, sourceItem) !== revision
+        || (itemId !== undefined && itemId !== sourceItem)) return
+      itemId = sourceItem
+    }
+    if (itemId !== undefined) this.#userOrigins.bindRetryResponse({epoch, responseId, itemId})
+  }
 
   /** Bind the head batch to the response that will speak it. */
   #bindContinuation(responseId: string): void {

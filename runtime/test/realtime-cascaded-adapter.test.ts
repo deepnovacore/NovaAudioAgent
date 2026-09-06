@@ -2088,3 +2088,27 @@ test('aborting before admission preserves selected context for both user and hos
     }
   }
 })
+
+
+test('tool output continuations retain configured tools for the next hop', async () => {
+  const llm = new FakeLlm([
+    {kind: 'response_started', response_id: 'hop-2'},
+    {kind: 'tool_call', item_id: 'item-2', call_id: 'call-2', name: 'weather', arguments: {}},
+    {kind: 'response_completed', response_id: 'hop-2'},
+  ])
+  const adapter = new CascadedRealtimeAdapter({endpointing: new ScriptedEndpointing(),
+    asr: new FakeAsrClient(), llm, tts: new FakeTtsClient(new FakeTtsSession()),
+    idFactory: ids('chain-session', 'chain-input')})
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [{type: 'function', function: {name: 'weather', parameters: {type: 'object'}}}], signal})
+  const item = {kind: 'tool_output' as const, host_item_id: 'result-1', event_id: 'result-event',
+    content: '{}', call_id: 'call-1'}
+  try {
+    await adapter.injectHostItem(item, directOptions())
+    const collecting = collectThroughTerminal(adapter)
+    await adapter.createResponse({kind: 'tool_result', item, task_summary: null, origin_spoken: false}, signal)
+    const events = await collecting
+    assert.deepEqual(llm.calls[0]?.tools, [{name: 'weather', parameters: {type: 'object'}}])
+    assert.ok(events.some(event => event.kind === 'tool_call_ready' && event.call_id === 'call-2'))
+  } finally { await adapter.close() }
+})

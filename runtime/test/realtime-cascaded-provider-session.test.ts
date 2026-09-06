@@ -544,6 +544,13 @@ test('real provider starts bind host facts and continuations before createRespon
         {kind: 'response_completed', response_id: 'wire-fast'},
       ])], idFactory: ids,
     }))
+    const started = deferred<void>()
+    const release = deferred<void>()
+    const create = port.createResponse.bind(port)
+    port.createResponse = async intent => {
+      await create(intent)
+      await release.promise
+    }
     const session = new RealtimeSession({provider: port, idFactory: ids, clock: new VirtualClock(),
       playback: new PlaybackRegistry({idFactory: ids, onFrame: () => undefined, onClear: () => undefined}),
       onDiagnostic: () => undefined})
@@ -552,23 +559,31 @@ test('real provider starts bind host facts and continuations before createRespon
     const reader = (async () => {
       for await (const event of port.events()) {
         await session.accept(event)
-        if (event.kind === 'response_started') bound.push([...session.responseEventIds(event.response_id)])
+        if (event.kind === 'response_started') {
+          bound.push([...session.responseEventIds(event.response_id)])
+          started.resolve()
+        }
         if (event.kind === 'response_terminal') return
       }
     })()
     try {
+      let delivery: Promise<unknown>
       if (mode === 'host') {
-        await session.deliverHostItem({kind: 'progress', host_item_id: 'host-fast', event_id: 'event-fast',
+        delivery = session.deliverHostItem({kind: 'progress', host_item_id: 'host-fast', event_id: 'event-fast',
           content: 'fact', call_id: null})
       } else {
         const item: HostContextItem = {kind: 'tool_output', host_item_id: 'host-fast', event_id: 'event-fast',
           content: '{"value":"ok"}', call_id: 'call-fast'}
         await session.injectToolOutput(item)
-        await session.requestToolContinuation([{kind: 'tool_result', item, task_summary: null, origin_spoken: false}])
+        delivery = session.requestToolContinuation([{kind: 'tool_result', item, task_summary: null, origin_spoken: false}])
       }
+      await settleWithin('start before command release', started.promise)
+      assert.deepEqual(bound, [['event-fast']], 'ownership binds while createResponse is held')
+      release.resolve()
+      await delivery
       await settleWithin('fast admitted response', reader)
       assert.deepEqual(bound, [['event-fast']])
       assert.equal(session.providerIdle, true)
-    } finally { await port.close() }
+    } finally { release.resolve(); await port.close() }
   }
 })

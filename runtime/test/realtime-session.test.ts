@@ -915,3 +915,80 @@ test('a failed host command releases its pending admission', async () => {
     event_id: 'event-failed', content: 'fact', call_id: null}), /response request failed/u)
   assert.equal(session.providerIdle, true)
 })
+
+for (const requested of [true, false]) {
+  test(`missing turn fails closed only in requested mode: ${requested}`, async () => {
+    const {session} = makeSession({requested})
+    await session.connect({tools: []})
+    assert.equal(session.responseMatchesUserItem('missing', 'A', 0), !requested)
+  })
+}
+
+test('a refused request preserves a separately armed fence', async () => {
+  const {session} = makeSession({requested: true, ensureResponse: () => Promise.resolve(false)})
+  await session.connect({tools: []})
+  session.armNextResponseFence()
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+  assert.equal(await session.requestPendingUserResponse(), false)
+  assert.equal(await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'other',
+    origin: {kind: 'unknown'}}), false)
+})
+
+for (const status of ['cancelled', 'failed'] as const) {
+  test(`an admitted request without a start releases on its ${status} terminal`, async () => {
+    const {session} = makeSession({requested: true})
+    await session.connect({tools: []})
+    await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+    assert.equal(await session.requestPendingUserResponse(), true)
+    await session.accept({kind: 'response_terminal', session_epoch: 1, response_id: 'unrelated',
+      status, reason: ''})
+    assert.equal(await session.requestUserResponse(), false)
+    const terminal = {kind: 'response_terminal' as const, session_epoch: 1,
+      response_id: 'never-started', status, reason: '', origin: {kind: 'user_item' as const, item_id: 'A'}}
+    await session.accept(terminal)
+    assert.equal(session.providerIdle, true)
+    assert.equal(await session.requestUserResponse(), true)
+    await session.accept(terminal)
+    assert.equal(await session.requestUserResponse(), false, 'duplicate old terminal cannot release a retry')
+  })
+}
+
+test('fatal provider error releases an admitted request without a start', async () => {
+  const {session} = makeSession({requested: true})
+  await session.connect({tools: []})
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+  await session.requestPendingUserResponse()
+  await session.accept({kind: 'provider_error', session_epoch: 1, code: 'asr_warning', recoverable: true})
+  assert.equal(await session.requestUserResponse(), false)
+  await session.accept({kind: 'provider_error', session_epoch: 1, code: 'connection_lost', recoverable: false})
+  assert.equal(session.providerIdle, true)
+})
+
+
+test('only a bound tool output continuation can propose another tool', async () => {
+  const {session} = makeSession()
+  await session.connect({tools: []})
+  const item: HostContextItem = {kind: 'tool_output', host_item_id: 'result-1', event_id: 'event-1',
+    content: '{}', call_id: 'call-1'}
+  await session.injectToolOutput(item)
+  await session.requestToolContinuation([{kind: 'tool_result', item, task_summary: null, origin_spoken: false}])
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'continuation',
+    origin: {kind: 'host_request', host_item_id: item.host_item_id}})
+  assert.equal(await session.accept({kind: 'tool_call_ready', session_epoch: 1, response_id: 'continuation',
+    call_id: 'call-2', item_id: 'tool-2', name: 'weather', arguments: {}}), true)
+})
+
+
+test('a terminal without a start clears only the old request fence and preserves the next input', async () => {
+  const {session} = makeSession({requested: true})
+  await session.connect({tools: []})
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'A', text: 'first'})
+  await session.requestPendingUserResponse()
+  await session.localSpeechOnset('next-onset')
+  await session.accept({kind: 'user_transcript_final', session_epoch: 1, item_id: 'B', text: 'next'})
+  await session.accept({kind: 'response_terminal', session_epoch: 1, response_id: 'never-started',
+    status: 'cancelled', reason: '', origin: {kind: 'user_item', item_id: 'A'}})
+  assert.equal(await session.requestPendingUserResponse(), true)
+  assert.equal(await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-B',
+    origin: {kind: 'user_item', item_id: 'B'}}), true)
+})

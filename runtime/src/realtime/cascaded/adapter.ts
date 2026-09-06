@@ -529,7 +529,8 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       if (!this.#isCurrent(owner)) throw new CascadedRealtimeError('state')
       throwIfAborted(combineSignals(owner.controller.signal, signal))
       for (const id of hostIds) owner.pending.delete(id)
-      this.#startResponse(owner, inputs, {kind: 'host_request', host_item_id: intent.item.host_item_id})
+      this.#startResponse(owner, inputs, {kind: 'host_request', host_item_id: intent.item.host_item_id},
+        intent.item.kind === 'tool_output')
       await Promise.resolve()
     })
   }
@@ -610,7 +611,8 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     active.terminal = true
     const terminal = realtimeProviderEventSchema.parse({
       kind: 'response_terminal', session_epoch: owner.epoch,
-      response_id: active.id, status: 'cancelled', reason: 'cancelled',
+      response_id: active.id,
+      ...(active.origin.kind === 'user_item' ? {origin: active.origin} : {}), status: 'cancelled', reason: 'cancelled',
     })
     if (!owner.queue.enqueue(terminal)) {
       owner.queue.overflow({
@@ -831,14 +833,15 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     })
   }
 
-  #startResponse(owner: EpochOwner, inputs: readonly CascadedLlmInput[], origin: ResponseOrigin): void {
+  #startResponse(owner: EpochOwner, inputs: readonly CascadedLlmInput[], origin: ResponseOrigin,
+    allowTools = true): void {
     const controller = new AbortController()
     const active: ActiveResponse = {
       controller, origin, id: `cascaded-response-${owner.epoch}-${++owner.responseSequence}`,
       task: Promise.resolve(), terminal: false, tts: null,
     }
     owner.response = active
-    active.task = Promise.resolve().then(() => this.#runResponse(owner, active, inputs))
+    active.task = Promise.resolve().then(() => this.#runResponse(owner, active, inputs, allowTools))
     void active.task.catch(() => undefined)
   }
 
@@ -867,6 +870,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     owner: EpochOwner,
     active: ActiveResponse,
     inputs: readonly CascadedLlmInput[],
+    allowTools: boolean,
   ): Promise<void> {
     let llmResponseId: string | null = null
     let textSeen = false
@@ -885,7 +889,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       throwIfAborted(signal)
       for await (const event of owner.llm.stream({
         inputs: inputs.map(item => structuredClone(item)),
-        tools: active.origin.kind === 'host_request' ? [] : owner.tools.map(tool => structuredClone(tool)),
+        tools: allowTools ? owner.tools.map(tool => structuredClone(tool)) : [],
         workspaceContext: owner.workspaceContext?.item.content ?? null,
         signal,
       })) {
@@ -1186,7 +1190,8 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     active.terminal = true
     await this.#emit(owner, {
       kind: 'response_terminal', session_epoch: owner.epoch,
-      response_id: active.id, status, reason,
+      response_id: active.id,
+      ...(active.origin.kind === 'user_item' ? {origin: active.origin} : {}), status, reason,
     })
     this.#record('volcengine.response.terminal', {status})
   }

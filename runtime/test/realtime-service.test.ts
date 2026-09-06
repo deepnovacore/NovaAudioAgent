@@ -10440,3 +10440,43 @@ test('explicit wrong origin cannot acquire approval authority through final-only
   assert.equal(service.executorApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
 })
+
+test('bound tool-result continuations retain the original user evidence across multiple steps', async () => {
+  const {service, injectedItems, runtimeDispatches} = pipelineService({agent: true})
+  await service.connect()
+  try {
+    await speak(service, 'chain-user', 'Complete the task in several steps')
+    let origin: ResponseOrigin = {kind: 'user_item', item_id: 'chain-user'}
+    for (let step = 1; step <= 3; step += 1) {
+      const responseId = `chain-response-${step}`
+      await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId, origin})
+      await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: responseId,
+        item_id: `chain-tool-${step}`, call_id: `chain-call-${step}`, name: 'dispatch',
+        arguments: {executor: 'codex', instruction: `Step ${step}`}})
+      assert.equal(runtimeDispatches(), step, `step ${step} must retain its real user origin`)
+      await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: responseId,
+        status: 'completed', reason: ''})
+      const output = injectedItems.find(item => item.kind === 'tool_output' && item.call_id === `chain-call-${step}`)
+      assert.ok(output)
+      origin = {kind: 'host_request', host_item_id: output.host_item_id}
+    }
+    await speak(service, 'replacement-user', 'A different request')
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'stale-continuation', origin})
+    await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'stale-continuation',
+      item_id: 'stale-tool', call_id: 'stale-call', name: 'dispatch',
+      arguments: {executor: 'codex', instruction: 'Continue the old request'}})
+    assert.equal(runtimeDispatches(), 3, 'an old continuation cannot borrow the replacement user')
+  } finally { await service.close() }
+})
+
+test('fatal provider errors settle an admitted user response through the service path', async () => {
+  const {service, session} = pipelineService()
+  await service.connect()
+  try {
+    await speak(service, 'admitted-user', 'Hello')
+    assert.equal(await session.requestUserResponse(), true)
+    assert.equal(session.providerIdle, false)
+    await service.handleEvent({kind: 'provider_error', session_epoch: 1, code: 'unavailable', recoverable: false})
+    assert.equal(session.providerIdle, true)
+  } finally { await service.close() }
+})
