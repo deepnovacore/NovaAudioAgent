@@ -68,30 +68,8 @@
   },
   {
     "path": "runtime/src/cascaded-realtime-assembly.ts",
-    "pattern": "...(options.codexResource === undefined ? [] : [options.codexResource.adapter]),",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
-    "count": 2
-  },
-  {
-    "path": "runtime/src/cascaded-realtime-assembly.ts",
-    "pattern": "...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
-    "count": 3
-  },
-  {
-    "path": "runtime/src/cascaded-realtime-assembly.ts",
-    "pattern": "options.codexResource !== undefined",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
-  },
-  {
-    "path": "runtime/src/cascaded-realtime-assembly.ts",
-    "pattern": "&& !options.settings.executors.includes(options.codexResource.adapter.manifest.name)",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
-  },
-  {
-    "path": "runtime/src/cascaded-realtime-assembly.ts",
-    "pattern": "if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "pattern": ": {executors: [...(options.executors ?? []), ...(options.codexResource === undefined ? [] : [options.codexResource.adapter])]}),",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt.",
     "count": 2
   },
   {
@@ -554,29 +532,13 @@
   },
   {
     "path": "runtime/src/qwen-realtime-assembly.ts",
-    "pattern": "options.codexResource !== undefined",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
-  },
-  {
-    "path": "runtime/src/qwen-realtime-assembly.ts",
-    "pattern": "&& !options.settings.executors.includes(options.codexResource.adapter.manifest.name)",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
-  },
-  {
-    "path": "runtime/src/qwen-realtime-assembly.ts",
-    "pattern": "if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
-    "count": 2
-  },
-  {
-    "path": "runtime/src/qwen-realtime-assembly.ts",
     "pattern": "...((options.executors === undefined && options.codexResource === undefined)",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
   },
   {
     "path": "runtime/src/qwen-realtime-assembly.ts",
-    "pattern": "...(options.codexResource === undefined ? [] : [options.codexResource.adapter]),",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "pattern": ": {executors: [...(options.executors ?? []), ...(options.codexResource === undefined ? [] : [options.codexResource.adapter])]}),",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt.",
     "count": 2
   },
   {
@@ -588,12 +550,6 @@
     "path": "runtime/src/qwen-realtime-assembly.ts",
     "pattern": "&& options.codexResource?.approvalController !== undefined,",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
-  },
-  {
-    "path": "runtime/src/qwen-realtime-assembly.ts",
-    "pattern": "...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
-    "count": 3
   },
   {
     "path": "runtime/src/realtime-assembly.ts",
@@ -657,7 +613,8 @@
   {
     "path": "runtime/src/realtime-assembly.ts",
     "pattern": "options.codexResource !== undefined",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "count": 2
   },
   {
     "path": "runtime/src/realtime-assembly.ts",
@@ -693,7 +650,7 @@
     "path": "runtime/src/realtime-assembly.ts",
     "pattern": "...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
-    "count": 3
+    "count": 6
   },
   {
     "path": "runtime/src/realtime-assembly.ts",
@@ -710,6 +667,22 @@
     "path": "runtime/src/realtime-assembly.ts",
     "pattern": "delete selected.codexResource",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "export function validateCodingResource(options: Pick<AssemblyOptions, 'settings'> & Pick<RealtimeAssemblyOptions, 'codexResource'>): void {",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "&& !options.settings.executors.includes(options.codexResource.adapter.manifest.name)",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt.",
+    "count": 2
   },
   {
     "path": "runtime/src/realtime/frontend-instructions.ts",
