@@ -7,7 +7,7 @@ import {statSync} from 'node:fs'
 import {join} from 'node:path'
 import {createBackendSupervisor} from '../src/main/backend-supervisor.mjs'
 import {classifyBackendFailure} from '../src/main/backend-diagnostics.mjs'
-import {capabilityPath, readCapabilityDocument} from '../src/main/capabilities-settings.mjs'
+import {capabilityPath, capabilityDocumentRevision, readCapabilityDocument} from '../src/main/capabilities-settings.mjs'
 
 const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 const launch = source.slice(source.indexOf('async function launchBackend('), source.indexOf('function initializeDesktopBootstrap('))
@@ -41,7 +41,7 @@ test('actual settings view decrypts only for an open panel and caches the public
   let decrypts = 0
   const context = vm.createContext({wakeWord: null, settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
     readCapabilityDocument: () => ({version: 1}), decryptSecretsForSpawn: () => {decrypts++; return {}},
-    readCapabilityEditor: () => ({document: {version: 1}, revision: 'test-revision', problems: []}), capabilityEnvironment: () => ({}), capabilityPath, statSync,
+    readCapabilityEditor: () => ({document: {version: 1}, revision: 'test-revision', problems: []}), capabilityEnvironment: () => ({}), capabilityPath, statSync, capabilityDocumentRevision: () => 'fixed',
     runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
     microphoneStatus: 'unknown', desktopConfig: null, secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})
   vm.runInContext(view, context)
@@ -65,7 +65,9 @@ test('actual main refreshes a hand-edited registry while the panel is open and o
   const context = vm.createContext({wakeWord: null, settingsWindow: {show() {}, focus() {}}, refreshManagedWorkspaceCapabilities: () => Promise.resolve(), sendToSettings: () => {}, capabilityEditorCache: null, settingsGeneration: 0,
     currentSettings: {capabilitiesConfigPath: path}, process: {env: {}}, readCapabilityDocument, classifyBackendFailure,
     decryptSecretsForSpawn: () => ({}), capabilityEnvironment: () => ({}),
-    readCapabilityEditor: settings => ({document: readCapabilityDocument(settings, {}), revision: 'test-revision', problems: []}), capabilityPath, statSync,
+    readCapabilityEditor: settings => ({document: readCapabilityDocument(settings, {}), revision: 'test-revision', problems: []}), capabilityPath, capabilityDocumentRevision,
+    // Windows can give consecutive same-size writes identical file timestamps.
+    statSync: () => ({dev: 1, ino: 1, size: 38, mtimeMs: 1, ctimeMs: 1}),
     runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
     microphoneStatus: 'unknown', desktopConfig: {modelConfigurationError: 'model_base_url_invalid'},
     secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})

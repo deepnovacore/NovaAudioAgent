@@ -18,6 +18,7 @@ export function invalidCommit(reason = 'invalid_document') {
 export function capabilityDocumentRevision(settings, environment = {}) {
   const path = capabilityPath(settings, environment)
   try {
+    if (statSync(path).size > MAX_BYTES) throw invalidCommit('file_too_large')
     const bytes = readFileSync(path)
     if (bytes.byteLength > MAX_BYTES) throw invalidCommit('file_too_large')
     return createHmac('sha256', CAPABILITY_REVISION_KEY).update(path).update('\0').update(bytes).digest('base64url')

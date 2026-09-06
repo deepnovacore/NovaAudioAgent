@@ -1,6 +1,6 @@
 import {createBackendControl} from './backend-control.mjs'
 import {createKnowledgeActions} from './knowledge-actions.mjs'
-import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, invalidCommit} from './capabilities-settings.mjs'
+import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, capabilityDocumentRevision, invalidCommit} from './capabilities-settings.mjs'
 import {parseCapabilityRegistry} from '@nova-audio-agent/runtime/desktop'
 import { WakeWordRuntime } from './wake-word/runtime.mjs'
 import {
@@ -246,11 +246,8 @@ function settingsView() {
   let capabilities = capabilityEditorCache?.view ?? {document: null, problems: []}
   let capabilityDiskVersion = null
   if (settingsWindow) {
-    const path = capabilityPath(currentSettings, process.env)
-    try {
-      const stat = statSync(path)
-      capabilityDiskVersion = `${path}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
-    } catch { capabilityDiskVersion = `${path}:missing` }
+    try { capabilityDiskVersion = capabilityDocumentRevision(currentSettings, process.env) }
+    catch { capabilityDiskVersion = 'unreadable' }
   }
   if (settingsWindow && (capabilityEditorCache?.generation !== settingsGeneration
     || capabilityEditorCache?.diskVersion !== capabilityDiskVersion)) {
