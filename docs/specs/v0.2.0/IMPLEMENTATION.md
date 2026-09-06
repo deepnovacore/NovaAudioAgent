@@ -663,7 +663,52 @@ suite (885 pass / 3 platform skips). A direct macOS source-window smoke against 
 passed with a private, canonical temporary home; an initial `/var` alias was correctly rejected by
 the project-store path boundary. This does not validate Windows window startup.
 
-At the user's request, further paid CI retries stopped in favor of local verification. No Windows
-development machine is currently available. The diagnostic/evidence follow-up is committed with
+At the user's request, further CI retries stopped in favor of local verification. At that checkpoint
+no Windows development machine was available. The diagnostic/evidence follow-up is committed with
 `[skip ci]`; the workflow remains enabled for ordinary dev pushes. Windows source startup remains
 an unresolved integration check, alongside the separately pending main/release acceptance items.
+
+### Windows development-machine follow-up
+
+The user subsequently supplied an Alibaba Cloud Windows Server 2022 machine (4 vCPU, 8 GB).
+Source-window startup passed as SYSTEM with Node 24.20.0 and Node 22.23.2, and independently in
+Administrator's interactive session. Administrator's Codex login status was also verified; this
+does not prove provider task execution or microphone acceptance. The initial full Windows desktop
+suite passed 868 tests with 20 platform skips, followed by its source startup smoke. These results
+make an environment-specific CI failure plausible, but do not identify the original runner's cause.
+
+Actual package inspection found a separate defect: the after-pack hook rebuilt `app.asar` with only
+native-library unpack rules, erasing the configured sherpa-onnx JS/WASM unpacking. The shared ASAR
+builder now preserves the sherpa directory; a real archive replacement regression failed before
+the fix and passed on both macOS and Windows afterward.
+
+Windows runtime execution also exposed three test timing assumptions. The startup-exit check now
+starts its two-second exit deadline after module loading, with an outer cold-start watchdog. MCP
+shutdown waits for an active tool call, and confirmation expiry waits for the expected state instead
+of assuming several timer steps complete within 30 ms. Production deadlines remain unchanged.
+An additional full-run failure exposed a test polling loop that survived its timeout and kept the
+process alive. The helper now stops polling; its regression verifies no further observations after
+timeout. The metadata-transition test opens its real graph fixture before assembly startup, so
+Windows Worker cold-start I/O does not accidentally exercise the separate one-second abandonment
+contract. Dedicated bounded-start tests retain that coverage.
+
+The actual Windows ASAR Worker/WASM smoke passed: synthetic positive audio produced one hit and
+negative audio produced zero. A paced positive run during runtime rebuilding produced one hit with
+126 frames offered, 124 accepted and 9 frames reported dropped. An idle-machine repeat produced
+one hit with 131/131 frames accepted and 2 reported dropped; neither is zero-drop or human audio
+acceptance. The unpacked application was built using the installed Electron 43.2.0 distribution
+after the initial Electron download stalled. NSIS creation then failed on a GitHub connection timeout
+(`ETIMEDOUT`), so the installer is not claimed built or validated.
+
+The [runner assessment](../../handoffs/2026-09-06-windows-runner-assessment.md) records capacity,
+account isolation and a proposed workflow; no runner was registered. This repository is public:
+standard GitHub-hosted runner minutes are currently free, correcting the earlier cost assumption.
+
+After these changes, the final local serial `check → test:runtime → test:desktop → test:cli` passed:
+runtime 2356 pass / 5 skips, desktop 886 pass / 3 skips, CLI 21/21. Windows Node 22.23.2 `check`
+passed, and the final full Windows runtime suite passed 2208 tests / 8 platform skips in 241 seconds.
+The final Windows desktop suite reused the already built application and passed 869 tests / 20
+platform skips in 51 seconds; its real source-window startup smoke passed, followed by CLI 21/21.
+No further GitHub Actions runs were requested. The historical hosted-Windows source startup timeout
+remains unclassified; local Windows success does not retroactively make that run green. No main
+merge, release, runner registration, or human acceptance completion was performed.
