@@ -143,7 +143,7 @@ async function runCapabilityStatus() {
   const source = await readFile(resolve(packageRoot, 'src/main/main.mjs'), 'utf8')
   const launchSource = source.slice(source.indexOf('async function launchBackend('), source.indexOf('function initializeDesktopBootstrap('))
   const supervisorStart = source.indexOf('  backendSupervisor = createBackendSupervisor({')
-  const supervisorSource = source.slice(supervisorStart, source.indexOf('  void managedWorkspaceBackendRecovery.start()', supervisorStart))
+  const supervisorSource = source.slice(supervisorStart, source.indexOf('\n  })', supervisorStart) + '\n  })'.length)
   let listed = 0, called = 0, providerConnections = 0
   const certificate = resolve(root, 'cert.pem'), privateKey = resolve(root, 'key.pem')
   await generateReleaseSmokeCertificate({certificate, privateKey})
