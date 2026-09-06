@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {createHash} from 'node:crypto'
 import {chmod, lstat, mkdir, mkdtemp, realpath, rm, symlink} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -197,7 +198,7 @@ test('maxSources refuses a second source but permits reindexing the existing sou
   assert.equal((await client.recall('updated', [0, 1], 'embed-a', 1))[0]?.text, 'updated durable result')
 })
 
-test('reindex makes old chunk locators gone and detects wrong digests as stale', async t => {
+test('reindex preserves chunk identity and detects content changes as stale', async t => {
   const client = await store(t)
   await client.replaceSource({
     source: source(),
@@ -218,7 +219,7 @@ test('reindex makes old chunk locators gone and detects wrong digests as stale',
     dims: 2,
     chunks: [{heading_path: 'New', text: 'new version', token_estimate: 2, vector: [0, 1]}],
   })
-  assert.equal((await client.getChunk(oldLocator)).status, 'gone')
+  assert.deepEqual(await client.getChunk(oldLocator), {status: 'stale', text: 'new version', title: 'Runtime notes', heading_path: 'New', source_id: 'source-a'})
   await client.removeSource('source-a')
   assert.equal((await client.getChunk(oldLocator)).status, 'gone')
 })
@@ -383,10 +384,10 @@ test('recall and getChunk redact document paths while keeping lexical matches ac
 
 test('close terminates an unresponsive worker within its two second grace period', async t => {
   const client = await store(t)
-  let worker: Worker | undefined
-  const original = Worker.prototype.postMessage
+  const workers: Worker[] = []
+  const original = Object.getOwnPropertyDescriptor(Worker.prototype, 'postMessage')!.value as Worker['postMessage']
   const post = t.mock.method(Worker.prototype, 'postMessage', function (this: Worker, value: unknown) {
-    worker = this
+    workers.push(this)
     if (['list_sources', 'close'].includes((value as {operation: string}).operation)) return
     original.call(this, value)
   })
@@ -397,6 +398,69 @@ test('close terminates an unresponsive worker within its two second grace period
   try {
     await rejected
     await settlesWithin('bounded close', closing, 3000)
-    assert.equal(worker?.threadId, -1)
-  } finally {post.mock.restore(); await worker?.terminate(); await closing.catch(() => undefined)}
+    assert.equal(workers[0]?.threadId, -1)
+  } finally {post.mock.restore(); await workers[0]?.terminate(); await closing.catch(() => undefined)}
+})
+
+async function fixtureSql(path: string, sql: string, mode = 'exec'): Promise<unknown> {
+  const worker = new Worker(new URL('./fixtures/workspace-graph-sqlite-worker.js', import.meta.url), {workerData: {path, sql, mode}})
+  try {return await new Promise((resolve, reject) => {worker.once('message', resolve); worker.once('error', reject)})}
+  finally {await worker.terminate()}
+}
+
+test('legacy database migration preserves data and old references across unchanged and changed reindex', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-legacy-'))
+  const path = join(directory, 'knowledge.sqlite')
+  t.after(() => rm(directory, {recursive: true, force: true}))
+  await fixtureSql(path, `
+    CREATE TABLE sources(id TEXT PRIMARY KEY, title TEXT NOT NULL, kind TEXT NOT NULL, locator TEXT NOT NULL, mime TEXT NOT NULL, fingerprint TEXT NOT NULL, bytes INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, status TEXT NOT NULL);
+    CREATE TABLE chunks(id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE, heading_path TEXT NOT NULL, text TEXT NOT NULL, token_estimate INTEGER NOT NULL);
+    CREATE TABLE embeddings(chunk_id TEXT PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE, provider_id TEXT NOT NULL, dims INTEGER NOT NULL, vector BLOB NOT NULL);
+    CREATE TABLE jobs(id TEXT PRIMARY KEY, source_id TEXT NOT NULL, state TEXT NOT NULL, error_code TEXT, updated_at INTEGER NOT NULL);
+    INSERT INTO sources VALUES ('source-a', 'Runtime notes', 'file', '/tmp/runtime-notes.md', 'text/markdown', '${'a'.repeat(64)}', 120, 1, 1, 'ready');
+    INSERT INTO chunks VALUES ('old-chunk', 'source-a', 'Old', 'old version', 2);
+    INSERT INTO embeddings VALUES ('old-chunk', 'embed-a', 2, X'0000803F00000000');
+    INSERT INTO jobs VALUES ('job-a', 'source-a', 'complete', NULL, 1);
+  `)
+  await chmod(path, 0o600)
+  const client = temporaryClient(t, path)
+  const legacy = `knowledge://source-a/old-chunk?d=${createHash('sha256').update('source-a:old-chunk').digest('hex').slice(0, 12)}`
+  await client.open()
+  assert.deepEqual(await client.listSources(), [source()])
+  assert.equal((await client.listJobs())[0]?.id, 'job-a')
+  assert.equal((await client.getChunk(legacy)).status, 'ok')
+  const input = {source: source(), provider_id: 'embed-a', dims: 2, chunks: [{heading_path: 'Old', text: 'old version', token_estimate: 2, vector: [1, 0]}]}
+  const hit = (await client.recall('old', [1, 0], 'embed-a', 1))[0]!
+  assert.notEqual(hit.locator, legacy)
+  assert.match(hit.locator, /\/old-chunk\?d=/u)
+  await client.replaceSource(input)
+  assert.equal((await client.getChunk(legacy)).status, 'ok')
+  assert.equal((await client.recall('old', [1, 0], 'embed-a', 1))[0]?.locator, hit.locator)
+  await client.replaceSource({...input, source: {...source(), title: 'Updated title'}})
+  assert.equal((await client.getChunk(legacy)).status, 'stale')
+  assert.equal((await client.getChunk(hit.locator)).status, 'stale')
+  await client.close()
+  const reopened = temporaryClient(t, path)
+  await reopened.open()
+  assert.equal((await reopened.getChunk(legacy)).status, 'stale')
+  assert.equal((await reopened.getChunk(hit.locator)).title, 'Updated title')
+  await reopened.removeSource('source-a')
+  assert.deepEqual(await reopened.getChunk(legacy), {status: 'gone'})
+})
+
+test('ordinal correspondence preserves unchanged chunks and removes surplus references', async t => {
+  const client = await store(t)
+  const chunks = [
+    {heading_path: 'First', text: 'first chunk', token_estimate: 2, vector: [1, 0]},
+    {heading_path: 'Last', text: 'last chunk', token_estimate: 2, vector: [0, 1]},
+  ]
+  const input = {source: source(), provider_id: 'embed-a', dims: 2, chunks}
+  await client.replaceSource(input)
+  const first = (await client.recall('first', [1, 0], 'embed-a', 1))[0]!.locator
+  const last = (await client.recall('last', [0, 1], 'embed-a', 1))[0]!.locator
+  await client.replaceSource({...input, chunks: chunks.slice(0, 1)})
+  assert.equal((await client.getChunk(first)).status, 'ok')
+  assert.deepEqual(await client.getChunk(last), {status: 'gone'})
+  await client.replaceSource({...input, chunks: [{...chunks[0]!, heading_path: 'Renamed'}]})
+  assert.equal((await client.getChunk(first)).status, 'stale')
 })

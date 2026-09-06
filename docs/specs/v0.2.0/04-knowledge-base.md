@@ -34,7 +34,7 @@
 
 - Shipping a full local embedding implementation in v0.2.0 (interface + settings
   enum only).
-- Auto-injecting knowledge into every ContextView (`autoRecall` default off).
+- Auto-injecting knowledge into every ContextView (no automatic recall setting is implemented).
 - Merging knowledge cards into the workspace graph board.
 - Multi-user sync, cloud blob storage, or proprietary vector DB requirement.
 - Copying qwen’s substring-only domain library as the primary retriever
@@ -50,16 +50,16 @@
 | Process | Dedicated Worker; main / voice hot path never opens SQLite |
 | Module gate | `modules.knowledge.enabled` in [03](03-capability-registry-and-mcp.md) |
 
-## Store schema (v1)
+## Store schema (content-digest migration)
 
 Tables (conceptual):
 
 - `sources` — id, title, kind (`file`\|`url`\|`folder_child`), locator, mime,
   fingerprint, bytes, created_at, updated_at, status
 - `chunks` — id, source_id, ordinal, heading_path, text, token_estimate,
-  content_digest
+  content_digest, legacy_digest (migration compatibility only)
 - `embeddings` — chunk_id, provider_id, dims, vector BLOB (float32 little-endian)
-- `ingest_jobs` — id, source_id, state, error_code, updated_at
+- `jobs` — id, source_id, state, error_code, updated_at
 - FTS5 virtual table over chunk text + heading_path
 
 Spike (2026-09-05, macOS): Node v22.13.0 reports `no such module: fts5`;
@@ -90,7 +90,8 @@ interface EmbeddingProvider {
 | `local` | Interface reserved. **Not selectable** in the panel (shown disabled with “即将支持”); the runtime enum accepts it only behind `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER=local` for development and then fails assembly with `embedding_provider_unavailable` |
 
 Settings: `embeddingProvider`, `embeddingModel` (see [06](06-settings-and-config.md)).
-Changing provider requires re-embed of all chunks (ingest job: `reindex`).
+Changing provider requires explicit reindexing to re-embed all chunks. Until then,
+old-provider vectors are excluded and existing text remains lexically searchable.
 
 ### Data flow disclosure
 
@@ -128,8 +129,8 @@ Chunking: heading-aware, ~800 tokens, ~15% overlap. Reuse sensitivity gates from
 `runtime/src/workspace-graph/sensitivity.ts` so credential-like spans are
 refused before persistence.
 
-Limits (v1 starting points): max source size 10 MiB; max sources per profile
-configurable (suggest 100); empty files rejected.
+Limits (v1 starting points): max source size 10 MiB; 100 sources per profile
+(the internal store option can lower this cap; there is no profile setting); empty files rejected.
 
 ## Retrieval
 
@@ -157,20 +158,32 @@ Hybrid: vector cosine top-N ∪ FTS5 top-N → Reciprocal Rank Fusion → trunca
 knowledge://<source_id>/<chunk_id>?d=<content_digest_prefix>
 ```
 
-- `chunk_id` is stable for the life of a chunk row; `d` is the first 12 hex of
-  the chunk’s `content_digest`.
+- `d` is the first 12 hex of SHA-256 over UTF-8 `JSON.stringify([title,
+  heading_path, text])`, before output redaction. Metadata changes also invalidate
+  the old citation; embedding-provider and timestamp changes alone do not.
+- Initial ingest assigns a source UUID; explicit reindex keeps it. The source
+  fingerprint hashes the original document bytes and is not the source identity.
+- Reindex reuses chunk UUIDs by zero-based ordinal. This is positional
+  correspondence, not semantic section tracking: insertion or reordering can
+  make a retained position refer to another passage, always marked `stale` when
+  its content differs. Surplus old positions are deleted; new positions get UUIDs.
 - Resolution semantics for `get_chunk(locator)`:
 
 | State | Result |
 |---|---|
 | Chunk exists, digest matches | `ok` + text + title + heading_path |
 | Chunk exists, digest differs (source re-indexed, text changed) | `stale` + current text + note; caller must not assume the quoted excerpt is still there |
-| Chunk row gone (source deleted or re-chunked) | `gone` + source title if the source still exists |
+| Chunk row gone (source deleted or ordinal removed) | `gone` |
 | Source deleted | `gone` |
 
-Re-index creates new chunk rows; old locators resolve to `gone`. Removal of a
-source removes its chunks. There is no soft-delete; the point is that a
-locator is never silently re-pointed at different text.
+Migration of the original database adds ordinals in per-source insertion order
+and backfills full content digests in one transaction, preserving source/chunk
+IDs, embeddings and jobs. Original identity-tag locators remain `ok` while the
+migrated content is unchanged; the first content change retires their legacy
+alias so they resolve `stale` to current text. Newly returned locators always use
+content digests. Deleting a source removes all its chunks; no soft-delete or
+historical text archive is kept. Old references cannot recover content changes
+that happened before the migration.
 
 ### Surface 2 — Work-order references (host-attached)
 
@@ -207,8 +220,8 @@ When `knowledge.exposeToCodex` is true (module setting):
 
 ## ContextView policy
 
-`knowledge.autoRecall` defaults **false**. Automatic packing of chunks into
-ContextView would reopen the deferred “unrestricted long-term memory search”
+There is no `knowledge.autoRecall` setting. Automatic packing of chunks into
+ContextView is not implemented and would reopen the deferred “unrestricted long-term memory search”
 item. Explicit tool / planner / Codex recall only.
 
 ## Phasing
@@ -232,6 +245,10 @@ item. Explicit tool / planner / Codex recall only.
 - [x] Worker isolation: main thread tests never open the DB file directly.
 - [x] Sensitivity gate drops credential-like chunks.
 - [x] Hybrid recall returns stable citations; empty corpus → empty ok handoff.
+- [x] Legacy DB migration retains source/chunk IDs, vectors, jobs and original references;
+      unchanged reindex stays `ok`, content/metadata changes become `stale`, removal becomes `gone`.
+- [x] Real file reindex → store Worker → MCP returns current text/title/heading for the original stale reference.
+- [x] Store close rejects pending calls immediately, then terminates an unresponsive Worker after a 2 s grace period.
 - [x] Disabled module removes `mcp__nova_knowledge__recall` from schemas.
 - [x] DashScope embed failure marks ingest job failed without crashing runtime.
 - [x] `local` provider not selectable in the panel; env-forced `local` fails
@@ -244,7 +261,7 @@ item. Explicit tool / planner / Codex recall only.
       drops non-`ok` locators (fixture: delete source between recall and
       render).
 - [x] Data-flow table rendered in the panel before first ingest.
-- [x] `autoRecall` off: ContextView goldens unchanged.
+- [x] Explicit tool / planner / Codex recall only; no automatic ContextView injection setting.
 - [x] FTS5 spike and Node 22 fallback evidence documented in the implementation ledger.
 
 ## Decision-record delta (apply on merge)

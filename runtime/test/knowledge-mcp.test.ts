@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import {mkdtemp, realpath, rm} from 'node:fs/promises'
+import {mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
+import {KnowledgeService} from '../src/knowledge/service.js'
 import {KnowledgeStoreClient} from '../src/knowledge/store-client.js'
 import {request as httpRequest} from 'node:http'
 import {test} from 'node:test'
@@ -300,4 +301,35 @@ test('real store stale chunks remain readable through MCP', async () => {
     assert.equal(result.isError, undefined)
     assert.deepEqual(structured(result), {trust: 'untrusted_external', status: 'stale', locator, source_id: 'source-a', title: 'Source', heading_path: 'Root', text: 'Current text', note: 'source_reindexed'})
   } finally {await peer.close(); await store.close(); await rm(directory, {recursive: true, force: true})}
+})
+
+test('real file reindex keeps the original MCP reference stale until source removal', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-update-'))
+  const file = join(directory, 'manual.md')
+  const service = new KnowledgeService({store: new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite')}),
+    embedding: {id: 'embed-a', dims: 2, embed: texts => Promise.resolve(texts.map(() => new Float32Array([1, 0])))}})
+  await service.open()
+  const peer = await local(service)
+  try {
+    await writeFile(file, '# Before\nOriginal content')
+    await service.handle('knowledge.ingest', {kind: 'file', locator: file, consent: true})
+    const hits = structured(await peer.client.callTool({name: 'recall', arguments: {query: 'Original'}})).hits as {locator: string; source_id: string}[]
+    const hit = hits[0]!
+    const before = (await service.listSources())[0]!
+    await writeFile(file, '# After\nUpdated content')
+    assert.deepEqual(await service.handle('knowledge.reindex', {id: hit.source_id, consent: true}), {ok: true, id: hit.source_id})
+    const after = (await service.listSources())[0]!
+    assert.equal(after.id, before.id)
+    assert.notEqual(after.fingerprint, before.fingerprint)
+    const current = structured(await peer.client.callTool({name: 'get_chunk', arguments: {locator: hit.locator}}))
+    assert.equal(current.status, 'stale')
+    assert.equal(current.title, 'manual.md')
+    assert.equal(current.heading_path, 'After')
+    assert.match(current.text as string, /Updated content/u)
+    const next = structured(await peer.client.callTool({name: 'recall', arguments: {query: 'Updated'}})).hits as {locator: string}[]
+    assert.notEqual(next[0]!.locator, hit.locator)
+    assert.equal(structured(await peer.client.callTool({name: 'get_chunk', arguments: {locator: next[0]!.locator}})).status, 'ok')
+    await service.handle('knowledge.remove', {id: hit.source_id})
+    assert.equal(structured(await peer.client.callTool({name: 'get_chunk', arguments: {locator: hit.locator}})).status, 'gone')
+  } finally {await peer.close(); await service.close(); await rm(directory, {recursive: true, force: true})}
 })
