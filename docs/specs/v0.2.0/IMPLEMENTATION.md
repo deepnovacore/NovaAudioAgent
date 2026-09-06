@@ -624,10 +624,10 @@ requires an explicit discovered Codex binary, while that invocation supplied the
 Capability-mode smoke proves the Electron utility path with an isolated dummy provider; neither it
 nor synthetic wake audio substitutes for human speech or Windows installed Worker/WASM acceptance.
 Final local verification (Node 24.8.0, Electron 43.2.0): `check` passed; runtime 2355 passed /
-5 platform skips; desktop 883 passed / 3 platform skips; CLI 21/21. Checks ran serially to avoid
+5 platform skips; desktop 884 passed / 3 platform skips; CLI 21/21. Checks ran serially to avoid
 shared `runtime/dist` races. Three caption source assertions were updated to the generated wire
 constants after the full desktop run exposed their old literals. Capability utility smoke passed.
-Parity covers 226 files / 388 occurrences; the expanded boundary baseline is 215 occurrences.
+Parity covers 226 files / 383 occurrences; the expanded boundary baseline is 215 occurrences.
 
 Settings follow-up review found and closed two ownership bugs: repeated rollback now refuses to
 overwrite externally changed capability bytes, and a desktop-only save cannot clear pending recovery
@@ -640,3 +640,15 @@ A normal utility-smoke retry with the discovered Codex binary and existing `.env
 not passed. Source-startup smoke used its default skip. Human speech, long standby, installed Windows
 wake/Worker/WASM and all feature acceptance remain pending for main. Final dev CI is verified against
 the pushed commit and reported with its Actions run in the integration task result.
+
+The final failure-path review also reproduced recovery-journal deletion failure after successful
+backend activation. Recovery now confirms the candidate backend stopped before changing files;
+if stopping fails, candidate files and the recovery record remain together. The same guard covers
+subsequent retry/save calls. Its focused real-file/main-helper tests passed before the desktop rerun.
+
+CI on `86c3210` passed macOS and Ubuntu but exposed a Windows registry-cache bug: equal-length
+consecutive edits can share timestamps. The panel now reuses the existing content revision instead
+of filesystem metadata. A fixed-timestamp regression reproduced the failure and then passed;
+74 relevant checks passed. The final check, full desktop (884 pass / 3 skip), CLI (21/21) and
+capability utility smoke were rerun successfully after these desktop-only fixes. Runtime code is
+unchanged from the 2355-pass run; CI reruns the complete runtime suite on the final pushed commit.
