@@ -79,6 +79,7 @@ import {
   createSafeStorageCodec,
   backendSettings,
   createSettingsWriter,
+  saveSettingsRecovery, restoreSettingsRecovery, clearSettingsRecovery,
   hasPlaintextSecret,
   loadSettings,
   orbSettings,
@@ -159,6 +160,7 @@ let runtimeCapabilities = null
 let capabilityEditorCache = null
 let backendControl = null
 let settingsApplyStatus = 'idle'
+let settingsRecoveryAvailable = false
 let mainWindow = null
 let boardWindow = null
 let settingsWindow = null
@@ -270,6 +272,7 @@ function settingsView() {
     backendDiagnostic: backendStatus.diagnostic,
     backendRetryInMs: backendStatus.retryInMs,
     settingsApplyStatus,
+    settingsRecoveryAvailable,
     managedWorkspaces: managedWorkspacesView(),
     microphoneStatus,
     wakeWord: wakeWord?.snapshot(),
@@ -320,6 +323,38 @@ const settingsWriter = createSettingsWriter({
   save: next => saveSettings(settingsFile(), next),
   codec: secretCodec,
 })
+
+function publishCommittedSettings() {
+  capabilityEditorCache = null
+  wakeWord?.configure(currentSettings)
+  settingsGeneration += 1
+  sendToOrb('nova:settings:changed', orbSettings(currentSettings))
+  sendToSettings('nova:settings:changed', settingsView())
+}
+
+async function rollbackSettings(refresh = true) {
+  const restored = await restoreSettingsRecovery(settingsFile())
+  if (restored === null) return
+  currentSettings = restored
+  settingsRecoveryAvailable = true
+  if (refresh) await refreshDesktopConfiguration()
+}
+
+async function completeSettings() {
+  await clearSettingsRecovery(settingsFile())
+  settingsRecoveryAvailable = false
+}
+
+async function restartSettingsBackend(committedConfiguration) {
+  const externalWorkspaceReset = committedConfiguration?.externalWorkspaceReset === true
+  const recovery = externalWorkspaceReset
+    ? await managedWorkspaceBackendRecovery.retry()
+    : await managedWorkspaceBackendRecovery.restart()
+  if (recovery.status !== (externalWorkspaceReset ? 'retried' : 'restarted')
+    || backendSupervisor?.status().state !== 'connected') {
+    throw new Error('backend activation unavailable')
+  }
+}
 
 // The orb is a single fixed size, so "which display's work area applies"
 // depends only on where the candidate position would put its center.
@@ -776,7 +811,10 @@ function initializeDesktopBootstrap(cameraSource) {
 }
 
 async function startSelectedCamera(camera, backendKind, smokeChannel) {
-  currentSettings = await loadSettings(settingsFile())
+  const recovered = await restoreSettingsRecovery(settingsFile())
+  settingsRecoveryAvailable = recovered !== null
+  currentSettings = recovered ?? await loadSettings(settingsFile())
+  if (recovered) publishSettingsApplyStatus('restart_failed')
   await refreshDesktopConfiguration()
   initializeDesktopBootstrap(camera.source)
   const launchId = randomBytes(8).toString('hex')
@@ -979,6 +1017,20 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
       throw new Error('backend retry rejected')
     }
+    if (settingsRecoveryAvailable) {
+      const applied = await applySettingsTransaction({
+        coordinator: lifecycleCoordinator, patch: null,
+        write: async () => { await rollbackSettings(); return currentSettings },
+        publishCommitted: publishCommittedSettings,
+        prepareConfiguration: prepareDesktopConfiguration,
+        commitConfiguration: commitDesktopConfiguration,
+        discardConfiguration: discardDesktopConfiguration,
+        restartBackend: restartSettingsBackend,
+        rollback: rollbackSettings, complete: completeSettings,
+        publishStatus: publishSettingsApplyStatus,
+      })
+      return {...settingsView(), ...applied}
+    }
     const recovery = await coordinateBackendRetry({
       coordinator: lifecycleCoordinator,
       retry: () => managedWorkspaceBackendRecovery.retry(),
@@ -1076,9 +1128,9 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings update rejected')
     }
-    // Plaintext values exist only in the inbound patch and the queued writer.
-    // Every later callback receives committed settings or prepared public
-    // configuration, and every reply contains secret key names only.
+    // Plaintext keys travel from the panel into the writer, and are decrypted
+    // only in main for validation or backend spawn. Public settings replies
+    // contain presence flags and rejected key names, never secret values.
     const previousSettings = currentSettings
     let capabilitiesChanged = false
     const applied = await applySettingsTransaction({
@@ -1088,27 +1140,29 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       patch: payload,
       write: async value => {
         try {
+          if (settingsRecoveryAvailable) await rollbackSettings(false)
           const commit = parseSettingsCommit(value)
           capabilitiesChanged = commit.capabilitiesDocument !== undefined
           return await settingsWriter(commit.settingsPatch ?? {}, next => {
             validatePreparedSettings(commit.settingsPatch, publicSettings(next))
-            if (capabilityPath(next, process.env) === resolve(settingsFile())) throw invalidCommit('capability_settings_path_conflict')
+            if ([resolve(settingsFile()), resolve(`${settingsFile()}.recovery`)].includes(capabilityPath(next, process.env))) throw invalidCommit('capability_settings_path_conflict')
             const document = commit.capabilitiesDocument ?? readCapabilityDocument(next, process.env)
             const secrets = decryptSecretsForSpawn(next, secretCodec)
             return prepareCapabilityCommit({settings: next, sourceSettings: currentSettings, document: commit.capabilitiesDocument, expectedRevision: commit.capabilitiesBaseRevision,
-              environment: capabilityEnvironment(next, secrets, process.env, document), knownSecrets: Object.values(secrets)})
+              environment: capabilityEnvironment(next, secrets, process.env, document), knownSecrets: Object.values(secrets),
+              beforeWrite: async capability => {
+                await saveSettingsRecovery(settingsFile(), currentSettings, capability)
+                settingsRecoveryAvailable = true
+              }})
           })
         } catch (error) {
           console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
           throw error
         }
       },
-      publishCommitted: () => {
-        wakeWord?.configure(currentSettings)
-        settingsGeneration += 1
-        sendToOrb('nova:settings:changed', orbSettings(currentSettings))
-        sendToSettings('nova:settings:changed', settingsView())
-      },
+      publishCommitted: publishCommittedSettings,
+      rollback: rollbackSettings,
+      complete: completeSettings,
       prepareConfiguration: async () => {
         try {
           return await prepareDesktopConfiguration()
@@ -1119,16 +1173,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       },
       commitConfiguration: commitDesktopConfiguration,
       discardConfiguration: discardDesktopConfiguration,
-      restartBackend: async committedConfiguration => {
-        const externalWorkspaceReset = committedConfiguration?.externalWorkspaceReset === true
-        const recovery = externalWorkspaceReset
-          ? await managedWorkspaceBackendRecovery.retry()
-          : await managedWorkspaceBackendRecovery.restart()
-        if (recovery.status !== (externalWorkspaceReset ? 'retried' : 'restarted')
-          || backendSupervisor?.status().state !== 'connected') {
-          throw new Error('backend activation unavailable')
-        }
-      },
+      restartBackend: restartSettingsBackend,
       publishStatus: publishSettingsApplyStatus,
     })
     return {...settingsView(), ...applied}
@@ -1280,15 +1325,6 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       if (status.state === 'connected' && status.connection !== previousConnection) {
         backendGeneration += 1
         if (runtimeCapabilities) runtimeCapabilities = {...runtimeCapabilities, state: 'running'}
-      }
-      if (status.state === 'connected' && settingsApplyStatus === 'restarting') {
-        settingsApplyStatus = 'applied'
-      } else if (
-        settingsApplyStatus === 'restarting'
-        && ['configuration_required', 'authentication_failed', 'unavailable', 'stopped']
-          .includes(status.state)
-      ) {
-        settingsApplyStatus = 'restart_failed'
       }
       if (runtimeCapabilities?.state === 'running' && status.state !== 'connected') runtimeCapabilities = {...runtimeCapabilities, state: 'stopped'}
       sendToSettings('nova:settings:changed', settingsView())

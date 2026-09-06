@@ -57,6 +57,7 @@ let workspaceBusy = false
 const statusLabel = document.querySelector('#status')
 const restartNotice = document.querySelector('#restart-notice')
 const warning = document.querySelector('#keyring-warning')
+const settingsRestore = document.querySelector('#settings-restore')
 const settingsSave = document.querySelector('#settings-save')
 const workspaceOpenCurrent = document.querySelector('#workspace-open-current')
 const workspaceClearCurrent = document.querySelector('#workspace-clear-current')
@@ -188,6 +189,7 @@ function updateButtons() {
   workspaceClearCurrent.disabled = state.currentDisabled
   workspaceClearAll.disabled = state.workspaceDisabled
   workspaceRetryRecovery.disabled = state.recoveryDisabled
+  settingsRestore.disabled = controllerState.busy || workspaceBusy || currentView?.managedWorkspaces?.lifecycleBusy === true
 }
 
 function render(view, _drafts, state) {
@@ -249,6 +251,7 @@ function render(view, _drafts, state) {
       ? WORKSPACE_STATUS_TEXT.recovery_failed
       : WORKSPACE_STATUS_TEXT.rollback_pending
   }
+  settingsRestore.hidden = view.settingsRecoveryAvailable !== true
   updateButtons()
 }
 
@@ -260,11 +263,15 @@ function updateRestartNotice(phase) {
     return
   }
   if (phase === 'failed') {
-    restartNotice.textContent = '已保存·未生效：后台仍在使用旧配置'
+    restartNotice.textContent = '未生效：请恢复上次可用设置，再检查未保存的草稿'
     return
   }
   if (phase === 'restart_failed') {
-    restartNotice.textContent = '已保存·后端未启动：请检查后台状态后重试'
+    restartNotice.textContent = '后端未启动：上次设置已保留，请恢复后端'
+    return
+  }
+  if (phase === 'recovery_failed') {
+    restartNotice.textContent = '设置恢复未完成，请重试恢复；恢复记录已保留'
     return
   }
   restartNotice.textContent = '设置已生效'
@@ -426,6 +433,18 @@ async function runWorkspaceAction(action) {
     updateButtons()
   }
 }
+
+settingsRestore.addEventListener('click', async () => {
+  workspaceBusy = true
+  updateButtons()
+  try {
+    const view = await api.retryBackend()
+    controller.syncView(view, {trackRestart: false})
+    statusLabel.textContent = view.settingsRecoveryAvailable === false && view.settingsApplyStatus === 'applied'
+      ? '上次设置已恢复并生效；草稿尚未保存' : '恢复未完成，请重试'
+  } catch { statusLabel.textContent = '恢复未完成，请重试' }
+  finally { workspaceBusy = false; updateButtons() }
+})
 
 workspaceOpenCurrent.addEventListener('click', () => {
   void runWorkspaceAction(() => api.openCurrentManagedWorkspace())

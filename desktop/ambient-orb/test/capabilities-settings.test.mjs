@@ -161,10 +161,10 @@ test('combined operation validates settings, returns invalid/busy unchanged and 
   release(); await active
   for (const [failure, operationStatus] of [['prepareConfiguration', 'failed'], ['restartBackend', 'restart_failed']]) {
     const result = await applySettingsTransaction({...options, [failure]: async () => {throw Error('failure')}})
-    assert.equal(result.saved, true); assert.equal(result.operationStatus, operationStatus)
+    assert.equal(result.saved, false); assert.equal(result.operationStatus, operationStatus)
   }
   assert.equal((await applySettingsTransaction(options)).operationStatus, 'applied')
-  assert.equal(saved, 3); assert.equal(published, 3)
+  assert.equal(saved, 3); assert.equal(published, 5)
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), commit.capabilitiesDocument)
 })
 test('actual launch and validator share capability credentials and new registry generation', async t => {
@@ -253,4 +253,52 @@ test('HOME and USER references are ordinary data while arbitrary authentication 
   assert.ok(result.tools[0].description.includes('/home/alice'))
   assert.ok(result.tools[0].description.includes('application/json'))
   assert.ok(!JSON.stringify(result).includes(environment.CUSTOM_AUTH))
+})
+
+test('failed backend activation and interrupted saves restore settings, sealed secrets, and capability-only changes', async t => {
+  const {applySettingsTransaction} = await import('../src/main/settings-apply.mjs')
+  const {saveSettings, loadSettings, saveSettingsRecovery, restoreSettingsRecovery, clearSettingsRecovery,
+    applySettingsUpdate} = await import('../src/main/settings-store.mjs')
+  const {createLifecycleCoordinator} = await import('../src/main/lifecycle-coordinator.mjs')
+  for (const capabilitiesOnly of [false, true]) {
+    const root = await fixture(t), file = join(root, 'settings.json'), cap = join(root, 'cap.json')
+    const originalBytes = ' {"version":1,"modules":{"search":{"enabled":false}}} \n'
+    await writeFile(cap, originalBytes)
+    // Stub the platform keyring to verify the stored snapshot carries ciphertext, not inbound keys.
+    const sealedCodec = {available: () => true, encrypt: () => Buffer.from('sealed-old-key')}
+    let current = await saveSettings(file, applySettingsUpdate({...SETTINGS_DEFAULTS, capabilitiesConfigPath: cap},
+      {secrets: {dashscopeApiKey: 'original-key'}}, sealedCodec))
+    const previous = structuredClone(current)
+    const writer = createSettingsWriter({getCurrent: () => current, codec: sealedCodec,
+      commit: next => { current = next }, save: next => saveSettings(file, next)})
+    const options = {
+      coordinator: createLifecycleCoordinator(), patch: capabilitiesOnly ? {} : {integratedModel: 'bad-model', secrets: {dashscopeApiKey: ''}},
+      write: patch => writer(patch, next => prepareCapabilityCommit({settings: next, document,
+        beforeWrite: capability => saveSettingsRecovery(file, current, capability)})),
+      publishCommitted: () => {}, prepareConfiguration: async () => ({}), commitConfiguration: async () => ({}),
+      restartBackend: async () => { throw Error('backend rejected configuration') },
+      rollback: async () => { current = await restoreSettingsRecovery(file) },
+      complete: () => clearSettingsRecovery(file), publishStatus: () => {},
+    }
+    const failed = await applySettingsTransaction(options)
+    assert.equal(failed.saved, false)
+    assert.equal(failed.operationStatus, 'restart_failed')
+    assert.deepEqual(await loadSettings(file), previous)
+    assert.deepEqual(current.secrets, previous.secrets)
+    assert.equal(await readFile(cap, 'utf8'), originalBytes)
+    assert.equal((await readFile(`${file}.recovery`, 'utf8')).includes('original-key'), false)
+    // Simulate process death after both writes, before the transaction catches the failure.
+    await options.write(options.patch)
+    assert.notEqual(await readFile(cap, 'utf8'), originalBytes)
+    current = await restoreSettingsRecovery(file)
+    assert.deepEqual(current, previous)
+    assert.equal(await readFile(cap, 'utf8'), originalBytes)
+    // Explicit recovery activates restored settings and clears the persistent marker only afterward.
+    const recovered = await applySettingsTransaction({...options, patch: null,
+      write: async () => { current = await restoreSettingsRecovery(file); return current },
+      restartBackend: async () => { assert.deepEqual(current, previous) },
+    })
+    assert.equal(recovered.operationStatus, 'applied')
+    await assert.rejects(readFile(`${file}.recovery`), {code: 'ENOENT'})
+  }
 })

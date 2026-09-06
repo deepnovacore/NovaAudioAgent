@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import {isAbsolute, resolve} from 'node:path'
 
 // `normalizeSettings` always rebuilds and stamps the latest shape, so an older file
 // keeps its provider choices while gaining packaged-desktop configuration.
@@ -716,14 +717,51 @@ export async function loadSettings(file) {
 
 export async function saveSettings(file, settings) {
   const normalized = normalizeSettings(settings)
+  await saveJson(file, normalized)
+  return normalized
+}
+
+async function saveJson(file, value) {
+  await replaceFile(file, JSON.stringify(value))
+}
+
+async function replaceFile(file, bytes) {
   // Same-directory tmp + rename keeps a crash from truncating the live file;
   // the random suffix keeps two writers from colliding on one tmp name.
   const temporary = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
   try {
-    await writeFile(temporary, JSON.stringify(normalized), { encoding: 'utf8', mode: 0o600 })
+    await writeFile(temporary, bytes, { encoding: 'utf8', mode: 0o600 })
     await rename(temporary, file)
   } finally {
     await unlink(temporary).catch(() => {})
   }
-  return normalized
+}
+
+// Persist the sealed pre-transaction settings before either live file changes.
+// A crash leaves this record pending; startup restores it before spawning.
+export async function saveSettingsRecovery(file, settings, capability = null) {
+  await saveJson(`${file}.recovery`, {version: 1, settings: normalizeSettings(settings), capability})
+}
+
+export async function restoreSettingsRecovery(file) {
+  let recovery
+  try { recovery = JSON.parse(await readFile(`${file}.recovery`, 'utf8')) }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error }
+  if (recovery?.version !== 1 || !isRecord(recovery.settings)) throw new Error('invalid settings recovery')
+  const capability = recovery.capability
+  if (capability !== null) {
+    if (!isRecord(capability) || typeof capability.path !== 'string' || !isAbsolute(capability.path)
+      || [resolve(file), resolve(`${file}.recovery`)].includes(resolve(capability.path))
+      || (capability.previous !== null && (typeof capability.previous !== 'string'
+        || (capability.previous !== '' && !BASE64.test(capability.previous))))) throw new Error('invalid capability recovery')
+    if (capability.previous === null) await unlink(capability.path).catch(error => { if (error.code !== 'ENOENT') throw error })
+    else await replaceFile(capability.path, Buffer.from(capability.previous, 'base64'))
+  }
+  const settings = await saveSettings(file, recovery.settings)
+  // Keep the record until restored settings have activated successfully.
+  return settings
+}
+
+export async function clearSettingsRecovery(file) {
+  await unlink(`${file}.recovery`).catch(error => { if (error.code !== 'ENOENT') throw error })
 }

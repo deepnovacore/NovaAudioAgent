@@ -564,8 +564,8 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(html, /<p id="restart-notice" class="warning" hidden><\/p>/)
   assert.match(script, /已保存，后台正在重启并重新连接/u)
   assert.match(script, /设置已生效/u)
-  assert.match(script, /已保存·未生效：后台仍在使用旧配置/u)
-  assert.match(script, /已保存·后端未启动：请检查后台状态后重试/u)
+  assert.match(script, /未生效：请恢复上次可用设置/u)
+  assert.match(script, /后端未启动：上次设置已保留/u)
   assert.match(controllerScript, /已保存·未生效/u)
   assert.match(controllerScript, /已保存·后端未启动/u)
   assert.match(controllerScript, /announce\('complete'\)/)
@@ -854,7 +854,7 @@ test('the Orb receives one committed palette notification only inside the save t
   assert.equal(notifications.length, 1)
   const handler = mainScript.slice(mainScript.indexOf("ipcMain.handle('nova:settings:set'"))
   const body = handler.slice(0, handler.indexOf('\n  })'))
-  assert.match(body, /publishCommitted: \(\) => \{[\s\S]*sendToOrb\(/)
+  assert.match(body, /publishCommitted: publishCommittedSettings/)
   assert.ok(body.indexOf('write: async value') < body.indexOf('publishCommitted:'))
 })
 
@@ -887,4 +887,23 @@ test('a stale capability document keeps its draft and asks the user to reopen se
   assert.equal((await controller.save()).saved, false)
   assert.equal(controller.snapshot().dirty, true)
   assert.match(note, /关闭并重新打开设置/u)
+})
+
+test('failed application exposes recovery without clearing unsaved drafts or accepting secret changes', async () => {
+  const {createSettingsController} = await import('../src/renderer/settings-controller.mjs')
+  const controller = createSettingsController({
+    api: {set: async () => ({integratedModel: 'previous-model', saved: false,
+      settingsApplyStatus: 'restart_failed', settingsRecoveryAvailable: true})},
+    render: () => {}, status: () => {},
+  })
+  controller.setView({integratedModel: 'previous-model'})
+  controller.stage({integratedModel: 'bad-model'})
+  const result = await controller.save({dashscopeApiKey: 'new-key'})
+  assert.equal(result.saved, false)
+  assert.deepEqual(result.acceptedSecrets, [])
+  assert.equal(controller.snapshot().dirty, true)
+  assert.equal(controller.snapshot().view.settingsRecoveryAvailable, true)
+  assert.equal(controller.snapshot().view.integratedModel, 'bad-model')
+  assert.match(html, /id="settings-restore" hidden>恢复上次可用设置/)
+  assert.match(script, /settingsRestore\.addEventListener\('click',[\s\S]*api\.retryBackend\(\)/)
 })

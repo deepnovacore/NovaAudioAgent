@@ -140,7 +140,7 @@ async function replaceBytes(path, bytes) {
     await rename(temp, path)
   } finally { await unlink(temp).catch(() => {}) }
 }
-export async function prepareCapabilityCommit({settings, sourceSettings = settings, document, expectedRevision, environment = {}, knownSecrets = []}) {
+export async function prepareCapabilityCommit({settings, sourceSettings = settings, document, expectedRevision, environment = {}, knownSecrets = [], beforeWrite = async () => {}}) {
   const nextDocument = document ?? readCapabilityDocument(settings, environment)
   assertEditorSafe(nextDocument, [...knownSecrets, ...referencedCapabilitySecrets(nextDocument, environment)])
   let registry
@@ -148,7 +148,7 @@ export async function prepareCapabilityCommit({settings, sourceSettings = settin
   catch (error) { throw invalidCommit(error?.reason ?? 'invalid_capabilities_configuration') }
   const failed = registry.serverStatuses.find(server => server.status === 'failed')
   if (failed) throw invalidCommit(failed.reason ?? 'invalid_mcp_server')
-  if (document === undefined) return
+  if (document === undefined) { await beforeWrite(null); return }
   const path = capabilityPath(settings, environment)
   let previous = null
   try { previous = readFileSync(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
@@ -163,6 +163,7 @@ export async function prepareCapabilityCommit({settings, sourceSettings = settin
     catch { throw invalidCommit('capabilities_document_changed') }
     if (expectedRevision !== currentRevision) throw invalidCommit('capabilities_document_changed')
   }
+  await beforeWrite({path, previous: previous === null ? null : previous.toString('base64')})
   await replaceBytes(path, Buffer.from(JSON.stringify(document)))
   return {rollback: () => previous === null ? unlink(path) : replaceBytes(path, previous)}
 }

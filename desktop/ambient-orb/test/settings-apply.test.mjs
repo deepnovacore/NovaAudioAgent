@@ -24,6 +24,7 @@ function harness(overrides = {}) {
         return {rejectedSecrets: ['openaiApiKey']}
       },
       publishCommitted: () => calls.push('publish_committed'),
+      rollback: async () => calls.push('rollback'),
       prepareConfiguration: async () => {
         calls.push('prepare_configuration')
         return Object.freeze({config: 'prepared'})
@@ -65,11 +66,11 @@ test('write failure performs no refresh or restart', async () => {
     rejectedSecrets: [],
     restarted: false,
   })
-  assert.deepEqual(calls, ['write'])
+  assert.deepEqual(calls, ['write', 'rollback', 'publish_committed'])
   assert.deepEqual(statuses, ['saving', 'failed'])
 })
 
-test('configuration failure retains the durable write without restarting', async () => {
+test('configuration failure restores the previous durable settings without restarting', async () => {
   const {calls, statuses, options} = harness({
     prepareConfiguration: async () => {
       calls.push('prepare_configuration')
@@ -77,12 +78,12 @@ test('configuration failure retains the durable write without restarting', async
     },
   })
   assert.deepEqual(await applySettingsTransaction(options), {
-    saved: true,
+    saved: false,
     operationStatus: 'failed',
     rejectedSecrets: ['openaiApiKey'],
     restarted: false,
   })
-  assert.deepEqual(calls, ['write', 'publish_committed', 'prepare_configuration'])
+  assert.deepEqual(calls, ['write', 'publish_committed', 'prepare_configuration', 'rollback', 'publish_committed'])
   assert.deepEqual(statuses, ['saving', 'refreshing', 'failed'])
 })
 
@@ -106,14 +107,14 @@ test('an abandoned prepared configuration explicitly discards its maintenance ow
     },
   })
   assert.deepEqual(await applySettingsTransaction(options), {
-    saved: true,
+    saved: false,
     operationStatus: 'failed',
     rejectedSecrets: ['openaiApiKey'],
     restarted: false,
   })
   assert.deepEqual(calls, [
     'write', 'publish_committed', 'prepare_configuration',
-    'commit_configuration:true', 'discard_configuration:true', 'maintenance_close',
+    'commit_configuration:true', 'discard_configuration:true', 'maintenance_close', 'rollback', 'publish_committed',
   ])
   assert.deepEqual(statuses, ['saving', 'refreshing', 'failed'])
 })
@@ -126,15 +127,16 @@ test('restart failure is bounded and reported after the committed refresh', asyn
     },
   })
   assert.deepEqual(await applySettingsTransaction(options), {
-    saved: true,
+    saved: false,
     operationStatus: 'restart_failed',
     rejectedSecrets: ['openaiApiKey'],
     restarted: false,
   })
   assert.deepEqual(calls, [
     'write', 'publish_committed', 'prepare_configuration',
-    'commit_configuration', 'restart_backend',
+    'commit_configuration', 'restart_backend', 'rollback', 'publish_committed',
   ])
+  assert.deepEqual(calls.slice(-2), ['rollback', 'publish_committed'])
   assert.deepEqual(statuses.at(-1), 'restart_failed')
 })
 
@@ -269,4 +271,15 @@ test('wake-only save ignores writer metadata when deciding whether to restart', 
   })
   assert.equal(result.restarted, false)
   assert.deepEqual(calls, ['saving', 'publish', 'applied'])
+})
+
+test('failed rollback remains recoverable and never reports applied', async () => {
+  const {options, statuses} = harness({
+    restartBackend: async () => {throw Error('activation failed')},
+    rollback: async () => {throw Error('recovery disk unavailable')},
+  })
+  const result = await applySettingsTransaction(options)
+  assert.equal(result.saved, false)
+  assert.equal(result.operationStatus, 'recovery_failed')
+  assert.equal(statuses.includes('applied'), false)
 })

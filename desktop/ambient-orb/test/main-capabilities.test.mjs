@@ -42,7 +42,7 @@ test('actual settings view decrypts only for an open panel and caches the public
   const context = vm.createContext({wakeWord: null, settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
     readCapabilityDocument: () => ({version: 1}), decryptSecretsForSpawn: () => {decrypts++; return {}},
     readCapabilityEditor: () => ({document: {version: 1}, revision: 'test-revision', problems: []}), capabilityEnvironment: () => ({}), capabilityPath, statSync,
-    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', managedWorkspacesView: () => ({}),
+    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
     microphoneStatus: 'unknown', desktopConfig: null, secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})
   vm.runInContext(view, context)
   context.settingsView(); context.settingsView()
@@ -66,7 +66,7 @@ test('actual main refreshes a hand-edited registry while the panel is open and o
     currentSettings: {capabilitiesConfigPath: path}, process: {env: {}}, readCapabilityDocument, classifyBackendFailure,
     decryptSecretsForSpawn: () => ({}), capabilityEnvironment: () => ({}),
     readCapabilityEditor: settings => ({document: readCapabilityDocument(settings, {}), revision: 'test-revision', problems: []}), capabilityPath, statSync,
-    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', managedWorkspacesView: () => ({}),
+    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
     microphoneStatus: 'unknown', desktopConfig: {modelConfigurationError: 'model_base_url_invalid'},
     secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})
   const open = source.slice(source.indexOf('function openSettingsWindow('), source.indexOf('function createTray('))

@@ -38,8 +38,18 @@ export async function applySettingsTransaction({
   restartBackend,
   publishStatus,
   needsBackendRestart = () => true,
+  rollback = async () => {},
+  complete = async () => {},
 }) {
   const coordinated = await coordinator.run('settings_save', async () => {
+    async function failed(status, rejectedSecrets) {
+      try {
+        await rollback()
+      } catch { status = 'recovery_failed' }
+      publishCommitted()
+      publishStatus(status)
+      return result(false, status, rejectedSecrets)
+    }
     publishStatus('saving')
     let written
     try {
@@ -49,13 +59,13 @@ export async function applySettingsTransaction({
         publishStatus('invalid')
         return {...result(false, 'invalid', Object.freeze([])), problems: error.problems}
       }
-      publishStatus('failed')
-      return result(false, 'failed', Object.freeze([]))
+      return failed('failed', Object.freeze([]))
     }
 
     const rejectedSecrets = rejectedSecretNames(written)
     publishCommitted(written)
     if (!needsBackendRestart()) {
+      try { await complete() } catch { return failed('failed', rejectedSecrets) }
       publishStatus('applied')
       return result(true, 'applied', rejectedSecrets)
     }
@@ -70,17 +80,16 @@ export async function applySettingsTransaction({
       preparedOwned = false
     } catch {
       if (preparedOwned) await discardConfiguration(prepared).catch(() => undefined)
-      publishStatus('failed')
-      return result(true, 'failed', rejectedSecrets)
+      return failed('failed', rejectedSecrets)
     }
 
     publishStatus('restarting')
     try {
       await restartBackend(committedConfiguration)
     } catch {
-      publishStatus('restart_failed')
-      return result(true, 'restart_failed', rejectedSecrets)
+      return failed('restart_failed', rejectedSecrets)
     }
+    try { await complete() } catch { return failed('failed', rejectedSecrets) }
     publishStatus('applied')
     return result(true, 'applied', rejectedSecrets, true)
   })

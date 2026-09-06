@@ -104,15 +104,12 @@ Doctor / CLI validate both layers.
 
 ## Coordinated commit
 
-Today `applySettingsTransaction`
+`applySettingsTransaction`
 ([`settings-apply.mjs`](../../../desktop/ambient-orb/src/main/settings-apply.mjs))
-runs one `coordinator.run('settings_save')` that writes the settings file,
-publishes it, prepares and commits the backend configuration, and restarts the
-backend. It can return `busy` (nothing written), `failed` after the write
-(saved, not applied), or `restart_failed` (saved, committed, backend down). The
-earlier draft of this volume said “write `capabilities.json`, then run the
-transaction”, which would let the registry change land on disk while the
-settings step returned `busy`. That ordering is withdrawn.
+runs one `coordinator.run('settings_save')` for validation, durable recovery
+snapshot, file writes, configuration preparation, and backend activation. `busy`
+changes neither file. Failed activation restores the preceding files; saving is
+acknowledged only when the requested settings have applied.
 
 Rules:
 
@@ -133,19 +130,15 @@ Rules:
    `${VAR}` presence, per-server rules from 03). Any validation failure returns
    `{saved:false, operationStatus:'invalid', problems:[…]}` with nothing
    written; problems carry bounded, secret-free text for the panel.
-3. **Write both atomically enough.** Write each file to a temp sibling and
-   rename; write `capabilities.json` first, then the settings file. If the
-   second write fails, restore the previous `capabilities.json` from the
-   in-memory snapshot taken at step start, then report `failed` with
-   `saved:false`.
-4. **Saved vs applied.** After both writes succeed the result is at least
-   `saved:true`. `operationStatus` then follows the existing lattice:
-   `applied` (backend restarted on the new files), `failed` (prepare/commit
-   failed; disk changed, running backend still on old config),
-   `restart_failed` (committed but backend down). The panel must render the
-   three states differently: 已保存·未生效 for `failed`, 已保存·后端未启动 for
-   `restart_failed`, 已生效 for `applied`. It must never show 已生效 unless the
-   backend restarted with the new configuration.
+3. **Write both atomically enough.** Persist the recovery record first, then
+   write `capabilities.json` and settings using temporary siblings and rename.
+   On failure restore the exact prior capability bytes and sealed settings.
+   Keep the recovery record until successful activation, including across crashes.
+4. **Saved vs applied.** `saved:true` requires successful application. Failures
+   return `saved:false` with `failed` (prepare/commit failure), `restart_failed`
+   (backend activation failure), or `recovery_failed` (restoration incomplete).
+   The panel retains drafts and exposes the recovery action. It must never show
+   已生效 unless backend activation completed or the change is desktop-only.
 5. **Effective view.** `publishCommitted` carries both documents so the panel’s
    displayed state is the on-disk state, and the backend status view says which
    configuration generation the running child was started with. Three
@@ -156,6 +149,33 @@ Rules:
 
 Doctor reads the same validator, so `novaaudio doctor` and the panel disagree
 only if the file changed between runs.
+
+## Failed activation and recovery
+
+A settings transaction writes an atomic `settings.json.recovery` record before
+changing settings or capabilities. It contains the previous normalized settings
+(including the already sealed secret entries) and the exact previous bytes, or
+absence, of the capability file being replaced. The existing atomic file writers
+remain the commit mechanism; no secret plaintext is returned to the renderer.
+
+Preparation, commit, or backend activation failure returns `saved: false` and a
+separate `operationStatus` (`failed`, `restart_failed`, or `recovery_failed`). Main
+restores the previous files and configuration, retains the recovery record, and
+exposes **恢复上次可用设置**. That action uses the existing coordinated backend
+retry entry point, restores the files again, prepares the restored configuration,
+and clears the record only after backend activation succeeds. Failed recovery
+keeps the record and does not report success. Unsaved panel drafts remain drafts;
+failed secret updates are not acknowledged as saved.
+
+Startup restores a pending record before preparing configuration or spawning the
+backend, so an interrupted transaction cannot replay the rejected settings on the
+next launch. An unreadable recovery record fails startup rather than selecting
+the unconfirmed configuration. A successful save removes the record after
+activation; desktop-only wake/appearance changes retain their immediate apply
+path without restarting the backend. The transaction's `publishStatus` callback
+is the sole application-status writer; supervisor connection notifications only
+update backend status. The snapshot preserves the preceding committed settings;
+it does not claim a live provider or hardware acceptance test has passed.
 
 ## Panel IA
 

@@ -180,7 +180,7 @@ test('settings IPC is sender-validated and answers from main without an orb rela
 
   assert.match(source, /ipcMain\.handle\('nova:settings:get', async event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
   assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, payload\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
-  assert.match(source, /publishCommitted: \(\) => \{[\s\S]*sendToOrb\('nova:settings:changed', orbSettings\(currentSettings\)\)/)
+  assert.match(source, /function publishCommittedSettings\(\) \{[\s\S]*sendToOrb\('nova:settings:changed', orbSettings\(currentSettings\)\)/)
   // No requestId machinery: settings live in main, so nothing round-trips
   // through the orb renderer the way the memory board has to.
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
@@ -261,8 +261,10 @@ test('rollback recovery gates startup, save restart, rescan, and explicit backen
   assert.match(recoveryBody, /retryBackend:[\s\S]*backendSupervisor\.status\(\)\.state === 'connected'/)
   const settings = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
   const settingsHandler = settings.slice(0, settings.indexOf('\n  })'))
-  assert.match(settingsHandler, /managedWorkspaceBackendRecovery\.restart\(\)/)
-  assert.match(settingsHandler, /managedWorkspaceBackendRecovery\.retry\(\)/)
+  assert.match(settingsHandler, /restartBackend: restartSettingsBackend/)
+  const activation = source.slice(source.indexOf('async function restartSettingsBackend'))
+  assert.match(activation.slice(0, activation.indexOf('\n}')), /managedWorkspaceBackendRecovery\.restart\(\)/)
+  assert.match(activation.slice(0, activation.indexOf('\n}')), /managedWorkspaceBackendRecovery\.retry\(\)/)
 })
 
 test('no decrypted secret can reach the renderer or a log line', async () => {
@@ -363,7 +365,7 @@ test('the bootstrap payload carries only orb-owned settings', async () => {
 
   const assignment = source.slice(source.indexOf('bootstrap = Object.freeze({'))
   assert.match(assignment.slice(0, assignment.indexOf('})')), /settings: orbSettings\(currentSettings\)/)
-  assert.match(source, /currentSettings = await loadSettings\(settingsFile\(\)\)/)
+  assert.match(source, /currentSettings = recovered \?\? await loadSettings\(settingsFile\(\)\)/)
 })
 
 test('quitting drains the backend on the stdin sentinel instead of killing it', async () => {
@@ -452,9 +454,10 @@ test('a saved configuration reports bounded transaction phases without falsifyin
 
   assert.match(source, /settingsApplyStatus/)
   assert.match(handler, /publishStatus: publishSettingsApplyStatus/)
-  assert.match(handler, /backendSupervisor\?\.status\(\)\.state !== 'connected'/)
+  assert.match(handler, /restartBackend: restartSettingsBackend/)
+  assert.match(source, /backendSupervisor\?\.status\(\)\.state !== 'connected'/)
   assert.match(handler, /discardConfiguration: discardDesktopConfiguration/)
-  for (const phase of ['saving', 'refreshing', 'restarting', 'applied', 'failed', 'restart_failed']) {
+  for (const phase of ['saving', 'refreshing', 'restarting', 'applied']) {
     assert.match(apply, new RegExp(`publishStatus\\('${phase}'\\)`))
   }
   assert.match(handler, /return \{\.\.\.settingsView\(\), \.\.\.applied\}/)
@@ -760,10 +763,24 @@ test('settings IPC restarts for capability commits while wake-only updates stay 
       readCapabilityDocument: () => ({}), decryptSecretsForSpawn: () => ({}), secretCodec: {},
       capabilityEnvironment: () => ({}), prepareCapabilityCommit() {}, process: {env: {}},
       commitDesktopConfiguration() {}, discardDesktopConfiguration() {}, publishSettingsApplyStatus() {},
-      settingsView: () => ({}), console,
+      settingsView: () => ({}), console, settingsRecoveryAvailable: false,
+      publishCommittedSettings() {}, rollbackSettings() {}, completeSettings() {}, restartSettingsBackend() {},
     })
     vm.runInContext(handlerSource, context)
     await handler({sender}, payload)
     assert.equal(restart, expectedRestart)
   }
+})
+
+test('settings recovery precedes startup configuration and has one transaction status publisher', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const startup = source.slice(source.indexOf('async function startSelectedCamera'))
+  assert.ok(startup.indexOf('restoreSettingsRecovery(settingsFile())') < startup.indexOf('await refreshDesktopConfiguration()'))
+  const writers = source.match(/settingsApplyStatus\s*=(?!=)/gu)
+  assert.equal(writers.length, 2) // initial value and publishSettingsApplyStatus only
+  const retry = source.slice(source.indexOf("ipcMain.handle('nova:backend:retry'"))
+  const body = retry.slice(0, retry.indexOf('\n  })'))
+  assert.match(body, /if \(settingsRecoveryAvailable\)/)
+  assert.match(body, /coordinator: lifecycleCoordinator/)
+  assert.match(body, /rollback: rollbackSettings, complete: completeSettings/)
 })
