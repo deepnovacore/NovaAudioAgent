@@ -8,6 +8,15 @@ export const SOURCE_STARTUP_SMOKE_ARGUMENT = '--nova-source-startup-smoke-v1'
 const READY_LINE = '[desktop-smoke] source_window_ready\n'
 const MAX_OUTPUT = 16 * 1024
 
+export function assertSourceStartupSmokeResult(result, stdout, stderr) {
+  const ready = stdout.includes(READY_LINE)
+  if (!result.timedOut && !result.error && result.code === 0 && ready) return
+  const diagnostic = stderr.match(/\[desktop-diagnostic\] [a-z_]+(?: code=[a-z_]+)?/u)?.[0] ?? 'unavailable'
+  const loadError = stderr.match(/\b(?:ERR_[A-Z_]+|MODULE_NOT_FOUND|SyntaxError|ReferenceError|TypeError)\b/u)?.[0] ?? 'unavailable'
+  const failure = result.timedOut ? 'source_startup_smoke_timeout' : 'source_startup_smoke_failed'
+  throw new Error(`${failure} window_ready=${ready} diagnostic=${diagnostic} load_error=${loadError}`)
+}
+
 export function sourceStartupSmokeEnvironment(parentEnvironment, {home}) {
   const environment = {}
   for (const [key, value] of Object.entries(parentEnvironment)) {
@@ -67,12 +76,8 @@ export async function runSourceStartupSmoke({
     if (result.timedOut) {
       child.kill('SIGKILL')
       await new Promise(resolveExit => child.once('exit', resolveExit))
-      throw new Error('source_startup_smoke_timeout')
     }
-    if (result.error || result.code !== 0 || !stdout.includes(READY_LINE)) {
-      const diagnostic = stderr.match(/\[desktop-diagnostic\] [^\r\n]+/u)?.[0] ?? 'unavailable'
-      throw new Error(`source_startup_smoke_failed diagnostic=${diagnostic}`)
-    }
+    assertSourceStartupSmokeResult(result, stdout, stderr)
     return Object.freeze({status: 'passed'})
   } finally {
     if (child?.exitCode === null && child.signalCode === null) child.kill('SIGKILL')

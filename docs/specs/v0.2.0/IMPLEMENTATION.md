@@ -638,8 +638,8 @@ writer changing the file between read and rename; the limitation remains explici
 A normal utility-smoke retry with the discovered Codex binary and existing `.env` returned
 `configuration_required` before readiness. It is recorded as blocked by the current configuration,
 not passed. Source-startup smoke used its default skip. Human speech, long standby, installed Windows
-wake/Worker/WASM and all feature acceptance remain pending for main. Final dev CI is verified against
-the pushed commit and reported with its Actions run in the integration task result.
+wake/Worker/WASM and all feature acceptance remain pending for main. The latest dev CI result and
+its remaining startup failure are recorded below; this integration is not claimed fully CI-green.
 
 The final failure-path review also reproduced recovery-journal deletion failure after successful
 backend activation. Recovery now confirms the candidate backend stopped before changing files;
@@ -652,3 +652,18 @@ of filesystem metadata. A fixed-timestamp regression reproduced the failure and 
 74 relevant checks passed. The final check, full desktop (884 pass / 3 skip), CLI (21/21) and
 capability utility smoke were rerun successfully after these desktop-only fixes. Runtime code is
 unchanged from the 2355-pass run; CI reruns the complete runtime suite on the final pushed commit.
+
+CI on `da38a59` passed macOS and Ubuntu. Windows passed its desktop tests (867 pass / 20 platform
+skips), then timed out in the real Electron source-window startup smoke after 20 seconds on both
+attempts: [run 34020908356](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34020908356).
+The timeout discarded captured child diagnostics, so a follow-up retains safe error classifications
+and whether the window-ready marker arrived. It does not extend the deadline, retry automatically,
+or mark the Windows failure fixed. Local regression checks passed, followed by the complete desktop
+suite (885 pass / 3 platform skips). A direct macOS source-window smoke against this checkout also
+passed with a private, canonical temporary home; an initial `/var` alias was correctly rejected by
+the project-store path boundary. This does not validate Windows window startup.
+
+At the user's request, further paid CI retries stopped in favor of local verification. No Windows
+development machine is currently available. The diagnostic/evidence follow-up is committed with
+`[skip ci]`; the workflow remains enabled for ordinary dev pushes. Windows source startup remains
+an unresolved integration check, alongside the separately pending main/release acceptance items.
