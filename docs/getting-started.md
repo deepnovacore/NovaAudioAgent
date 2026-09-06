@@ -82,17 +82,28 @@ process, so project mode intentionally disables Codex prewarm. A persistent work
 refreshes its saved login when the host credential changes, using owner-only atomic files; a
 destination-only credential refresh is preserved while the host source is unchanged.
 
+## Local wake word
+
+Local Chinese wake-word detection is off by default. Enabling it in settings downloads the
+keyword model on first use and runs detection in a desktop Worker. The orb hides after 60
+idle seconds by default; choose `0` to disable auto-hide or `30..3600` seconds.
+The wake switch and idle timeout apply immediately without restarting the backend.
+
+macOS uses native capture; other platforms use browser capture as the fallback. While asleep,
+microphone frames go only to local wake detection. Explicit mute stops this capture too:
+speech cannot unmute the app, so unmute manually. Installed Windows Worker/WASM loading,
+model replacement and spoken wake-word acceptance remain pending.
+
+For manual Codex discovery on Windows select `codex.exe`, or the supported Node entry pairing
+`node.exe + codex.js`; `codex.cmd` is not a directly executable binary.
+
 ## Unsigned Windows development candidates
 
 The GitHub Actions workflow **Unsigned Windows packages** produces unsigned development
-candidates, not signed releases, and currently builds a Windows artifact only: download the
-`unsigned-win32-x64` workflow artifact and use the stable `nova-win32-x64.exe` inside it. Its
-Linux leg is temporarily disabled pending cross-platform CI restoration. Linux AppImage and deb
-targets exist as local packaging scripts (`npm run package:linux`) and as legs of the
-manual-dispatch release-candidate workflow (macOS, Windows, and Ubuntu legs; signing is required
-for macOS and Windows, while Linux artifacts are format-checked, not signed); the unsigned
-workflow does not currently publish Linux artifacts. Verify that a download came from the
-intended workflow run before using it.
+candidates. Download `unsigned-win32-x64` and use its `nova-win32-x64.exe`.
+Linux is deferred from release targets; Ubuntu still runs source builds and automated tests.
+Retained Linux packaging scripts do not establish a supported release candidate.
+Verify the intended workflow run before using a download.
 
 Windows may show a SmartScreen warning for the unsigned `nova-win32-x64.exe`. Keep SmartScreen and
 other Windows security protections enabled; verify the workflow run and file before deciding
@@ -333,3 +344,5 @@ FrontBrain gains only `mcp__nova_knowledge__recall`. To let Codex resolve full c
 Run `npm run smoke:knowledge --workspace @nova-audio-agent/runtime` with model credentials in the
 environment for a synthetic-document smoke. It sends no existing user corpus. macOS real embedding
 and MCP retrieval passed on 2026-09-05; Windows and human-voice acceptance remain separate gates.
+
+For opt-in live cascaded verification run `npm run smoke:cascaded --workspace @nova-audio-agent/runtime` with the provider credentials. The host controls response admission and request ownership; response origin is evidence, never authorization. Human acceptance remains pending.

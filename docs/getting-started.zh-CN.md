@@ -72,14 +72,25 @@ Workspace；未命名 Session 使用便于朗读的“任务 N”。每个工作
 owner-only 的原子文件刷新；如果只更新了 workspace home 内的凭据而宿主源没有变化，这次
 destination-only 更新会被保留。
 
+## 本地唤醒词
+
+本地中文唤醒默认关闭。在设置中启用后，首次使用会下载关键词模型；检测在桌面 Worker
+中完成。空闲默认 60 秒后隐藏悬浮球，时长可设 `0`（禁用自动隐藏）或 `30..3600` 秒。
+唤醒开关和空闲时长保存后立即生效，不重启后端。
+
+macOS 使用原生采集，其他平台使用浏览器采集回退。隐藏休眠时麦克风帧只送本地
+唤醒检测；显式静音会停止这条采集，不能靠说唤醒词解除静音，需手动解除。
+Windows 安装包的 Worker、WASM、模型替换和实际语音唤醒仍需验收。
+
+Windows 手动配置 Codex 时请选择 `codex.exe`，或通过支持的 Node 入口组合
+`node.exe + codex.js`；`codex.cmd` 不能作为直接可执行文件。
+
 ## 未签名 Windows 开发候选包
 
-GitHub Actions 工作流 **Unsigned Windows packages** 产出的是未签名开发候选包，而非已签名
-发布版，且目前只构建 Windows artifact：请下载 `unsigned-win32-x64` 工作流 artifact，并使用其中
-稳定的 `nova-win32-x64.exe`。其 Linux 分支在跨平台 CI 恢复之前暂时停用。Linux AppImage 与 deb
-仍以本地打包脚本（`npm run package:linux`）和仅手动触发的 release-candidate 工作流（macOS、
-Windows、Ubuntu 三平台；macOS 与 Windows 腿要求签名，Linux artifact 仅做格式校验、不签名）
-形式存在；unsigned 工作流目前不发布 Linux artifact。使用前先确认下载来自预期的工作流运行。
+GitHub Actions 工作流 **Unsigned Windows packages** 产出未签名开发候选包。下载
+`unsigned-win32-x64` artifact 并使用其中的 `nova-win32-x64.exe`。
+Linux 已暂时移出发布目标，Ubuntu 保留源码构建与自动化测试；已有 Linux 打包脚本
+不代表可发布的候选包。使用前确认下载来自预期的工作流运行。
 
 未签名的 `nova-win32-x64.exe` 在 Windows 上可能触发 SmartScreen 警告。请保持 SmartScreen 和其他
 Windows 安全防护开启；先核验工作流运行和文件，再决定是否使用该候选包。每个候选包的构建和验证
@@ -276,3 +287,5 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 凭据已在环境中时，可运行 `npm run smoke:knowledge --workspace @nova-audio-agent/runtime`，仅发送
 脚本内的合成文档，不读取用户知识库。macOS 真实 embedding→检索→MCP 引用已于 2026-09-05 通过；
 Windows 和真人语音验收仍需独立完成。
+
+级联管线的可选真实验证：`npm run smoke:cascaded --workspace @nova-audio-agent/runtime`。需要相应 provider 凭据；宿主控制 response admission 和请求归属，模型 response origin 不是授权。真人验收仍待完成。

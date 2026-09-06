@@ -24,7 +24,11 @@
 | Suggestion pool | The suggestion lifecycle: `pending → fired → cooldown + re-arm → pending`, plus `withdrawn` and lazy expiry; re-arming requires both an elapsed cooldown and new evidence on the cited channel |
 | Steering | Appending a new instruction to an in-flight Codex turn (`codex.steer` over the app-server transport) without terminating or restarting it |
 | App-server | The native `codex app-server` JSON-RPC process driven by the live Codex backend (`turn/start`, `turn/steer`) |
-| Wake reason | Causal metadata describing why a model slot should run |
+| Wake reason | Causal metadata describing why a model slot should run; distinct from an acoustic wake word |
+| Wake word | A local acoustic keyword that wakes the hidden desktop orb; never execution authorization |
+| Auto-hide / sleep | Idle desktop state that hides the orb and routes unmuted microphone frames to local wake detection |
+| Frontend instructions | Shared host-rendered context and speaking/tool rules in `frontend-instructions.ts` |
+| Response origin | Provider correlation evidence linking a response to a user turn or host request; not permission to execute |
 | Workspace | One isolated filesystem/Git project with its own Codex home; a Session never leaves its Workspace |
 | Session | One durable, resumable Codex thread inside exactly one Workspace |
 | Proposal / structured confirmation | Create, switch, and resume first produce a proposal; only the dedicated confirmation call with the exact proposal ID and a JSON boolean commits it — rejection, mismatch, or replay fails closed |

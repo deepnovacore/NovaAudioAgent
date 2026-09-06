@@ -4,23 +4,25 @@ Branch: `v0.2.0dev`. Contract: [00-overview.md](00-overview.md).
 Implement M1 first, keeping package versions unchanged. Use the existing Node/TypeScript
 runtime, one-shot confirmation controllers, desktop settings transaction and test harness.
 
-- [x] 01: resolve ask / ask_headless / yolo once; derive process, thread and
+- [ ] 01 acceptance (implementation and deterministic checks complete; live pending): resolve ask / ask_headless / yolo once; derive process, thread and
   effective-config validation from the same profile. Validate the pinned Codex
   0.152.0 schema and exact per-kind approval results, including denial and expiry.
-- [x] 06 (M1): settings v4 migration, env contract, permissions/intake/notification
+- [ ] 06 (M1) acceptance (implementation complete; complete-flow acceptance pending): settings v4 migration, env contract, permissions/intake/notification
   controls; preserve safe defaults, encrypted secrets and saved/applied distinction.
-- [x] 02: bound intake assessment and WorkOrder compilation, request revisions,
+- [ ] 02 acceptance (implementation complete; human voice pending): bound intake assessment and WorkOrder compilation, request revisions,
   independent planning/execution gates, existing confirmation and admission paths.
-- [x] 05: sanitized executor progress, bounded bubble stack and native bounds
+- [ ] 05 acceptance (implementation complete; supported-platform acceptance pending): sanitized executor progress, bounded bubble stack and native bounds
   reservation, persistent last-result access independent of notification mode.
-- [x] Integration: runtime and desktop builds/tests run serially; review authorization,
+- [ ] Release integration (dev deterministic checks are tracked separately): runtime and desktop builds/tests run serially; review authorization,
   stale-result rejection, config migration and renderer bounds before completion.
 
 Live macOS/headset and Windows acceptance remains distinct from deterministic tests.
+The checkboxes above denote full acceptance, not merely implemented code.
+The authoritative release declarations are in [RELEASE-GATE.md](RELEASE-GATE.md).
 
 ## M1.5 (inserted before M2)
 
-- [x] 07 executor boundary: move Codex under `executors/codex/`, `roles` /
+- [ ] 07 complete acceptance (deterministic fixture proof complete; shared M1 live rows pending): move Codex under `executors/codex/`, `roles` /
   `display_name` / `approvals` on the manifest, `ApprovalBroker` port, role-based
   routing, `executor.*` / `project.*` wire, fixture executor,
   `check:executor-boundary`. Behaviour identical to M1. Deterministic list green;
@@ -583,3 +585,42 @@ Wake integration candidate rebased onto `2356305`: root check passed (224 files,
 skips; source startup smoke skipped), and backend desktop transport passed 57/57.
 Capability document commits retain backend restart even when paired with wake-only
 settings; main/knowledge VM contexts retain the dev settings and quit contracts.
+
+## 2026-09-06 branch integration and repair
+
+Two history-preserving merges landed on dev: voice-focus (`2356305`) and Chinese wake word
+(`dfc687d`). Integration is separate from main/release acceptance; all human rows stay pending
+in [RELEASE-GATE.md](RELEASE-GATE.md). This supersedes earlier proposals to exempt M2–M4.
+
+- Voice: missing-turn/fence ownership, admitted-without-start terminal cleanup and deterministic
+  race barriers repaired. Host narration has no tools; correlated tool-result continuations retain
+  tools while dispatch/confirmation still require current user evidence. Shared frontend instructions
+  retain Knowledge MCP guidance. See [cascaded acceptance](../../handoffs/2026-09-05-cascaded-live-acceptance.md).
+- Wake: backed-up original work, three feature commits, per-frame epochs, interrupted-download
+  ownership cleanup, bounded Windows file retries, hidden fallback, heartbeat exception isolation,
+  and sherpa WASM unpack configuration. [Spec 11](11-local-wake-word.md) records English-only
+  exception and outstanding installed/human acceptance.
+- Dev repairs: maintenance quit drain 3 seconds; knowledge close rejects after 2 seconds even if
+  worker termination stalls; real content-digest migration and stale text through MCP; visible FTS
+  fallback; pending workspace maintenance journal replay on open. Capability writes already used
+  same-directory temporary files plus rename; the roadmap's non-atomic-write finding was disproved.
+- Fixture executor exercises the real host assembly, intake, project confirmation, progress,
+  approval and terminal flow. ESM tracing observed 252 loaded modules and no Codex executor load.
+  Busy speech uses manifest display names; retired FASTBRAIN prompt/goldens removed. The broader
+  case-insensitive boundary check retains an explicit counted compatibility baseline.
+- Shared pipeline composition, runtime-generated renderer frame types and deterministic delivery
+  snapshots preserve existing host state machines. Settings preserve encrypted recovery data before
+  writes, roll back failed activation, expose recovery, and publish application state from one owner.
+- CI now runs on dev pushes; Windows excludes six POSIX-only files instead of the runtime suite.
+  Linux is deferred from release targets, with Ubuntu source builds retained. CI on `ed7c933`
+  passed macOS, Windows and Ubuntu: [run 34019081236](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34019081236).
+- Local intermediate evidence: merged voice runtime 2337 pass / 5 platform skips; desktop 847 pass /
+  3 skips; CLI 21/21. Knowledge integration 41/41 and independent migration/MCP/FTS review 10/10.
+  Capability utility smoke passed using dummy loopback services. Wake model smoke: synthetic positive
+  1 hit, negative 0, paced positive 127/127 frames accepted with zero dropped frames.
+
+The default node-backend utility smoke initially reported `backend_unavailable`: production now
+requires an explicit discovered Codex binary, while that invocation supplied the bare default.
+Capability-mode smoke proves the Electron utility path with an isolated dummy provider; neither it
+nor synthetic wake audio substitutes for human speech or Windows installed Worker/WASM acceptance.
+Final candidate checks and remaining limitations are appended after integration verification.

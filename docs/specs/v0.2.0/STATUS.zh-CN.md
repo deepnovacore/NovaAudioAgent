@@ -15,7 +15,7 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 | 里程碑 | 一句话 | 状态 |
 |---|---|---|
 | **M1** 一条完整的编码体验 | 提任务 → 只问必要的问题 → 工作单 → 审批 → 执行 → 看到结果；三平台统一审批策略，可选 YOLO | ✅ 代码 + 单测完成；真人语音/耳机、Windows 验收仍待做 |
-| **M1.5a** 执行器边界（spec 07） | Codex 变成一个真正的"插件"，核心代码不再认识 "codex" 这个词，只认角色（coding）；用 lint + 脚本强制 | ✅ 完成并经独立 review |
+| **M1.5a** 执行器边界（spec 07） | Codex 变成一个真正的"插件"，核心代码不再认识 "codex" 这个词，只认角色（coding）；用 lint + 脚本强制 | 🟡 确定性边界验证完成；真人语音/耳机与 Windows 验收仍未完成 |
 | **M1.5b** 项目 / 会话 / 任务（spec 08） | 阶段性三工具前台；"在哪个项目、开不开新会话、停哪个任务"由编码执行器自己判断；支持多项目并发；显式取消；会话有可读标题（阶段性 surface 已被 M1.5c 取代） | 🟡 代码与测试完成，三轮 review 的已知阻断项均已修并带测试；语音端到端与并发审批真机未验，**不勾**（见第四、五节） |
 | **M1.5c** 前台变薄（spec 03 / 07） | 默认六工具面；Camera MCP + side-VLM 投影；Vision controller 持有隐藏 `watch` / `guard`；监控由宿主策略驱动；桌面发布依赖闭包包含 MCP SDK 及其传递依赖 | 🟡 代码与定向确定性覆盖已完成；旧 08 live 行、真人语音、macOS camera、Windows 与完整发布验收仍待做 |
 | **M2** 能力注册表（spec 03a） | `capabilities.json`、模块开关、MCP 搜索可选接入 | 🟡 代码/定向测试完成；百炼 Search macOS live 已通过，Windows 与默认翻转仍待验 |
@@ -26,6 +26,10 @@ M4 最终证据：runtime 2301 通过 / 5 跳过，desktop 846 通过 / 3 Window
 fixtures 19/19，`npm run check` 全绿；Node 22 的 Knowledge 专项 55/55。Node 22.13 没有 FTS5，
 已实现有界 LIKE 回退；回到 Node 24 时从正文事务重建派生索引。Terra/Sol 独立复审的阻断项已关闭。
 外部 Claude 代码复审 20 分钟无返回后终止，**未记为通过**。没有推送、发布或切换 Search 默认值。
+
+新增集成项：本地中文唤醒词与宿主控制的级联 response 调度已合入。真人语音、
+Windows 安装包内 Worker/WASM 和唤醒体验仍待验收，未验项不会阻挡 dev CI。
+M1 与 M1.5a 的代码完成不等于发布验收完成；以下历史测试快照不能替代当前发布台账。
 
 ## 三、最近两天干了什么（07 + 08）
 
@@ -215,12 +219,12 @@ camera、Windows 和完整发布验收；当前定向确定性测试通过不替
 
 ## 七、想请大家拍板 / 重点 review 的点
 
-第一轮 review 已定（2026-09-04）：编排下沉到执行器 ✅；会话只有 `latest / new` ✅；**任何改变当前项目的操作都确认** ✅（原稿"切换不确认"作废）；并发 1 + 3 作为首版默认 ✅；别名保守反问 ✅，以后可加用户显式维护的确定性别名，不交回模型模糊匹配；M4 不阻塞 v0.2 ✅；文本前脑删除 ✅。
+第一轮 review 已定（2026-09-04）：编排下沉到执行器 ✅；会话只有 `latest / new` ✅；**任何改变当前项目的操作都确认** ✅（原稿"切换不确认"作废）；并发 1 + 3 作为首版默认 ✅；别名保守反问 ✅，以后可加用户显式维护的确定性别名，不交回模型模糊匹配；M4 不阻塞 dev 集成；合 main 前须完成验收（2026-09-06 更新）；文本前脑删除 ✅。
 
 仍开放：
 
 1. **Agent 契约**：AgentController registry 统一拥有公开的 `dispatch` / `cancel` 路由；coding intake 仍是 coding controller 的私有编排实现。非 agent 的 MCP direct path 已按用户显式 allowlist 装配，并可投影到 Codex。接 AutoGLM 前再评估是否把更多 executor 端口（roster / running / resolve）抽成通用契约。
-2. **发布门槛**建议定为：M1.5 全绿 + 真人语音链路（上面 10 条）+ 并发审批真机。M2/M3 不作为 v0.2 发布前置？
+2. **发布门槛已定（2026-09-06）**：dev 通过自动化即可集成；main 才是发布边界，M1–M4、真人语音、并发审批、级联与唤醒词以及支持平台全部验收。单一台账为 [RELEASE-GATE.md](RELEASE-GATE.md)。Linux 暂不发布，保留 Ubuntu 测试。
 3. **holdout 的两类系统性失分**（状态提问→steer、前缀重名）：安全副作用已由宿主兜底；是接受当前模型体验，还是要求 prompt 第二版把 holdout 提到 ≥9/10 再进真人验收？
 
 ## 八、相关文件
@@ -230,3 +234,5 @@ camera、Windows 和完整发布验收；当前定向确定性测试通过不替
 - 项目 / 会话 / 任务：[`08-project-and-work.md`](08-project-and-work.md)（文末有 live 验收清单，未勾的就是第五节的缺口）
 - 实现台账与全部验证证据：[`IMPLEMENTATION.md`](IMPLEMENTATION.md)
 - 关键代码：`runtime/src/work-tools.ts`（三个工具）、`runtime/src/executors/coding/intake.ts`（coordinator）、`runtime/src/executors/codex/adapter-project.ts`（并发槽 / 取消 / 标题）、`runtime/src/realtime/service.ts`（拦截与 `confirm` 分流）
+
+调度归属关键代码补充：`runtime/src/realtime/session.ts`、`runtime/src/realtime/frontend-instructions.ts`。

@@ -24,9 +24,17 @@ The public architecture volumes under [`docs/archs/`](../../archs/00-overview.md
 remain the source of invariants. Specs here propose deltas; they do not silently
 rewrite those volumes.
 
+## Integration and release decision (2026-09-06)
+
+`v0.2.0dev` is an integration branch. Passing automated checks permits dev merges; human
+acceptance does not block integration. Merging into `main` is the release boundary. All
+supported features, including M2, M3, M4 and wake word, must complete the single checkable
+[release ledger](RELEASE-GATE.md) before a main PR or formal publication. No pending human
+item is implicitly passed. Linux is deferred from release targets; Ubuntu source CI remains.
+
 ## Goals
 
-1. **Trustworthy Codex execution on every platform.** macOS, Windows, and Linux
+1. **Trustworthy Codex execution on supported release platforms.** macOS and Windows
    use `approvalPolicy: on-request` with the existing workspace-write permission
    profile by default. Work inside the sandbox — including ordinary commands —
    proceeds without a prompt; sandbox escapes, network access, and permission
@@ -117,21 +125,10 @@ control.
 
 ### Release gate for 04
 
-Decision (2026-09-05): the product owner approved completing M4 in this cycle,
-using built-in Knowledge MCP instead of another native frontend tool. Module
-default remains off. This approves implementation, not release before the 04
-acceptance checks pass. Prior trade-offs are retained for context:
-
-- For shipping together: the user asked for RAG in this cycle; the module gate
-  (`modules.knowledge.enabled = false` by default) avoids allocating corpus
-  resources or adding retrieval tools for M1–M3 users; shared dependency changes still need regression testing.
-- For splitting: M4 carries new parsing deps (`pdfjs-dist`, `mammoth`, `jszip`,
-  embedding client), the FTS5 spike, and a data-flow disclosure that deserves
-  its own review. Shipping M1–M3 earlier gets the coding loop into daily use
-  sooner.
-
-M4 implementation proceeds after the M3 code checkpoint; deterministic and live
-verification are tracked separately in STATUS.
+Decision (2026-09-06): M4 ships only after its acceptance checks pass together with the other
+supported features. Its default-off setting does not exempt it from the main/release gate.
+The earlier proposal to release M1–M3 first is superseded. Dev integration may proceed with
+live checks still pending in [RELEASE-GATE.md](RELEASE-GATE.md).
 
 ## Proposed architecture deltas
 

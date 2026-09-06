@@ -31,6 +31,8 @@ worth it at all** (see the [historical design post](docs/blog/2026-08-proactive-
 - **Revision-bound intake.** For under-specified requirements, host-owned intake slots clarify the request before dispatch. The M1.5c live validation gate is still pending; no token-saving percentage is claimed here.
 - **Real-time steering**. Our codex executor is built upon native codex app-server instead of ACP, which allows real-time steering.
 
+- **Local wake word.** Opt-in offline Chinese keyword detection hides the idle orb and wakes it locally; see [setup](docs/getting-started.md#local-wake-word).
+
 ## 2. Architecture
 
 [![Nova Audio Agent runtime architecture on a chalkboard](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)
@@ -79,8 +81,7 @@ Get API key from [DashScope](https://platform.qianwenai.com) and [Tavily](https:
 ```bash
 npm run start:client
 ```
-The client includes microphone, camera, sound, settings, and workspace-graph surfaces. External MCP
-settings are not presented as shipped. Try hovering over the desktop orb to get surprised :) Also you
+The client includes microphone, camera, sound, settings, and workspace-graph surfaces. Dev includes external MCP controls; live acceptance remains pending. Try hovering over the desktop orb to get surprised :) Also you
 may try build or run demo locally:
 
 ```bash
@@ -105,10 +106,12 @@ Note that native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windo
 | [Historical design exploration: A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | Historical design-space essay |
 
 ## 5. Roadmap
-- [ ] **v0.2.0 (branch `v0.2.0dev`):** M1.5b → M1.5c thin frontend → 03a capability expansion. The M1.5c gate covers the final six-tool surface, Camera MCP + side VLM projection, Vision hidden watch/guard, policy-driven monitoring, and rerun of the 08 live acceptance; live and Windows evidence remain pending. External MCP settings are not shipped. Specs: [docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md).
+- [ ] **v0.2.0 (branch `v0.2.0dev`):** M1.5b → M1.5c thin frontend → 03a capability expansion. The M1.5c gate covers the final six-tool surface, Camera MCP + side VLM projection, Vision hidden watch/guard, policy-driven monitoring, and rerun of the 08 live acceptance; live and Windows evidence remain pending. External MCP settings are implemented; live acceptance remains pending. Specs: [docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md).
 - [ ] Support more end-to-end and cascaded frontend pipelines.
 - [ ] Integrate MyContext to support workspace-centric memory.
 - [ ] More coding agents through the executor port.
+
+- [ ] Cascaded response scheduling is host-owned; human voice and installed Windows wake-word acceptance remain pending. Linux releases are deferred while Ubuntu source tests remain. All feature acceptance gates apply to main; dev can integrate earlier.
 
 ## 6. Contribution
 
