@@ -329,6 +329,24 @@ export interface AgentControllerFactory {
  */
 const SHUTDOWN_GRACE_MS = 250
 
+/** Detached observability at an awaited delivery/event boundary; reading never drives work. */
+export interface DeliverySnapshot {
+  readonly sessionEpoch: number
+  readonly floor: RealtimeSession['floor']['state']
+  readonly providerIdle: boolean
+  readonly foregroundIdle: boolean
+  readonly rendererPaused: boolean
+  readonly activeResponseId: string | null
+  readonly userResponseMode: RealtimeSession['userResponseMode']
+  readonly urgentOwner: Pick<UrgentHostResponseOwner, 'session_epoch' | 'event_id' | 'response_id' | 'delivery_token'> | null
+  readonly queuedEventIds: readonly string[]
+  readonly armedPreemptPriority: number | null
+  readonly preemptiveAlert: PreemptiveAlert | null
+  readonly epochNeedingActivation: number | null
+  readonly acknowledgementPhases: Readonly<Record<string, string>>
+  readonly continuationOrder: readonly string[]
+}
+
 export class RealtimeService {
   readonly session: RealtimeSession
   readonly #intake: IntakeEventPort | undefined
@@ -6079,6 +6097,33 @@ export class RealtimeService {
     }
   }
 
+  deliveryState(): DeliverySnapshot {
+    const alert = this.#preemptiveAlert
+    return {
+      sessionEpoch: this.session.sessionEpoch,
+      floor: this.session.floor.state,
+      providerIdle: this.session.providerIdle,
+      foregroundIdle: this.session.foregroundIdle,
+      rendererPaused: this.#rendererHostDeliveryPaused,
+      activeResponseId: this.session.activeProviderResponseId,
+      userResponseMode: this.session.userResponseMode,
+      urgentOwner: this.#urgentHostResponseOwner === null ? null : {
+        session_epoch: this.#urgentHostResponseOwner.session_epoch,
+        event_id: this.#urgentHostResponseOwner.event_id,
+        response_id: this.#urgentHostResponseOwner.response_id,
+        delivery_token: this.#urgentHostResponseOwner.delivery_token,
+      },
+      queuedEventIds: this.queuedHostItems().map(queued => queued.intent.item.event_id),
+      armedPreemptPriority: this.#pendingPreemptPriority,
+      preemptiveAlert: alert === null ? null : {...alert,
+        old_generation: alert.old_generation === null ? null : {...alert.old_generation}},
+      epochNeedingActivation: this.#providerEpochNeedingActivation,
+      acknowledgementPhases: Object.fromEntries([...this.#semanticAcknowledgements.entries()]
+        .map(([eventId, acknowledgement]) => [eventId, acknowledgement.phase])),
+      continuationOrder: [...this.#continuationFifo],
+    }
+  }
+
   /** Read-only views the tests and the desktop layer use. */
   get pendingHostItemCount(): number {
     return this.#hostItems.length
@@ -6179,36 +6224,9 @@ export class RealtimeService {
     return this.#urgentHostResponseOwner
   }
 
-  get epochNeedingActivationForTest(): number | null {
-    return this.#providerEpochNeedingActivation
-  }
-
-  /** Each acknowledgement's phase, by event id. The phase is the whole state machine. */
-  get acknowledgementPhasesForTest(): Readonly<Record<string, string>> {
-    return Object.fromEntries(
-      [...this.#semanticAcknowledgements.entries()]
-        .map(([eventId, acknowledgement]) => [eventId, acknowledgement.phase]),
-    )
-  }
-
   /** Each tracked tool call's final disposition, in admission order. */
   get toolCallDispositionsForTest(): readonly (string | null)[] {
     return [...this.#toolCalls.values()].map(state => state.final_disposition)
-  }
-
-  /**
-   * The preemption in flight, if any.
-   *
-   * Its flags are the whole state machine -- whether the cancel was sent, whether the deadline fired,
-   * whether the reconnect permit was spent -- and none of that is visible from outside otherwise.
-   */
-  get preemptiveAlertForTest(): PreemptiveAlert | null {
-    return this.#preemptiveAlert
-  }
-
-  /** @deprecated Test compatibility alias for the legacy Guard terminology. */
-  get guardPreemptionForTest(): PreemptiveAlert | null {
-    return this.preemptiveAlertForTest
   }
 
   /** Which responses a confirmation has blocked. The block outliving its turn is the failure mode. */
@@ -6241,11 +6259,6 @@ export class RealtimeService {
   /** Which response holds which user turn, in binding order. */
   get boundOriginsForTest(): readonly (readonly [string, string])[] {
     return this.#userOrigins.boundResponses
-  }
-
-  /** The continuation queue, head first. Order is the contract, so it has to be observable. */
-  get continuationOrderForTest(): readonly string[] {
-    return [...this.#continuationFifo]
   }
 
   /** The runtime's delegate lookups, for a projection test that needs one to be in flight. */

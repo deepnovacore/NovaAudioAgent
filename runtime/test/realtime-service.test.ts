@@ -636,6 +636,7 @@ async function* parkedStream(signal: AbortSignal): AsyncGenerator<never> {
  * the batch that speaks about the result. That is what these do.
  */
 function pipelineService(options: {
+  readonly userResponseMode?: 'automatic' | 'requested'
   readonly intake?: ConstructorParameters<typeof RealtimeService>[0]['intake']
   readonly toolResult?: {readonly accepted: boolean; readonly delegateId: string | null}
   readonly onCaption?: (frame: {
@@ -739,6 +740,7 @@ function pipelineService(options: {
   // provider session claiming the same identity, which the session refuses outright.
   let epoch = 0
   const provider: SessionProvider & ServiceProvider = {
+    ...(options.userResponseMode === undefined ? {} : {userResponseMode: options.userResponseMode}),
     connect: () => {
       epoch += 1
       actions.push('connect')
@@ -3153,7 +3155,7 @@ test('failed handoff fences an undelivered semantic acknowledgement', async () =
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
     name: 'codex__run', arguments: {work_order: 'build timer'}, response_id: 'origin',
   })
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'pending')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'pending')
 
   service.projectRuntimeEvent({
     kind: 'handoff', seq: 1, ts: 1,
@@ -3164,7 +3166,7 @@ test('failed handoff fences an undelivered semantic acknowledgement', async () =
     },
   })
 
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'cancelled')
   assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
   assert.equal(service.session.delegateState('d-1'), 'failed')
 })
@@ -3189,7 +3191,7 @@ test('successful handoff fences an undelivered semantic acknowledgement before t
     kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
     name: 'codex__run', arguments: {work_order: 'build timer'}, response_id: 'origin',
   })
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'pending')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'pending')
 
   service.projectRuntimeEvent({
     kind: 'handoff', seq: 1, ts: 1,
@@ -3200,7 +3202,7 @@ test('successful handoff fences an undelivered semantic acknowledgement before t
     },
   })
 
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'cancelled')
   assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
   assert.equal(service.session.delegateState('d-1'), 'completed')
 })
@@ -3412,7 +3414,7 @@ test('unknown handoff fences acknowledgement but remains open to a late verdict'
     },
   })
 
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'cancelled')
   assert.equal(service.session.delegateState('d-1'), 'unknown')
 
   service.projectRuntimeEvent({
@@ -3452,7 +3454,7 @@ test('failed handoff suppresses a bound unspoken acknowledgement', async () => {
     status: 'completed', reason: '',
   })
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'ack'})
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'bound')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'bound')
 
   service.projectRuntimeEvent({
     kind: 'handoff', seq: 1, ts: 1,
@@ -3467,7 +3469,7 @@ test('failed handoff suppresses a bound unspoken acknowledgement', async () => {
     response_id: 'ack', pcm: new Uint8Array([0, 1]),
   })
 
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'cancelled')
   assert.equal(session.currentGeneration, null)
   assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
 })
@@ -3493,7 +3495,7 @@ test('failed handoff suppresses a requested acknowledgement when its response st
     name: 'codex__run', arguments: {work_order: 'build timer'}, response_id: 'origin',
   })
   await service.reconnectForTest()
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'requested')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'requested')
 
   service.projectRuntimeEvent({
     kind: 'handoff', seq: 1, ts: 1,
@@ -3509,7 +3511,7 @@ test('failed handoff suppresses a requested acknowledgement when its response st
     response_id: 'late-ack', pcm: new Uint8Array([0, 1]),
   })
 
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'cancelled')
   assert.equal(session.currentGeneration, null)
   assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
 })
@@ -3646,7 +3648,7 @@ test('a continuation batch speaks before a later one, whatever finished first', 
   const afterFirst = actions.filter(action => action.startsWith('create_response')).length
   assert.equal(afterFirst, 1, 'the first batch asked for its turn')
   assert.equal(
-    service.continuationOrderForTest[0],
+    service.deliveryState().continuationOrder[0],
     '1:r-1',
     'and it is still at the head, waiting to be bound',
   )
@@ -3761,7 +3763,7 @@ test('a terminal for a different response does not close the bound batch', async
   })
   // The continuation turn starts, binding the batch to r-2.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
-  assert.deepEqual(service.continuationOrderForTest, ['1:r-1'], 'still open')
+  assert.deepEqual(service.deliveryState().continuationOrder, ['1:r-1'], 'still open')
 
   // A terminal for an unrelated response must not close it.
   await service.handleEvent({
@@ -3771,7 +3773,7 @@ test('a terminal for a different response does not close the bound batch', async
     status: 'completed',
     reason: '',
   })
-  assert.deepEqual(service.continuationOrderForTest, ['1:r-1'], 'still open')
+  assert.deepEqual(service.deliveryState().continuationOrder, ['1:r-1'], 'still open')
 
   // The one it was bound to does.
   await service.handleEvent({
@@ -3781,7 +3783,7 @@ test('a terminal for a different response does not close the bound batch', async
     status: 'completed',
     reason: '',
   })
-  assert.deepEqual(service.continuationOrderForTest, [], 'closed by its own terminal')
+  assert.deepEqual(service.deliveryState().continuationOrder, [], 'closed by its own terminal')
 })
 
 test('a reconnect drops every origin binding from the dead session', async () => {
@@ -3828,12 +3830,12 @@ test('a reconnect settles the tool calls of the dead epoch instead of leaving th
     arguments: {work_order: 'compile the runtime'},
     response_id: 'r-1',
   })
-  assert.equal(service.continuationOrderForTest.length, 1, 'one batch open')
+  assert.equal(service.deliveryState().continuationOrder.length, 1, 'one batch open')
   assert.equal(service.toolCallDispositionsForTest[0], null, 'not yet settled')
 
   await service.reconnectForTest()
   assert.deepEqual(
-    service.continuationOrderForTest,
+    service.deliveryState().continuationOrder,
     [],
     'the dead epoch leaves nothing in the queue',
   )
@@ -3894,7 +3896,7 @@ test('a reconnect demands an activation, unless the user already spoke into the 
   await quiet.service.connect()
   await quiet.service.reconnectForTest()
   assert.equal(
-    quiet.service.epochNeedingActivationForTest,
+    quiet.service.deliveryState().epochNeedingActivation,
     quiet.service.session.sessionEpoch,
     'the new session needs activating',
   )
@@ -3909,7 +3911,7 @@ test('a reconnect demands an activation, unless the user already spoke into the 
     provider_item_id: 'user-item-1',
   })
   assert.equal(
-    spoken.service.epochNeedingActivationForTest,
+    spoken.service.deliveryState().epochNeedingActivation,
     null,
     'the user activated it themselves',
   )
@@ -4084,7 +4086,7 @@ test('an acknowledgement bound to an unfinished continuation is reopened by the 
   // The continuation turn starts -- binding the acknowledgement to it -- and then never finishes.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
   assert.equal(
-    service.acknowledgementPhasesForTest['background:d-1'],
+    service.deliveryState().acknowledgementPhases['background:d-1'],
     'bound',
     'bound to a turn that is still speaking',
   )
@@ -4125,7 +4127,7 @@ test('an acknowledgement bound to an unfinished fallback is reopened by the reco
   await service.handleEvent({
     kind: 'response_started', session_epoch: fallbackEpoch, response_id: 'r-fallback',
   })
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'bound')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'bound')
   const before = actions.filter(action => action === 'inject:background:d-1').length
 
   await service.reconnectForTest()
@@ -4157,7 +4159,7 @@ test('a zero-audio fallback completion reopens response authority without reinje
   await service.handleEvent({
     kind: 'response_started', session_epoch: fallbackEpoch, response_id: 'r-fallback-1',
   })
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'bound')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'bound')
   const responsesBefore = actions.filter(action => action === 'create_response:host_fact').length
   const injectionsBefore = actions.filter(action => action === 'inject:background:d-1').length
 
@@ -4176,7 +4178,7 @@ test('a zero-audio fallback completion reopens response authority without reinje
     injectionsBefore,
     'reopening response authority preserves the confirmed provider item',
   )
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'requested')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'requested')
 })
 
 test('an acknowledgement heard from its continuation is not reopened by a reconnect', async () => {
@@ -4227,7 +4229,7 @@ test('an acknowledgement heard from its continuation is not reopened by a reconn
     reason: '',
   })
   assert.equal(
-    service.acknowledgementPhasesForTest['background:d-1'],
+    service.deliveryState().acknowledgementPhases['background:d-1'],
     'bound',
     'provider completion is not proof that renderer playback reached the user',
   )
@@ -4235,7 +4237,7 @@ test('an acknowledgement heard from its continuation is not reopened by a reconn
     service.playbackDone(generation!.utterance_id, generation!.generation_epoch, 250),
     true,
   )
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'delivered')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'delivered')
   const before = actions.filter(action => action === 'inject:background:d-1').length
 
   await service.reconnectForTest()
@@ -4281,7 +4283,7 @@ async function openCompletedAcknowledgementPlayback(
       response_id: 'r-2', status: 'completed', reason: '',
     })
   }
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'bound')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'bound')
   return generation!
 }
 
@@ -4295,7 +4297,7 @@ test('playback clear reopens an unheard acknowledgement until its delegate settl
     service.playbackCleared(generation.utterance_id, generation.generation_epoch, 0),
     true,
   )
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'queued')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'queued')
 
   service.projectRuntimeEvent({
     kind: 'handoff', seq: 1, ts: 1,
@@ -4305,7 +4307,7 @@ test('playback clear reopens an unheard acknowledgement until its delegate settl
       content: {result: {final_message: {text: 'timer completed'}}}, refs: [],
     },
   })
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'cancelled')
   const before = actions.filter(action => action === 'inject:background:d-1').length
   await service.reconnectForTest()
   assert.equal(
@@ -4326,7 +4328,7 @@ test('local speech after partial acknowledgement playback suppresses a repeated 
     true,
   )
   assert.equal(
-    service.acknowledgementPhasesForTest['background:d-1'],
+    service.deliveryState().acknowledgementPhases['background:d-1'],
     'cancelled',
     'the user already heard part of this acknowledgement and then took the floor',
   )
@@ -4350,7 +4352,7 @@ test('playback stop reopens an unheard acknowledgement for the still-running del
     await service.playbackStopped(generation.utterance_id, generation.generation_epoch, 0),
     true,
   )
-  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'queued')
+  assert.equal(service.deliveryState().acknowledgementPhases['background:d-1'], 'queued')
   const before = actions.filter(action => action === 'inject:background:d-1').length
 
   await service.reconnectForTest()
@@ -4619,7 +4621,7 @@ test('playback stop requeues an acknowledgement when provider cancellation termi
     response_id: 'r-2', status: 'cancelled', reason: 'renderer stopped',
   })
   assert.equal(
-    service.acknowledgementPhasesForTest['background:d-1'],
+    service.deliveryState().acknowledgementPhases['background:d-1'],
     'queued',
     'the terminal event cannot strand the recovered acknowledgement while cancel is pending',
   )
@@ -4627,7 +4629,7 @@ test('playback stop requeues an acknowledgement when provider cancellation termi
   releaseCancel?.()
   assert.equal(await stopped, true)
   assert.equal(
-    service.acknowledgementPhasesForTest['background:d-1'],
+    service.deliveryState().acknowledgementPhases['background:d-1'],
     'queued',
     'the renderer interruption still makes the unheard acknowledgement eligible for delivery',
   )
@@ -4683,7 +4685,7 @@ test('a completed continuation that renderer never played is reopened by a recon
   await service.reconnectForTest()
 
   assert.equal(
-    service.acknowledgementPhasesForTest['background:d-1'],
+    service.deliveryState().acknowledgementPhases['background:d-1'],
     'queued',
     'the replacement session retains the acknowledgement until it has activation',
   )
@@ -4915,14 +4917,14 @@ test('the alert deadline stops waiting for a provider that will not confirm', as
   })
   service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
   await service.flushHostItems()
-  assert.notEqual(service.guardPreemptionForTest, null, 'a preemption is in flight')
-  assert.equal(service.guardPreemptionForTest?.deadline_fired, false)
+  assert.notEqual(service.deliveryState().preemptiveAlert, null, 'a preemption is in flight')
+  assert.equal(service.deliveryState().preemptiveAlert?.deadline_fired, false)
 
   // Past the preemptive-alert deadline with no terminal from the provider.
   clock.advanceTo(clock.now() + 1)
   await new Promise<void>(resolve => setTimeout(resolve, 5))
   assert.equal(
-    service.guardPreemptionForTest?.deadline_fired ?? 'cleared',
+    service.deliveryState().preemptiveAlert?.deadline_fired ?? 'cleared',
     true,
     'the host stopped waiting',
   )
@@ -4953,7 +4955,7 @@ test('a preemptive monitor policy keeps the 350ms alert deadline after a channel
   assert.ok(actions.includes('cancel:r-1'), 'the policy, not priority or channel name, authorizes preemption')
   clock.advanceTo(clock.now() + 1)
   await new Promise<void>(resolve => setTimeout(resolve, 5))
-  assert.equal(service.guardPreemptionForTest?.deadline_fired ?? 'cleared', true)
+  assert.equal(service.deliveryState().preemptiveAlert?.deadline_fired ?? 'cleared', true)
 })
 
 test('a user speaking revokes the reconnect permit a preemption was holding', async () => {
@@ -4970,7 +4972,7 @@ test('a user speaking revokes the reconnect permit a preemption was holding', as
   })
   service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
   await service.flushHostItems()
-  assert.equal(service.guardPreemptionForTest?.reconnect_disallowed, false)
+  assert.equal(service.deliveryState().preemptiveAlert?.reconnect_disallowed, false)
 
   await service.handleEvent({
     kind: 'user_speech_started',
@@ -4979,7 +4981,7 @@ test('a user speaking revokes the reconnect permit a preemption was holding', as
     provider_item_id: 'user-item-1',
   })
   assert.equal(
-    service.guardPreemptionForTest?.reconnect_disallowed,
+    service.deliveryState().preemptiveAlert?.reconnect_disallowed,
     true,
     'the permit is revoked before it can be spent',
   )
@@ -5039,7 +5041,7 @@ test('a cancel rejection with the gate open replaces the provider session', asyn
     actions.filter(action => action.startsWith('connect:')).length > before,
     'the session was replaced',
   )
-  assert.equal(service.guardPreemptionForTest?.reconnect_permit_consumed, true, 'permit spent')
+  assert.equal(service.deliveryState().preemptiveAlert?.reconnect_permit_consumed, true, 'permit spent')
 })
 
 test('Guard recovery telemetry counts Python code points in astral history', async () => {
@@ -10479,4 +10481,103 @@ test('fatal provider errors settle an admitted user response through the service
     await service.handleEvent({kind: 'provider_error', session_epoch: 1, code: 'unavailable', recoverable: false})
     assert.equal(session.providerIdle, true)
   } finally { await service.close() }
+})
+
+// Every step awaits the real public delivery/event boundary; no background service loop or timer sleeps.
+const deliveryPassScenarios = [
+  {name: 'idle drains one host response and reserves the provider', steps: [
+    {event: 'queue', queued: ['fixture'], floor: 'idle', idle: true},
+    {event: 'flush', queued: [], floor: 'idle', idle: false},
+    {event: 'flush', queued: [], floor: 'idle', idle: false},
+  ]},
+  {name: 'active provider holds ordinary delivery until its terminal', steps: [
+    {event: 'response', queued: [], floor: 'idle', idle: false},
+    {event: 'queue', queued: ['fixture'], floor: 'idle', idle: false},
+    {event: 'flush', queued: ['fixture'], floor: 'idle', idle: false},
+    {event: 'terminal', queued: [], floor: 'idle', idle: false},
+  ]},
+  {name: 'stale user hold is released strictly after the deadline', steps: [
+    {event: 'speech', queued: [], floor: 'user_speaking', idle: true},
+    {event: 'queue', queued: ['fixture'], floor: 'user_speaking', idle: true},
+    {event: 'at-deadline', queued: ['fixture'], floor: 'user_speaking', idle: true},
+    {event: 'past-deadline', queued: [], floor: 'idle', idle: false},
+  ]},
+  {name: 'renderer disconnect pauses and explicit resume releases delivery', steps: [
+    {event: 'disconnect', queued: [], floor: 'idle', idle: true, paused: true},
+    {event: 'queue', queued: ['fixture'], floor: 'idle', idle: true, paused: true},
+    {event: 'flush', queued: ['fixture'], floor: 'idle', idle: true, paused: true},
+    {event: 'resume', queued: [], floor: 'idle', idle: false},
+  ]},
+] as const
+
+for (const scenario of deliveryPassScenarios) {
+  test(`delivery-pass fixture: ${scenario.name}`, async (t) => {
+    const {service, clock, actions} = pipelineService()
+    t.after(() => service.close())
+    await service.connect()
+    const initial = service.deliveryState()
+    for (const step of scenario.steps) {
+      switch (step.event) {
+        case 'queue': service.queueHostItem(hostFact('fixture')); break
+        case 'flush': await service.flushHostItems(); break
+        case 'response': await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'fixture-response'}); break
+        case 'terminal': await finishProviderResponse(service, 'fixture-response'); break
+        case 'speech': await service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 'fixture-speech', provider_item_id: 'fixture-user'}); break
+        case 'at-deadline': clock.advanceTo(30); await service.flushHostItems(); break
+        case 'past-deadline': clock.advanceTo(30.001); await service.flushHostItems(); break
+        case 'disconnect': await service.playbackDisconnected(); break
+        case 'resume': await service.playbackDisconnected({resumeDelivery: true}); await service.flushHostItems(); break
+      }
+      const state = service.deliveryState()
+      assert.deepEqual({queued: state.queuedEventIds, floor: state.floor, idle: state.foregroundIdle, paused: state.rendererPaused},
+        {queued: step.queued, floor: step.floor, idle: step.idle, paused: 'paused' in step && step.paused}, step.event)
+    }
+    assert.deepEqual(initial.queuedEventIds, [], 'an earlier snapshot stays detached')
+    assert.equal(actions.filter(action => action === 'inject:fixture').length, 1, 'exactly one host injection')
+  })
+}
+
+test('delivery-pass fixture: urgent preempt cancels once and snapshots cannot mutate its owner', async (t) => {
+  const {service, actions} = guardService()
+  t.after(() => service.close())
+  await service.connect()
+  for (const step of [
+    {event: 'response', queued: [], armed: null, cancel: false},
+    {event: 'queue', queued: ['final:d-guard'], armed: 90, cancel: false},
+    {event: 'flush', queued: ['final:d-guard'], armed: 90, cancel: true},
+    {event: 'flush', queued: ['final:d-guard'], armed: 90, cancel: true},
+  ] as const) {
+    if (step.event === 'response') {
+      await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'fixture-response'})
+      await service.handleEvent({kind: 'response_audio_delta', session_epoch: 1, response_id: 'fixture-response', pcm: new Uint8Array([0, 1])})
+    } else if (step.event === 'queue') service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+    else await service.flushHostItems()
+    const state = service.deliveryState()
+    assert.deepEqual({queued: state.queuedEventIds, armed: state.armedPreemptPriority, cancel: state.preemptiveAlert?.cancel_sent ?? false},
+      {queued: step.queued, armed: step.armed, cancel: step.cancel}, step.event)
+  }
+  const snapshot = service.deliveryState()
+  const before = structuredClone(snapshot)
+  ;(snapshot.queuedEventIds as string[]).push('tampered')
+  Object.assign(snapshot.preemptiveAlert!, {cancel_sent: false})
+  Object.assign(snapshot.preemptiveAlert!.old_generation!, {response_id: 'tampered'})
+  assert.deepEqual(service.deliveryState(), before)
+  assert.equal(actions.filter(action => action === 'cancel:fixture-response').length, 1)
+})
+
+test('delivery-pass fixture: requested user response reserves the provider before queued host work', async (t) => {
+  const {service, actions} = pipelineService({userResponseMode: 'requested'})
+  t.after(() => service.close())
+  await service.connect()
+  await service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 'fixture-speech', provider_item_id: 'fixture-user'})
+  await service.handleEvent({kind: 'user_speech_ended', session_epoch: 1, speech_id: 'fixture-speech', provider_item_id: 'fixture-user'})
+  service.queueHostItem(hostFact('fixture'))
+  await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'fixture-user', text: 'hello'})
+  await service.flushHostItems()
+  const state = service.deliveryState()
+  assert.equal(state.userResponseMode, 'requested')
+  assert.equal(state.providerIdle, false)
+  assert.deepEqual(state.queuedEventIds, ['fixture'])
+  assert.equal(actions.filter(action => action === 'ensure_response').length, 1)
+  assert.equal(actions.includes('inject:fixture'), false)
 })
