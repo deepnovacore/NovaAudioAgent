@@ -255,6 +255,8 @@ function render(view, _drafts, state) {
   if (view.settingsApplyStatus === 'recovery_pending') {
     restartNotice.hidden = false
     restartNotice.textContent = '上次设置已还原，请点击恢复以确认后端可用'
+  } else if (view.settingsApplyStatus === 'recovery_failed') {
+    updateRestartNotice('recovery_failed')
   }
   updateButtons()
 }
@@ -275,7 +277,7 @@ function updateRestartNotice(phase) {
     return
   }
   if (phase === 'recovery_failed') {
-    restartNotice.textContent = '设置恢复未完成，请重试恢复；恢复记录已保留'
+    restartNotice.textContent = '设置恢复未完成，恢复记录已保留；若重试仍失败，请修复配置目录中的 settings.json.recovery 或配置冲突后再恢复'
     return
   }
   restartNotice.textContent = '设置已生效'

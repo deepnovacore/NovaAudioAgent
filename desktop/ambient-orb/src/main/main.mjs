@@ -679,7 +679,7 @@ const workspaceActions = createWorkspaceActions({
     return backendSupervisor.status().state === 'stopped'
   },
   restartBackendBounded: async () => {
-    if (!backendSupervisor) return false
+    if (settingsRecoveryAvailable || !backendSupervisor) return false
     await backendSupervisor.restart()
     return backendSupervisor.status().state === 'connected'
   },
@@ -813,12 +813,25 @@ function initializeDesktopBootstrap(cameraSource) {
   })
 }
 
+async function loadStartupSettings() {
+  try {
+    const recovered = await restoreSettingsRecovery(settingsFile())
+    settingsRecoveryAvailable = recovered !== null
+    currentSettings = recovered ?? await loadSettings(settingsFile())
+    if (recovered) publishSettingsApplyStatus('recovery_pending')
+    return true
+  } catch {
+    currentSettings = await loadSettings(settingsFile())
+    settingsRecoveryAvailable = true
+    publishSettingsApplyStatus('recovery_failed')
+    openSettingsRequested = true
+    return false
+  }
+}
+
 async function startSelectedCamera(camera, backendKind, smokeChannel) {
-  const recovered = await restoreSettingsRecovery(settingsFile())
-  settingsRecoveryAvailable = recovered !== null
-  currentSettings = recovered ?? await loadSettings(settingsFile())
-  if (recovered) publishSettingsApplyStatus('recovery_pending')
-  await refreshDesktopConfiguration()
+  const settingsReady = await loadStartupSettings()
+  if (settingsReady) await refreshDesktopConfiguration()
   initializeDesktopBootstrap(camera.source)
   const launchId = randomBytes(8).toString('hex')
   activeLaunchId = launchId
@@ -991,6 +1004,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('Codex rescan rejected')
     }
+    if (settingsRecoveryAvailable) return {...settingsView(), operationStatus: 'recovery_pending'}
     return coordinateCodexRescan({
       coordinator: lifecycleCoordinator,
       currentConfiguration: () => Object.freeze({config: desktopConfig, codexStatus}),
@@ -1340,10 +1354,19 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       }
     },
   })
-  void managedWorkspaceBackendRecovery.start()
+  if (settingsReady) void managedWorkspaceBackendRecovery.start()
   if (openSettingsRequested) {
     openSettingsRequested = false
     openSettingsWindow(launchId)
+  }
+  if (!settingsReady) {
+    void dialog.showMessageBox(mainWindow, {
+      type: 'error', message: '设置恢复未完成，后端尚未启动',
+      detail: `恢复记录已保留：${settingsFile()}.recovery\n请修复该文件或配置冲突，再在设置中点击“恢复上次可用设置”。`,
+      buttons: ['打开配置目录', '稍后处理'], cancelId: 1,
+    }).then(result => {
+      if (result.response === 0) return shell.openPath(dirname(settingsFile()))
+    }).catch(() => console.error('[desktop-diagnostic] settings_recovery_help_unavailable'))
   }
 }
 

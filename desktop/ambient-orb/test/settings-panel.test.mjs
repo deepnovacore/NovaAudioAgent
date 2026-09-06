@@ -228,13 +228,13 @@ test('an explicitly local-only save does not wait for a backend restart', async 
   assert.deepEqual(notices, ['complete'])
 })
 
-test('a durable save clears accepted drafts and secrets while reporting restart failure separately', async () => {
+test('a failed restart retains drafts and secrets for recovery', async () => {
   const statuses = []
   const notices = []
   const controller = createSettingsController({
     api: {set: async () => publicView({
       palette: 'graphite',
-      saved: true,
+      saved: false, settingsRecoveryAvailable: true,
       operationStatus: 'restart_failed',
       settingsApplyStatus: 'restart_failed',
     })},
@@ -245,15 +245,15 @@ test('a durable save clears accepted drafts and secrets while reporting restart 
   controller.setView(publicView())
   controller.stage({palette: 'graphite'})
   const result = await controller.save({dashscopeApiKey: 'write-only'})
-  assert.equal(result.saved, true)
-  assert.equal(controller.dirty, false)
-  assert.deepEqual(controller.snapshot().drafts, {})
-  assert.deepEqual(result.acceptedSecrets, ['dashscopeApiKey'])
-  assert.equal(statuses.at(-1), '已保存·后端未启动')
+  assert.equal(result.saved, false)
+  assert.equal(controller.dirty, true)
+  assert.deepEqual(controller.snapshot().drafts, {palette: 'graphite'})
+  assert.deepEqual(result.acceptedSecrets, [])
+  assert.equal(statuses.at(-1), '未生效，已保留上次设置；请恢复后端')
   assert.deepEqual(notices, ['restart_failed'])
 })
 
-test('apply failure retains only rejected leaves and edits newer than the durable save', async () => {
+test('apply failure retains submitted leaves and newer edits', async () => {
   const response = deferred()
   const controller = createSettingsController({
     api: {set: () => response.promise},
@@ -272,16 +272,17 @@ test('apply failure retains only rejected leaves and edits newer than the durabl
     palette: 'graphite',
     codexHeartbeatSeconds: 30,
     integratedModel: 'submitted-model',
-    saved: true,
+    saved: false, settingsRecoveryAvailable: true,
     operationStatus: 'failed',
     settingsApplyStatus: 'failed',
   }))
 
   const result = await saving
   assert.equal(result.saved, false)
-  assert.deepEqual(result.rejectedPublicFields, ['codexHeartbeatSeconds'])
-  assert.deepEqual(result.acceptedSecrets, ['dashscopeApiKey'])
+  assert.deepEqual(result.rejectedPublicFields, [])
+  assert.deepEqual(result.acceptedSecrets, [])
   assert.deepEqual(controller.snapshot().drafts, {
+    palette: 'graphite',
     codexHeartbeatSeconds: 45,
     integratedModel: 'newer-model',
   })
@@ -566,8 +567,7 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(script, /设置已生效/u)
   assert.match(script, /未生效：请恢复上次可用设置/u)
   assert.match(script, /后端未启动：上次设置已保留/u)
-  assert.match(controllerScript, /已保存·未生效/u)
-  assert.match(controllerScript, /已保存·后端未启动/u)
+  assert.doesNotMatch(controllerScript, /已保存·(?:未生效|后端未启动)/u)
   assert.match(controllerScript, /announce\('complete'\)/)
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })
