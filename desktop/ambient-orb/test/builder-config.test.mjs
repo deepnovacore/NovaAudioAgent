@@ -37,6 +37,7 @@ const EXPECTED_BUILD_SCRIPTS = [
   'src/main/launch-command.mjs',
   'src/main/settings-store.mjs',
   'src/renderer/index.mjs',
+  'src/renderer/wire-frame-types.mjs',
   'src/renderer/camera.mjs',
   'src/renderer/release-camera.mjs',
   'src/renderer/release-camera-contract.mjs',

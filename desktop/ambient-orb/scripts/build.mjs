@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { checkJavaScriptFiles } from './build-contract.mjs'
+import { checkJavaScriptFiles, generateWireFrameTypes } from './build-contract.mjs'
 import { buildDependencyReport, inspectConfiguredPackage } from './inspect-package.mjs'
 import { deriveLockedProductionClosure } from './release-dependency-closure.mjs'
 import { buildProjectNativeAddon } from './build-project-native.mjs'
@@ -30,6 +30,7 @@ const runtimeBuild = spawnSync(process.execPath, [
 })
 assert.equal(runtimeBuild.status, 0, runtimeBuild.stderr)
 await readFile(runtimeEntry, 'utf8')
+await generateWireFrameTypes(root)
 const targetId = process.platform === 'darwin'
   ? `darwin-${process.arch}`
   : process.platform === 'win32'

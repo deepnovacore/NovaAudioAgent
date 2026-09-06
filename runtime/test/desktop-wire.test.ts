@@ -16,6 +16,7 @@ import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import {
   DesktopProtocolError,
+  WIRE_FRAME_TYPES,
   captionMessage,
   executorApprovalMessage,
   projectStateMessage,
@@ -28,6 +29,7 @@ import {
   playbackTerminalMessage,
   validateInputPcm,
 } from '../src/desktop-wire.js'
+import {executorProgressSchema, executorResultSchema} from '../src/desktop-progress.js'
 import { parseClientMessage } from '../src/desktop-bridge.js'
 import type { PlaybackCompletion } from '../src/playback.js'
 import type { ExecutorState } from '../src/realtime/service-state.js'
@@ -554,4 +556,18 @@ test('an escaped key spelling is recognised as the field it decodes to', () => {
       .generation_epoch,
     1,
   )
+})
+
+test('wire serializers emit the declared playback, caption and confirmation types', () => {
+  const emitted = [
+    playbackClearMessage('utterance-1', 1), playbackAlertMessage(null, null), playbackTerminalMessage('utterance-1', 1),
+    executorStateMessage('idle', CODEX),
+    projectStateMessage({workspace_display_name: null, session_title: null, pending_confirmation: false, pending_confirmation_busy: false}),
+    executorApprovalMessage({pending_approval: false, pending_approval_busy: false, kind: null,
+      local_detail: null, operation_summary: null, expires_at: null, work: null, queued: 0}, 0, CODEX),
+    captionMessage({role: 'assistant', text: 'hello', final: true}, 1),
+  ].map(value => (JSON.parse(value) as {type: string}).type)
+  emitted.push(executorProgressSchema.shape.type.value, executorResultSchema.shape.type.value)
+  assert.deepEqual(new Set(emitted), new Set(WIRE_FRAME_TYPES.filter(type =>
+    !['executor.results.reset'].includes(type))))
 })

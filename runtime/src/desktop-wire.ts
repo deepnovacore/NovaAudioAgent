@@ -24,6 +24,22 @@ import {
   type ApprovalView as ExecutorApprovalView,
 } from './approval-port.js'
 
+/** Runtime-to-renderer playback, caption and executor control discriminants. */
+export const WIRE_FRAME_TYPES = Object.freeze([
+  'playback.clear',
+  'playback.alert',
+  'playback.terminal',
+  'executor.state',
+  'project.state',
+  'executor.approval',
+  'caption',
+  'executor.progress',
+  'executor.results.reset',
+  'executor.result',
+] as const)
+
+export const [PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT] = WIRE_FRAME_TYPES
+
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1_024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1_024
 /** Bounded so a malformed length prefix cannot make a reader allocate arbitrarily. */
@@ -166,7 +182,7 @@ export function validateInputPcm(raw: Uint8Array): Uint8Array {
 
 export function playbackClearMessage(utteranceId: string, generationEpoch: number): string {
   return asciiJson({
-    type: 'playback.clear',
+    type: PLAYBACK_CLEAR,
     utterance_id: plainIdentifier(utteranceId),
     generation_epoch: plainPositiveInteger(generationEpoch),
   })
@@ -187,10 +203,10 @@ export function playbackAlertMessage(
     throw new DesktopProtocolError('desktop alert identity must be complete')
   }
   if (utteranceId === null || generationEpoch === null) {
-    return asciiJson({type: 'playback.alert'})
+    return asciiJson({type: PLAYBACK_ALERT})
   }
   return asciiJson({
-    type: 'playback.alert',
+    type: PLAYBACK_ALERT,
     utterance_id: plainIdentifier(utteranceId),
     generation_epoch: plainPositiveInteger(generationEpoch),
   })
@@ -198,7 +214,7 @@ export function playbackAlertMessage(
 
 export function playbackTerminalMessage(utteranceId: string, generationEpoch: number): string {
   return asciiJson({
-    type: 'playback.terminal',
+    type: PLAYBACK_TERMINAL,
     utterance_id: plainIdentifier(utteranceId),
     generation_epoch: plainPositiveInteger(generationEpoch),
   })
@@ -225,7 +241,7 @@ export function executorStateMessage(state: ExecutorState, identity: ExecutorIde
   if (state !== 'idle' && state !== 'running') {
     throw new DesktopProtocolError('desktop executor state is invalid')
   }
-  return unicodeJson({type: 'executor.state', ...executorIdentity(identity), state})
+  return unicodeJson({type: EXECUTOR_STATE, ...executorIdentity(identity), state})
 }
 
 /**
@@ -312,7 +328,7 @@ export function projectStateMessage(view: PublicProjectView): string {
     throw new DesktopProtocolError('desktop project view is invalid')
   }
   return unicodeJson({
-    type: 'project.state',
+    type: PROJECT_STATE,
     workspace_display_name: view.workspace_display_name,
     session_title: view.session_title,
     roster: roster.map(entry => ({
@@ -351,7 +367,7 @@ export function executorApprovalMessage(view: ExecutorApprovalView, now: number,
       || view.expires_at !== null
     ) throw new DesktopProtocolError('desktop executor approval view is invalid')
     return unicodeJson({
-      type: 'executor.approval',
+      type: EXECUTOR_APPROVAL,
       ...executor,
       pending_approval: false,
       pending_approval_busy: false,
@@ -394,7 +410,7 @@ export function executorApprovalMessage(view: ExecutorApprovalView, now: number,
   )) throw new DesktopProtocolError('desktop executor approval view is invalid')
   const clip = (value: string): string => [...value].slice(0, 120).join('')
   const message = unicodeJson({
-    type: 'executor.approval',
+    type: EXECUTOR_APPROVAL,
     ...executor,
     pending_approval: true,
     pending_approval_busy: view.pending_approval_busy,
@@ -466,7 +482,7 @@ function validateExecutorApprovalLocalDetail(
 /** Speculative or final transcript text. The sequence lets the renderer drop what arrives late. */
 export function captionMessage(frame: CaptionFrame, sequence: number): string {
   return unicodeJson({
-    type: 'caption',
+    type: CAPTION,
     role: frame.role,
     text: frame.text,
     final: frame.final,

@@ -1,3 +1,4 @@
+import {EXECUTOR_PROGRESS, EXECUTOR_RESULT} from './desktop-wire.js'
 import {z} from 'zod'
 import type {CausalRuntime} from './causal-runtime.js'
 import {validProgressSummary, type EventRecord} from './events.js'
@@ -105,11 +106,11 @@ export function projectExecutorEvent(
       started_at: delegate.dispatched_at, ended_at: event.ts,
       changed_files: typeof changed === 'number' && Number.isSafeInteger(changed) && changed >= 0 ? changed : null}
   }
-  const parsed = executorProgressSchema.safeParse({type: 'executor.progress', delegate_id: id,
+  const parsed = executorProgressSchema.safeParse({type: EXECUTOR_PROGRESS, delegate_id: id,
     executor: publicExecutor, phase, summary: text, level, ts: event.ts})
   if (!parsed.success) return null
   if (result === undefined) return {progress: parsed.data}
-  const parsedResult = executorResultSchema.safeParse({type: 'executor.result', work_id: id, result})
+  const parsedResult = executorResultSchema.safeParse({type: EXECUTOR_RESULT, work_id: id, result})
   if (!parsedResult.success) return null
   return {progress: parsed.data, result: parsedResult.data.result}
 }
@@ -118,7 +119,7 @@ export function projectExecutorSuggestion(suggestion: Suggestion, now: number): 
   if (suggestion.origin !== 'surrogate' || suggestion.kind === 'question') return null
   const content = safeProgressSummary(suggestion.content.summary, '')
   if (!content) return null
-  const parsed = executorProgressSchema.safeParse({type: 'executor.progress', delegate_id: suggestion.id,
+  const parsed = executorProgressSchema.safeParse({type: EXECUTOR_PROGRESS, delegate_id: suggestion.id,
     executor: 'surrogate', phase: 'working', summary: content, level: 'milestone', ts: now})
   return parsed.success ? parsed.data : null
 }

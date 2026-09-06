@@ -1,4 +1,5 @@
 import { WakeAudioRouter, canAutoSleep } from './wake-audio.mjs'
+import {PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT} from './wire-frame-types.mjs'
 import {
   activateCaptureMode,
   AlertTone,
@@ -768,7 +769,7 @@ function clearCaption() {
 }
 
 async function handleControl(message) {
-  if (message.type === 'playback.clear') {
+  if (message.type === PLAYBACK_CLEAR) {
     clearAssistantCaption()
     const backend = playback.current?.backend
     const cleared = playback.clear(message.utterance_id, message.generation_epoch)
@@ -804,7 +805,7 @@ async function handleControl(message) {
       played_ms: playedMs,
       t_render_ms: performance.now(),
     })
-  } else if (message.type === 'playback.alert') {
+  } else if (message.type === PLAYBACK_ALERT) {
     clearAssistantCaption()
     const hasIdentity = Object.hasOwn(message, 'utterance_id')
     const result = await applyAlertCommand(playback, message, {
@@ -825,7 +826,7 @@ async function handleControl(message) {
         t_render_ms: performance.now(),
       })
     }
-  } else if (message.type === 'playback.terminal') {
+  } else if (message.type === PLAYBACK_TERMINAL) {
     const backend = playback.current?.backend
     const acknowledgement = playback.markProviderTerminal(
       message.utterance_id,
@@ -844,14 +845,14 @@ async function handleControl(message) {
     reportWakeActivity()
   } else if (message.type === 'clock.ping') {
     send({ type: 'clock.pong', ping_id: message.ping_id, t_render_ms: performance.now() })
-  } else if (message.type === 'caption') {
+  } else if (message.type === CAPTION) {
     captionLabel.textContent = message.text
     captionLabel.dataset.role = message.role
     captionLabel.hidden = !message.text
-  } else if (message.type === 'executor.state') {
+  } else if (message.type === EXECUTOR_STATE) {
     axes.codex = message.state === 'running' ? 'working' : 'idle'
     if (typeof message.display_name === 'string') axes.executorName = message.display_name
-  } else if (message.type === 'project.state') {
+  } else if (message.type === PROJECT_STATE) {
     const keys = Object.keys(message).sort().join(',')
     const workspace = message.workspace_display_name
     const session = message.session_title
@@ -934,7 +935,7 @@ async function handleControl(message) {
       confirmationPresentation.sync('project', pillPending)
       applyConfirmationPresentation()
     }
-  } else if (message.type === 'executor.approval') {
+  } else if (message.type === EXECUTOR_APPROVAL) {
     const approval = parseCodexApprovalMessage(message)
     if (approval !== null) {
       axes.executorName = approval.display_name
@@ -957,15 +958,15 @@ async function handleControl(message) {
       confirmationPresentation.sync('codex', approval.pending_approval)
       applyConfirmationPresentation()
     }
-  } else if (message.type === 'executor.progress') {
+  } else if (message.type === EXECUTOR_PROGRESS) {
     const frame = parseProgressFrame(message)
     if (frame !== null) void progressBubbles.push(frame)
-  } else if (message.type === 'executor.results.reset') {
+  } else if (message.type === EXECUTOR_RESULTS_RESET) {
     if (Object.keys(message).length === 1) {
       retainedResults.clear()
       updateResultButton()
     }
-  } else if (message.type === 'executor.result') {
+  } else if (message.type === EXECUTOR_RESULT) {
     const result = parseLastResultFrame(message)
     if (result !== undefined) {
       if (result === null) retainedResults.delete(message.work_id)
