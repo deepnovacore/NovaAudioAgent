@@ -14,6 +14,8 @@ test('release gate requires every milestone and platform with evidence, while de
   const workflow = await readFile(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8')
   assert.match(workflow, /release-readiness:[\s\S]*github\.base_ref == 'main'[\s\S]*check:release-gate/u)
   const publish = await readFile(new URL('../../../.github/workflows/release-publish.yml', import.meta.url), 'utf8')
+  assert.ok(publish.includes('git merge-base --is-ancestor "$EXPECTED_COMMIT" origin/main'))
+  assert.match(workflow, /needs: \[electron, release-readiness\]/u)
   assert.ok(publish.includes('check:release-gate'))
   assert.ok(publish.indexOf('check:release-gate') < publish.indexOf('npm whoami'))
 })
