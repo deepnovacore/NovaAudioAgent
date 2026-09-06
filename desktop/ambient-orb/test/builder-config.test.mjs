@@ -20,6 +20,12 @@ const INHERIT_ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/ent
 const HTML_PATH = resolve(import.meta.dirname, '../src/renderer/index.html')
 const EXPECTED_BUILD_SCRIPTS = [
   'src/main/main.mjs',
+  'src/main/wake-word/runtime.mjs',
+  'src/main/wake-word/worker.mjs',
+  'src/main/wake-word/model-manager.mjs',
+  'src/main/wake-word/sherpa-detector.mjs',
+  'src/renderer/wake-audio.mjs',
+  'scripts/wake-word-smoke.mjs',
   'src/main/app-protocol.mjs',
   'src/main/camera-source.mjs',
   'src/main/backend.mjs',
@@ -638,4 +644,9 @@ test('the dedicated camera-file script builds runtime before launching pinned El
     pkg.scripts['test:camera-file'],
     'npm run build --workspace @nova-audio-agent/runtime && electron scripts/camera-file-integration.mjs',
   )
+})
+
+test('sherpa WASM distribution is unpacked for worker filesystem loading', async () => {
+  const config = await readFile(CONFIG_PATH, 'utf8')
+  assert.match(config, /asarUnpack:\n  - '\*\*\/node_modules\/sherpa-onnx\/\*\*'/)
 })

@@ -50,6 +50,8 @@ export function browserWindowOptions(preload, launchId, { opaque = false } = {})
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // Hidden wake-word capture and its heartbeat must keep running.
+      backgroundThrottling: false,
       autoplayPolicy: 'no-user-gesture-required',
       partition: `nova-orb-${launchId}`,
       preload,

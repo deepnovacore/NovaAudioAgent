@@ -208,6 +208,26 @@ test('the complete successful apply sequence clears only the submitted draft', a
   assert.deepEqual(notices, ['restarting', 'complete'])
 })
 
+test('an explicitly local-only save does not wait for a backend restart', async () => {
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({
+      wakeWordEnabled: true,
+      restarted: false,
+      settingsApplyStatus: 'applied',
+      backendStatus: 'connected',
+    })},
+    render: () => {},
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+  controller.stage({wakeWordEnabled: true})
+  assert.equal((await controller.save()).saved, true)
+  controller.syncView(publicView({settingsApplyStatus: 'applied', backendStatus: 'connected'}))
+  assert.deepEqual(notices, ['complete'])
+})
+
 test('a durable save clears accepted drafts and secrets while reporting restart failure separately', async () => {
   const statuses = []
   const notices = []
@@ -543,7 +563,7 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(html, /保存并重启/)
   assert.match(html, /<p id="restart-notice" class="warning" hidden><\/p>/)
   assert.match(script, /已保存，后台正在重启并重新连接/u)
-  assert.match(script, /已生效：后台已重启并重新连接/u)
+  assert.match(script, /设置已生效/u)
   assert.match(script, /已保存·未生效：后台仍在使用旧配置/u)
   assert.match(script, /已保存·后端未启动：请检查后台状态后重试/u)
   assert.match(controllerScript, /已保存·未生效/u)

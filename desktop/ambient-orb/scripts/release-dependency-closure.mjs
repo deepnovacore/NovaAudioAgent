@@ -1,3 +1,4 @@
+export const DESKTOP_DEPENDENCIES = Object.freeze(['@nova-audio-agent/runtime', 'sherpa-onnx', 'tar-stream', 'unbzip2-stream'])
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
@@ -203,7 +204,7 @@ export async function deriveLockedProductionClosure({
     throw new ReleaseDependencyError('lock_invalid')
   }
   const desktopDependencies = Object.keys(desktop.dependencies ?? {})
-  if (desktopDependencies.length !== 1 || desktopDependencies[0] !== RUNTIME_PACKAGE) {
+  if (!desktopDependencies.includes(RUNTIME_PACKAGE) || desktopDependencies.some(name => !DESKTOP_DEPENDENCIES.includes(name))) {
     throw new ReleaseDependencyError('desktop_dependency_invalid')
   }
 

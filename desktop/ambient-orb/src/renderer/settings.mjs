@@ -63,6 +63,10 @@ const workspaceClearCurrent = document.querySelector('#workspace-clear-current')
 const workspaceClearAll = document.querySelector('#workspace-clear-all')
 const workspaceRetryRecovery = document.querySelector('#workspace-retry-recovery')
 const workspaceActionStatus = document.querySelector('#workspace-action-status')
+const wakeEnabled = document.querySelector('#wake-word-enabled')
+const autoHideSeconds = document.querySelector('#auto-hide-seconds')
+const wakeStatus = document.querySelector('#wake-word-status')
+const wakeRetry = document.querySelector('#wake-word-retry')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
 const pipelineModeInputs = [...document.querySelectorAll('input[name="pipelineMode"]')]
@@ -193,6 +197,11 @@ function render(view, _drafts, state) {
   knowledgePanel.render(view)
   for (const input of capabilitySettings) input.value = view[input.id] ?? ''
   controllerState = state
+  wakeEnabled.checked = view.wakeWordEnabled === true
+  autoHideSeconds.value = String(view.autoHideSeconds ?? 60)
+  wakeStatus.textContent = ({off: '未开启', loading: '正在准备唤醒模型…', ready: '本地唤醒已就绪', error: '唤醒模型不可用，请重试；可用托盘显示窗口。'})[view.wakeWord?.status] ?? ''
+  wakeRetry.hidden = view.wakeWord?.status !== 'error'
+
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
   for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
@@ -258,7 +267,7 @@ function updateRestartNotice(phase) {
     restartNotice.textContent = '已保存·后端未启动：请检查后台状态后重试'
     return
   }
-  restartNotice.textContent = '已生效：后台已重启并重新连接'
+  restartNotice.textContent = '设置已生效'
 }
 
 const controller = createSettingsController({
@@ -275,6 +284,18 @@ function bindStage(element, event, patch) {
   element.addEventListener(event, () => { controller.stage(patch()) })
 }
 
+bindStage(wakeEnabled, 'change', () => ({wakeWordEnabled: wakeEnabled.checked}))
+bindStage(autoHideSeconds, 'change', () => {
+  const value = Number(autoHideSeconds.value)
+  const valid = Number.isInteger(value) && (value === 0 || value >= 30 && value <= 3600)
+  autoHideSeconds.setCustomValidity(valid ? '' : '请输入 0 或 30–3600 的整数')
+  autoHideSeconds.reportValidity()
+  return valid ? {autoHideSeconds: value} : {}
+})
+wakeRetry.addEventListener('click', () => { void window.novaAudioAgentDesktop.wakeWord.retry() })
+for (const event of ['pointerdown', 'keydown']) {
+  document.addEventListener(event, () => window.novaAudioAgentDesktop.wakeWord.activity())
+}
 for (const input of paletteInputs) bindStage(input, 'change', () => ({palette: input.value}))
 for (const input of proactivityInputs) bindStage(input, 'change', () => ({proactivity: input.value}))
 for (const input of pipelineModeInputs) bindStage(input, 'change', () => ({pipelineMode: input.value}))

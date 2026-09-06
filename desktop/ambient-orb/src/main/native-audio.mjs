@@ -14,6 +14,7 @@ export function startNativeAudio({
   const child = spawnImpl(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] })
   let stdout = ''
   let ready = false
+  let captureEpoch = 0
   let closing = false
   let settled = false
   let clearSequence = 0
@@ -113,15 +114,24 @@ export function startNativeAudio({
     let event
     try { event = JSON.parse(line) } catch { return }
     if (event.type === 'ready' && event.aecMode === 'voice_processing_io') {
+      if (event.captureEpochSupported !== true) {
+        settle(new Error('native capture epoch protocol unavailable'))
+        child.kill('SIGTERM')
+        return
+      }
       ready = true
       settle(null, event)
     } else if (event.type === 'error') {
       if (!ready) settle(new Error('VoiceProcessingIO unavailable'))
       onEvent({ type: 'error', code: 'voice_processing_unavailable' })
+    } else if (event.type === 'capture.epoch' && event.wakeEpoch === captureEpoch) {
+      // Producer acknowledgement is diagnostic; each frame carries its own epoch.
+      return
     } else if (event.type === 'audio' && typeof event.audio === 'string') {
+      if (event.wakeEpoch !== captureEpoch) return
       const pcm = Buffer.from(event.audio, 'base64')
       if (pcm.length && pcm.length <= MAX_PCM_BYTES && pcm.length % 2 === 0) {
-        onEvent({ type: 'audio', pcm })
+        onEvent({ type: 'audio', pcm, wakeEpoch: event.wakeEpoch })
       }
     } else if (
       event.type === 'playback.cleared'
@@ -211,6 +221,11 @@ export function startNativeAudio({
 
   return readyPromise.then(status => ({
     status,
+    setCaptureEpoch(epoch) {
+      if (!Number.isSafeInteger(epoch) || epoch < 0) return false
+      captureEpoch = epoch
+      return send({type: 'capture_epoch', wakeEpoch: epoch})
+    },
     setCaptureEnabled(enabled) {
       return send({ type: 'capture', enabled: enabled === true })
     },
@@ -329,6 +344,7 @@ export function createNativeAudioManager({
   let audio = null
   let pending = null
   let playbackMuted = false
+  let captureEpoch = 0
 
   const ensure = async () => {
     if (audio) return audio
@@ -359,12 +375,18 @@ export function createNativeAudioManager({
 
   return Object.freeze({
     get ready() { return audio !== null },
+    setCaptureEpoch(epoch) {
+      if (!Number.isSafeInteger(epoch) || epoch < 0) return false
+      captureEpoch = epoch
+      return audio ? audio.setCaptureEpoch?.(epoch) === true : true
+    },
     async activate() {
       try {
         const current = await ensure()
         if (playbackMuted && current.setPlaybackMuted?.(true) !== true) {
           throw new Error('native playback mute command failed')
         }
+        if (current.setCaptureEpoch && !current.setCaptureEpoch(captureEpoch)) throw new Error('native capture epoch failed')
         if (!current.setCaptureEnabled(true)) throw new Error('native capture command failed')
         return Object.freeze({ audioMode: 'voice_processing_io' })
       } catch {

@@ -82,6 +82,8 @@ test('the default settings are the documented schema', () => {
     codexManagedRoot: '',
     modelBaseUrl: '',
     startListeningOnLaunch: false,
+    wakeWordEnabled: false,
+    autoHideSeconds: 60,
     pipelineMode: 'integrated',
     integratedProvider: 'qwen',
     integratedModel: 'qwen-audio-3.0-realtime-plus',
@@ -223,6 +225,8 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     codexManagedRoot: '',
     modelBaseUrl: '',
     startListeningOnLaunch: false,
+    wakeWordEnabled: false,
+    autoHideSeconds: 60,
     pipelineMode: 'cascaded',
     integratedProvider: 'not-qwen',
     integratedModel: '  qwen-realtime-custom  ',
@@ -249,6 +253,8 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     codexManagedRoot: '',
     modelBaseUrl: '',
     startListeningOnLaunch: false,
+    wakeWordEnabled: false,
+    autoHideSeconds: 60,
     pipelineMode: 'cascaded',
     integratedProvider: 'qwen',
     integratedModel: 'qwen-realtime-custom',
@@ -311,6 +317,7 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
   })
 
   assert.deepEqual(Object.keys(normalized).sort(), [
+    'autoHideSeconds',
     'capabilitiesConfigPath',
     'cascadedAsrProvider',
     'cascadedEndpointingProvider',
@@ -341,6 +348,7 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'secrets',
     'startListeningOnLaunch',
     'version',
+    'wakeWordEnabled',
   ])
 })
 
@@ -679,6 +687,7 @@ test('publicSettings never carries the secrets object', () => {
   const view = publicSettings(settings)
 
   assert.deepEqual(Object.keys(view).sort(), [
+    'autoHideSeconds',
     'capabilitiesConfigPath',
     'cascadedAsrProvider',
     'cascadedEndpointingProvider',
@@ -708,6 +717,7 @@ test('publicSettings never carries the secrets object', () => {
     'progressBubbles',
     'startListeningOnLaunch',
     'version',
+    'wakeWordEnabled',
   ])
   assert.doesNotMatch(JSON.stringify(view), /sk-visible|sealed/)
 })
@@ -718,7 +728,7 @@ test('orb settings expose only renderer-owned appearance and activation fields',
     startListeningOnLaunch: true,
     codexBinaryPath: 'C:\\private\\codex.exe',
     modelBaseUrl: 'https://private.example/v1',
-  }), {palette: 'graphite', startListeningOnLaunch: true})
+  }), {palette: 'graphite', startListeningOnLaunch: true, wakeWordEnabled: false, autoHideSeconds: 60})
 })
 
 test('secretsPresent reports booleans for every key and leaks no ciphertext', () => {

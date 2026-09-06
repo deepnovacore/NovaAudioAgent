@@ -164,6 +164,8 @@ export function buildDesktopRealtimeComposition(
     ...(options.createServer === undefined ? {} : {createServer: options.createServer}),
   })
   holder.desktop = desktop
+  startDesktopActivityHeartbeat(realtime.service, idle => desktop.bridge.onActivity(idle), options.stop.signal)
+
   const unsubscribeProgress = realtime.runtime.observe(event => {
     const projected = projectExecutorEvent(event, realtime.runtime, channel => realtime.service.agentNameForChannel(channel))
     if (projected !== null) desktop.bridge.onExecutorProgress(projected.progress, projected.result)
@@ -171,6 +173,29 @@ export function buildDesktopRealtimeComposition(
   if (options.stop.signal.aborted) unsubscribeProgress()
   else options.stop.signal.addEventListener('abort', unsubscribeProgress, {once: true})
   return {realtime, desktop}
+}
+
+/** Best-effort presence must never take down the owning realtime service. */
+export function startDesktopActivityHeartbeat(
+  service: RealtimeAssembly['service'],
+  publish: (idle: boolean) => void,
+  signal: AbortSignal,
+): ReturnType<typeof setInterval> {
+  const timer = setInterval(() => {
+    if (signal.aborted) return
+    let idle = false
+    try {
+      const session = service.session
+      idle = session.foregroundIdle && session.floor.state === 'idle'
+        && session.snapshot().active_delegates.length === 0
+        && service.executorState === 'idle'
+    } catch { /* Unavailable session state conservatively means busy. */ }
+    try { publish(idle) } catch { /* A dropped presence frame is retried next tick. */ }
+  }, 1000)
+  timer.unref()
+  if (signal.aborted) clearInterval(timer)
+  else signal.addEventListener('abort', () => clearInterval(timer), {once: true})
+  return timer
 }
 
 /** The frame identity of the configured coding executor, or `null` when there is none. */

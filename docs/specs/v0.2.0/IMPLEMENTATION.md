@@ -566,3 +566,20 @@ This verifies rendering and interaction, not OS DPI behavior or live audio.
   approval fixture was migrated from `codex.approval` to the current
   `executor.approval` wire. This closes implementation gaps only; physical/live
   acceptance and the separate Task 10 ownership extraction remain open.
+
+
+## Local wake word (11)
+
+[11 Local wake word](11-local-wake-word.md) defines the opt-in desktop KWS feature.
+The 2026-09-06 branch fixes cover interrupted model downloads, manual-hide fallback,
+per-frame native capture epochs, heartbeat error isolation and lifecycle checks,
+and bounded Windows filesystem retries. Sherpa is unpacked from asar.
+The volume is English-only by explicit user decision, an exception to the series'
+Chinese-summary convention. Human microphone and Windows/Linux packaged acceptance
+remain open; prior synthetic macOS smoke results are not release acceptance.
+
+Wake integration candidate rebased onto `2356305`: root check passed (224 files,
+387 occurrences), desktop build and full suite passed (873/876, three platform
+skips; source startup smoke skipped), and backend desktop transport passed 57/57.
+Capability document commits retain backend restart even when paired with wake-only
+settings; main/knowledge VM contexts retain the dev settings and quit contracts.

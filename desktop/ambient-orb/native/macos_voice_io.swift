@@ -16,6 +16,7 @@ private struct Command: Decodable {
     let utteranceId: String?
     let generationEpoch: Int?
     let enabled: Bool?
+    let wakeEpoch: Int?
     let requestId: String?
 }
 
@@ -68,6 +69,7 @@ private final class VoiceIO {
     private let captureLock = NSLock()
     private let output = DispatchQueue(label: "nova-audio-agent.voice-io.output")
     private var captureEnabled = false
+    private var captureEpoch = 0
     private var unit: AudioUnit?
     private var running = false
     private var telemetryTimer: DispatchSourceTimer?
@@ -159,6 +161,7 @@ private final class VoiceIO {
             "type": "ready",
             "aecMode": "voice_processing_io",
             "systemAEC": true,
+            "captureEpochSupported": true,
             "inputSampleRate": captureRate,
             "outputSampleRate": playbackRate,
         ])
@@ -168,6 +171,14 @@ private final class VoiceIO {
         captureLock.lock()
         captureEnabled = enabled
         captureLock.unlock()
+    }
+
+    func setCaptureEpoch(_ epoch: Int) {
+        guard epoch >= 0, epoch <= 9_007_199_254_740_991 else { return }
+        captureLock.lock()
+        captureEpoch = epoch
+        captureLock.unlock()
+        emit(["type": "capture.epoch", "wakeEpoch": epoch])
     }
 
     func setPlaybackMuted(_ muted: Bool) {
@@ -202,10 +213,10 @@ private final class VoiceIO {
         ])
     }
 
-    private func shouldCapture() -> Bool {
+    private func captureSnapshot() -> Int? {
         captureLock.lock()
         defer { captureLock.unlock() }
-        return captureEnabled
+        return captureEnabled ? captureEpoch : nil
     }
 
     func enqueue(_ data: Data, identity: PlaybackIdentity) {
@@ -266,6 +277,8 @@ private final class VoiceIO {
         frameCount: UInt32
     ) -> OSStatus {
         guard let unit else { return kAudio_ParamError }
+        // Snapshot before rendering and before the asynchronous stdout queue.
+        let epoch = captureSnapshot()
         var samples = [Int16](repeating: 0, count: Int(frameCount))
         let status = samples.withUnsafeMutableBytes { bytes -> OSStatus in
             var buffers = AudioBufferList(
@@ -278,12 +291,12 @@ private final class VoiceIO {
             )
             return AudioUnitRender(unit, flags, timestamp, 1, frameCount, &buffers)
         }
-        guard status == noErr, shouldCapture() else { return status }
+        guard status == noErr, let epoch else { return status }
         let converted = samples.withUnsafeBufferPointer {
             convert($0, from: processingRate, to: captureRate)
         }
         let data = converted.withUnsafeBytes { Data($0) }
-        emit(["type": "audio", "audio": data.base64EncodedString()])
+        emit(["type": "audio", "audio": data.base64EncodedString(), "wakeEpoch": epoch])
         return noErr
     }
 
@@ -376,6 +389,8 @@ private enum VoiceIOProgram {
                     } else {
                         voice.clear()
                     }
+                case "capture_epoch":
+                    if let epoch = command.wakeEpoch { voice.setCaptureEpoch(epoch) }
                 case "capture": voice.setCapture(command.enabled == true)
                 case "playback_muted": voice.setPlaybackMuted(command.enabled == true)
                 case "playback_stats": voice.emitPlaybackTelemetry()

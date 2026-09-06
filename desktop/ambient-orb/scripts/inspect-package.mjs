@@ -13,6 +13,7 @@ import { extractAll, getRawHeader, listPackage } from '@electron/asar'
 
 import {
   deriveLockedProductionClosure,
+  DESKTOP_DEPENDENCIES,
   readReleaseTargets,
 } from './release-dependency-closure.mjs'
 import {
@@ -291,8 +292,8 @@ function assertDependencyContract(productionDependencies, runtimeDependencies) {
   const production = [...productionDependencies].sort()
   const runtime = [...runtimeDependencies].sort()
   const violations = []
-  if (production.length !== 1 || production[0] !== RUNTIME_PACKAGE) {
-    violations.push(...production.filter(name => name !== RUNTIME_PACKAGE))
+  if (!production.includes(RUNTIME_PACKAGE) || production.some(name => !DESKTOP_DEPENDENCIES.includes(name))) {
+    violations.push(...production.filter(name => !DESKTOP_DEPENDENCIES.includes(name)))
     if (!production.includes(RUNTIME_PACKAGE)) violations.push(RUNTIME_PACKAGE)
   }
   if (

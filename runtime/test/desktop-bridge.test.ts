@@ -989,3 +989,12 @@ test('retained result keeps the work project/title after its running roster entr
   const result = findJsonFrame(drainJsonFrames(bridge), 'executor.result').result
   assert.deepEqual(result, {delegate_id: 'a', executor: 'codex', outcome: 'ok', summary: 'done', started_at: 1, ended_at: 2, changed_files: 1, project: 'alpha', title: '🌟'.repeat(120)})
 })
+
+test('desktop activity heartbeat is authenticated and carries only a boolean', () => {
+  const {bridge} = harness()
+  bridge.onActivity(false)
+  bridge.markAuthenticated()
+  bridge.onActivity(true)
+  const frames = drainJsonFrames(bridge)
+  assert.deepEqual(frames.filter(frame => frame.type === 'desktop.activity'), [{type: 'desktop.activity', idle: true}])
+})

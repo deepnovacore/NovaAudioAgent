@@ -277,6 +277,10 @@ export class DesktopSocketBridge {
     this.#syncExecutorStateDelivery()
   }
 
+  onActivity(idle: boolean): void {
+    if (this.#authenticated) this.#enqueue(JSON.stringify({type: 'desktop.activity', idle}), {droppable: true})
+  }
+
   onProjectView(view: PublicProjectView): void {
     projectStateMessage(view)
     if (sameProjectView(view, this.#projectView)) return

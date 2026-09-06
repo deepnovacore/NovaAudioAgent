@@ -43,6 +43,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   codexManagedRoot: '',
   modelBaseUrl: '',
   startListeningOnLaunch: false,
+  wakeWordEnabled: false,
+  autoHideSeconds: 60,
   pipelineMode: 'integrated',
   integratedProvider: 'qwen',
   integratedModel: 'qwen-audio-3.0-realtime-plus',
@@ -297,6 +299,15 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
       DEFAULT_SETTINGS.modelBaseUrl,
       validModelBaseUrl,
     ),
+    wakeWordEnabled: pick(
+      ownEnumerableDataValue(source, 'wakeWordEnabled'),
+      ownEnumerableDataValue(fallback, 'wakeWordEnabled'), false, validBoolean,
+    ),
+    autoHideSeconds: pick(
+      ownEnumerableDataValue(source, 'autoHideSeconds'),
+      ownEnumerableDataValue(fallback, 'autoHideSeconds'), 60,
+      value => Number.isInteger(value) && (value === 0 || value >= 30 && value <= 3600) ? value : null,
+    ),
     startListeningOnLaunch: pick(
       ownEnumerableDataValue(source, 'startListeningOnLaunch'),
       ownEnumerableDataValue(fallback, 'startListeningOnLaunch'),
@@ -419,6 +430,11 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
   }
 }
 
+export function backendSettings(settings) {
+  const {wakeWordEnabled, autoHideSeconds, ...backend} = normalizeSettings(settings)
+  return backend
+}
+
 // The renderer's whole view of the settings: no secrets object, not even an
 // empty one, so no future edit can widen it by accident.
 export function publicSettings(settings) {
@@ -434,6 +450,8 @@ export function publicSettings(settings) {
     codexManagedRoot: normalized.codexManagedRoot,
     modelBaseUrl: normalized.modelBaseUrl,
     startListeningOnLaunch: normalized.startListeningOnLaunch,
+    wakeWordEnabled: normalized.wakeWordEnabled,
+    autoHideSeconds: normalized.autoHideSeconds,
     pipelineMode: normalized.pipelineMode,
     integratedProvider: normalized.integratedProvider,
     integratedModel: normalized.integratedModel,
@@ -461,6 +479,8 @@ export function orbSettings(settings) {
   return Object.freeze({
     palette: normalized.palette,
     startListeningOnLaunch: normalized.startListeningOnLaunch,
+    wakeWordEnabled: normalized.wakeWordEnabled,
+    autoHideSeconds: normalized.autoHideSeconds,
   })
 }
 
@@ -607,6 +627,8 @@ export function applySettingsUpdate(current, patch, codec) {
     codexManagedRoot: ownEnumerableDataValue(source, 'codexManagedRoot'),
     modelBaseUrl: ownEnumerableDataValue(source, 'modelBaseUrl'),
     startListeningOnLaunch: ownEnumerableDataValue(source, 'startListeningOnLaunch'),
+    wakeWordEnabled: ownEnumerableDataValue(source, 'wakeWordEnabled'),
+    autoHideSeconds: ownEnumerableDataValue(source, 'autoHideSeconds'),
     pipelineMode: ownEnumerableDataValue(source, 'pipelineMode'),
     integratedProvider: ownEnumerableDataValue(source, 'integratedProvider'),
     integratedModel: ownEnumerableDataValue(source, 'integratedModel'),
