@@ -292,10 +292,10 @@ function assertDependencyContract(productionDependencies, runtimeDependencies) {
   const production = [...productionDependencies].sort()
   const runtime = [...runtimeDependencies].sort()
   const violations = []
-  if (!production.includes(RUNTIME_PACKAGE) || production.some(name => !DESKTOP_DEPENDENCIES.includes(name))) {
-    violations.push(...production.filter(name => !DESKTOP_DEPENDENCIES.includes(name)))
-    if (!production.includes(RUNTIME_PACKAGE)) violations.push(RUNTIME_PACKAGE)
-  }
+  violations.push(
+    ...DESKTOP_DEPENDENCIES.filter(name => !production.includes(name)),
+    ...production.filter(name => !DESKTOP_DEPENDENCIES.includes(name)),
+  )
   if (
     runtime.length !== EXPECTED_RUNTIME_DEPENDENCIES.length
     || runtime.some((name, index) => name !== EXPECTED_RUNTIME_DEPENDENCIES[index])

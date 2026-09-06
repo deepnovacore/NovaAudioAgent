@@ -68,7 +68,7 @@ async function download(url, path, fetchImpl) {
   }))
 }
 
-async function extractSelected(archivePath, targetDirectory) {
+export async function extractSelected(archivePath, targetDirectory) {
   const extract = tar.extract()
   const writes = []
   extract.on('entry', (header, stream, next) => {

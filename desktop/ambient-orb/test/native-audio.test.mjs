@@ -656,3 +656,26 @@ test('native capture epochs survive delayed stdout and accept matching producer 
   assert.equal(events.at(-1).wakeEpoch, 8)
   child.emit('exit', 0)
 })
+
+test('native readiness rejects helpers without capture epoch support', {
+  skip: process.platform !== 'darwin',
+}, async () => {
+  for (const captureEpochSupported of [undefined, false]) {
+    const child = new EventEmitter()
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    const signals = []
+    child.kill = signal => signals.push(signal)
+    await assert.rejects(startNativeAudio({
+      binary: '/tmp/old-macos-voice-io',
+      spawnImpl: () => {
+        queueMicrotask(() => child.stdout.write(JSON.stringify({
+          type: 'ready', aecMode: 'voice_processing_io', systemAEC: true, captureEpochSupported,
+        }) + '\n'))
+        return child
+      },
+    }), /native capture epoch protocol unavailable/)
+    assert.deepEqual(signals, ['SIGTERM'])
+  }
+})

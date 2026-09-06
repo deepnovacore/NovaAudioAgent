@@ -204,7 +204,8 @@ export async function deriveLockedProductionClosure({
     throw new ReleaseDependencyError('lock_invalid')
   }
   const desktopDependencies = Object.keys(desktop.dependencies ?? {})
-  if (!desktopDependencies.includes(RUNTIME_PACKAGE) || desktopDependencies.some(name => !DESKTOP_DEPENDENCIES.includes(name))) {
+  if (desktopDependencies.length !== DESKTOP_DEPENDENCIES.length
+    || desktopDependencies.some(name => !DESKTOP_DEPENDENCIES.includes(name))) {
     throw new ReleaseDependencyError('desktop_dependency_invalid')
   }
 

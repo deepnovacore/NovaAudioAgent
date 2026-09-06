@@ -328,3 +328,37 @@ test('manual hide falls back when sleep is unavailable', () => {
   new Function('wakeWord', 'mainWindow', body)({enabled: true, state: 'active', sleep: () => true}, {hide: () => hidden++})
   assert.equal(hidden, 0)
 })
+
+test('blocked manual hide wakes recovery and tray/shortcut dispatch through hideOrb', () => {
+  const source = readFileSync(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const hideBody = source.match(/function hideOrb\(\) \{([\s\S]*?)\n\}/)[1]
+  let woke = 0
+  new Function('wakeWord', 'mainWindow', hideBody)({
+    enabled: true, state: 'blocked', wake: () => woke++,
+    sleep: () => assert.fail('blocked state must recover'),
+  }, {hide: () => assert.fail('blocked state must stay visible')})
+  assert.equal(woke, 1)
+
+  const trayBody = source.match(/function createTray\(\) \{([\s\S]*?)\n\}/)[1]
+  const handlers = []
+  class Tray {
+    setToolTip() {}
+    setContextMenu() {}
+    on(event, callback) { if (event === 'click') handlers.push(callback) }
+  }
+  let visible = true, hidden = 0
+  const window = {isVisible: () => visible}
+  const wakeWord = {wake: () => woke++}
+  new Function('Tray', 'trayImage', 'Menu', 'app', 'mainWindow', 'wakeWord', 'hideOrb', trayBody)(
+    Tray, () => null, {buildFromTemplate: value => value}, {}, window, wakeWord, () => hidden++,
+  )
+  const shortcut = source.match(/globalShortcut\.register\('CommandOrControl\+Shift\+Space', \(\) => \{([\s\S]*?)\n  \}\)/)[1]
+  handlers.push(() => new Function('mainWindow', 'wakeWord', 'hideOrb', shortcut)(window, wakeWord, () => hidden++))
+  assert.equal(handlers.length, 2)
+  for (const handler of handlers) {
+    visible = true; handler()
+    visible = false; handler()
+  }
+  assert.equal(hidden, 2)
+  assert.equal(woke, 3)
+})

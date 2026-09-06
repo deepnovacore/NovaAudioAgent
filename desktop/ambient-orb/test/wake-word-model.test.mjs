@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {mkdtemp, mkdir, writeFile, rm, readdir} from 'node:fs/promises'
+import {mkdtemp, mkdir, writeFile, rm, readdir, readFile, lstat} from 'node:fs/promises'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
-import {ensureWakeWordModel, validateKeywords, WAKE_WORD_MODEL_NAME, WAKE_WORD_MODEL_FILES, WAKE_WORD_KEYWORDS} from '../src/main/wake-word/model-manager.mjs'
+import {extractSelected, ensureWakeWordModel, validateKeywords, WAKE_WORD_MODEL_NAME, WAKE_WORD_MODEL_FILES, WAKE_WORD_KEYWORDS} from '../src/main/wake-word/model-manager.mjs'
 import {pcm16Base64ToFloat32} from '../src/main/wake-word/sherpa-detector.mjs'
 
 test('download failure and checksum failure leave no partial model; retry remains possible', async () => {
@@ -139,5 +139,27 @@ test('model install retries transient Windows handles with a finite limit', asyn
     })
     await assert.rejects(installWakeWordModel(stage, target), /invalid/)
     assert.equal(calls, 1)
+  } finally { await rm(root, {recursive: true, force: true}) }
+})
+
+test('compressed model extraction selects regular model files and rejects corrupt archives', async () => {
+  // USTAR/bzip2 fixture: four model files, keywords/ignored files and a tokens symlink.
+  const archive = Buffer.from('QlpoOTFBWSZTWXADiYUAAZtfhdqAQBv/0AAByABv/9/gAxAAOAgIMAFYAGAAGgADJoAAA0BgABoAAyaAAANAIpBENGpqepso2TAptQPJGge0p39n1Dh4DQYGKNGSM6oA6dU9Pv0yseqyXMLqrPPLHjmsLiRSAWEPQfQbx+g4hyDlHYMtesvChEEevOGIpm+ySiesc65dElAtWBQOXLlfv31tBcUL5Y+MiTFOIzy0k+NBv4ldspWWUmMoiekCVBpCxPFKzENyyttlUqPkHAbVJLMeowPUqH38edgm084GCDYMhrXc5BpkiIJncbh9hynQHfddeZuAdRrW8bGc53D4Dh/emGHfviNB2GLx6FGYZh7D2HUHY2uocC01ZBwWBzF4wbrCI3ZKr/l2DUNq3HnZYN6/scY4DhfnHuZhsX4DoOaAf8XckU4UJBwA4mFA', 'base64')
+  const root = await mkdtemp(join(tmpdir(), 'wake-extract-'))
+  const archivePath = join(root, 'model.tar.bz2'), target = join(root, 'model')
+  try {
+    await mkdir(target)
+    await writeFile(archivePath, archive)
+    await extractSelected(archivePath, target)
+    const selected = Object.values(WAKE_WORD_MODEL_FILES).filter(file => file !== 'keywords.txt')
+    assert.deepEqual((await readdir(target)).sort(), selected.sort())
+    for (const file of selected) {
+      assert.equal(await readFile(join(target, file), 'utf8'), `fixture:${file}`)
+      assert.equal((await lstat(join(target, file))).isFile(), true)
+    }
+    for (const corrupt of [Buffer.from('not bzip2'), archive.subarray(0, archive.length / 2)]) {
+      await writeFile(archivePath, corrupt)
+      await assert.rejects(extractSelected(archivePath, target))
+    }
   } finally { await rm(root, {recursive: true, force: true}) }
 })

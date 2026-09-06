@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import test from 'node:test'
+import {OWNED_ASAR_UNPACK_DIR} from '../scripts/build-owned-asar.mjs'
 
 // electron-builder.yml is small and structurally simple (two-space indents,
 // no anchors/aliases, no flow collections except the `[a, b]` target lists),
@@ -649,5 +650,6 @@ test('the dedicated camera-file script builds runtime before launching pinned El
 
 test('sherpa WASM distribution is unpacked for worker filesystem loading', async () => {
   const config = await readFile(CONFIG_PATH, 'utf8')
-  assert.match(config, /asarUnpack:\n  - '\*\*\/node_modules\/sherpa-onnx\/\*\*'/)
+  assert.deepEqual(parseYaml(config).asarUnpack, [`**/${OWNED_ASAR_UNPACK_DIR.replaceAll('\\', '/')}/**`],
+    'builder unpack rules must match the final owned-ASAR replacement')
 })
