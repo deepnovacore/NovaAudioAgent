@@ -1,6 +1,6 @@
 /** Production Qwen composition above the provider-neutral realtime owner. */
 
-import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
+import {buildAssembly, type AssemblyOptions} from './assembly.js'
 import type {CodingExecutorResource} from './coding-executor.js'
 import { RealClock } from './clock.js'
 import {
@@ -12,7 +12,8 @@ import {
 import { MonotonicIdFactory } from './ids.js'
 import { OpenAIModelGateway } from './model-gateway.js'
 import {
-  buildRealtimeAssembly,
+  composeRealtime,
+  validateCodingResource,
   filterDisabledCoding,
   defaultIntake,
   type RealtimeAssembly,
@@ -21,7 +22,6 @@ import {
 import type {RealtimeProvider} from './realtime/protocol.js'
 import { QwenAudioRealtimeAdapter, type QwenConnector } from './realtime/qwen.js'
 import { webSocketQwenConnector } from './realtime/qwen-transport.js'
-import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
 
 export interface BuildQwenRealtimeAssemblyOptions
   extends Omit<AssemblyOptions, 'gateway'>, Omit<
@@ -87,13 +87,7 @@ export function buildQwenRealtimeAssembly(
     })
   }
   options = filterDisabledCoding(options)
-  if (
-    options.codexResource !== undefined
-    && !options.settings.executors.includes(options.codexResource.adapter.manifest.name)
-  ) throw new AssemblyError('realtime coding resource selection mismatch')
-  if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {
-    throw new AssemblyError('realtime coding resource project mode mismatch')
-  }
+  validateCodingResource(options)
   const qwen = options.qwenConfig ?? requireQwenRealtime(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
@@ -108,26 +102,14 @@ export function buildQwenRealtimeAssembly(
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
   const core = buildAssembly({
+    ...options,
     settings: options.settings,
     clock,
     ids,
-    gateway,
-    ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
-    ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
+    gateway: gateway,
     ...((options.executors === undefined && options.codexResource === undefined)
       ? {}
-      : {executors: [
-          ...(options.executors ?? []),
-          ...(options.codexResource === undefined ? [] : [options.codexResource.adapter]),
-        ]}),
-    ...(options.searchTransport === undefined ? {} : {searchTransport: options.searchTransport}),
-    ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
-    ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
-    ...(options.capabilities === undefined ? {} : {capabilities: options.capabilities}),
-    ...(options.externalMcp === undefined ? {} : {externalMcp: options.externalMcp}),
-    ...(options.knowledge === undefined ? {} : {knowledge: options.knowledge}),
-    ...(options.cameraModuleEnabled === undefined ? {} : {cameraModuleEnabled: options.cameraModuleEnabled}),
-    ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
+      : {executors: [...(options.executors ?? []), ...(options.codexResource === undefined ? [] : [options.codexResource.adapter])]}),
   })
   const provider = options.qwenProvider ?? buildQwenRealtimeAssembly({
     config: qwen,
@@ -144,50 +126,14 @@ export function buildQwenRealtimeAssembly(
     executorApproval: options.codexResource?.approvalController !== null
       && options.codexResource?.approvalController !== undefined,
   })
-  const createWorkspaceGraph = () => workspaceGraphServiceFromSettings(
-    options.settings,
-    code => {
-      if (code === 'workspace_graph_open_failed') return
-      try { options.onDiagnostic?.(`[realtime-diagnostic] ${code}`) } catch { /* advisory */ }
-    },
-  )
   const intake = options.intake ?? defaultIntake(core, gateway, options.settings)
-  return buildRealtimeAssembly({
-    core,
-    provider,
+  return composeRealtime(core, provider, {
+    ...options,
     ...(intake === undefined ? {} : {intake}),
-    ...(options.onExecutorSuggestion === undefined ? {} : {onExecutorSuggestion: options.onExecutorSuggestion}),
     idFactory: () => ids.next('realtime'),
+  }, {
     controlledPreemptiveAlertReconnect: options.settings.qwen_controlled_guard_reconnect,
     preemptiveAlertHistoryRecovery: options.settings.qwen_guard_history_recovery,
     preemptiveAlertHistoryPairs: options.settings.qwen_guard_history_pairs,
-    createWorkspaceGraph,
-    ...(options.providerToolView === undefined
-      ? {}
-      : {providerToolView: options.providerToolView}),
-    ...(options.onAudioFrame === undefined ? {} : {onAudioFrame: options.onAudioFrame}),
-    ...(options.onAudioClear === undefined ? {} : {onAudioClear: options.onAudioClear}),
-    ...(options.onAudioAlert === undefined ? {} : {onAudioAlert: options.onAudioAlert}),
-    ...(options.onAudioTerminal === undefined ? {} : {onAudioTerminal: options.onAudioTerminal}),
-    ...(options.onSpoken === undefined ? {} : {onSpoken: options.onSpoken}),
-    ...(options.onDelivery === undefined ? {} : {onDelivery: options.onDelivery}),
-    ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
-    ...(options.onExecutorState === undefined ? {} : {onExecutorState: options.onExecutorState}),
-    ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
-    ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
-    ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
-    ...(options.projectConfirmation === undefined
-      ? {}
-      : {projectConfirmation: options.projectConfirmation}),
-    ...(options.commitProjectOperation === undefined
-      ? {}
-      : {commitProjectOperation: options.commitProjectOperation}),
-    ...(options.projectExpiryStepTimeoutMs === undefined
-      ? {}
-      : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
-    ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
-    ...(options.codingAgentControllerFactory === undefined
-      ? {}
-      : {codingAgentControllerFactory: options.codingAgentControllerFactory}),
   })
 }

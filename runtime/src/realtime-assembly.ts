@@ -1,3 +1,4 @@
+import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
 import {capabilityStatus, type CapabilityStatus} from './capability-registry.js'
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly, type AssemblyOptions } from './assembly.js'
@@ -1205,3 +1206,66 @@ export function filterDisabledCoding<T extends AssemblyOptions & Pick<RealtimeAs
   delete selected.projectAdapter
   return selected
 }
+
+/** Shared production wiring; provider policy remains at each pipeline boundary. */
+export function composeRealtime(
+  core: Assembly,
+  provider: RealtimeProvider,
+  options: Omit<RealtimeAssemblyOptions, 'core' | 'provider' | 'idFactory'> & {readonly settings: AssemblyOptions['settings']; readonly idFactory: () => string},
+  providerTuning: Required<Pick<RealtimeAssemblyOptions, 'controlledPreemptiveAlertReconnect' | 'preemptiveAlertHistoryRecovery' | 'preemptiveAlertHistoryPairs'>>,
+): RealtimeAssembly {
+  const createWorkspaceGraph = () => workspaceGraphServiceFromSettings(
+    options.settings,
+    code => {
+      if (code === 'workspace_graph_open_failed') return
+      try { options.onDiagnostic?.(`[realtime-diagnostic] ${code}`) } catch { /* advisory */ }
+    },
+  )
+  return buildRealtimeAssembly({
+    core,
+    provider,
+    ...(options.intake === undefined ? {} : {intake: options.intake}),
+    ...(options.onExecutorSuggestion === undefined ? {} : {onExecutorSuggestion: options.onExecutorSuggestion}),
+    idFactory: options.idFactory,
+    ...providerTuning,
+    createWorkspaceGraph,
+    ...(options.providerToolView === undefined
+      ? {}
+      : {providerToolView: options.providerToolView}),
+    ...(options.onAudioFrame === undefined ? {} : {onAudioFrame: options.onAudioFrame}),
+    ...(options.onAudioClear === undefined ? {} : {onAudioClear: options.onAudioClear}),
+    ...(options.onAudioAlert === undefined ? {} : {onAudioAlert: options.onAudioAlert}),
+    ...(options.onAudioTerminal === undefined ? {} : {onAudioTerminal: options.onAudioTerminal}),
+    ...(options.onSpoken === undefined ? {} : {onSpoken: options.onSpoken}),
+    ...(options.onDelivery === undefined ? {} : {onDelivery: options.onDelivery}),
+    ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
+    ...(options.onExecutorState === undefined ? {} : {onExecutorState: options.onExecutorState}),
+    ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
+    ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
+    ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
+    ...(options.projectConfirmation === undefined
+      ? {}
+      : {projectConfirmation: options.projectConfirmation}),
+    ...(options.commitProjectOperation === undefined
+      ? {}
+      : {commitProjectOperation: options.commitProjectOperation}),
+    ...(options.projectExpiryStepTimeoutMs === undefined
+      ? {}
+      : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
+    ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
+    ...(options.codingAgentControllerFactory === undefined
+      ? {}
+      : {codingAgentControllerFactory: options.codingAgentControllerFactory}),
+  })
+}
+
+export function validateCodingResource(options: Pick<AssemblyOptions, 'settings'> & Pick<RealtimeAssemblyOptions, 'codexResource'>): void {
+  if (
+    options.codexResource !== undefined
+    && !options.settings.executors.includes(options.codexResource.adapter.manifest.name)
+  ) throw new AssemblyError('realtime coding resource selection mismatch')
+  if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {
+    throw new AssemblyError('realtime coding resource project mode mismatch')
+  }
+}
+
