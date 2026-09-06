@@ -51,6 +51,25 @@ async function postStatus(url: string, headers: Record<string, string>): Promise
   })
 }
 
+async function partialRequest(url: string, headers: Record<string, string>, body = '{', method = 'POST') {
+  let request: ReturnType<typeof httpRequest> | undefined
+  try {
+    return await new Promise<{status: number; body: string; connection: string | undefined}>((resolve, reject) => {
+      request = httpRequest(url, {method, headers}, response => {
+        let body = ''
+        response.setEncoding('utf8')
+        response.on('data', chunk => {body += String(chunk)})
+        response.once('error', reject)
+        response.once('end', () => resolve({status: response.statusCode ?? 0, body, connection: response.headers.connection}))
+      })
+      request.once('error', reject)
+      request.setTimeout(6500, () => request!.destroy(new Error('rejection did not arrive')))
+      // Leave the body unfinished: rejection must reach the client before it stops uploading.
+      request.write(body)
+    })
+  } finally {request?.destroy()}
+}
+
 function context(signal = new AbortController().signal): ExecutorDispatchContext {
   return {
     clock: new VirtualClock(), signal, progress: () => undefined,
@@ -162,15 +181,8 @@ test('loopback closes excess slow request bodies instead of leaving them outside
       request.write('{')
       requests.push(request)
     }
-    const excess = await new Promise<'closed' | 'open'>(resolve => {
-      const request = httpRequest(loopback.url, {method: 'POST', headers: {Authorization: `Bearer ${loopback.token}`, 'content-type': 'application/json'}})
-      const deadline = setTimeout(() => { resolve('open') }, 250)
-      request.once('error', () => { clearTimeout(deadline); resolve('closed') })
-      request.once('response', response => { response.resume() })
-      request.once('close', () => { clearTimeout(deadline); resolve('closed') })
-      request.write('{')
-    })
-    assert.equal(excess, 'closed')
+    const excess = await partialRequest(loopback.url, {Authorization: `Bearer ${loopback.token}`})
+    assert.deepEqual(excess, {status: 503, body: '{"error":"request_rejected"}', connection: 'close'})
   } finally {
     for (const request of requests) request.destroy()
     await loopback.close()
@@ -215,7 +227,7 @@ test('loopback uses an absolute deadline for a continuously dripping request bod
       }})
       const drip = setInterval(() => { if (!request.destroyed) request.write(' ') }, 100)
       const deadline = setTimeout(() => { request.destroy(); reject(new Error('absolute request deadline did not settle')) }, 6_500)
-      request.once('error', () => { clearInterval(drip); clearTimeout(deadline); resolve() })
+      request.once('error', error => { clearInterval(drip); clearTimeout(deadline); reject(error) })
       request.once('response', response => {
         clearInterval(drip); clearTimeout(deadline); response.resume()
         response.once('end', () => { assert.equal(response.statusCode, 408); resolve() })
@@ -223,6 +235,35 @@ test('loopback uses an absolute deadline for a continuously dripping request bod
       request.write('{')
     })
   } finally { await loopback.close() }
+})
+
+test('HTTP rejects unfinished unauthorized, forbidden, and oversized bodies with complete responses', async () => {
+  let calls = 0
+  const loopback = await startKnowledgeMcpHttpServer({
+    recall: () => {calls++; return Promise.resolve([])}, getChunk: () => {calls++; return Promise.resolve({status: 'gone'})},
+  })
+  const auth = {Authorization: `Bearer ${loopback.token}`}
+  try {
+    for (const [headers, method, body, status] of [
+      [{}, 'POST', '{', 401],
+      [{Authorization: 'Bearer wrong'}, 'POST', '{', 401],
+      [{...auth, Host: 'evil.example'}, 'POST', '{', 403],
+      [{...auth, Origin: 'http://evil.example'}, 'POST', '{', 403],
+      [auth, 'PUT', '{', 405],
+      [{...auth, 'content-length': '100'}, 'GET', '{', 413],
+      [{...auth, 'content-length': '100'}, 'DELETE', '{', 413],
+      [{...auth, 'content-length': '70000'}, 'POST', '{', 413],
+      [{...auth, 'transfer-encoding': 'chunked'}, 'POST', 'x'.repeat(70000), 413],
+    ] as const) {
+      assert.deepEqual(await partialRequest(loopback.url, headers, body, method), {
+        status, body: '{"error":"request_rejected"}', connection: 'close',
+      })
+    }
+    assert.deepEqual(await partialRequest(`${loopback.url}/wrong`, auth), {
+      status: 403, body: '{"error":"request_rejected"}', connection: 'close',
+    })
+    assert.equal(calls, 0)
+  } finally {await loopback.close()}
 })
 
 test('knowledge adapter fails closed for malformed, oversized, secret-bearing, and aborted backend recall', async () => {
