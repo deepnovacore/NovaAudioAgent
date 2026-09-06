@@ -385,8 +385,11 @@ test('recall and getChunk redact document paths while keeping lexical matches ac
   assert.equal((await client.getChunk(hit.locator)).status, 'gone')
 })
 
-test('close terminates an unresponsive worker within its two second grace period', async t => {
-  const client = await store(t)
+test('close rejects at its deadline even when worker termination never settles', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-close-'))
+  const client = new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite')})
+  t.after(async () => { await client.close().catch(() => undefined); await rm(directory, {recursive: true, force: true}) })
+  await client.open()
   const workers: Worker[] = []
   const original = Object.getOwnPropertyDescriptor(Worker.prototype, 'postMessage')!.value as Worker['postMessage']
   const post = t.mock.method(Worker.prototype, 'postMessage', function (this: Worker, value: unknown) {
@@ -396,13 +399,16 @@ test('close terminates an unresponsive worker within its two second grace period
   })
   const pending = client.listSources()
   const rejected = assert.rejects(pending, (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'CLIENT_CLOSED')
+  const terminate = t.mock.method(Worker.prototype, 'terminate', () => new Promise<number>(() => undefined))
   const closing = client.close()
   assert.equal(client.close(), closing)
   try {
     await rejected
-    await settlesWithin('bounded close', closing, 3000)
-    assert.equal(workers[0]?.threadId, -1)
-  } finally {post.mock.restore(); await workers[0]?.terminate(); await closing.catch(() => undefined)}
+    await settlesWithin('bounded close', assert.rejects(closing, (error: unknown) => (
+      error instanceof KnowledgeStoreClientError && error.code === 'WORKER_CLOSE_TIMEOUT'
+    )), 3000)
+    assert.equal(terminate.mock.callCount(), 1)
+  } finally {post.mock.restore(); terminate.mock.restore(); await workers[0]?.terminate(); await closing.catch(() => undefined)}
 })
 
 async function fixtureSql(path: string, sql: string, mode = 'exec'): Promise<unknown> {

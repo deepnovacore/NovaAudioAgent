@@ -30,6 +30,7 @@ export type KnowledgeStoreClientErrorCode = KnowledgeStoreErrorCode
   | 'WORKER_ERROR'
   | 'WORKER_EXITED'
   | 'WORKER_PROTOCOL_FAILURE'
+  | 'WORKER_CLOSE_TIMEOUT'
 
 export class KnowledgeStoreClientError extends Error {
   constructor(readonly code: KnowledgeStoreClientErrorCode) {
@@ -44,6 +45,7 @@ interface KnowledgeStoreWorker {
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit', listener: (code: number) => void): unknown
   terminate(): Promise<number>
+  unref(): void
 }
 
 interface WorkerResponse {
@@ -100,7 +102,7 @@ export class KnowledgeStoreClient {
       // while the Worker drains its bounded SQLite call and exits after the close signal.
       this.#worker.postMessage({kind: 'request', request_id: this.#nextRequestId++, operation: 'close'})
     } catch {
-      this.#terminateClosing()
+      this.#terminateClosing('WORKER_PROTOCOL_FAILURE')
     }
     return this.#closing
   }
@@ -159,11 +161,16 @@ export class KnowledgeStoreClient {
     pending.resolve(response.result)
   }
 
-  #terminateClosing(): void {
+  #terminateClosing(code: KnowledgeStoreClientErrorCode = 'WORKER_CLOSE_TIMEOUT'): void {
+    if (this.#forcedExit) return
     this.#forcedExit = true
-    void this.#worker.terminate().catch(() => {
-      this.#rejectClosing?.(new KnowledgeStoreClientError('WORKER_ERROR'))
-    })
+    clearTimeout(this.#closeTimer)
+    // Native SQLite can delay termination. Bound the caller without claiming the worker exited.
+    this.#rejectClosing?.(new KnowledgeStoreClientError(code))
+    this.#resolveClosing = undefined
+    this.#rejectClosing = undefined
+    this.#worker.unref()
+    void this.#worker.terminate().catch(() => undefined)
   }
 
   #handleExit(code: number): void {
