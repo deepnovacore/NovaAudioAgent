@@ -602,7 +602,7 @@ class ReplaceManagedRestoreAfterMkdirRootFileAuthority
 
 class FailManagedLookupRootFileAuthority extends DescriptorRelativeRootFileAuthority {
   override lookupAt(rootDescriptor: number, name: string): ProjectRootFileLookupResult {
-    if (name.startsWith('managed-')) return {status: 'failed'}
+    if (name.startsWith('managed-') && name !== PROJECT_MAINTENANCE_JOURNAL_FILE) return {status: 'failed'}
     return super.lookupAt(rootDescriptor, name)
   }
 }
@@ -2391,7 +2391,7 @@ test('a partially cleaned committed v1 maintenance journal remains decodable', a
 
     rootFiles.failCleanupName = null
     store = await ProjectStore.open(options)
-    assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'committed')
+    assert.equal(await store.loadManagedMaintenanceJournal(), null, 'open replays legacy committed journals')
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
   } finally {
     await store.close().catch(() => undefined)
@@ -2498,6 +2498,7 @@ test('crash after tombstone deletion is idempotently completed from the committe
     await store.close()
 
     store = await ProjectStore.open(baseOptions)
+    assert.equal(await store.loadManagedMaintenanceJournal(), null, 'open must replay the committed journal')
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
     assert.equal(await store.loadManagedMaintenanceJournal(), null)
     assert.deepEqual(await readdir(workspace.canonical_path), [])

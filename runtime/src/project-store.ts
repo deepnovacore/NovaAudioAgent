@@ -384,6 +384,9 @@ export class ProjectStore {
         await store.#revalidateStateRoot()
         await store.#migrateLegacyHomes(store.#requireStateRootHandle())
       }
+      if (await store.#loadMaintenanceJournal() !== null) {
+        await store.cleanupManagedMaintenanceJournal()
+      }
       return store
     } catch (error) {
       const owner = store.#ownerLock
