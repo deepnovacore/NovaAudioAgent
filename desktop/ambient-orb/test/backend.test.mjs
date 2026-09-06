@@ -299,7 +299,7 @@ test('launch spec maps v4 runtime settings and omits empty optional overrides', 
   }, {
     approval: 'yolo', depth: 'thorough', readback: 'confirm', planner: 'settings-planner',
     bubbles: 'all', embeddingProvider: 'local', embeddingModel: 'custom-embedding',
-    capabilities: '/settings/capabilities.json', knowledge: '/settings/knowledge.sqlite',
+    capabilities: resolve('/settings/capabilities.json'), knowledge: '/settings/knowledge.sqlite',
   })
 
   const empty = nodeLaunchSpec({

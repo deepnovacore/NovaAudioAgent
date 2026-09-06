@@ -1,3 +1,4 @@
+import {tmpdir} from 'node:os'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import vm from 'node:vm'
@@ -13,7 +14,7 @@ const launch = source.slice(source.indexOf('async function launchBackend('), sou
 const view = source.slice(source.indexOf('function settingsView()'), source.indexOf('async function loadMemoryBoardExport()'))
 
 test('actual main prelaunch registry failures stop the supervisor without scheduling reconnect', async t => {
-  const root = await mkdtemp('/private/tmp/nova-task4-prelaunch-')
+  const root = await mkdtemp(join(tmpdir(), 'nova-task4-prelaunch-'))
   t.after(() => rm(root, {recursive: true, force: true}))
   const path = join(root, 'cap.json')
   for (const bytes of ['invalid json', ' '.repeat(256 * 1024 + 1), null]) {
@@ -58,7 +59,7 @@ test('actual settings view decrypts only for an open panel and caches the public
 })
 
 test('actual main refreshes a hand-edited registry while the panel is open and on backend launch', async t => {
-  const root = await mkdtemp('/private/tmp/nova-task4-cache-')
+  const root = await mkdtemp(join(tmpdir(), 'nova-task4-cache-'))
   t.after(() => rm(root, {recursive: true, force: true}))
   const path = join(root, 'capabilities.json')
   const context = vm.createContext({settingsWindow: {show() {}, focus() {}}, refreshManagedWorkspaceCapabilities: () => Promise.resolve(), sendToSettings: () => {}, capabilityEditorCache: null, settingsGeneration: 0,

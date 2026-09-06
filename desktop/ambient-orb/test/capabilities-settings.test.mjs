@@ -1,3 +1,4 @@
+import {tmpdir} from 'node:os'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {mkdtemp, readFile, writeFile, rm} from 'node:fs/promises'
@@ -8,7 +9,7 @@ import {prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, p
 const codec = {available: () => false}
 const document = {version: 1, modules: {search: {enabled: false}}, mcpServers: {}}
 const fixture = async t => {
-  const root = await mkdtemp('/private/tmp/nova-capability-save-')
+  const root = await mkdtemp(join(tmpdir(), 'nova-capability-save-'))
   t.after(() => rm(root, {recursive: true, force: true}))
   return root
 }
