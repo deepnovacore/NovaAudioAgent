@@ -1397,7 +1397,7 @@ app.on('before-quit', event => {
     : backend ? shutdownBackendBestEffort(backend) : Promise.resolve()
   const maintenance = managedWorkspaceMaintenance
   managedWorkspaceMaintenance = null
-  const maintenanceDrain = maintenance?.close() ?? Promise.resolve()
+  const maintenanceDrain = Promise.race([Promise.resolve().then(() => maintenance?.close()), wait(3000)])
   const drain = Promise.all([backendDrain, maintenanceDrain])
   quitDrain = drain.then(() => app.exit(0), () => app.exit(0))
 })

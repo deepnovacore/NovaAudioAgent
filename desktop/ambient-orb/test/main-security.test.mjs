@@ -702,3 +702,26 @@ test('the mute toggle drops microphone input at both ingress points', async () =
   assert.match(renderer, /muteToggle\.addEventListener\('click', \(\) => toggleMute\(\)\)/)
   assert.match(renderer, /openSettingsButton\.addEventListener\('click', \(\) => window\.novaAudioAgentDesktop\.orbMenu\.openSettings\?\.\(\)\)/)
 })
+
+test('quit bounds a maintenance drain without bypassing backend shutdown', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const {default: vm} = await import('node:vm')
+  let beforeQuit, releaseMaintenanceDeadline, releaseBackend, timeout
+  const exits = []
+  const context = vm.createContext({
+    app: {on: (name, handler) => { if (name === 'before-quit') beforeQuit = handler }, exit: code => exits.push(code)},
+    releaseSmokeChannel: null, globalShortcut: {unregisterAll() {}}, nativeAudio: null,
+    backendSupervisor: {stop: () => new Promise(resolve => { releaseBackend = resolve })}, backend: null,
+    managedWorkspaceMaintenance: {close: () => new Promise(() => {})}, quitDrain: null,
+    wait: milliseconds => { timeout = milliseconds; return new Promise(resolve => { releaseMaintenanceDeadline = resolve }) },
+  })
+  vm.runInContext(source.slice(source.indexOf("app.on('before-quit'")), context)
+  beforeQuit({preventDefault() {}})
+  assert.equal(timeout, 3000)
+  releaseMaintenanceDeadline()
+  await Promise.resolve()
+  assert.deepEqual(exits, [], 'backend still owns its shutdown deadline')
+  releaseBackend()
+  await context.quitDrain
+  assert.deepEqual(exits, [0])
+})
