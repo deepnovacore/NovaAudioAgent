@@ -368,6 +368,7 @@ async function collectThroughTerminal(
   for await (const raw of adapter.events(signal)) {
     const event = raw
     seen.push(event)
+    if (event.kind === 'user_transcript_final') await adapter.ensureResponse(signal, event.item_id)
     if (event.kind === 'response_terminal') return seen
   }
   throw new Error('Volcengine event stream ended before a terminal')
@@ -379,9 +380,22 @@ function observe(adapter: CascadedRealtimeAdapter): {
 } {
   const controller = new AbortController()
   const events: RealtimeProviderEvent[] = []
+  // Test host preserves the historical schedule while the adapter now only executes commands.
   const task = (async () => {
+    let active: string | null = null
     for await (const raw of adapter.events(controller.signal)) {
       events.push(raw)
+      if (raw.kind === 'response_started') active = raw.response_id
+      if (raw.kind === 'response_terminal' && raw.response_id === active) active = null
+      if (raw.kind === 'user_transcript_final') {
+        if (active !== null) await adapter.cancelResponse(active, controller.signal)
+        await settleWithin('test host admits user response', (async () => {
+          while (!await adapter.ensureResponse(controller.signal, raw.item_id)) {
+            controller.signal.throwIfAborted()
+            await new Promise<void>(resolve => setImmediate(resolve))
+          }
+        })())
+      }
     }
   })()
   return {
@@ -488,6 +502,8 @@ test('cascaded happy path preserves VAD, ASR, LLM, TTS, and normalized event ord
     'response_transcript_final',
     'response_terminal',
   ])
+  assert.deepEqual(Reflect.get(events.find(event => event.kind === 'response_started')!, 'origin'),
+    {kind: 'user_item', item_id: 'item-1'})
   assert.deepEqual(asrSession.appended, [onset])
   assert.deepEqual(llm.calls[0]?.inputs, [{kind: 'user_text', text: '你好 Nova'}])
   assert.deepEqual(ttsSession.texts, ['你好，', '很高兴见到你。'])
@@ -546,7 +562,7 @@ test('one adapter reconnects with a fresh LLM epoch instead of reusing a closed 
   await adapter.close()
 })
 
-test('every final ASR segment becomes its own user turn, matching the Python adapter', async () => {
+test('one ASR item emits one final and one host-requested user turn', async () => {
   const llm = new FakeLlm(
     [
       {kind: 'response_started', response_id: 'response-first-final'},
@@ -578,22 +594,21 @@ test('every final ASR segment becomes its own user turn, matching the Python ada
 
   await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
   await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
-  await waitFor('both ASR finals', () => llm.calls.length === 2)
+  await waitFor('first ASR final response', () => llm.calls.length === 1)
 
   assert.deepEqual(llm.calls.map(call => call.inputs), [
     [{kind: 'user_text', text: '第一段'}],
-    [{kind: 'user_text', text: '第二段'}],
   ])
   assert.deepEqual(watching.events
     .filter((event): event is Extract<RealtimeProviderEvent, {kind: 'user_transcript_final'}> => (
       event.kind === 'user_transcript_final'
     ))
-    .map(event => event.text), ['第一段', '第二段'])
+    .map(event => event.text), ['第一段'])
   await watching.stop()
   await adapter.close()
 })
 
-test('host inputs and copied Responses tools preserve Python wording and caller ownership', async () => {
+test('host facts preserve wording and cannot expose user-action tools', async () => {
   const llm = new FakeLlm([
     {kind: 'response_started', response_id: 'response-host'},
     {kind: 'response_completed', response_id: 'response-host'},
@@ -621,15 +636,14 @@ test('host inputs and copied Responses tools preserve Python wording and caller 
   await adapter.createResponse({
     kind: 'host_fact', item, task_summary: null, origin_spoken: false,
   }, new AbortController().signal)
-  await settleWithin('host response', collecting)
+  const events = await settleWithin('host response', collecting)
+  assert.deepEqual(Reflect.get(events.find(event => event.kind === 'response_started')!, 'origin'),
+    {kind: 'host_request', host_item_id: item.host_item_id})
 
   assert.deepEqual(llm.calls[0]?.inputs, [{
     kind: 'host_context', content: 'Nova Audio Agent 任务进度事实：第一项',
   }])
-  assert.deepEqual(llm.calls[0]?.tools, [{
-    name: 'weather__get', description: '天气',
-    parameters: {type: 'object', properties: {city: {type: 'string'}}},
-  }])
+  assert.deepEqual(llm.calls[0]?.tools, [])
 })
 
 test('cascaded adapter replaces workspace context without adding old context to LLM history', async () => {
@@ -679,7 +693,7 @@ test('cascaded adapter replaces workspace context without adding old context to 
     kind: 'host_fact', item: firstFact, task_summary: null, origin_spoken: false,
   }, new AbortController().signal)
   await waitFor('first workspace response', () => watching.events.some(event =>
-    event.kind === 'response_terminal' && event.response_id === 'response-workspace-1'))
+    event.kind === 'response_terminal' && event.response_id === 'cascaded-response-1-1'))
 
   const second = await adapter.injectWorkspaceContext({
     kind: 'workspace_context',
@@ -704,7 +718,7 @@ test('cascaded adapter replaces workspace context without adding old context to 
     kind: 'host_fact', item: secondFact, task_summary: null, origin_spoken: false,
   }, new AbortController().signal)
   await waitFor('second workspace response', () => watching.events.some(event =>
-    event.kind === 'response_terminal' && event.response_id === 'response-workspace-2'))
+    event.kind === 'response_terminal' && event.response_id === 'cascaded-response-1-2'))
 
   assert.equal(llm.calls[0]?.workspaceContext,
     '<active_project_context>first</active_project_context>')
@@ -1334,7 +1348,7 @@ test('exact cancellation is single-terminal; mismatch is safely rejected; teleme
   await adapter.cancelResponse('wrong-response', new AbortController().signal)
   await waitFor('cancel rejection', () => watching.events.some(event =>
     event.kind === 'response_cancel_rejected'))
-  await adapter.cancelResponse('response-blocked', new AbortController().signal)
+  await adapter.cancelResponse('cascaded-response-1-1', new AbortController().signal)
   await waitFor('cancel terminal', () => watching.events.some(event =>
     event.kind === 'response_terminal' && event.status === 'cancelled'))
   assert.equal(watching.events.filter(event => event.kind === 'response_terminal').length, 1)
@@ -1365,7 +1379,7 @@ test('cancellation abandons a committed tool continuation before an unrelated re
       origin_spoken: false}, new AbortController().signal)
     await llm.committed.promise
 
-    const cancelling = adapter.cancelResponse('response-window', new AbortController().signal)
+    const cancelling = adapter.cancelResponse('cascaded-response-1-1', new AbortController().signal)
     await llm.aborted.promise
     llm.releaseTerminal()
     await cancelling
@@ -1445,7 +1459,7 @@ test('closing an active response emits one cancelled terminal into its owning ep
   assert.equal(terminals.length, 1)
   assert.deepEqual(terminals[0], {
     kind: 'response_terminal', session_epoch: 1,
-    response_id: 'response-blocked', status: 'cancelled', reason: 'cancelled',
+    response_id: 'cascaded-response-1-1', status: 'cancelled', reason: 'cancelled',
   })
   assert.equal(llm.closed, true)
   assert.equal(tts.cancelled, true)
@@ -1830,4 +1844,271 @@ test('a task settling after an old epoch is revoked cannot enqueue into the fres
   assert.doesNotMatch(JSON.stringify(newWatching.events), /stale-provider-secret/u)
   await newWatching.stop()
   await oldWatching.stop()
+})
+
+test('ASR opening after close releases the late session without forwarding old audio', async () => {
+  const opened = deferred<AsrSession>()
+  const entered = deferred<void>()
+  const late = new FakeAsrSession({text: 'stale speech', final: true})
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing([
+      {kind: 'speech_start', pcm: new Uint8Array([1, 0])},
+    ]),
+    asr: {open: () => { entered.resolve(undefined); return opened.promise }},
+    llm: new FakeLlm(), tts: new FakeTtsClient(),
+    idFactory: ids('late-open-session', 'late-speech', 'late-item'), settleTimeoutMs: 20,
+  })
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+  const sending = adapter.sendAudio(new Uint8Array([1, 0]), signal)
+  void sending.catch(() => undefined)
+  await entered.promise
+  try {
+    await assert.rejects(adapter.close(), (error: unknown) =>
+      error instanceof CascadedRealtimeError && error.code === 'closed')
+    opened.resolve(late)
+    await settleWithin('late ASR cleanup', sending.catch(() => undefined))
+    assert.equal(late.closed, true)
+    assert.equal(late.appended.length, 0)
+  } finally {
+    opened.resolve(late)
+    await late.close()
+    await sending.catch(() => undefined)
+  }
+})
+
+test('ASR open rejection after close does not reset endpointing reused by a fresh epoch', async () => {
+  const release = deferred<void>()
+  const entered = deferred<void>()
+  const endpointing = new ScriptedEndpointing([
+    {kind: 'speech_start', pcm: new Uint8Array([1, 0])},
+  ])
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing,
+    asr: {open: async () => {
+      entered.resolve(undefined)
+      await release.promise
+      throw new Error('late connection failure')
+    }},
+    llm: new FakeLlm(), llmFactory: {open: () => new FakeLlm()},
+    tts: new FakeTtsClient(),
+    idFactory: ids('old-session', 'speech', 'item', 'new-session'), settleTimeoutMs: 20,
+  })
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+  const sending = adapter.sendAudio(new Uint8Array([1, 0]), signal)
+  void sending.catch(() => undefined)
+  await entered.promise
+  try {
+    await assert.rejects(adapter.close(), (error: unknown) =>
+      error instanceof CascadedRealtimeError && error.code === 'closed')
+    await adapter.connect({tools: [], signal})
+    const resets = endpointing.resets
+    release.resolve(undefined)
+    await settleWithin('late ASR rejection', sending.catch(() => undefined))
+    assert.equal(endpointing.resets, resets)
+  } finally {
+    release.resolve(undefined)
+    await sending.catch(() => undefined)
+    await adapter.close()
+  }
+})
+
+
+test('ASR final waits for a targeted host request and never preempts provider work', async () => {
+  const llm = new FakeLlm([
+    {kind: 'response_started', response_id: 'requested-response'},
+    {kind: 'response_completed', response_id: 'requested-response'},
+  ])
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(
+      [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],
+      [{kind: 'speech_end', commit: true}],
+    ),
+    asr: new FakeAsrClient(new FakeAsrSession(
+      {text: 'first final', final: true}, {text: 'duplicate final', final: true},
+    )),
+    llm, tts: new FakeTtsClient(new FakeTtsSession()),
+    idFactory: ids('requested-session', 'requested-speech', 'requested-item'),
+  })
+  const signal = new AbortController().signal
+  const tool = {type: 'function', function: {name: 'weather', parameters: {type: 'object'}}}
+  await adapter.connect({tools: [tool], signal})
+  tool.function.name = 'caller-mutated'
+  const events: RealtimeProviderEvent[] = []
+  const reader = (async () => {
+    for await (const event of adapter.events(signal)) events.push(event)
+  })()
+  try {
+    await adapter.sendAudio(new Uint8Array([0, 0]), signal)
+    await adapter.sendAudio(new Uint8Array([0, 0]), signal)
+    await waitFor('ASR final', () => events.some(event => event.kind === 'user_transcript_final'))
+    assert.equal(llm.calls.length, 0, 'ASR is evidence; only the host may schedule LLM')
+    assert.equal(events.filter(event => event.kind === 'user_transcript_final').length, 1)
+    assert.equal(await adapter.ensureResponse(signal, 'stale-item'), false)
+    assert.equal(await adapter.ensureResponse(signal, 'requested-item'), true)
+    await waitFor('requested terminal', () => events.some(event => event.kind === 'response_terminal'))
+    assert.deepEqual(llm.calls[0]?.inputs, [{kind: 'user_text', text: 'first final'}])
+    assert.deepEqual(llm.calls[0]?.tools, [{name: 'weather', parameters: {type: 'object'}}])
+  } finally {
+    await adapter.close()
+    await reader
+  }
+})
+
+
+test('admitted response is cancellable before the LLM sends any event', async () => {
+  const entered = deferred<void>()
+  const llm: CascadedLlmSession = {
+    async *stream(input) {
+      entered.resolve()
+      await new Promise<void>(resolve => {
+        if (input.signal.aborted) resolve()
+        else input.signal.addEventListener('abort', () => resolve(), {once: true})
+      })
+      throw new DOMException('aborted', 'AbortError')
+    },
+    abandonPendingResponse: () => Promise.resolve(),
+    close: () => Promise.resolve(),
+  }
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), llm,
+    tts: new FakeTtsClient(), idFactory: ids('before-start', 'before-start-host'),
+  })
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+  const watching = observe(adapter)
+  try {
+    const item = hostItem('before-start')
+    await adapter.injectHostItem(item, directOptions())
+    await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false}, signal)
+    await entered.promise
+    await waitFor('local admission', () => watching.events.some(event => event.kind === 'response_started'))
+    const started = watching.events.find(event => event.kind === 'response_started')!
+    assert.equal(started.kind, 'response_started')
+    await adapter.cancelResponse(started.response_id, signal)
+    await waitFor('pre-start terminal', () => watching.events.some(event => event.kind === 'response_terminal'))
+    assert.deepEqual(watching.events.map(event => event.kind), ['response_started', 'response_terminal'])
+    assert.equal(terminalStatus(watching.events), 'cancelled')
+  } finally {
+    await watching.stop()
+    await adapter.close()
+  }
+})
+
+
+test('cancel timeout fails and retires the epoch instead of leaving a permanently busy slot', async () => {
+  const entered = deferred<void>()
+  const release = deferred<void>()
+  const stuck: CascadedLlmSession = {
+    async *stream() {
+      entered.resolve()
+      await release.promise
+      yield {kind: 'response_started', response_id: 'late-wire-id'}
+      yield {kind: 'response_completed', response_id: 'late-wire-id'}
+    },
+    abandonPendingResponse: () => Promise.resolve(),
+    close: () => Promise.resolve(),
+  }
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), llm: stuck,
+    llmFactory: {open: () => new FakeLlm()},
+    tts: new FakeTtsClient(), idFactory: ids('stuck-epoch', 'stuck-host', 'fresh-epoch'),
+    settleTimeoutMs: 10,
+  })
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+  const events: RealtimeProviderEvent[] = []
+  const reader = (async () => {
+    for await (const event of adapter.events(signal)) events.push(event)
+  })()
+  try {
+    const item = hostItem('stuck')
+    await adapter.injectHostItem(item, directOptions())
+    await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false}, signal)
+    await entered.promise
+    await settleWithin('uncooperative cancellation', adapter.cancelResponse('cascaded-response-1-1', signal))
+    await reader
+    assert.deepEqual(events.map(event => event.kind), ['response_started', 'response_terminal', 'provider_error'])
+    assert.equal(events.find(event => event.kind === 'response_terminal')?.status, 'failed')
+    assert.deepEqual(events.at(-1), {kind: 'provider_error', session_epoch: 1,
+      code: 'cascaded_cancel_timeout', recoverable: false})
+    assert.equal((await adapter.connect({tools: [], signal})).epoch, 2)
+    release.resolve()
+  } finally {
+    release.resolve()
+    await adapter.close()
+  }
+})
+
+
+test('aborting before admission preserves selected context for both user and host retries', async () => {
+  for (const mode of ['user', 'host']) {
+    const llm = new FakeLlm([
+      {kind: 'response_started', response_id: 'wire-retry'},
+      {kind: 'response_completed', response_id: 'wire-retry'},
+    ])
+    const adapter = new CascadedRealtimeAdapter({
+      endpointing: new ScriptedEndpointing(
+        [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}], [{kind: 'speech_end', commit: true}],
+      ),
+      asr: new FakeAsrClient(new FakeAsrSession({text: 'user question', final: true})),
+      llm, tts: new FakeTtsClient(new FakeTtsSession()),
+      idFactory: ids('session', 'speech', 'user-item', 'recovery-provider', 'host-provider'),
+    })
+    const signal = new AbortController().signal
+    await adapter.connect({tools: [], signal})
+    const events: RealtimeProviderEvent[] = []
+    const reader = (async () => {
+      for await (const event of adapter.events(signal)) events.push(event)
+    })()
+    try {
+      await adapter.sendAudio(new Uint8Array([0, 0]), signal)
+      await adapter.sendAudio(new Uint8Array([0, 0]), signal)
+      await waitFor('stored user input', () => events.some(event => event.kind === 'user_transcript_final'))
+      const recovery = {...hostItem('retry-context', 'context-must-survive'), kind: 'recovery' as const}
+      const item = hostItem('retry-target')
+      await adapter.injectHostItem(recovery, directOptions())
+      await adapter.injectHostItem(item, directOptions())
+      const request = (requestSignal: AbortSignal): Promise<unknown> => mode === 'user'
+        ? adapter.ensureResponse(requestSignal, 'user-item')
+        : adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false}, requestSignal)
+      const abort = new AbortController()
+      const cancelled = request(abort.signal)
+      abort.abort()
+      await assert.rejects(cancelled)
+      assert.equal(llm.calls.length, 0)
+      await request(signal)
+      await waitFor('retry response', () => events.some(event => event.kind === 'response_terminal'))
+      assert.ok(llm.calls[0]?.inputs.some(input => input.kind === 'host_context'
+        && input.content.includes('context-must-survive')))
+    } finally {
+      await adapter.close()
+      await reader
+    }
+  }
+})
+
+
+test('tool output continuations retain configured tools for the next hop', async () => {
+  const llm = new FakeLlm([
+    {kind: 'response_started', response_id: 'hop-2'},
+    {kind: 'tool_call', item_id: 'item-2', call_id: 'call-2', name: 'weather', arguments: {}},
+    {kind: 'response_completed', response_id: 'hop-2'},
+  ])
+  const adapter = new CascadedRealtimeAdapter({endpointing: new ScriptedEndpointing(),
+    asr: new FakeAsrClient(), llm, tts: new FakeTtsClient(new FakeTtsSession()),
+    idFactory: ids('chain-session', 'chain-input')})
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [{type: 'function', function: {name: 'weather', parameters: {type: 'object'}}}], signal})
+  const item = {kind: 'tool_output' as const, host_item_id: 'result-1', event_id: 'result-event',
+    content: '{}', call_id: 'call-1'}
+  try {
+    await adapter.injectHostItem(item, directOptions())
+    const collecting = collectThroughTerminal(adapter)
+    await adapter.createResponse({kind: 'tool_result', item, task_summary: null, origin_spoken: false}, signal)
+    const events = await collecting
+    assert.deepEqual(llm.calls[0]?.tools, [{name: 'weather', parameters: {type: 'object'}}])
+    assert.ok(events.some(event => event.kind === 'tool_call_ready' && event.call_id === 'call-2'))
+  } finally { await adapter.close() }
 })

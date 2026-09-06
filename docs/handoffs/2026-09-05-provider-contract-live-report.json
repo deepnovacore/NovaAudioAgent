@@ -1,0 +1,51 @@
+{
+  "startedAt": "2026-09-05T14:22:25.655Z",
+  "cases": [
+    {
+      "name": "configuration",
+      "status": "passed",
+      "ignoredRetiredKeys": [
+        "NOVA_AUDIO_AGENT_REALTIME_PROVIDER"
+      ]
+    },
+    {
+      "name": "tts_input_generation",
+      "status": "passed",
+      "inputAudioMs": 2790
+    },
+    {
+      "name": "audio_asr_llm_tts",
+      "status": "passed",
+      "elapsedMs": 7251,
+      "audioBytes": 86000
+    },
+    {
+      "name": "cancel_live_response",
+      "status": "passed"
+    },
+    {
+      "name": "reconnect_and_tool_continuation",
+      "status": "passed"
+    },
+    {
+      "name": "host_playback_barge_in_and_recovery",
+      "status": "passed",
+      "clears": 1,
+      "deliveries": [
+        "interrupted",
+        "spoken"
+      ]
+    },
+    {
+      "name": "host_fact_attribution_and_queue_reuse",
+      "status": "passed",
+      "spokenEvents": [
+        "host-fact-1",
+        "host-fact-2"
+      ]
+    }
+  ],
+  "scope": "digital audio; no microphone or speaker playback",
+  "endpointing": [],
+  "finishedAt": "2026-09-05T14:23:18.250Z"
+}

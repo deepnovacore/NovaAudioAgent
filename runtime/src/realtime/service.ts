@@ -1061,6 +1061,9 @@ export class RealtimeService {
       if (this.#rendererHostDeliveryPaused) return
       const eligiblePreemptWasArmed = this.#hasEligiblePreempt()
       await this.#maybePreemptLocked()
+      if (this.session.userResponseMode === 'requested') {
+        await this.session.requestPendingUserResponse()
+      }
       await this.#flushHostItemsLocked()
       shouldRedriveContinuations = eligiblePreemptWasArmed
         && (
@@ -2527,6 +2530,7 @@ export class RealtimeService {
       return
     }
     if (event.kind === 'provider_error') {
+      await this.session.accept(event)
       this.#onDiagnostic(
         `[realtime-diagnostic] provider_error code=${event.code} recoverable=${event.recoverable}`,
       )
@@ -2578,7 +2582,7 @@ export class RealtimeService {
     const blockedExecutorApprovalTool = event.kind === 'tool_call_ready'
       && this.#approvalHost.blocksExecutorApprovalTool(event)
       && !isExecutorApprovalDecision
-    // Qwen may create the response that will emit the confirmation function before VAD reports
+    // An automatic provider may create the response that will emit the confirmation function before VAD reports
     // speech end. That response is an authorization carrier, not an audible assistant turn. Let it
     // acquire an origin while the user still owns the floor, but never bypass the one-shot fence for
     // a stale host-requested confirmation question.
@@ -2694,6 +2698,7 @@ export class RealtimeService {
       this.#suppressCancelledSemanticAcknowledgement(event.response_id)
       this.#bindRequestedSemanticAcknowledgement(event.response_id)
       this.#bindContinuation(event.response_id)
+      this.#bindToolContinuationOrigin(event.session_epoch, event.response_id)
       this.#suppressShadowConfirmationResponse(event.session_epoch, event.response_id)
     }
     if (event.kind === 'response_started') {
@@ -2733,7 +2738,7 @@ export class RealtimeService {
           reconnect_aborted: preemption.reconnect_permit_consumed,
         }
       }
-      // Qwen may finish its function call before emitting this turn's transcript final. Do not let
+      // An automatic provider may finish its function call before emitting this turn's transcript final. Do not let
       // that call bind to provider-authored placeholder text or the previous user turn.
       this.#awaitingUserOrigin = true
       this.#userOriginPreexistingResponseId = this.session.activeProviderResponseId
@@ -3009,6 +3014,23 @@ export class RealtimeService {
     const activeResponseId = this.session.activeProviderResponseId
     const observedResponseId = event.response_id ?? activeResponseId
 
+    const evidence = observedResponseId === null ? undefined : this.session.providerResponseOrigin(observedResponseId)
+    const boundItem = observedResponseId === null ? undefined
+      : this.#userOrigins.itemForResponse(event.session_epoch, observedResponseId)
+    const toolContinuation = observedResponseId !== null && evidence?.kind === 'host_request'
+      && this.session.responseIsToolContinuation(observedResponseId)
+      && boundItem !== undefined
+      && this.#userOrigins.revisionForItem(event.session_epoch, boundItem) === this.session.userInputRevision
+      && this.session.providerTurnUserInputRevision(observedResponseId) === this.session.userInputRevision
+    if (evidence !== undefined && !toolContinuation && (
+      evidence.kind !== 'user_item' || boundItem !== evidence.item_id
+    )) {
+      // Explicit evidence may be rejected, but cannot fall back to the next arriving transcript.
+      await this.#handleBoundToolCall(event, {
+        observedProviderResponseId: observedResponseId, originItemId: null, originRef: null,
+      })
+      return
+    }
     const confirmTarget = this.#confirmTarget(event)
     if (confirmTarget === 'approval') {
       await this.#approvalHost.routeExecutorApprovalCall(event, observedResponseId)
@@ -3137,7 +3159,7 @@ export class RealtimeService {
   // Family H: binding a tool call to the user turn that justifies it.
   //
   // A tool proposal needs evidence, and the evidence is the user transcript of the turn the model was
-  // responding to. The provider does not hand those over together -- Qwen can finish a function call
+  // responding to. The provider does not hand those over together -- An automatic provider can finish a function call
   // before emitting the turn's transcript final -- so the binding is built here from two streams that
   // arrive out of order. Getting it wrong does not fail loudly; it attaches a proposal to the
   // *previous* user turn, which is precisely the kind of citation the origin check exists to stop.
@@ -3165,6 +3187,15 @@ export class RealtimeService {
     const revision = this.session.providerTurnUserInputRevision(responseId)
     if (revision === undefined) {
       this.#recordUserOriginResponseBinding(epoch, responseId, -1, 'revision_missing', 'none')
+      return false
+    }
+    const origin = this.session.providerResponseOrigin(responseId)
+    if (origin !== undefined && (
+      origin.kind !== 'user_item'
+      || this.#userOrigins.revisionForItem(epoch, origin.item_id) !== revision
+      || !this.session.responseMatchesUserItem(responseId, origin.item_id, revision)
+    )) {
+      this.#recordUserOriginResponseBinding(epoch, responseId, revision, 'provider_origin_mismatch', 'none')
       return false
     }
     const result = this.#userOrigins.bindResponse({epoch, responseId, revision})
@@ -3916,6 +3947,30 @@ export class RealtimeService {
   // Family M: batching tool results into one turn.
   // ---------------------------------------------------------------------------------------------
 
+  /** A tool continuation inherits evidence only from its confirmed outputs in the current turn. */
+  #bindToolContinuationOrigin(epoch: number, responseId: string): void {
+    if (epoch !== this.session.sessionEpoch || !this.session.responseIsToolContinuation(responseId)) return
+    const revision = this.session.providerTurnUserInputRevision(responseId)
+    if (revision !== this.session.userInputRevision) return
+    let itemId: string | undefined
+    // ponytail: bounded ledger scan; index event ids if large continuation batches become common.
+    for (const eventId of this.session.responseEventIds(responseId)) {
+      const state = [...this.#toolCalls.values(), ...this.#overflowToolCalls.values()].find(current => (
+        current.acceptance.host_item.event_id === eventId
+        && current.provider_session_epoch === epoch
+        && current.output === 'confirmed'
+        && current.continuation !== 'abandoned'
+        && current.observation !== 'superseded'
+      ))
+      if (state?.origin_user_input_revision !== revision) return
+      const sourceItem = this.#userOrigins.itemForResponse(epoch, state.provider_response_id)
+      if (sourceItem === undefined || this.#userOrigins.revisionForItem(epoch, sourceItem) !== revision
+        || (itemId !== undefined && itemId !== sourceItem)) return
+      itemId = sourceItem
+    }
+    if (itemId !== undefined) this.#userOrigins.bindRetryResponse({epoch, responseId, itemId})
+  }
+
   /** Bind the head batch to the response that will speak it. */
   #bindContinuation(responseId: string): void {
     const head = this.#continuationFifo[0]
@@ -4068,8 +4123,8 @@ export class RealtimeService {
       return
     }
     // Cancel only a confirmation question whose host-requested response has not started yet. The
-    // response created from this user answer must remain alive so Qwen can emit the structured
-    // confirmation function after `response.created`.
+    // response created from this user answer must remain alive so the provider can emit the structured
+    // confirmation function after its response start.
     this.#projectConfirmationIsolation.setResponseFencePending(
       this.session.armPendingResponseFence(),
     )
@@ -4098,9 +4153,9 @@ export class RealtimeService {
     if (retry === null || !retry.requested || retry.retry_response_id !== null) return false
     const item = parseCallKey(retry.item_key)
     if (item.sessionEpoch !== epoch) return false
-    if (!this.#userOrigins.bindRetryResponse({epoch, responseId, itemId: item.id})) return false
     const revision = this.#userOrigins.revisionForItem(epoch, item.id)
-    if (revision === undefined) return false
+    if (revision === undefined || !this.session.responseMatchesUserItem(responseId, item.id, revision)) return false
+    if (!this.#userOrigins.bindRetryResponse({epoch, responseId, itemId: item.id})) return false
     const isolated = this.#projectConfirmationIsolation.bindRetryResponse({
       sessionEpoch: epoch,
       itemId: item.id,
@@ -4122,7 +4177,7 @@ export class RealtimeService {
     return true
   }
 
-  /** Once the same turn's transcript exists, ask Qwen once more for the structured decision. */
+  /** Once the same turn's transcript exists, ask the provider once more for the structured decision. */
   async #maybeRequestProjectConfirmationDecisionRetry(epoch: number, itemId: string): Promise<void> {
     const retry = this.#projectConfirmationDecisionRetry
     const controller = this.#projectConfirmation

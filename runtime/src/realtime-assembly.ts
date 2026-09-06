@@ -32,7 +32,7 @@ import type { ExecutorState, PreemptiveAlertHistoryRecovery } from './realtime/s
 import { RealtimeSession } from './realtime/session.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
-import {renderActiveExecutorContext, renderActiveProjectContext} from './realtime/qwen.js'
+import {renderActiveExecutorContext, renderActiveProjectContext} from './realtime/frontend-instructions.js'
 import type {
   OpenWorkspaceInput,
   TaskCompletionInput,

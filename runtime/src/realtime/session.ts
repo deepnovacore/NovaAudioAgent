@@ -58,6 +58,7 @@ export interface HostResponseDelivery {
 
 /** Just enough of the provider port for the session; the adapter implements more. */
 export interface SessionProvider {
+  readonly userResponseMode?: 'automatic' | 'requested'
   connect(options: {readonly tools: readonly Record<string, unknown>[]}): Promise<{
     readonly epoch: number
   }>
@@ -75,7 +76,7 @@ export interface SessionProvider {
   }>
   retireHostItem?(providerItemId: string): Promise<boolean>
   createResponse(intent: HostResponseIntent): Promise<void>
-  ensureResponse?(): Promise<void>
+  ensureResponse?(userItemId?: string): Promise<void | boolean>
   cancelResponse(responseId: string): Promise<void>
   close(): Promise<void>
 }
@@ -105,6 +106,9 @@ export class RealtimeSession {
   #floor = new Floor()
   #userHoldSince: number | null = null
   #awaitingUserResponse = false
+  #pendingUserResponse: {readonly itemId: string; readonly revision: number} | null = null
+  #latestUserResponse: {readonly itemId: string; readonly revision: number} | null = null
+  #userResponseRequest: {readonly itemId: string | null; readonly revision: number; armedHere: boolean} | null = null
   #fenceNextResponse = false
   #fenceInterruption: FenceInterruption | null = null
   #providerResponseId: string | null = null
@@ -141,6 +145,10 @@ export class RealtimeSession {
     return this.#state.sessionEpoch
   }
 
+  get userResponseMode(): 'automatic' | 'requested' {
+    return this.#provider.userResponseMode ?? 'automatic'
+  }
+
   get userInputRevision(): number {
     return this.#state.userInputRevision
   }
@@ -158,6 +166,8 @@ export class RealtimeSession {
     return (
       this.#state.pendingResponseCount === 0
       && !this.#awaitingUserResponse
+      && this.#pendingUserResponse === null
+      && this.#userResponseRequest === null
       && this.#providerResponseId === null
     )
   }
@@ -179,6 +189,19 @@ export class RealtimeSession {
     return this.#state.providerTurnUserInputRevision(responseId)
   }
 
+  providerResponseOrigin(responseId: string): Extract<RealtimeProviderEvent, {kind: 'response_started'}>['origin'] {
+    return this.#state.providerTurn(responseId)?.origin
+  }
+
+  responseMatchesUserItem(responseId: string, itemId: string, revision: number): boolean {
+    const turn = this.#state.providerTurn(responseId)
+    if (turn === undefined) return this.#provider.userResponseMode !== 'requested'
+    if (turn.origin === undefined) return true
+    return turn.origin.kind === 'user_item'
+      && turn.origin.item_id === itemId
+      && turn.user_input_revision === revision
+  }
+
   providerTurnWasFenced(responseId: string | null): boolean {
     return this.#state.providerTurnWasFenced(responseId)
   }
@@ -190,6 +213,11 @@ export class RealtimeSession {
     if (revision === undefined || revision !== this.userInputRevision) return false
     this.#awaitingUserResponse = false
     return true
+  }
+
+  responseIsToolContinuation(responseId: string): boolean {
+    const items = this.#responseItems.get(this.#turnKey(responseId))
+    return items !== undefined && items.length > 0 && items.every(item => item.kind === 'tool_output')
   }
 
   responseEventIds(responseId: string): readonly string[] {
@@ -475,6 +503,9 @@ export class RealtimeSession {
   /** The fields that belong to one provider session and none other. */
   #resetForNewProviderSession(): void {
     this.#awaitingUserResponse = false
+    this.#pendingUserResponse = null
+    this.#latestUserResponse = null
+    this.#userResponseRequest = null
     this.#fenceNextResponse = false
     this.#fenceInterruption = null
     this.#providerResponseId = null
@@ -605,12 +636,7 @@ export class RealtimeSession {
     if (options.responseAllowed !== undefined && !options.responseAllowed()) {
       return {accepted: false, injectionEpoch}
     }
-    await this.#createResponse(intent, [item.event_id])
-    this.#state.queuePendingResponse({
-      intents: [intent],
-      provider_intent: intent,
-      user_input_revision: this.userInputRevision,
-    })
+    await this.#createResponse(intent, [intent])
     return {accepted: true, injectionEpoch}
   }
 
@@ -631,22 +657,50 @@ export class RealtimeSession {
     return this.#injectHostItem(item, {confirmationTimeout: null, asUserActivation: false})
   }
 
+  /** Delivery passes may only start a queued input once; explicit approval retries use the port below. */
+  async requestPendingUserResponse(): Promise<boolean> {
+    if (this.#pendingUserResponse === null) return false
+    return this.requestUserResponse()
+  }
+
   /** Request one normal provider response for the user turn that already reached transcript final. */
   async requestUserResponse(): Promise<boolean> {
     if (
       this.#provider.ensureResponse === undefined
+      || this.#userResponseRequest !== null
       || this.#providerResponseId !== null
       || this.#state.pendingResponseCount > 0
       || this.#floor.state === 'user_speaking'
       || this.#playback.current !== null
       || this.#playback.hasUnreportedFence
     ) return false
+    const pending = this.#pendingUserResponse
+    const target = pending ?? this.#latestUserResponse
+    if (this.#provider.userResponseMode === 'requested' && target === null) return false
+    const request = {itemId: target?.itemId ?? null, revision: target?.revision ?? this.userInputRevision, armedHere: false}
+    this.#userResponseRequest = request
     this.#awaitingUserResponse = true
+    if (this.#pendingUserResponse === pending) this.#pendingUserResponse = null
     try {
-      await this.#provider.ensureResponse()
-      return true
+      const admitted = await this.#provider.ensureResponse(request.itemId ?? undefined)
+      if (admitted === false && this.#userResponseRequest === request) {
+        this.#userResponseRequest = null
+        this.#awaitingUserResponse = false
+        // false proves this request never owned a generation. Its pre-start fence has no target.
+        if (request.armedHere) this.#fenceNextResponse = false
+        if (pending !== null && this.userInputRevision === pending.revision) {
+          this.#pendingUserResponse ??= pending
+        }
+      }
+      return admitted !== false
     } catch (cause) {
-      this.#awaitingUserResponse = false
+      if (this.#userResponseRequest === request) {
+        this.#userResponseRequest = null
+        this.#awaitingUserResponse = false
+        if (pending !== null && this.userInputRevision === pending.revision) {
+          this.#pendingUserResponse ??= pending
+        }
+      }
       throw new RealtimeDeliveryError(`user response request failed: ${String(cause)}`)
     }
   }
@@ -717,10 +771,15 @@ export class RealtimeSession {
     return true
   }
 
-  async #createResponse(intent: HostResponseIntent, eventIds: readonly string[]): Promise<void> {
+  async #createResponse(intent: HostResponseIntent, intents: readonly HostResponseIntent[]): Promise<void> {
+    const pending = {intents: [...intents], provider_intent: intent, user_input_revision: this.userInputRevision}
+    // A provider may publish its start before the command promise resolves. Register ownership first.
+    this.#state.queuePendingResponse(pending)
+    const eventIds = intents.map(candidate => candidate.item.event_id)
     try {
       await this.#provider.createResponse(intent)
     } catch (cause) {
+      this.#state.discardPendingResponse(pending)
       throw new RealtimeDeliveryError(`response request failed: ${String(cause)}`)
     }
     for (const eventId of eventIds) this.#state.markEventResponded(eventId)
@@ -750,6 +809,7 @@ export class RealtimeSession {
       case 'response_started':
         return this.#acceptResponseStarted(
           event.response_id,
+          event.origin,
           options.allowResponseStartDuringUserSpeech === true,
         )
       case 'response_audio_delta':
@@ -757,7 +817,7 @@ export class RealtimeSession {
       case 'response_transcript_final':
         return this.#acceptTranscriptFinal(event.response_id, event.text)
       case 'response_terminal':
-        return this.#acceptTerminal(event.response_id, event.status, event.session_epoch)
+        return this.#acceptTerminal(event.response_id, event.status, event.session_epoch, event.origin)
       case 'user_speech_started':
         return this.#acceptSpeechStarted(event.speech_id, event.provider_item_id)
       case 'user_speech_ended':
@@ -765,8 +825,11 @@ export class RealtimeSession {
       case 'user_transcript_final':
       case 'user_transcript_failed':
         return this.#acceptTranscriptTerminal(event.item_id, event.kind)
+      case 'provider_error':
+        if (!event.recoverable) this.#releaseUserResponseRequest()
+        return false
       default:
-        // Deltas, confirmations, cancel rejections and provider errors are not this reducer's to
+        // Deltas, confirmations and cancel rejections are not this reducer's to
         // act on. Transcript deltas belong to `captionFor`; the rest belong to the layer above.
         return false
     }
@@ -777,10 +840,12 @@ export class RealtimeSession {
     if (responseId !== null) {
       const turn = this.#state.providerTurn(responseId)
       if (turn !== undefined && (turn.locally_fenced || turn.phase !== 'active')) return false
+      if (turn?.origin?.kind === 'unknown') return false
+      if (turn?.origin?.kind === 'host_request' && !this.responseIsToolContinuation(responseId)) return false
     }
-    if (responseId !== null && this.#responseItems.has(this.#turnKey(responseId))) {
-      // Host-created responses narrate an injected fact or continue an already accepted tool
-      // protocol. They never authorize a new tool.
+    if (responseId !== null && this.#responseItems.has(this.#turnKey(responseId))
+      && !this.responseIsToolContinuation(responseId)) {
+      // Host factual narration cannot propose tools. Continuations still need host authorization.
       return false
     }
     return true
@@ -788,9 +853,14 @@ export class RealtimeSession {
 
   async #acceptResponseStarted(
     responseId: string,
+    origin: Extract<RealtimeProviderEvent, {kind: 'response_started'}>['origin'],
     allowDuringUserSpeech: boolean,
   ): Promise<boolean> {
-    this.#awaitingUserResponse = false
+    const requested = this.#userResponseRequest
+    if (origin === undefined || (origin.kind === 'user_item' && origin.item_id === requested?.itemId)) {
+      this.#userResponseRequest = null
+      this.#awaitingUserResponse = false
+    }
     let turn = this.#state.providerTurn(responseId)
     if (turn !== undefined && (turn.locally_fenced || turn.phase !== 'active')) return false
 
@@ -829,12 +899,19 @@ export class RealtimeSession {
       this.#state.clearPremapAudio()
       return false
     }
-    turn ??= this.#state.openProviderTurn(responseId)
+    turn ??= this.#state.openProviderTurn(responseId,
+      requested !== null && origin?.kind === 'user_item' && origin.item_id === requested.itemId
+        ? requested.revision : this.userInputRevision)
+    if (turn.origin === undefined && origin !== undefined) turn.origin = origin
     this.#providerResponseId = responseId
     this.#spokenResponseId = null
     this.#providerTranscript = ''
 
-    const pending = this.#state.popPendingResponse()
+    const pending = origin === undefined
+      ? this.#state.popPendingResponse()
+      : origin.kind === 'host_request'
+        ? this.#state.takePendingResponse(origin.host_item_id)
+        : undefined
     if (pending !== undefined) {
       this.#responseItems.set(
         this.#turnKey(responseId),
@@ -937,17 +1014,33 @@ export class RealtimeSession {
     return false
   }
 
+  #releaseUserResponseRequest(): void {
+    const request = this.#userResponseRequest
+    if (request === null) return
+    if (request.armedHere) this.#fenceNextResponse = false
+    this.#userResponseRequest = null
+    this.#awaitingUserResponse = false
+  }
+
   #acceptTerminal(
     responseId: string,
     status: 'completed' | 'cancelled' | 'failed',
     eventEpoch: number,
+    origin?: Extract<RealtimeProviderEvent, {kind: 'response_terminal'}>['origin'],
   ): boolean {
     const turn = this.#state.providerTurn(responseId)
     if (turn === undefined) {
+      if (origin?.kind === 'user_item' && origin.item_id === this.#userResponseRequest?.itemId) {
+        const ended = this.#state.openProviderTurn(responseId, this.#userResponseRequest.revision)
+        ended.origin = origin
+        ended.phase = status
+        this.#releaseUserResponseRequest()
+        return true
+      }
       // A pre-start fence has no provider response id to cancel. If its first observable event is
       // a terminal, it consumes the one-shot fence and releases the fenced pending's inference
       // slot. Without an armed fence an unknown terminal must not touch a live pending response.
-      if (this.#fenceNextResponse) {
+      if (this.#fenceNextResponse && this.#userResponseRequest?.armedHere !== true) {
         this.#fenceNextResponse = false
         this.#state.popPendingResponse()
       }
@@ -1034,13 +1127,20 @@ export class RealtimeSession {
     return this.#floor !== before
   }
 
-  #acceptTranscriptTerminal(
+  async #acceptTranscriptTerminal(
     itemId: string,
     kind: 'user_transcript_final' | 'user_transcript_failed',
-  ): boolean {
+  ): Promise<boolean> {
     if (!this.#state.acceptUserTranscriptTerminal(itemId)) return false
     this.#state.acceptUserTurn(itemId)
     if (kind === 'user_transcript_failed') return true
+    this.#latestUserResponse = {itemId, revision: this.userInputRevision}
+    if (this.#provider.userResponseMode === 'requested') {
+      this.#pendingUserResponse = this.#latestUserResponse
+      // Queued input is not in-flight inference: only existing provider/playback work is revoked.
+      await this.#fenceAndCancelActiveResponse()
+      return true
+    }
     // A final transcript is a question the provider owes an answer to, so the session is no longer
     // idle even though no response has started.
     this.#awaitingUserResponse = true
@@ -1192,6 +1292,7 @@ export class RealtimeSession {
       }
       if (expectedResponseId === null && this.#awaitingUserResponse && !this.#fenceNextResponse) {
         this.#fenceNextResponse = true
+        if (this.#userResponseRequest !== null) this.#userResponseRequest.armedHere = true
         this.#state.advanceSnapshot()
         return true
       }
@@ -1576,7 +1677,7 @@ export class RealtimeSession {
   /**
    * Ask the provider to narrate one or more finished tool calls.
    *
-   * `retryable` rather than a refusal when the provider or renderer is busy: Qwen permits one
+   * `retryable` rather than a refusal when the provider or renderer is busy: the provider contract permits one
    * inference at a time, and a continuation's audio would fence pre-tool-call speech that is still
    * audible, so the caller is told to come back rather than told no.
    */
@@ -1610,12 +1711,7 @@ export class RealtimeSession {
       }
     }
     const providerIntent = this.#mergeContinuationIntents(intents, options.originSpoken ?? false)
-    await this.#createResponse(providerIntent, intents.map(intent => intent.item.event_id))
-    this.#state.queuePendingResponse({
-      intents: [...intents],
-      provider_intent: providerIntent,
-      user_input_revision: this.userInputRevision,
-    })
+    await this.#createResponse(providerIntent, intents)
     return 'requested'
   }
 

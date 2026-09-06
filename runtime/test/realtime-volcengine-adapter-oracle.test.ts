@@ -434,9 +434,18 @@ class EventObserver {
   readonly #task: Promise<void>
 
   constructor(adapter: CascadedRealtimeAdapter) {
+    // Python's legacy adapter scheduled internally; emulate that host policy explicitly here.
     this.#task = (async () => {
-      for await (const event of adapter.events(new AbortController().signal)) {
+      const signal = new AbortController().signal
+      let active: string | null = null
+      for await (const event of adapter.events(signal)) {
         this.events.push(event)
+        if (event.kind === 'response_started') active = event.response_id
+        if (event.kind === 'response_terminal' && event.response_id === active) active = null
+        if (event.kind === 'user_transcript_final') {
+          if (active !== null) await adapter.cancelResponse(active, signal)
+          await adapter.ensureResponse(signal, event.item_id)
+        }
       }
     })()
   }
@@ -497,6 +506,12 @@ async function runScenario(spec: Scenario, tools: readonly JsonObject[]): Promis
   readonly observed: Row
   readonly llmClosed: boolean
 }> {
+  // Realtime response ids are now allocated at command admission, independently of Ark wire ids.
+  // Rename opaque identities bijectively for the legacy oracle; compare all references and payloads.
+  const responseIds = new Map<string, string>((spec.ark ?? []).flatMap((script, index) => {
+    const started = script.find(entry => entry.kind === 'started')
+    return started === undefined ? [] : [[`cascaded-response-1-${index + 1}`, String(started.response_id)] as const]
+  }))
   const endpointing = new ScriptedEndpointing(spec.vad ?? [])
   const asr = new ScriptedAsr(spec.asr ?? [])
   const llm = new ScriptedLlm(spec.ark ?? [])
@@ -531,7 +546,8 @@ async function runScenario(spec: Scenario, tools: readonly JsonObject[]): Promis
             responseIntent(step.kind, item), new AbortController().signal,
           )
         } else if (step.op === 'cancel_response') {
-          await adapter.cancelResponse(String(step.response_id), new AbortController().signal)
+          await adapter.cancelResponse([...responseIds].find(([, wireId]) => wireId === step.response_id)?.[0]
+            ?? String(step.response_id), new AbortController().signal)
         } else {
           await adapter.close()
           closed = true
@@ -568,8 +584,21 @@ async function runScenario(spec: Scenario, tools: readonly JsonObject[]): Promis
       name: spec.name,
       session,
       steps,
-      events: observer.events.map(normalizeNodeEvent),
-      ark_calls: llm.calls,
+      events: observer.events.map(event => normalizeNodeEvent('response_id' in event && event.response_id !== null
+        ? {...event, response_id: responseIds.get(event.response_id) ?? event.response_id} : event)),
+      // The generic contract now disables tools for host narration. Verify this deliberate policy
+      // difference, then retain the legacy oracle comparison for the remaining wire payload.
+      ark_calls: llm.calls.map(call => {
+        const userRequest = (call.input_items as readonly Row[]).some(item => item.role === 'user'
+          && !(String(item.content).startsWith('Nova Audio Agent')))
+        const toolContinuation = (call.input_items as readonly Row[]).some(item => item.type === 'function_call_output')
+        if (userRequest || toolContinuation) return call
+        assert.deepEqual(call.tools, [], 'host narration must not offer tools')
+        return {...call, tools: tools.map(tool => {
+          const fn = tool.function as JsonObject
+          return {type: 'function', name: fn.name, description: fn.description, parameters: fn.parameters}
+        })}
+      }),
       asr_operations: asr.operations,
       tts_operations: tts.operations,
       telemetry: telemetry.records,
@@ -580,6 +609,12 @@ async function runScenario(spec: Scenario, tools: readonly JsonObject[]): Promis
 }
 
 function normalizeNodeEvent(event: RealtimeProviderEvent): Row {
+  if (event.kind === 'response_started' || event.kind === 'response_terminal') {
+    // Python predates provider origin evidence; dedicated contract tests assert the new field.
+    const {origin, kind, ...rest} = event
+    void origin
+    return {event: kind, ...rest}
+  }
   if (event.kind === 'response_audio_delta') {
     const {kind, pcm, ...rest} = event
     return {event: kind, ...rest, pcm_b64: encode(pcm)}

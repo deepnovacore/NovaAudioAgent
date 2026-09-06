@@ -1,3 +1,4 @@
+import type {ResponseOrigin} from '../src/realtime/protocol.js'
 /**
  * The Node leg of the realtime service parity suite, plus the lifecycle tests.
  *
@@ -5130,6 +5131,7 @@ async function beginExecutorApprovalCarrier(
     readonly itemId: string | null
     readonly responseId: string
     readonly revealItemAtEnd?: string
+    readonly origin?: ResponseOrigin
   },
 ): Promise<void> {
   await new Promise<void>(resolve => { setImmediate(resolve) })
@@ -5140,6 +5142,7 @@ async function beginExecutorApprovalCarrier(
   })
   await service.handleEvent({
     kind: 'response_started', session_epoch: 1, response_id: input.responseId,
+    ...(input.origin === undefined ? {} : {origin: input.origin}),
   })
   if (input.revealItemAtEnd !== undefined) return
   await service.handleEvent({
@@ -10362,4 +10365,118 @@ test('intake owns final queued-fact eligibility and workspace changes without se
     Object.defineProperty(IntakeController.prototype, 'view', snapshot)
     await service.close()
   }
+})
+
+
+test('explicit response evidence cannot claim the current user through host or mismatched origins', async () => {
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-evidence', provider_item_id: 'user-evidence'})
+  await service.handleEvent({kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-evidence', provider_item_id: 'user-evidence'})
+  await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-evidence', text: '请查询天气'})
+  for (const [index, origin] of [
+    {kind: 'host_request', host_item_id: 'host-evidence'},
+    {kind: 'unknown'},
+    {kind: 'user_item', item_id: 'stale-user'},
+  ].entries()) {
+    const responseId = `response-rejected-${index}`
+    await service.handleEvent({kind: 'response_started', session_epoch: 1,
+      response_id: responseId, origin: origin as ResponseOrigin})
+    await service.handleEvent({kind: 'response_terminal', session_epoch: 1,
+      response_id: responseId, status: 'completed', reason: ''})
+  }
+  assert.deepEqual(service.boundOriginsForTest, [])
+  await service.handleEvent({kind: 'response_started', session_epoch: 1,
+    response_id: 'response-exact', origin: {kind: 'user_item', item_id: 'user-evidence'}})
+  assert.deepEqual(service.boundOriginsForTest, [['1:response-exact', 'user-evidence']])
+})
+
+
+test('executor approval cannot use host, unknown, or mismatched provider evidence', async t => {
+  const origins: ResponseOrigin[] = [
+    {kind: 'host_request', host_item_id: 'host-approval'},
+    {kind: 'unknown'},
+    {kind: 'user_item', item_id: 'different-user'},
+    {kind: 'user_item', item_id: 'approval-user'},
+  ]
+  for (const origin of origins) await t.test(JSON.stringify(origin), async () => {
+    const {service, executorApproval} = pipelineService({projectTool: true, withExecutorApproval: true})
+    assert.ok(executorApproval !== null)
+    await service.connect()
+    const waiting = offerCodexCommand(executorApproval)
+    const approvalId = executorApproval.view.pending_approval_id!
+    await beginExecutorApprovalCarrier(service, {
+      itemId: 'approval-user', responseId: 'approval-response', origin,
+    })
+    await emitExecutorApprovalFunction(service, {
+      approvalId, approved: true, responseId: 'approval-response',
+    })
+    const matches = origin.kind === 'user_item' && origin.item_id === 'approval-user'
+    assert.equal(executorApproval.pending, !matches)
+    if (!matches) assert.equal(service.executorApprovalDecision(approvalId, false), true)
+    assert.deepEqual(await waiting, {decision: matches ? 'accept' : 'decline'})
+  })
+})
+
+test('explicit wrong origin cannot acquire approval authority through final-only provisional binding', async () => {
+  const {service, executorApproval, injectedContents} = pipelineService({
+    projectTool: true, withExecutorApproval: true,
+  })
+  assert.ok(executorApproval !== null)
+  await service.connect()
+  const waiting = offerCodexCommand(executorApproval)
+  const approvalId = executorApproval.view.pending_approval_id!
+  await finishExecutorApprovalQuestion(service, 'origin-question')
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin-provisional',
+    origin: {kind: 'user_item', item_id: 'different-item'}})
+  await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'actual-item', text: '批准'})
+  await emitExecutorApprovalFunction(service, {approvalId, approved: true, responseId: 'origin-provisional'})
+  assert.equal(executorApproval.pending, true)
+  assert.equal(injectedContents.some(content => content.includes('approval_accepted')), false)
+  assert.equal(service.executorApprovalDecision(approvalId, false), true)
+  assert.deepEqual(await waiting, {decision: 'decline'})
+})
+
+test('bound tool-result continuations retain the original user evidence across multiple steps', async () => {
+  const {service, injectedItems, runtimeDispatches} = pipelineService({agent: true})
+  await service.connect()
+  try {
+    await speak(service, 'chain-user', 'Complete the task in several steps')
+    let origin: ResponseOrigin = {kind: 'user_item', item_id: 'chain-user'}
+    for (let step = 1; step <= 3; step += 1) {
+      const responseId = `chain-response-${step}`
+      await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId, origin})
+      await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: responseId,
+        item_id: `chain-tool-${step}`, call_id: `chain-call-${step}`, name: 'dispatch',
+        arguments: {executor: 'codex', instruction: `Step ${step}`}})
+      assert.equal(runtimeDispatches(), step, `step ${step} must retain its real user origin`)
+      await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: responseId,
+        status: 'completed', reason: ''})
+      const output = injectedItems.find(item => item.kind === 'tool_output' && item.call_id === `chain-call-${step}`)
+      assert.ok(output)
+      origin = {kind: 'host_request', host_item_id: output.host_item_id}
+    }
+    await speak(service, 'replacement-user', 'A different request')
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'stale-continuation', origin})
+    await service.handleEvent({kind: 'tool_call_ready', session_epoch: 1, response_id: 'stale-continuation',
+      item_id: 'stale-tool', call_id: 'stale-call', name: 'dispatch',
+      arguments: {executor: 'codex', instruction: 'Continue the old request'}})
+    assert.equal(runtimeDispatches(), 3, 'an old continuation cannot borrow the replacement user')
+  } finally { await service.close() }
+})
+
+test('fatal provider errors settle an admitted user response through the service path', async () => {
+  const {service, session} = pipelineService()
+  await service.connect()
+  try {
+    await speak(service, 'admitted-user', 'Hello')
+    assert.equal(await session.requestUserResponse(), true)
+    assert.equal(session.providerIdle, false)
+    await service.handleEvent({kind: 'provider_error', session_epoch: 1, code: 'unavailable', recoverable: false})
+    assert.equal(session.providerIdle, true)
+  } finally { await service.close() }
 })

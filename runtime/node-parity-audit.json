@@ -170,6 +170,7 @@
     "runtime/src/realtime/cascaded/qwen-llm.ts",
     "runtime/src/realtime/confirmation-turn-isolation.ts",
     "runtime/src/realtime/evidence.ts",
+    "runtime/src/realtime/frontend-instructions.ts",
     "runtime/src/realtime/history.ts",
     "runtime/src/realtime/memory-board.ts",
     "runtime/src/realtime/protocol.ts",
@@ -3003,6 +3004,28 @@
       "disposition": "wire_json",
       "behavior": "final provider tool composition enforces exact N/B without partial exposure",
       "test": "runtime/test/capability-registry.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/cascaded/adapter.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "line": 840,
+      "snippet": "owner.epoch",
+      "snippet_sha256": "e4c4c4f0c830154e4ddd59055a662b9a4d580a32e8cabb996b825470ba3010f6",
+      "disposition": "wire_json",
+      "behavior": "admitted response is cancellable before the LLM sends any event",
+      "test": "runtime/test/realtime-cascaded-adapter.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/cascaded/adapter.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "line": 840,
+      "snippet": "++owner.responseSequence",
+      "snippet_sha256": "dbe8a0310f862ffb945b3f1c08466eea7a7b8e1c18c8fc7109aaaf48733aa2dd",
+      "disposition": "wire_json",
+      "behavior": "admitted response is cancellable before the LLM sends any event",
+      "test": "runtime/test/realtime-cascaded-adapter.test.ts"
     },
     {
       "file": "runtime/src/realtime/cascaded/qwen-llm.ts",

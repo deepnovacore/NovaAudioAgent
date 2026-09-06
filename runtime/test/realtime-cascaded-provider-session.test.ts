@@ -194,6 +194,7 @@ async function collectTerminal(session: RealtimeProviderSession): Promise<Realti
   const events: RealtimeProviderEvent[] = []
   for await (const event of session.events()) {
     events.push(event)
+    if (event.kind === 'user_transcript_final') await session.ensureResponse(event.item_id)
     if (event.kind === 'response_terminal') return events
   }
   throw new Error('provider-session stream ended before terminal')
@@ -277,7 +278,7 @@ async function guardReconnectInputs(historyMode: 'none' | 'packed'): Promise<{
   return {inputs, outcome}
 }
 
-test('formal provider session reconnect closes the epoch LLM, swaps streams, and deep-copies tools',
+test('formal provider session reconnect closes the epoch LLM, swaps streams, and restricts host tools',
   async () => {
     const firstLlm = new EpochLlm()
     const secondLlm = new EpochLlm([
@@ -320,9 +321,7 @@ test('formal provider session reconnect closes the epoch LLM, swaps streams, and
     const events = await settleWithin('second epoch response', collecting)
 
     assert.deepEqual(events.map(event => event.session_epoch), [2, 2])
-    assert.deepEqual(secondLlm.calls[0]?.tools, [
-      {name: 'weather__get', parameters: {type: 'object'}},
-    ])
+    assert.deepEqual(secondLlm.calls[0]?.tools, [])
     await session.close()
     assert.equal(secondLlm.closed, true)
   })
@@ -351,7 +350,7 @@ test('formal provider cancellation resets a terminal-window continuation before 
       origin_spoken: false})
     await llm.committed.promise
 
-    const cancelling = session.cancelResponse('provider-window')
+    const cancelling = session.cancelResponse('cascaded-response-1-1')
     await llm.aborted.promise
     llm.releaseTerminal()
     await cancelling
@@ -532,4 +531,59 @@ test('adapter-connect failure closes each constructed owner once in reverse orde
     'endpointing', 'asr', 'llm', 'tts', 'llm.close', 'endpointing.close',
   ])
   assert.equal(llm.closed, true)
+})
+
+
+test('real provider starts bind host facts and continuations before createResponse returns', async () => {
+  for (const mode of ['host', 'continuation']) {
+    let nextId = 0
+    const ids = (): string => `admission-${++nextId}`
+    const port = new RealtimeProviderSession(providerFor({
+      llms: [new EpochLlm([
+        {kind: 'response_started', response_id: 'wire-fast'},
+        {kind: 'response_completed', response_id: 'wire-fast'},
+      ])], idFactory: ids,
+    }))
+    const started = deferred<void>()
+    const release = deferred<void>()
+    const create = port.createResponse.bind(port)
+    port.createResponse = async intent => {
+      await create(intent)
+      await release.promise
+    }
+    const session = new RealtimeSession({provider: port, idFactory: ids, clock: new VirtualClock(),
+      playback: new PlaybackRegistry({idFactory: ids, onFrame: () => undefined, onClear: () => undefined}),
+      onDiagnostic: () => undefined})
+    await session.connect({tools: []})
+    const bound: string[][] = []
+    const reader = (async () => {
+      for await (const event of port.events()) {
+        await session.accept(event)
+        if (event.kind === 'response_started') {
+          bound.push([...session.responseEventIds(event.response_id)])
+          started.resolve()
+        }
+        if (event.kind === 'response_terminal') return
+      }
+    })()
+    try {
+      let delivery: Promise<unknown>
+      if (mode === 'host') {
+        delivery = session.deliverHostItem({kind: 'progress', host_item_id: 'host-fast', event_id: 'event-fast',
+          content: 'fact', call_id: null})
+      } else {
+        const item: HostContextItem = {kind: 'tool_output', host_item_id: 'host-fast', event_id: 'event-fast',
+          content: '{"value":"ok"}', call_id: 'call-fast'}
+        await session.injectToolOutput(item)
+        delivery = session.requestToolContinuation([{kind: 'tool_result', item, task_summary: null, origin_spoken: false}])
+      }
+      await settleWithin('start before command release', started.promise)
+      assert.deepEqual(bound, [['event-fast']], 'ownership binds while createResponse is held')
+      release.resolve()
+      await delivery
+      await settleWithin('fast admitted response', reader)
+      assert.deepEqual(bound, [['event-fast']])
+      assert.equal(session.providerIdle, true)
+    } finally { release.resolve(); await port.close() }
+  }
 })

@@ -38,7 +38,7 @@ import {CascadedRealtimeProvider} from './realtime/cascaded/provider.js'
 import {createQwenCascadedLlmFactory} from './realtime/cascaded/qwen-llm.js'
 import {
   frontendInstructions,
-} from './realtime/qwen.js'
+} from './realtime/frontend-instructions.js'
 import {DoubaoAsrClient} from './realtime/volcengine/asr.js'
 import {
   createEndpointingCapabilityFactory,
