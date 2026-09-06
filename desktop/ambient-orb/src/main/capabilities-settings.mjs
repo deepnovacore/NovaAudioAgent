@@ -1,3 +1,4 @@
+import {restoreCapabilitySnapshot} from './settings-store.mjs'
 import {readFileSync, statSync} from 'node:fs'
 import {mkdir, rename, unlink, writeFile} from 'node:fs/promises'
 import {dirname, join, resolve} from 'node:path'
@@ -163,9 +164,11 @@ export async function prepareCapabilityCommit({settings, sourceSettings = settin
     catch { throw invalidCommit('capabilities_document_changed') }
     if (expectedRevision !== currentRevision) throw invalidCommit('capabilities_document_changed')
   }
-  await beforeWrite({path, previous: previous === null ? null : previous.toString('base64')})
-  await replaceBytes(path, Buffer.from(JSON.stringify(document)))
-  return {rollback: () => previous === null ? unlink(path) : replaceBytes(path, previous)}
+  const bytes = Buffer.from(JSON.stringify(document))
+  const snapshot = {path, previous: previous === null ? null : previous.toString('base64'), written: bytes.toString('base64')}
+  await beforeWrite(snapshot)
+  await replaceBytes(path, bytes)
+  return {rollback: () => restoreCapabilitySnapshot(snapshot)}
 }
 export async function publicCapabilityProbe(config, probe = probeMcpServer, knownSecrets = []) {
   const secrets = [...knownSecrets, ...Object.entries(config.env ?? {}).filter(([name]) => !PUBLIC_IDENTITY_ENV.has(name)).map(([, value]) => value), ...Object.entries(config.headers ?? {}).filter(([name]) => !MCP_NON_AUTH_HEADERS.includes(name.toLowerCase())).flatMap(([, value]) => [value, value.replace(/^Bearer\s+/iu, '')])].filter(Boolean)

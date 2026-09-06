@@ -740,9 +740,10 @@ test('settings IPC restarts for capability commits while wake-only updates stay 
   const {backendSettings, DEFAULT_SETTINGS} = await import('../src/main/settings-store.mjs')
   const start = source.indexOf("  ipcMain.handle('nova:settings:set'")
   const handlerSource = source.slice(start, source.indexOf('\n  })', start) + 5)
-  for (const [payload, expectedRestart] of [
+  for (const [payload, expectedRestart, pendingRecovery = false] of [
     [{settingsPatch: {wakeWordEnabled: true}}, false],
     [{settingsPatch: {autoHideSeconds: 120}}, false],
+    [{settingsPatch: {wakeWordEnabled: true}}, true, true],
     [{settingsPatch: {}, capabilitiesDocument: {}}, true],
     [{settingsPatch: {wakeWordEnabled: true}, capabilitiesDocument: {}}, true],
     [{settingsPatch: {startListeningOnLaunch: true}}, true],
@@ -763,7 +764,7 @@ test('settings IPC restarts for capability commits while wake-only updates stay 
       readCapabilityDocument: () => ({}), decryptSecretsForSpawn: () => ({}), secretCodec: {},
       capabilityEnvironment: () => ({}), prepareCapabilityCommit() {}, process: {env: {}},
       commitDesktopConfiguration() {}, discardDesktopConfiguration() {}, publishSettingsApplyStatus() {},
-      settingsView: () => ({}), console, settingsRecoveryAvailable: false,
+      settingsView: () => ({}), console, settingsRecoveryAvailable: pendingRecovery,
       publishCommittedSettings() {}, rollbackSettings() {}, completeSettings() {}, restartSettingsBackend() {},
     })
     vm.runInContext(handlerSource, context)

@@ -155,7 +155,12 @@ only if the file changed between runs.
 A settings transaction writes an atomic `settings.json.recovery` record before
 changing settings or capabilities. It contains the previous normalized settings
 (including the already sealed secret entries) and the exact previous bytes, or
-absence, of the capability file being replaced. The existing atomic file writers
+absence, of the capability file being replaced, plus the exact bytes this
+transaction writes. Recovery accepts only those written bytes or the already
+restored bytes; an external edit raises a recovery conflict and preserves both
+the external file and the recovery record. This detects edits between recovery
+attempts; it is not filesystem locking against an uncoordinated writer racing
+the comparison and rename. The existing atomic file writers
 remain the commit mechanism; no secret plaintext is returned to the renderer.
 
 Preparation, commit, or backend activation failure returns `saved: false` and a
@@ -172,7 +177,10 @@ backend, so an interrupted transaction cannot replay the rejected settings on th
 next launch. An unreadable recovery record fails startup rather than selecting
 the unconfirmed configuration. A successful save removes the record after
 activation; desktop-only wake/appearance changes retain their immediate apply
-path without restarting the backend. The transaction's `publishStatus` callback
+path without restarting the backend unless a prior recovery remains pending.
+A pending recovery always requires backend activation before clearing its record.
+Startup exposes `recovery_pending` with the explicit recovery action, independently
+of the supervisor connection state. The transaction's `publishStatus` callback
 is the sole application-status writer; supervisor connection notifications only
 update backend status. The snapshot preserves the preceding committed settings;
 it does not claim a live provider or hardware acceptance test has passed.

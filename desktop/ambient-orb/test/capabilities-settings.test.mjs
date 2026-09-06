@@ -302,3 +302,22 @@ test('failed backend activation and interrupted saves restore settings, sealed s
     await assert.rejects(readFile(`${file}.recovery`), {code: 'ENOENT'})
   }
 })
+
+test('pending recovery preserves external capability edits after rollback, including an originally absent file', async t => {
+  const {saveSettingsRecovery, restoreSettingsRecovery} = await import('../src/main/settings-store.mjs')
+  for (const original of [' {"version":1}\n', null]) {
+    const root = await fixture(t), file = join(root, 'settings.json'), cap = join(root, 'cap.json')
+    if (original !== null) await writeFile(cap, original)
+    await prepareCapabilityCommit({settings: {...SETTINGS_DEFAULTS, capabilitiesConfigPath: cap}, document,
+      beforeWrite: capability => saveSettingsRecovery(file, SETTINGS_DEFAULTS, capability)})
+    await restoreSettingsRecovery(file)
+    const external = '{"version":1,"frontbrainToolBudget":5}\n'
+    await writeFile(cap, external)
+    const journal = await readFile(`${file}.recovery`, 'utf8')
+    for (let retry = 0; retry < 2; retry++) {
+      await assert.rejects(restoreSettingsRecovery(file), {code: 'settings_recovery_conflict'})
+      assert.equal(await readFile(cap, 'utf8'), external)
+      assert.equal(await readFile(`${file}.recovery`, 'utf8'), journal)
+    }
+  }
+})

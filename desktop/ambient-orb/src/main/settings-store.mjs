@@ -752,10 +752,10 @@ export async function restoreSettingsRecovery(file) {
   if (capability !== null) {
     if (!isRecord(capability) || typeof capability.path !== 'string' || !isAbsolute(capability.path)
       || [resolve(file), resolve(`${file}.recovery`)].includes(resolve(capability.path))
+      || typeof capability.written !== 'string' || !BASE64.test(capability.written)
       || (capability.previous !== null && (typeof capability.previous !== 'string'
         || (capability.previous !== '' && !BASE64.test(capability.previous))))) throw new Error('invalid capability recovery')
-    if (capability.previous === null) await unlink(capability.path).catch(error => { if (error.code !== 'ENOENT') throw error })
-    else await replaceFile(capability.path, Buffer.from(capability.previous, 'base64'))
+    await restoreCapabilitySnapshot(capability)
   }
   const settings = await saveSettings(file, recovery.settings)
   // Keep the record until restored settings have activated successfully.
@@ -764,4 +764,16 @@ export async function restoreSettingsRecovery(file) {
 
 export async function clearSettingsRecovery(file) {
   await unlink(`${file}.recovery`).catch(error => { if (error.code !== 'ENOENT') throw error })
+}
+
+// Accept only the transaction's bytes or the already-restored snapshot. A later
+// external edit belongs to its writer, including a file created after rollback.
+export async function restoreCapabilitySnapshot({path, previous, written}) {
+  let current = null
+  try { current = (await readFile(path)).toString('base64') }
+  catch (error) { if (error.code !== 'ENOENT') throw error }
+  if (current === previous) return
+  if (current !== written) throw Object.assign(new Error('capability changed during settings recovery'), {code: 'settings_recovery_conflict'})
+  if (previous === null) await unlink(path)
+  else await replaceFile(path, Buffer.from(previous, 'base64'))
 }

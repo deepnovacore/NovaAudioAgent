@@ -252,6 +252,10 @@ function render(view, _drafts, state) {
       : WORKSPACE_STATUS_TEXT.rollback_pending
   }
   settingsRestore.hidden = view.settingsRecoveryAvailable !== true
+  if (view.settingsApplyStatus === 'recovery_pending') {
+    restartNotice.hidden = false
+    restartNotice.textContent = '上次设置已还原，请点击恢复以确认后端可用'
+  }
   updateButtons()
 }
 

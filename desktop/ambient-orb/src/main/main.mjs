@@ -814,7 +814,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   const recovered = await restoreSettingsRecovery(settingsFile())
   settingsRecoveryAvailable = recovered !== null
   currentSettings = recovered ?? await loadSettings(settingsFile())
-  if (recovered) publishSettingsApplyStatus('restart_failed')
+  if (recovered) publishSettingsApplyStatus('recovery_pending')
   await refreshDesktopConfiguration()
   initializeDesktopBootstrap(camera.source)
   const launchId = randomBytes(8).toString('hex')
@@ -1132,9 +1132,10 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // only in main for validation or backend spawn. Public settings replies
     // contain presence flags and rejected key names, never secret values.
     const previousSettings = currentSettings
+    const recoveryPending = settingsRecoveryAvailable
     let capabilitiesChanged = false
     const applied = await applySettingsTransaction({
-      needsBackendRestart: () => capabilitiesChanged || JSON.stringify(backendSettings(previousSettings))
+      needsBackendRestart: () => recoveryPending || capabilitiesChanged || JSON.stringify(backendSettings(previousSettings))
         !== JSON.stringify(backendSettings(currentSettings)),
       coordinator: lifecycleCoordinator,
       patch: payload,
