@@ -164,13 +164,25 @@ async function settleNamed<T>(
 
 async function waitNamed(
   name: string,
-  condition: () => boolean,
+  condition: () => boolean | Promise<boolean>,
   timeoutMs = 1_500,
 ): Promise<void> {
-  await settleNamed(name, (async () => {
-    while (!condition()) await yieldImmediate()
-  })(), timeoutMs)
+  let waiting = true
+  try {
+    await settleNamed(name, (async () => {
+      while (waiting && !await condition()) await yieldImmediate()
+    })(), timeoutMs)
+  } finally { waiting = false }
 }
+
+test('a failed condition wait stops polling after its deadline', async () => {
+  let polls = 0
+  await assert.rejects(waitNamed('never ready', () => { polls++; return false }, 5), /did not settle/u)
+  const stoppedAt = polls
+  await yieldImmediate()
+  await yieldImmediate()
+  assert.equal(polls, stoppedAt)
+})
 
 async function assertPending(name: string, promise: Promise<unknown>): Promise<void> {
   const turn = deferred<'turn'>()
@@ -2640,6 +2652,8 @@ test('real assembly and graph service infer only weak metadata from committed ad
     await rm(directory, {recursive: true, force: true})
   })
 
+  // This test owns metadata transitions; cold Worker startup has a separate bounded-start test.
+  await settleNamed('graph fixture startup', graph.open(), 20_000)
   await realtime.start()
   await waitNamed('authoritative alpha graph open', () => (
     graph.publishedSnapshot.logical_workspaces.length === 1
@@ -2652,11 +2666,9 @@ test('real assembly and graph service infer only weak metadata from committed ad
     query: 'explain current workspace evidence',
     limit: 1,
   } as const
-  await settleNamed('authoritative alpha provider scope', (async () => {
-    while ((await graph.enrichAfterExplicitRecall(alphaProviderInput)).degraded) {
-      await yieldImmediate()
-    }
-  })())
+  await waitNamed('authoritative alpha provider scope', async () => (
+    !(await graph.enrichAfterExplicitRecall(alphaProviderInput)).degraded
+  ))
   assert.equal(providerScopeLookups, 1)
   const committed = [...workspaceObservers][0]
   const terminal = [...terminalObservers][0]

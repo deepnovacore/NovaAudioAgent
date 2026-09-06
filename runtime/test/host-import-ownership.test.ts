@@ -22,7 +22,12 @@ for (const entry of ['index', 'desktop', 'production-realtime-assembly']) {
 test('desktop entry exits with its startup failure code after bounded cleanup', () => {
   const target = new URL('../src/desktop-entry.js', import.meta.url).href
   const replacements = {
-    './desktop-service.js': `export async function runDesktopEntryWithStopSources() { setInterval(() => {}, 1000); return 2; }
+    // Measure the exit boundary after module loading, not Windows cold-start I/O.
+    './desktop-service.js': `export async function runDesktopEntryWithStopSources() {
+      setInterval(() => {}, 1000);
+      setTimeout(() => process.exit(99), 2000);
+      return 2;
+    }
       export function buildDesktopRealtimeComposition() { throw new Error('not reached'); }`,
   }
   const hook = `export async function resolve(specifier, context, next) {
@@ -35,7 +40,7 @@ test('desktop entry exits with its startup failure code after bounded cleanup', 
   const script = `import {register} from 'node:module';
     register('data:text/javascript,' + encodeURIComponent(${JSON.stringify(hook)}), import.meta.url);
     await import(${JSON.stringify(target)});`
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding: 'utf8', timeout: 2_000})
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding: 'utf8', timeout: 20_000})
   assert.equal(result.status, 2, result.stderr)
 })
 

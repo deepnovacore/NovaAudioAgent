@@ -10069,6 +10069,10 @@ test('an abandoned confirmation cleanup cannot block a later expiry batch', asyn
     hangInjection: true,
     expiryStepTimeoutMs: 5,
   })
+  const waitUntil = async (ready: () => boolean): Promise<void> => {
+    const deadline = Date.now() + 1000
+    while (!ready() && Date.now() < deadline) await new Promise<void>(resolve => setTimeout(resolve, 5))
+  }
   await service.connect()
   await service.handleEvent({
     kind: 'user_speech_started', session_epoch: 1,
@@ -10092,7 +10096,7 @@ test('an abandoned confirmation cleanup cannot block a later expiry batch', asyn
   })
   clock.advanceTo(clock.now() + 400)
   assert.equal(controller.expire(), true)
-  await new Promise<void>(resolve => setTimeout(resolve, 30))
+  await waitUntil(() => injected.some(item => item.content === '确认已过期，本次操作已取消。'))
   const firstExpiryEvents = new Set(injected
     .filter(item => item.content === '确认已过期，本次操作已取消。')
     .map(item => item.event_id))
@@ -10101,7 +10105,10 @@ test('an abandoned confirmation cleanup cannot block a later expiry batch', asyn
   propose(controller)
   clock.advanceTo(clock.now() + 400)
   assert.equal(controller.expire(), true)
-  await new Promise<void>(resolve => setTimeout(resolve, 30))
+  await waitUntil(() => new Set([
+    ...injected,
+    ...service.queuedHostItems().map(item => item.intent.item),
+  ].filter(item => item.content === '确认已过期，本次操作已取消。').map(item => item.event_id)).size === 2)
   const expiryEvents = new Set([
     ...injected,
     ...service.queuedHostItems().map(item => item.intent.item),

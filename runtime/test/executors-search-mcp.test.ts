@@ -91,14 +91,20 @@ test('MCP response bytes and total request time are bounded; shutdown aborts act
   try { await assert.rejects(transport(large.url, {maxResultBytes: 2048}).search('Nova', {maxResults: 1}), /response_too_large/u) }
   finally { await large.close() }
   for (const shutdown of [false, true]) {
-    const local = await localMcp(() => new Promise<CallToolResult>(() => undefined))
-    const search = transport(local.url, {timeoutMs: 80})
+    let entered!: () => void
+    const callStarted = new Promise<void>(resolve => { entered = resolve })
+    const local = await localMcp(() => { entered(); return new Promise<CallToolResult>(() => undefined) })
+    const search = transport(local.url, {timeoutMs: shutdown ? 1000 : 80})
     try {
-      const pending = search.search('Nova', {maxResults: 1})
-      if (shutdown) setTimeout(() => { void search.close() }, 20)
-      await assert.rejects(pending, /timeout/u)
+      const pending = assert.rejects(search.search('Nova', {maxResults: 1}), /timeout/u)
+      if (shutdown) {
+        await Promise.race([callStarted, pending.then(() => { throw new Error('request ended before active-work shutdown') })])
+        await search.close()
+      }
+      await pending
       await search.close()
-      assert.equal(local.stats().deleted, 1)
+      // A total deadline may expire before the client even acquires a session.
+      if (shutdown || local.stats().called > 0) assert.equal(local.stats().deleted, 1)
     } finally { await local.close() }
   }
 })
