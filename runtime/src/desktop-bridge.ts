@@ -1,4 +1,4 @@
-import {EXECUTOR_RESULT, EXECUTOR_RESULTS_RESET} from './desktop-wire.js'
+import {EXECUTOR_RESULT, EXECUTOR_RESULTS_RESET, DESKTOP_ACTIVITY, CLOCK_PING, CAPTION, PLAYBACK_TERMINAL} from './desktop-wire.js'
 /**
  * One-client transport adapter around an already-built `RealtimeService`.
  *
@@ -279,7 +279,7 @@ export class DesktopSocketBridge {
   }
 
   onActivity(idle: boolean): void {
-    if (this.#authenticated) this.#enqueue(JSON.stringify({type: 'desktop.activity', idle}), {droppable: true})
+    if (this.#authenticated) this.#enqueue(JSON.stringify({type: DESKTOP_ACTIVITY, idle}), {droppable: true})
   }
 
   onProjectView(view: PublicProjectView): void {
@@ -605,8 +605,8 @@ export class DesktopSocketBridge {
       return decodeAudioFrame(value).generation_epoch <= this.#fencedGenerationEpoch
     }
     if (
-      !value.startsWith('{"type":"caption"')
-      && !value.startsWith('{"type":"playback.terminal"')
+      !value.startsWith(`{"type":"${CAPTION}"`)
+      && !value.startsWith(`{"type":"${PLAYBACK_TERMINAL}"`)
     ) {
       return false
     }
@@ -715,7 +715,7 @@ export class DesktopSocketBridge {
     const ids: string[] = []
     for (let index = 0; index < count; index += 1) {
       const pingId = `ping-${index}`
-      if (this.#enqueue(`{"type":"clock.ping","ping_id":"${pingId}"}`, {droppable: true})) {
+      if (this.#enqueue(`{"type":"${CLOCK_PING}","ping_id":"${pingId}"}`, {droppable: true})) {
         this.registerPing(pingId)
         ids.push(pingId)
       }

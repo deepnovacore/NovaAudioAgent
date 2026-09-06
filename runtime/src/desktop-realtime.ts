@@ -1,3 +1,4 @@
+import {DESKTOP_READY} from './desktop-wire.js'
 import {
   DesktopSocketBridge,
   type DesktopBridgeOptions,
@@ -14,7 +15,7 @@ import type {RealtimeTelemetry} from './realtime/telemetry.js'
 import type {MemoryBoardDetail} from './realtime/memory-board.js'
 import {workspaceGraphBoardMessage} from './realtime/workspace-graph-board.js'
 
-const READY_FRAME = '{"type":"desktop.ready"}'
+const READY_FRAME = JSON.stringify({type: DESKTOP_READY})
 
 /** The authenticated writer surface used by the bridge pump. */
 export interface DesktopServerTransport {

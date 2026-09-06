@@ -1,3 +1,4 @@
+import {CAMERA_CAPTURE, CAMERA_PERMISSION} from './wire-frame-types.mjs'
 export const CAMERA_FRAME_MAGIC = new Uint8Array([
   0x4e, 0x56, 0x43, 0x41, 0x4d, 0x01, 0x0d, 0x0a,
 ])
@@ -29,13 +30,13 @@ const encoder = new TextEncoder()
 
 export function parseCameraCapture(raw) {
   const parsed = parseFlatJsonObject(raw)
-  if (!parsed || parsed.value.type !== 'camera.capture' || !validRequestId(parsed.value.request_id)) {
+  if (!parsed || parsed.value.type !== CAMERA_CAPTURE || !validRequestId(parsed.value.request_id)) {
     return null
   }
   if (parsed.value.source === 'local') {
     if (!hasExactKeys(parsed.value, localKeys)) return null
     return Object.freeze({
-      type: 'camera.capture',
+      type: CAMERA_CAPTURE,
       request_id: parsed.value.request_id,
       source: 'local',
     })
@@ -47,7 +48,7 @@ export function parseCameraCapture(raw) {
     || parsed.value.position_ms < 0
     || parsed.value.position_ms > MAX_CAMERA_POSITION_MS) return null
   return Object.freeze({
-    type: 'camera.capture',
+    type: CAMERA_CAPTURE,
     request_id: parsed.value.request_id,
     source: 'file',
     position_ms: parsed.value.position_ms,
@@ -58,10 +59,10 @@ export function parseCameraPermissionRequest(raw) {
   const parsed = parseFlatJsonObject(raw)
   if (!parsed
     || !hasExactKeys(parsed.value, permissionRequestKeys)
-    || parsed.value.type !== 'camera.permission'
+    || parsed.value.type !== CAMERA_PERMISSION
     || !validRequestId(parsed.value.request_id)) return null
   return Object.freeze({
-    type: 'camera.permission',
+    type: CAMERA_PERMISSION,
     request_id: parsed.value.request_id,
   })
 }
@@ -118,7 +119,7 @@ export function classifyCameraCaptureText(raw) {
   const request = parseCameraCapture(raw)
   if (request) return Object.freeze({kind: 'valid', request})
   const fields = scanTopLevelJsonFields(raw)
-  if (!fields.some(field => field.key === 'type' && field.value === 'camera.capture')) {
+  if (!fields.some(field => field.key === 'type' && field.value === CAMERA_CAPTURE)) {
     return Object.freeze({kind: 'other'})
   }
   const requestIds = fields

@@ -1,5 +1,5 @@
 import { WakeAudioRouter, canAutoSleep } from './wake-audio.mjs'
-import {PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT} from './wire-frame-types.mjs'
+import {DESKTOP_ACTIVITY, CLOCK_PING, ERROR, PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT} from './wire-frame-types.mjs'
 import {
   activateCaptureMode,
   AlertTone,
@@ -839,11 +839,11 @@ async function handleControl(message) {
         message.generation_epoch,
       )
     }
-  } else if (message.type === 'desktop.activity') {
+  } else if (message.type === DESKTOP_ACTIVITY) {
     backendIdle = message.idle === true
     backendIdleAt = performance.now()
     reportWakeActivity()
-  } else if (message.type === 'clock.ping') {
+  } else if (message.type === CLOCK_PING) {
     send({ type: 'clock.pong', ping_id: message.ping_id, t_render_ms: performance.now() })
   } else if (message.type === CAPTION) {
     captionLabel.textContent = message.text
@@ -973,7 +973,7 @@ async function handleControl(message) {
       else if (retainedResults.has(message.work_id) || retainedResults.size < 64) retainedResults.set(message.work_id, result)
       updateResultButton()
     }
-  } else if (message.type === 'error') {
+  } else if (message.type === ERROR) {
     axes.error = 'backend'
   }
   render()

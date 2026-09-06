@@ -46,7 +46,7 @@ export {
 } from './managed-workspace-maintenance.js'
 
 
-import {MAX_DESKTOP_JSON_BYTES, MAX_DESKTOP_PCM_BYTES} from './desktop-wire.js'
+import {DESKTOP_READY, MAX_DESKTOP_JSON_BYTES, MAX_DESKTOP_PCM_BYTES} from './desktop-wire.js'
 export {MAX_DESKTOP_JSON_BYTES, MAX_DESKTOP_PCM_BYTES, WIRE_FRAME_TYPES} from './desktop-wire.js'
 export const MAX_DESKTOP_OUTBOUND_BINARY_BYTES = 8 * 1024 * 1024
 export const MAX_DESKTOP_PENDING_SENDS = 128
@@ -133,7 +133,7 @@ export const connectionDiagnosticSchema = z.discriminatedUnion('phase', [
   }).strict(),
 ])
 const DEFAULT_BOOTSTRAP_TEXT_FRAMES = [
-  '{"type":"desktop.ready"}',
+  JSON.stringify({type: DESKTOP_READY}),
 ] as const
 
 const ordinaryDesktopControlSchema = z.discriminatedUnion('type', [

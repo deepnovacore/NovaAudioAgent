@@ -29,6 +29,7 @@ import {
   playbackTerminalMessage,
   validateInputPcm,
 } from '../src/desktop-wire.js'
+import {serializeCameraCapture, serializeCameraPermissionRequest} from '../src/desktop-camera.js'
 import {executorProgressSchema, executorResultSchema} from '../src/desktop-progress.js'
 import { parseClientMessage } from '../src/desktop-bridge.js'
 import type { PlaybackCompletion } from '../src/playback.js'
@@ -560,6 +561,8 @@ test('an escaped key spelling is recognised as the field it decodes to', () => {
 
 test('wire serializers emit the declared playback, caption and confirmation types', () => {
   const emitted = [
+    serializeCameraCapture({request_id: 'camera-1', source: 'local'}),
+    serializeCameraPermissionRequest({request_id: 'camera-2'}),
     playbackClearMessage('utterance-1', 1), playbackAlertMessage(null, null), playbackTerminalMessage('utterance-1', 1),
     executorStateMessage('idle', CODEX),
     projectStateMessage({workspace_display_name: null, session_title: null, pending_confirmation: false, pending_confirmation_busy: false}),
@@ -569,5 +572,5 @@ test('wire serializers emit the declared playback, caption and confirmation type
   ].map(value => (JSON.parse(value) as {type: string}).type)
   emitted.push(executorProgressSchema.shape.type.value, executorResultSchema.shape.type.value)
   assert.deepEqual(new Set(emitted), new Set(WIRE_FRAME_TYPES.filter(type =>
-    !['executor.results.reset'].includes(type))))
+    !['executor.results.reset', 'desktop.activity', 'clock.ping', 'desktop.ready', 'error'].includes(type))))
 })
