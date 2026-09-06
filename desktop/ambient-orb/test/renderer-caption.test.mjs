@@ -8,7 +8,7 @@ test('renderer clears captions on disconnect and on every playback clear', async
   // The assistant caption clears before the racy clear() verdict, never inside it.
   assert.match(
     source,
-    /if \(message\.type === 'playback\.clear'\) \{\n    clearAssistantCaption\(\)/,
+    /if \(message\.type === PLAYBACK_CLEAR\) \{\n    clearAssistantCaption\(\)/,
   )
   // A dead socket must not leave speculative text on screen.
   const disconnectHandler = source.slice(
@@ -29,7 +29,7 @@ test('renderer clears captions on disconnect and on every playback clear', async
 test('renderer stops the guard tone before replacement PCM and local onset', async () => {
   const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /message\.type === 'playback\.alert'/)
+  assert.match(source, /message\.type === PLAYBACK_ALERT/)
   const handler = source.indexOf('async function handleSocketMessage(event, delivery)')
   const toneStop = source.indexOf('alertTone.stop()', handler)
   const decode = source.indexOf('decodeAudioFrame', handler)
@@ -40,7 +40,7 @@ test('renderer stops the guard tone before replacement PCM and local onset', asy
 test('renderer accepts the closed public Codex project message', async () => {
   const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /message\.type === 'project\.state'/)
+  assert.match(source, /message\.type === PROJECT_STATE/)
   assert.match(source, /workspace_display_name/)
   assert.match(source, /pending_confirmation/)
   assert.match(source, /pending_confirmation_id/)
