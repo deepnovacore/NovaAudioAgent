@@ -36,19 +36,20 @@ function source(id = 'source-a'): KnowledgeSource {
   }
 }
 
-async function store(t: TestContext): Promise<KnowledgeStoreClient> {
-  return (await storeWithPath(t)).client
+async function store(t: TestContext, forceLexical = false): Promise<KnowledgeStoreClient> {
+  return (await storeWithPath(t, forceLexical)).client
 }
 
-async function storeWithPath(t: TestContext): Promise<{readonly client: KnowledgeStoreClient; readonly path: string}> {
+async function storeWithPath(t: TestContext, forceLexical = false): Promise<{readonly client: KnowledgeStoreClient; readonly path: string}> {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-store-'))
   const path = join(directory, 'knowledge.sqlite')
-  const client = new KnowledgeStoreClient({path})
+  const client = new KnowledgeStoreClient({path, forceLexical})
   t.after(async () => {
     await client.close()
     await rm(directory, {recursive: true, force: true})
   })
-  await client.open()
+  const opened = await client.open()
+  if (forceLexical) assert.deepEqual(opened, {fts: false})
   return {client, path}
 }
 
@@ -119,18 +120,20 @@ test('recall combines lexical FTS and vector hits without exposing source locato
 })
 
 test('recall falls back to bounded lexical matching without FTS5', async t => {
-  const client = await store(t)
+  const client = await store(t, true)
   await client.replaceSource({
     source: source(),
     provider_id: 'embed-a',
     dims: 2,
     chunks: [
-      {heading_path: 'Portable', text: 'portable lexical fallback result', token_estimate: 4, vector: [1, 0]},
-      {heading_path: 'Other', text: 'unrelated document', token_estimate: 2, vector: [0, 1]},
+      {heading_path: 'Portable', text: 'portable lexical fallback_under result', token_estimate: 4, vector: [1, 0]},
+      {heading_path: 'Other', text: 'fallbackXunder unrelated document', token_estimate: 2, vector: [0, 1]},
     ],
   })
   const lexical = await client.recall('portable fallback', [0, 1], 'embed-b', 1)
-  assert.equal(lexical[0]?.text, 'portable lexical fallback result')
+  assert.equal(lexical[0]?.text, 'portable lexical fallback_under result')
+  assert.equal((await client.recall('ortable', [0, 1], 'embed-b', 1))[0]?.text, lexical[0]?.text)
+  assert.deepEqual((await client.recall('fallback_under', [0, 1], 'embed-b', 5)).map(hit => hit.text), [lexical[0]?.text])
 })
 
 test('invalid replacement rolls back and leaves the prior source recallable', async t => {
@@ -463,4 +466,45 @@ test('ordinal correspondence preserves unchanged chunks and removes surplus refe
   assert.deepEqual(await client.getChunk(last), {status: 'gone'})
   await client.replaceSource({...input, chunks: [{...chunks[0]!, heading_path: 'Renamed'}]})
   assert.equal((await client.getChunk(first)).status, 'stale')
+})
+
+test('FTS opens reuse a clean index and rebuild after lexical-only mutations', async t => {
+  const {client, path} = await storeWithPath(t)
+  await client.close()
+  const initial = temporaryClient(t, path)
+  const opened = await initial.open()
+  // Node 22 has no FTS5; forced fallback is tested independently on every runtime.
+  if (opened.fts === false) return t.skip('FTS5 unavailable')
+  assert.deepEqual(opened, {fts: true})
+  const input = {source: source(), provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Old', text: 'original evidence', token_estimate: 2, vector: [1, 0]}]}
+  await initial.replaceSource(input)
+  await initial.close()
+  // A harmless rowid change observes physical index reuse without timing assertions.
+  await fixtureSql(path, 'UPDATE chunks_fts SET rowid = 99')
+  const clean = temporaryClient(t, path)
+  assert.deepEqual(await clean.open(), {fts: true})
+  assert.deepEqual(await fixtureSql(path, 'SELECT rowid FROM chunks_fts', 'query'), {kind: 'rows', rows: [{rowid: 99}]})
+  await clean.close()
+  const fallback = new KnowledgeStoreClient({path, forceLexical: true})
+  t.after(() => fallback.close())
+  assert.deepEqual(await fallback.open(), {fts: false})
+  await fallback.replaceSource({...input, chunks: [{...input.chunks[0]!, text: 'updated evidence'}]})
+  await fallback.replaceSource({...input, source: source('removed')})
+  await fallback.removeSource('removed')
+  await fallback.close()
+  const rebuilt = temporaryClient(t, path)
+  assert.deepEqual(await rebuilt.open(), {fts: true})
+  assert.equal((await rebuilt.recall('updated', [0, 1], 'embed-b', 5))[0]?.text, 'updated evidence')
+  assert.deepEqual(await rebuilt.recall('original', [0, 1], 'embed-b', 5), [])
+  assert.deepEqual(await fixtureSql(path, 'SELECT text FROM chunks_fts', 'query'), {kind: 'rows', rows: [{text: 'updated evidence'}]})
+  await rebuilt.close()
+  const removing = new KnowledgeStoreClient({path, forceLexical: true})
+  t.after(() => removing.close())
+  await removing.open()
+  await removing.removeSource('source-a')
+  await removing.close()
+  const empty = temporaryClient(t, path)
+  await empty.open()
+  assert.deepEqual(await fixtureSql(path, 'SELECT text FROM chunks_fts', 'query'), {kind: 'rows', rows: []})
 })

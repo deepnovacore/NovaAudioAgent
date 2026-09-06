@@ -11,6 +11,8 @@ import type {
 export interface KnowledgeStoreClientOptions {
   readonly path: string
   readonly maxSources?: number
+  /** Test seam for exercising the portable LIKE path on FTS-capable runtimes. */
+  readonly forceLexical?: boolean
 }
 
 export type KnowledgeStoreErrorCode =
@@ -73,14 +75,14 @@ export class KnowledgeStoreClient {
 
   constructor(options: KnowledgeStoreClientOptions) {
     const workerUrl = new URL('./store-worker.js', import.meta.url)
-    const workerOptions: WorkerOptions = {workerData: {path: options.path, maxSources: options.maxSources}}
+    const workerOptions: WorkerOptions = {workerData: {path: options.path, maxSources: options.maxSources, forceLexical: options.forceLexical}}
     this.#worker = new Worker(workerUrl, workerOptions)
     this.#worker.on('message', message => this.#handleMessage(message))
     this.#worker.on('error', () => this.#fail('WORKER_ERROR'))
     this.#worker.on('exit', code => this.#handleExit(code))
   }
 
-  async open(): Promise<void> { await this.#request('open', {}) }
+  open(): Promise<{readonly fts: boolean}> { return this.#request('open', {}) }
 
   close(): Promise<void> {
     if (this.#closing !== undefined) return this.#closing

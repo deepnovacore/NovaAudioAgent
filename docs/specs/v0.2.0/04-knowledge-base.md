@@ -60,13 +60,18 @@ Tables (conceptual):
   content_digest, legacy_digest (migration compatibility only)
 - `embeddings` — chunk_id, provider_id, dims, vector BLOB (float32 little-endian)
 - `jobs` — id, source_id, state, error_code, updated_at
-- FTS5 virtual table over chunk text + heading_path
+- FTS5 virtual table over chunk text + heading_path; `knowledge_metadata.fts_dirty`
+  marks canonical mutations performed while FTS is unavailable.
 
 Spike (2026-09-05, macOS): Node v22.13.0 reports `no such module: fts5`;
 Node v24.8.0 supports FTS5. The Worker feature-probes it and uses bounded,
 parameterized LIKE when absent (≤24 terms, ≤50 lexical candidates, existing
-20k chunk ceiling). A later FTS-capable open transactionally rebuilds the
-derived index from canonical chunks, including changes made by Node 22.
+20k chunk ceiling). `open()` reports `{fts: boolean}`; `knowledge.status` and
+the desktop panel expose the selected lexical mode. The LIKE fallback has no
+lexical relevance ranking (the vector/RRF leg remains available).
+An FTS-capable open transactionally builds a missing index or rebuilds one
+marked dirty by fallback writes, including changes made by Node 22. Ordinary
+clean opens reuse it. `forceLexical` is an internal test seam, not a user setting.
 Both paths retain the same vector/RRF and citation contracts. All 55 Knowledge
 tests and synthetic-document real embedding/MCP smoke passed on Node 22.13.0;
 the real smoke also passed on Node 24.8.0. Windows remains a separate gate.
@@ -263,6 +268,9 @@ item. Explicit tool / planner / Codex recall only.
 - [x] Data-flow table rendered in the panel before first ingest.
 - [x] Explicit tool / planner / Codex recall only; no automatic ContextView injection setting.
 - [x] FTS5 spike and Node 22 fallback evidence documented in the implementation ledger.
+- [x] Forced LIKE tests exercise substring matching and literal underscore escaping;
+      status/panel report fallback, clean FTS reopen preserves the index, and
+      fallback writes/removal are reflected after an FTS-capable reopen.
 
 ## Decision-record delta (apply on merge)
 

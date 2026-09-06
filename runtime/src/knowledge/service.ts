@@ -21,11 +21,12 @@ export class KnowledgeService {
   #folderBusy = false
   #folderSignal: AbortSignal | undefined
   #queries = 0
+  #fts = false
 
   constructor(options: {store: KnowledgeStoreClient; embedding: EmbeddingProvider}) {
     this.#store = options.store; this.#embedding = options.embedding
   }
-  open(): Promise<void> {return this.#store.open()}
+  async open(): Promise<void> {this.#fts = (await this.#store.open()).fts}
   async close(): Promise<void> {
     this.#stop.abort(); this.#active?.abort.abort()
     await this.#store.close()
@@ -55,7 +56,7 @@ export class KnowledgeService {
     if (method === 'knowledge.status') {
       if (!z.object({}).strict().safeParse(params).success) throw failure('invalid_request')
       const sources = await this.#store.listSources(), jobs = await this.#store.listJobs()
-      return {sources: sources.map(({id, title, kind, bytes, updated_at, status}) => ({id, title, kind, bytes, updated_at, status})), jobs}
+      return {fts: this.#fts, sources: sources.map(({id, title, kind, bytes, updated_at, status}) => ({id, title, kind, bytes, updated_at, status})), jobs}
     }
     if (method === 'knowledge.remove') {
       const parsed = z.object({id: idSchema}).strict().safeParse(params)

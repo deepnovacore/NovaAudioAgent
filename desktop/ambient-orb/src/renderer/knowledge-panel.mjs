@@ -33,7 +33,8 @@ export function createKnowledgePanel({document, action}) {
         node('sources').append(row)
       }
       const failed = (state.jobs ?? []).filter(job => job.state === 'failed').length
-      node('status').textContent = `${state.sources?.length ?? 0} 个来源${failed ? `；${failed} 个失败任务，请检查文件格式、敏感内容或服务连接后重试。` : ''}`
+      const search = state.fts === false ? '；FTS5 不可用，已使用基础词法匹配（无相关性排序）。' : state.fts === true ? '；FTS5 已启用。' : ''
+      node('status').textContent = `${state.sources?.length ?? 0} 个来源${search}${failed ? `；${failed} 个失败任务，请检查文件格式、敏感内容或服务连接后重试。` : ''}`
     } catch {if (revision === epoch) node('status').textContent = '知识库操作失败；请确认模块已启用、后端正在运行，或检查文档与服务连接。'}
     finally {busy = false; controls.forEach(value => {value.disabled = !enabled})}
   }

@@ -40,6 +40,7 @@ class StoreError extends Error {
 interface WorkerData {
   readonly path: string
   readonly maxSources?: number
+  readonly forceLexical?: boolean
 }
 
 interface Request extends Record<string, unknown> {
@@ -96,7 +97,7 @@ function execute(request: Request): unknown {
   }
 }
 
-function open(): null {
+function open(): {readonly fts: boolean} {
   if (database !== undefined) throw new StoreError('STORE_ALREADY_OPEN')
   ftsAvailable = false
   let opened: DatabaseSync | undefined
@@ -123,6 +124,8 @@ function open(): null {
         id TEXT PRIMARY KEY, source_id TEXT NOT NULL, state TEXT NOT NULL,
         error_code TEXT, updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS knowledge_metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      INSERT OR IGNORE INTO knowledge_metadata(key, value) VALUES ('fts_dirty', 1);
       CREATE INDEX IF NOT EXISTS chunks_source_idx ON chunks(source_id);
       CREATE INDEX IF NOT EXISTS embeddings_model_idx ON embeddings(provider_id, dims);
       CREATE INDEX IF NOT EXISTS jobs_updated_idx ON jobs(updated_at DESC, id DESC);
@@ -133,7 +136,7 @@ function open(): null {
     secureSidecar(path, '-shm')
     database = opened
     opened = undefined
-    return null
+    return {fts: ftsAvailable}
   } catch (error) {
     try { opened?.close() } catch { /* stable error only */ }
     database = undefined
@@ -181,18 +184,23 @@ function close(): null {
 }
 
 function enableFts(opened: DatabaseSync): boolean {
-  if (!supportsFts5(opened)) return false
+  if (data.forceLexical || !supportsFts5(opened)) return false
   try {
     opened.exec('BEGIN IMMEDIATE')
+    const exists = opened.prepare("SELECT 1 FROM sqlite_master WHERE name = 'chunks_fts'").get() !== undefined
+    const dirty = opened.prepare("SELECT value FROM knowledge_metadata WHERE key = 'fts_dirty'").get()?.value !== 0
     opened.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
         chunk_id UNINDEXED, source_id UNINDEXED, text, heading_path
       );
+    `)
+    if (!exists || dirty) opened.exec(`
       DELETE FROM chunks_fts;
       INSERT INTO chunks_fts(chunk_id, source_id, text, heading_path)
       SELECT id, source_id, text, heading_path FROM chunks;
-      COMMIT;
+      UPDATE knowledge_metadata SET value = 0 WHERE key = 'fts_dirty';
     `)
+    opened.exec('COMMIT')
     return true
   } catch {
     try { opened.exec('ROLLBACK') } catch { /* no active transaction */ }
@@ -230,6 +238,7 @@ function replaceSource(value: unknown): null {
     opened.exec('BEGIN IMMEDIATE')
     const previous = opened.prepare('SELECT id, content_digest, legacy_digest FROM chunks WHERE source_id = ? ORDER BY ordinal').all(input.source.id) as Row[]
     if (ftsAvailable) opened.prepare('DELETE FROM chunks_fts WHERE source_id = ?').run(input.source.id)
+    else opened.exec("UPDATE knowledge_metadata SET value = 1 WHERE key = 'fts_dirty'")
     opened.prepare('DELETE FROM sources WHERE id = ?').run(input.source.id)
     opened.prepare(`
       INSERT INTO sources(id, title, kind, locator, mime, fingerprint, bytes, created_at, updated_at, status)
@@ -273,6 +282,7 @@ function removeSource(value: unknown): null {
   try {
     opened.exec('BEGIN IMMEDIATE')
     if (ftsAvailable) opened.prepare('DELETE FROM chunks_fts WHERE source_id = ?').run(id)
+    else opened.exec("UPDATE knowledge_metadata SET value = 1 WHERE key = 'fts_dirty'")
     opened.prepare('DELETE FROM sources WHERE id = ?').run(id)
     opened.exec('COMMIT')
     return null
@@ -464,7 +474,8 @@ function db(): DatabaseSync {
 function parseWorkerData(value: unknown): Required<WorkerData> {
   if (!isRecord(value) || typeof value.path !== 'string') throw new Error('invalid knowledge worker data')
   const maxSources = value.maxSources === undefined ? DEFAULT_MAX_SOURCES : positiveInteger(value.maxSources, DEFAULT_MAX_SOURCES)
-  return {path: value.path, maxSources}
+  if (value.forceLexical !== undefined && typeof value.forceLexical !== 'boolean') throw new Error('invalid knowledge worker data')
+  return {path: value.path, maxSources, forceLexical: value.forceLexical === true}
 }
 
 function parseRequest(value: unknown): Request | undefined {
