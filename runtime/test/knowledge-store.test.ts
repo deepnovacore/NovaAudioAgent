@@ -380,3 +380,23 @@ test('recall and getChunk redact document paths while keeping lexical matches ac
   await client.removeSource('source-a')
   assert.equal((await client.getChunk(hit.locator)).status, 'gone')
 })
+
+test('close terminates an unresponsive worker within its two second grace period', async t => {
+  const client = await store(t)
+  let worker: Worker | undefined
+  const original = Worker.prototype.postMessage
+  const post = t.mock.method(Worker.prototype, 'postMessage', function (this: Worker, value: unknown) {
+    worker = this
+    if (['list_sources', 'close'].includes((value as {operation: string}).operation)) return
+    original.call(this, value)
+  })
+  const pending = client.listSources()
+  const rejected = assert.rejects(pending, (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'CLIENT_CLOSED')
+  const closing = client.close()
+  assert.equal(client.close(), closing)
+  try {
+    await rejected
+    await settlesWithin('bounded close', closing, 3000)
+    assert.equal(worker?.threadId, -1)
+  } finally {post.mock.restore(); await worker?.terminate(); await closing.catch(() => undefined)}
+})

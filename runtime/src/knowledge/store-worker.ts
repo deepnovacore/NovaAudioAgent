@@ -298,9 +298,8 @@ function getChunk(value: unknown): KnowledgeChunkResult {
     FROM chunks c JOIN sources s ON s.id = c.source_id WHERE c.id = ? AND c.source_id = ?
   `).get(parsed.chunkId, parsed.sourceId) as Row | undefined
   if (row === undefined) return {status: 'gone'}
-  if (locatorDigest(parsed.sourceId, parsed.chunkId) !== parsed.digest) return {status: 'stale'}
   return {
-    status: 'ok', text: redactOutput(textValue(row, 'text')), title: redactOutput(textValue(row, 'title')),
+    status: locatorDigest(parsed.sourceId, parsed.chunkId) === parsed.digest ? 'ok' : 'stale', text: redactOutput(textValue(row, 'text')), title: redactOutput(textValue(row, 'title')),
     heading_path: redactOutput(textValue(row, 'heading_path')), source_id: textValue(row, 'source_id'),
   }
 }
@@ -603,16 +602,17 @@ function ensurePrivateParent(parent: string): string {
   return current
 }
 
+// O_NOFOLLOW is unavailable on Windows; retain lstat and descriptor identity checks there.
 function ensurePrivateDatabaseFile(path: string): void {
   let descriptor: number | undefined
   try {
     try {
       const info = lstatSync(path)
       if (info.isSymbolicLink() || !info.isFile() || !privateFile(info)) throw new StoreError('STORE_WRITE_FAILED')
-      descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW)
+      descriptor = openSync(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0))
     } catch (error) {
       if (error instanceof StoreError) throw error
-      descriptor = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+      descriptor = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
     }
     const fromDescriptor = fstatSync(descriptor)
     const fromPath = lstatSync(path)

@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import {mkdtemp, realpath, rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {KnowledgeStoreClient} from '../src/knowledge/store-client.js'
 import {request as httpRequest} from 'node:http'
 import {test} from 'node:test'
 import {Client} from '@modelcontextprotocol/sdk/client/index.js'
@@ -279,4 +283,21 @@ test('knowledge HTTP loopback authenticates before parsing and serves actual SDK
     await transport.close().catch(() => undefined)
     await loopback.close()
   }
+})
+
+test('real store stale chunks remain readable through MCP', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-mcp-'))
+  const store = new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite')})
+  await store.open()
+  const peer = await local({recall: (query, k) => store.recall(query, [1, 0], 'embed-a', k), getChunk: locator => store.getChunk(locator)})
+  try {
+    await store.replaceSource({source: {id: 'source-a', title: 'Source', kind: 'file', locator: '/tmp/notes.md', mime: 'text/plain', fingerprint: 'a', bytes: 10, created_at: 1, updated_at: 1, status: 'ready'}, provider_id: 'embed-a', dims: 2,
+      chunks: [{heading_path: 'Root', text: 'Current text', token_estimate: 2, vector: [1, 0]}]})
+    const [hit] = await store.recall('Current', [1, 0], 'embed-a', 1)
+    assert.ok(hit)
+    const locator = hit.locator.replace(/d=[^&]+/u, 'd=000000000000')
+    const result = await peer.client.callTool({name: 'get_chunk', arguments: {locator}})
+    assert.equal(result.isError, undefined)
+    assert.deepEqual(structured(result), {trust: 'untrusted_external', status: 'stale', locator, source_id: 'source-a', title: 'Source', heading_path: 'Root', text: 'Current text', note: 'source_reindexed'})
+  } finally {await peer.close(); await store.close(); await rm(directory, {recursive: true, force: true})}
 })
