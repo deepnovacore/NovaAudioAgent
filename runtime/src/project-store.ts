@@ -383,9 +383,9 @@ export class ProjectStore {
         store.#ownerLock = await store.#openAndAcquireLock(PROJECT_OWNER_LOCK_FILE)
         await store.#revalidateStateRoot()
         await store.#migrateLegacyHomes(store.#requireStateRootHandle())
-      }
-      if (await store.#loadMaintenanceJournal() !== null) {
-        await store.cleanupManagedMaintenanceJournal()
+        if (await store.#loadMaintenanceJournal() !== null) {
+          await store.cleanupManagedMaintenanceJournal()
+        }
       }
       return store
     } catch (error) {

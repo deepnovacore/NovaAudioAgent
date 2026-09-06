@@ -2390,8 +2390,8 @@ test('a partially cleaned committed v1 maintenance journal remains decodable', a
     await store.close()
 
     rootFiles.failCleanupName = null
-    store = await ProjectStore.open(options)
-    assert.equal(await store.loadManagedMaintenanceJournal(), null, 'open replays legacy committed journals')
+    store = await ProjectStore.open({...options, live: true})
+    assert.equal(await store.loadManagedMaintenanceJournal(), null, 'live open replays legacy committed journals')
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
   } finally {
     await store.close().catch(() => undefined)
@@ -2497,8 +2497,25 @@ test('crash after tombstone deletion is idempotently completed from the committe
     assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'committed')
     await store.close()
 
-    store = await ProjectStore.open(baseOptions)
-    assert.equal(await store.loadManagedMaintenanceJournal(), null, 'open must replay the committed journal')
+    const journalBytes = await readFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE))
+    const busyLocks = new BusyThenDescriptorLockAuthority()
+    busyLocks.busyAttempts = Number.MAX_SAFE_INTEGER
+    const observer = await ProjectStore.open({...baseOptions, nativeLocks: busyLocks})
+    assert.equal(busyLocks.acquireCalls, 0, 'a desktop observer must not replay during open')
+    assert.deepEqual(await readFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE)), journalBytes)
+    await observer.close()
+
+    await writeFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE), '{broken', {mode: 0o600})
+    const maintenance = await ManagedWorkspaceMaintenanceService.openFromDesktop({
+      stateRoot: await realpath(stateRoot), managedRoot: await realpath(managedRoot),
+      nativeHost: {nativeLocks: baseOptions.nativeLocks, rootFiles} as unknown as Parameters<typeof ManagedWorkspaceMaintenanceService.openFromDesktop>[0]['nativeHost'],
+    })
+    assert.equal((await maintenance.capabilities()).health, 'unavailable')
+    await maintenance.close()
+    await assert.rejects(ProjectStore.open({...baseOptions, live: true}))
+    await writeFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE), journalBytes, {mode: 0o600})
+    store = await ProjectStore.open({...baseOptions, live: true})
+    assert.equal(await store.loadManagedMaintenanceJournal(), null, 'failed live replay releases its owner lock for retry')
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
     assert.equal(await store.loadManagedMaintenanceJournal(), null)
     assert.deepEqual(await readdir(workspace.canonical_path), [])
