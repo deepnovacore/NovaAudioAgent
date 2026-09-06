@@ -35,7 +35,8 @@
     "test:desktop": "npm test --workspace @nova-audio-agent/ambient-orb",
     "test:runtime": "npm test --workspace @nova-audio-agent/runtime",
     "test:runtime:win": "npm run test:win --workspace @nova-audio-agent/runtime",
-    "runtime:smoke:search:mcp": "npm run smoke:search:mcp --workspace @nova-audio-agent/runtime"
+    "runtime:smoke:search:mcp": "npm run smoke:search:mcp --workspace @nova-audio-agent/runtime",
+    "check:release-gate": "node runtime/scripts/check-release-gate.mjs"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

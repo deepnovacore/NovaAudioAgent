@@ -38,6 +38,7 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+      - run: npm run check:release-gate
       - run: npm install --global npm@11.6.0
       - name: Verify candidate identity, platform builds, version, and release authority
         env:
