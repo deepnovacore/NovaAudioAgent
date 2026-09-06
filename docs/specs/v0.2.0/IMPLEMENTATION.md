@@ -623,4 +623,20 @@ The default node-backend utility smoke initially reported `backend_unavailable`:
 requires an explicit discovered Codex binary, while that invocation supplied the bare default.
 Capability-mode smoke proves the Electron utility path with an isolated dummy provider; neither it
 nor synthetic wake audio substitutes for human speech or Windows installed Worker/WASM acceptance.
-Final candidate checks and remaining limitations are appended after integration verification.
+Final local verification (Node 24.8.0, Electron 43.2.0): `check` passed; runtime 2355 passed /
+5 platform skips; desktop 883 passed / 3 platform skips; CLI 21/21. Checks ran serially to avoid
+shared `runtime/dist` races. Three caption source assertions were updated to the generated wire
+constants after the full desktop run exposed their old literals. Capability utility smoke passed.
+Parity covers 226 files / 388 occurrences; the expanded boundary baseline is 215 occurrences.
+
+Settings follow-up review found and closed two ownership bugs: repeated rollback now refuses to
+overwrite externally changed capability bytes, and a desktop-only save cannot clear pending recovery
+without backend activation. Its 183 targeted checks and four independent regressions passed before
+final desktop validation. The byte comparison is not an atomic lock against an uncoordinated external
+writer changing the file between read and rename; the limitation remains explicit in spec 06.
+
+A normal utility-smoke retry with the discovered Codex binary and existing `.env` returned
+`configuration_required` before readiness. It is recorded as blocked by the current configuration,
+not passed. Source-startup smoke used its default skip. Human speech, long standby, installed Windows
+wake/Worker/WASM and all feature acceptance remain pending for main. Final dev CI is verified against
+the pushed commit and reported with its Actions run in the integration task result.

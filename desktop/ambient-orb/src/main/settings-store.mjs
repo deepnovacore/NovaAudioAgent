@@ -768,6 +768,7 @@ export async function clearSettingsRecovery(file) {
 
 // Accept only the transaction's bytes or the already-restored snapshot. A later
 // external edit belongs to its writer, including a file created after rollback.
+// ponytail: an external writer can race read/rename; shared CLI locking is needed for cross-process serialization.
 export async function restoreCapabilitySnapshot({path, previous, written}) {
   let current = null
   try { current = (await readFile(path)).toString('base64') }
