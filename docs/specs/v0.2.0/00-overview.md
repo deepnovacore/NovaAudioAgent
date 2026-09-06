@@ -18,6 +18,7 @@ only after the corresponding volume is agreed.
 | [06 Settings and config](06-settings-and-config.md) | Settings v4, env contract, panel tabs |
 | [07 Executor boundary](07-executor-boundary.md) | Codex as a real plug-in behind `ports.ts`; role-based routing; host-owned confirmations; enforced by lint + script |
 | [08 Project, session and work](08-project-and-work.md) | `dispatch` / `cancel` / `confirm` host tools replace `codex__project`; coordinator sinks into the coding executor; per-project concurrency; explicit cancel; Codex-owned titles |
+| [11 Local wake word](11-local-wake-word.md) | Opt-in local KWS, presence epochs, model ownership and desktop-only settings |
 
 The public architecture volumes under [`docs/archs/`](../../archs/00-overview.md)
 remain the source of invariants. Specs here propose deltas; they do not silently
@@ -277,7 +278,8 @@ work-order authorship, and admission on the host (02).
 ## Document conventions
 
 - English body (matches `docs/archs/`); a short Chinese 摘要 at the top of each
-  file.
+  file. Volume [11](11-local-wake-word.md) is English-only by explicit user
+  decision on 2026-09-06.
 - Cite concrete current paths when describing baseline behaviour.
 - Prefer “must / must not / may” over soft wishlist language for acceptance
   criteria.
