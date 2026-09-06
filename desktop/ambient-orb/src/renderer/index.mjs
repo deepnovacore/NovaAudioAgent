@@ -1,5 +1,5 @@
 import { WakeAudioRouter, canAutoSleep } from './wake-audio.mjs'
-import {DESKTOP_ACTIVITY, CLOCK_PING, ERROR, PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT} from './wire-frame-types.mjs'
+import {DESKTOP_ACTIVITY, CLOCK_PING, PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT} from './wire-frame-types.mjs'
 import {
   activateCaptureMode,
   AlertTone,
@@ -973,8 +973,6 @@ async function handleControl(message) {
       else if (retainedResults.has(message.work_id) || retainedResults.size < 64) retainedResults.set(message.work_id, result)
       updateResultButton()
     }
-  } else if (message.type === ERROR) {
-    axes.error = 'backend'
   }
   render()
 }

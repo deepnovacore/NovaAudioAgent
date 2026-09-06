@@ -24,7 +24,7 @@ import {
   type ApprovalView as ExecutorApprovalView,
 } from './approval-port.js'
 
-/** Text frames on the orb socket (bootstrap, controls, camera requests and compatibility errors). */
+/** Text frames produced on the orb socket (bootstrap, controls and camera requests). */
 export const WIRE_FRAME_TYPES = Object.freeze([
   'playback.clear',
   'playback.alert',
@@ -39,12 +39,11 @@ export const WIRE_FRAME_TYPES = Object.freeze([
   'desktop.activity',
   'clock.ping',
   'desktop.ready',
-  'error',
   'camera.capture',
   'camera.permission',
 ] as const)
 
-export const [PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT, DESKTOP_ACTIVITY, CLOCK_PING, DESKTOP_READY, ERROR, CAMERA_CAPTURE, CAMERA_PERMISSION] = WIRE_FRAME_TYPES
+export const [PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT, DESKTOP_ACTIVITY, CLOCK_PING, DESKTOP_READY, CAMERA_CAPTURE, CAMERA_PERMISSION] = WIRE_FRAME_TYPES
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1_024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1_024

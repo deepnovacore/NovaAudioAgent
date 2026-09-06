@@ -7,9 +7,11 @@ import {
   type DesktopServerTransport,
 } from '../src/desktop-realtime.js'
 import type {BridgeService} from '../src/desktop-bridge.js'
-import {decodeAudioFrame} from '../src/desktop-wire.js'
+import {decodeAudioFrame, WIRE_FRAME_TYPES} from '../src/desktop-wire.js'
+import {encodeCameraFrame, serializeCameraPermissionResult} from '../src/desktop-camera.js'
 import {
   DesktopOutboundValidationError,
+  NodeDesktopServer,
   type DesktopServerOptions,
 } from '../src/desktop.js'
 import type {JsonValue} from '../src/events.js'
@@ -147,7 +149,7 @@ function text(frame: ReceivedFrame): string {
   return Buffer.from(frame.bytes).toString('utf8')
 }
 
-test('real loopback drains ready, preempt, current state, project, and duplex traffic', async () => {
+test('real loopback covers every declared orb frame, preemption, and duplex traffic', async () => {
   const {service, calls} = serviceHarness()
   const stop = new AbortController()
   const clock = new VirtualClock()
@@ -177,7 +179,8 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
   try {
     const initial = nextFrames(socket, 4, 'desktop ready and current bridge state')
     await sendClient(socket, JSON.stringify({type: 'hello', token: TOKEN}), 'desktop hello send')
-    assert.deepEqual((await initial).map(frame => text(frame)), [
+    const initialFrames = await initial
+    assert.deepEqual(initialFrames.map(frame => text(frame)), [
       '{"type":"desktop.ready"}',
       '{"type":"playback.clear","utterance_id":"stale","generation_epoch":1}',
       '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}',
@@ -208,6 +211,36 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
     assert.match(text(frames[3]!), /"type":"caption"/u)
     assert.equal(text(frames[4]!), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
     assert.match(text(frames[5]!), /"workspace_display_name":"project-b"/u)
+
+    const remaining = nextFrames(socket, 8, 'approval, results, activity, clock and camera producers')
+    realtime.bridge.onExecutorApproval({
+      pending_approval: false, pending_approval_busy: false, kind: null,
+      local_detail: null, operation_summary: null, expires_at: null, work: null, queued: 0,
+    })
+    realtime.bridge.onExecutorProgress({
+      type: 'executor.progress', delegate_id: 'work-1', executor: 'codex', ts: 2,
+      phase: 'completed', summary: 'done', level: 'milestone',
+    }, {delegate_id: 'work-1', executor: 'codex', outcome: 'ok', summary: 'done',
+      started_at: 1, ended_at: 2, changed_files: 0})
+    realtime.bridge.onActivity(true)
+    realtime.bridge.sendClockPings(1)
+    assert.ok(realtime.server instanceof NodeDesktopServer)
+    const capture = realtime.server.captureCamera({source: 'local'})
+    const permission = realtime.server.requestCameraPermission()
+    const remainingFrames = await remaining
+    const emittedTypes = [...initialFrames, ...frames, ...remainingFrames]
+      .filter(frame => !frame.binary)
+      .map(frame => (JSON.parse(text(frame)) as {type: string}).type)
+    await sendClient(socket, encodeCameraFrame({
+      request_id: 'camera-1', payload: new Uint8Array([0xff, 0xd8, 0x11, 0x22, 0xff, 0xd9]),
+    }), 'camera capture response')
+    await sendClient(socket, serializeCameraPermissionResult({
+      request_id: 'camera-permission-1', status: 'denied',
+    }), 'camera permission response')
+    await settleWithin('camera capture completed', capture)
+    assert.equal(await settleWithin('camera permission completed', permission), 'denied')
+    assert.deepEqual(new Set(emittedTypes), new Set(WIRE_FRAME_TYPES),
+      'the declared orb contract must equal real authenticated producer output')
 
     realtime.bridge.registerPing('p-1')
     clock.advanceTo(0.25)
