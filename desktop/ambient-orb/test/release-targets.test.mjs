@@ -57,16 +57,6 @@ test('release targets require each canonical tuple, installer, and resource exac
           'livekit_probe_silence', 'livekit_probe_speech',
         ],
       },
-      {
-        id: 'linux-x64-gnu', platform: 'linux', architecture: 'x64', libc: 'glibc',
-        installers: ['appimage', 'deb'],
-        native_resources: [
-          'project_native_addon', 'codex_sandbox_probe',
-          'livekit_local_inference', 'livekit_rtc',
-          'livekit_probe_manifest', 'livekit_probe_license',
-          'livekit_probe_silence', 'livekit_probe_speech',
-        ],
-      },
     ],
   }
   try {

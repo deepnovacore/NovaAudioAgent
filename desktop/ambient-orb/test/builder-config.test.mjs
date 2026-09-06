@@ -419,7 +419,7 @@ test('ordinary CI uploads package artifacts only for version tags', async () => 
   const workflow = parseYaml(text)
 
   assert.deepEqual(Object.keys(workflow.on), ['push', 'pull_request'])
-  assert.deepEqual(workflow.on.push.branches, ['main'])
+  assert.deepEqual(workflow.on.push.branches, ['main', 'v0.2.0dev'])
   assert.deepEqual(workflow.on.push.tags, ['v*'])
   assert.equal('python' in workflow.jobs, false)
   assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, [
@@ -427,6 +427,13 @@ test('ordinary CI uploads package artifacts only for version tags', async () => 
   ])
   const cliTest = workflow.jobs.electron.steps.find(step => step.run === 'npm run test:cli')
   assert.deepEqual(cliTest, {run: 'npm run test:cli'})
+  assert.deepEqual(
+    workflow.jobs.electron.steps.filter(step => step.run?.startsWith('npm run test:runtime')),
+    [
+      {run: 'npm run test:runtime', if: "runner.os != 'Windows'"},
+      {run: 'npm run test:runtime:win', if: "runner.os == 'Windows'"},
+    ],
+  )
   assert.equal(
     workflow.jobs.electron.steps.some(step => step.uses === 'actions/upload-artifact@v4'),
     false,
@@ -478,7 +485,7 @@ test('unsigned Windows workflow is manual-only and never creates a release', asy
   const packageRuns = packageSteps.map(step => step.run).filter(Boolean).join('\n')
   for (const command of [
     'npm run check',
-    'npm run test:runtime',
+    'npm run test:runtime:win',
     'npm run test:desktop',
     'npm run build',
     'npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb',
@@ -486,10 +493,10 @@ test('unsigned Windows workflow is manual-only and never creates a release', asy
     'npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}',
     'npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb',
   ]) assert.ok(packageRuns.includes(command), command)
-  const runtimeTests = packageSteps.find(step => step.run === 'npm run test:runtime')
-  assert.equal(runtimeTests?.if, "runner.os != 'Windows'")
+  const runtimeTests = packageSteps.find(step => step.run === 'npm run test:runtime:win')
+  assert.deepEqual(runtimeTests, {run: 'npm run test:runtime:win'})
   const desktopTests = packageSteps.find(step => step.run === 'npm run test:desktop')
-  assert.equal(desktopTests?.if, "runner.os != 'Windows'")
+  assert.deepEqual(desktopTests, {run: 'npm run test:desktop'})
   assert.equal(packageSteps.some(step => step.uses === 'actions/attest-build-provenance@v3'), false)
   assert.ok(packageSteps.some(step => step.uses === 'actions/upload-artifact@v4'))
   assert.doesNotMatch(text, /continue-on-error|\|\| true/u)

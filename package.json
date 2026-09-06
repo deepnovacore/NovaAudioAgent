@@ -34,6 +34,7 @@
     "test:cli": "npm test --workspace nova-audio-agent",
     "test:desktop": "npm test --workspace @nova-audio-agent/ambient-orb",
     "test:runtime": "npm test --workspace @nova-audio-agent/runtime",
+    "test:runtime:win": "npm run test:win --workspace @nova-audio-agent/runtime",
     "runtime:smoke:search:mcp": "npm run smoke:search:mcp --workspace @nova-audio-agent/runtime"
   },
   "devDependencies": {

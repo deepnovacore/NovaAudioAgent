@@ -43,16 +43,6 @@ const CANONICAL_TARGETS = Object.freeze([
       'livekit_probe_silence', 'livekit_probe_speech',
     ]),
   }),
-  Object.freeze({
-    id: 'linux-x64-gnu', platform: 'linux', architecture: 'x64', libc: 'glibc',
-    installers: Object.freeze(['appimage', 'deb']),
-    native_resources: Object.freeze([
-      'project_native_addon', 'codex_sandbox_probe',
-      'livekit_local_inference', 'livekit_rtc',
-      'livekit_probe_manifest', 'livekit_probe_license',
-      'livekit_probe_silence', 'livekit_probe_speech',
-    ]),
-  }),
 ])
 
 export class ReleaseDependencyError extends Error {
@@ -84,7 +74,7 @@ export async function readReleaseTargets(path = resolve(
     throw new ReleaseDependencyError('target_manifest_invalid')
   }
   exactKeys(parsed, ['schema_version', 'electron', 'targets'], 'target_manifest_invalid')
-  if (parsed.schema_version !== 1 || !Array.isArray(parsed.targets) || parsed.targets.length !== 4) {
+  if (parsed.schema_version !== 1 || !Array.isArray(parsed.targets) || parsed.targets.length !== 3) {
     throw new ReleaseDependencyError('target_manifest_invalid')
   }
   exactKeys(parsed.electron, ['version', 'module_abi'], 'target_manifest_invalid')
