@@ -4589,7 +4589,7 @@ export class RealtimeService {
           ? projectCommitSuccessText(operation, result.code)
           : result.code === 'confirmation_in_progress'
             ? ''
-            : projectCommitFailureText(result.code),
+            : projectCommitFailureText(result.code, this.#coding?.display_name),
       })
     } catch (failure) {
       if (intakeOperation) this.#intake?.settleConfirmed({accepted: false, code: 'callback_failed'})

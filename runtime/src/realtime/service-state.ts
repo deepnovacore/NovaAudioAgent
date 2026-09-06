@@ -65,8 +65,6 @@ const PROJECT_COMMIT_FAILURE_TEXT: ReadonlyMap<string, string> = new Map([
   ['workspace_limit', '工作区数量已达上限，本次操作未执行。'],
   ['session_limit', 'Session 数量已达上限，本次操作未执行。'],
   ['state_busy', '工作区状态正忙，请稍后再试。'],
-  ['busy', 'Codex 当前正忙，本次操作未执行。'],
-  ['runtime_rejected', 'Codex 当前正忙，本次操作未执行。'],
   ['confirmation_invalid', '确认状态已失效，本次操作未执行。'],
   ['workspace_not_found', '没有找到指定工作区，本次操作未执行。'],
   ['session_not_found', '没有找到指定 Session，本次操作未执行。'],
@@ -80,7 +78,8 @@ const PROJECT_COMMIT_FAILURE_TEXT: ReadonlyMap<string, string> = new Map([
  * somewhere this layer does not model, and inventing a specific reason for it would be worse than
  * admitting the operation did not happen.
  */
-export function projectCommitFailureText(code: unknown): string {
+export function projectCommitFailureText(code: unknown, displayName = '执行器'): string {
+  if (code === 'busy' || code === 'runtime_rejected') return `${displayName} 当前正忙，本次操作未执行。`
   if (typeof code !== 'string') return '已确认，但操作未执行。'
   return PROJECT_COMMIT_FAILURE_TEXT.get(code) ?? '已确认，但操作未执行。'
 }

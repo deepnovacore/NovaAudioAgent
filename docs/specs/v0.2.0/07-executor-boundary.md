@@ -392,6 +392,26 @@ module loaded** (asserted via `require.cache` / module registry inspection).
 If that test cannot be written without importing Codex, the boundary is not
 real and this volume is not done.
 
+Phase 5.5 implementation note (2026-09-06): registration is the existing
+`buildAssembly({executors})` adapter map plus `settings.executors` selection,
+followed by the realtime host's coding-role resolution. Both production and
+the fixture supply their resource/controller through these ports. The
+`executors/index.ts` file is a public export barrel, not a factory registry;
+like the production compositions, the proof imports the selected package's
+dedicated entry point so the barrel does not eagerly import unrelated
+executors. The fixture factory rejects `NODE_ENV=production` and is never
+selected by production configuration. The test uses Node's ESM loader hooks
+to inspect actual loaded modules (CommonJS `require.cache` cannot prove this).
+The scripted boundaries are the provider, intake model answers and the
+in-memory executor; assembly, intake, runtime, confirmation capabilities,
+approval broker and service delivery are the actual host implementations.
+
+The broadened case-insensitive scan deliberately retains an exact-line,
+counted baseline for existing settings/storage names, composition field
+names, live prompt policy and historical comments. These are documented
+debt, not a claim that the stricter env-only acceptance checklist is done.
+
+
 ## Enforcement
 
 - ESLint (`eslint.config.mjs`): add a block for

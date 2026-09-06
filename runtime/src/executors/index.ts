@@ -6,3 +6,4 @@
  */
 export * from './codex/index.js'
 export * from './vision.js'
+export * from './fixture/index.js'
