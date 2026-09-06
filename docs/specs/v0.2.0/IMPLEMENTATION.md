@@ -754,7 +754,7 @@ On the repaired code tree through `154ae6c`, the local serial
 | Gate | Result |
 | --- | --- |
 | `check` | Passed; parity 226 files / 385 reviewed occurrences, boundary 215, generated wire drift check |
-| runtime | 2367 passed / 5 platform skips |
+| runtime | 2367 passed / 5 skips: 2 Windows-only, 3 opt-in live model evaluations without credentials |
 | desktop | 893 passed / 3 platform skips |
 | CLI | 21/21 |
 | documentation contract | 8/8 |
@@ -766,6 +766,28 @@ budget 1 yields `configuration_required`, budget 24 connects and shuts down clea
 both have zero readiness timeouts; only dummy loopback services were used.
 
 The desktop command's Windows-only source-startup smoke is skipped on this Mac.
-Earlier Alibaba Windows results remain anchored to `afc82dd` above. The final
-push intentionally has no `[skip ci]`; its hosted CI receipt will be appended
-after completion. No main merge or publication is part of this repair.
+Earlier Alibaba Windows results remain anchored to `afc82dd` above. No main merge
+or publication is part of this repair.
+
+Hosted CI on **`883113daf8b459f41efb62b99e4f77fa15e44727`** passed all three platform
+jobs: [run 34036272128](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34036272128).
+This ordinary dev push had no `[skip ci]` marker.
+
+| Hosted platform | Runtime pass / skip | Desktop pass / skip | Additional evidence |
+| --- | --- | --- | --- |
+| macOS | 2367 / 5 | 893 / 3 | CLI 21/21; real Electron capability smoke; final build |
+| Ubuntu | 2367 / 5 | 873 / 23 | CLI 21/21; source build, not a Linux release package |
+| Windows | 2217 / 8 | 875 / 21 | CLI 21/21; real source-window startup smoke; final build |
+
+All platform `check` gates passed. On macOS/Ubuntu, runtime skips comprise two
+Windows-specific cases and three opt-in live coordinator evaluations without keys;
+on Windows, the narrowed suite also skips five POSIX/symlink cases. Desktop skips
+cover platform-specific native helpers, visual cases and platform-specific release
+script fixtures. These counts do not certify skipped features or human acceptance.
+The main-only readiness job and tag-only package job were correctly skipped on dev.
+
+The earlier `da38a59` hosted-Windows startup timeout remains historically failed
+and unclassified. This new source-startup success is evidence for `883113d`, not a
+retrospective diagnosis. This receipt-only follow-up will itself receive normal CI;
+its final HEAD/run can be found in the branch checks without recursively editing
+this ledger to embed its own commit hash.
