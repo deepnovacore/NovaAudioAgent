@@ -180,9 +180,13 @@ function lockedIdentity(name, installKey, manifest) {
 export async function deriveLockedProductionClosure({
   lockPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../package-lock.json'),
   targetId,
+  sourceBuild = false,
 } = {}) {
   const targets = await readReleaseTargets()
   const target = targets.targets.find(candidate => candidate.id === targetId)
+    // Ubuntu exercises source builds only; packaged release inspection cannot opt in.
+    ?? (sourceBuild && targetId === 'linux-x64-gnu'
+      ? {id: targetId, platform: 'linux', architecture: 'x64', libc: 'glibc'} : undefined)
   if (!target) throw new ReleaseDependencyError('unsupported_target')
   let lock
   try {

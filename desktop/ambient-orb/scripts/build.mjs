@@ -39,6 +39,7 @@ await inspectConfiguredPackage({ packageRoot: root, targetId })
 const closure = await deriveLockedProductionClosure({
   lockPath: resolve(root, '../../package-lock.json'),
   targetId,
+  sourceBuild: true,
 })
 const releaseBuildDirectory = resolve(root, 'build/release')
 await mkdir(releaseBuildDirectory, { recursive: true })

@@ -506,6 +506,7 @@ export async function inspectConfiguredPackage({
   const closure = await deriveLockedProductionClosure({
     lockPath: resolve(repositoryRoot, 'package-lock.json'),
     targetId,
+    sourceBuild: true,
   })
   const dependencyIncluded = (await Promise.all(closure.packages
     .filter(value => value.name !== RUNTIME_PACKAGE)

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import test from 'node:test'
 
-import { readReleaseTargets } from '../scripts/release-dependency-closure.mjs'
+import { deriveLockedProductionClosure, readReleaseTargets } from '../scripts/release-dependency-closure.mjs'
 
 test('release target parser rejects duplicate JSON keys before validation', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'nova-release-targets-'))
@@ -77,4 +77,12 @@ test('release targets require each canonical tuple, installer, and resource exac
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('Linux source checks retain a locked closure without becoming a release target', async () => {
+  assert.equal((await readReleaseTargets()).targets.some(target => target.platform === 'linux'), false)
+  await assert.rejects(deriveLockedProductionClosure({targetId: 'linux-x64-gnu'}), error => error.code === 'unsupported_target')
+  const closure = await deriveLockedProductionClosure({targetId: 'linux-x64-gnu', sourceBuild: true})
+  assert.equal(closure.target, 'linux-x64-gnu')
+  assert.ok(closure.packages.some(item => item.name === '@livekit/local-inference-linux-x64-gnu'))
 })

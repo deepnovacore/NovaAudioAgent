@@ -303,7 +303,7 @@ test('approval command and file displays redact common credential forms', async 
     signal: new AbortController().signal,
   })
   assert.notEqual(fileRequest, undefined)
-  const fileDisplay = JSON.stringify(controller.view.local_detail)
+  const fileDisplay = JSON.stringify(controller.view.local_detail).replaceAll('\\\\', '/')
   assert.equal(fileDisplay.includes('relative-file-path-secret'), false)
   assert.equal(fileDisplay.includes('move-path-secret-secret'), false)
   assert.match(fileDisplay, /src\/token=\[REDACTED\]/u)
@@ -338,7 +338,7 @@ test('permission summaries identify broad scopes and keep the exact grant snapsh
     signal: new AbortController().signal,
   })
   assert.notEqual(request, undefined)
-  const display = JSON.stringify(controller.view.local_detail)
+  const display = JSON.stringify(controller.view.local_detail).replaceAll('\\\\', '/')
   assert.match(display, /全文件系统（根目录）/u)
   assert.match(display, /项目根目录\/token=\[REDACTED\]/u)
   assert.match(display, /临时目录/u)
