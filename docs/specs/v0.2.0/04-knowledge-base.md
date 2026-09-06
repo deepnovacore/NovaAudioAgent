@@ -72,9 +72,13 @@ lexical relevance ranking (the vector/RRF leg remains available).
 An FTS-capable open transactionally builds a missing index or rebuilds one
 marked dirty by fallback writes, including changes made by Node 22. Ordinary
 clean opens reuse it. `forceLexical` is an internal test seam, not a user setting.
-Both paths retain the same vector/RRF and citation contracts. All 55 Knowledge
-tests and synthetic-document real embedding/MCP smoke passed on Node 22.13.0;
-the real smoke also passed on Node 24.8.0. Windows remains a separate gate.
+Both paths retain the same vector/RRF and citation contracts. At the 2026-09-05
+spike, all 55 then-existing Knowledge tests and synthetic-document real
+embedding/MCP smoke passed on Node 22.13.0; the real smoke also passed on
+Node 24.8.0. The [integration review follow-up](../../handoffs/2026-09-06-integration-review-followup.md)
+records the later 65-test deterministic suite on Node 24.8.0 and 22.23.2;
+those deterministic counts do not establish a new real embedding smoke. Windows
+remains a separate gate.
 
 Scale target: 1k–20k chunks with brute-force cosine is acceptable; document
 `sqlite-vec` as a later acceleration option.

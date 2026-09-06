@@ -836,95 +836,131 @@ export class ProjectStore {
     }>(async () => {
       const journal = await this.#loadMaintenanceJournal()
       if (journal === null) return [{status: 'clean'}, false]
-      await this.#validateManagedRoot()
-      const root = this.#requireManagedRootHandle()
-      if (journal.phase === 'prepared') {
-        const remaining: ManagedMaintenanceJournalEntry[] = []
-        for (const entry of [...journal.entries].reverse()) {
-          const tombstone = this.#lookupAt(root, entry.tombstone_name, 'workspace_boundary_changed')
-          const original = this.#lookupAt(root, entry.original_name, 'workspace_boundary_changed')
-          const temporary = entry.replacement_name === entry.original_name
-            ? {status: 'missing'} as const
-            : this.#lookupAt(root, entry.replacement_name, 'workspace_boundary_changed')
-          if (tombstone.status === 'missing') {
+      // Inspection needs only the transaction lock. Replay also needs the live-owner lock;
+      // a non-live desktop observer must not mutate a running backend's workspaces.
+      let owner: HeldLock | null = null
+      if (this.#ownerLock === null) {
+        try {
+          owner = await this.#openAndAcquireLock(PROJECT_OWNER_LOCK_FILE)
+        } catch (error) {
+          if (!(error instanceof ProjectStateError) || error.code !== 'state_busy') throw error
+          return [{status: journal.phase === 'prepared' ? 'rollback_pending' : 'cleanup_pending'}, false]
+        }
+      }
+      try {
+        await this.#validateManagedRoot()
+        const root = this.#requireManagedRootHandle()
+        if (journal.phase === 'prepared') {
+          const remaining: ManagedMaintenanceJournalEntry[] = []
+          for (const entry of [...journal.entries].reverse()) {
+            const tombstone = this.#lookupAt(root, entry.tombstone_name, 'workspace_boundary_changed')
+            const original = this.#lookupAt(root, entry.original_name, 'workspace_boundary_changed')
+            const temporary = entry.replacement_name === entry.original_name
+              ? {status: 'missing'} as const
+              : this.#lookupAt(root, entry.replacement_name, 'workspace_boundary_changed')
+            if (tombstone.status === 'missing') {
+              if (
+                original.status !== 'ok'
+                || !sameFileIdentity(original.identity, entry.identity)
+                || temporary.status !== 'missing'
+              ) {
+                remaining.push(entry)
+              } else {
+                this.#restoreWorkspaceIdentity(entry.workspace_id, null, entry.identity)
+              }
+              continue
+            }
+            if (tombstone.status !== 'ok' || !sameFileIdentity(tombstone.identity, entry.identity)) {
+              remaining.push(entry)
+              continue
+            }
+            let replacementSafe = true
+            const candidates = entry.replacement_name === entry.original_name
+              ? [{name: entry.original_name, result: original}]
+              : [
+                  {name: entry.original_name, result: original},
+                  {name: entry.replacement_name, result: temporary},
+                ]
+            for (const candidate of candidates) {
+              if (candidate.result.status === 'missing') continue
+              if (candidate.result.status !== 'ok') {
+                replacementSafe = false
+                continue
+              }
+              const bound = entry.replacement_identity !== null
+                && sameFileIdentity(candidate.result.identity, entry.replacement_identity)
+              const reservedUnboundTemporary = entry.replacement_identity === null
+                && entry.replacement_name !== entry.original_name
+                && candidate.name === entry.replacement_name
+              if (!bound && !reservedUnboundTemporary) {
+                replacementSafe = false
+                continue
+              }
+              try {
+                const removed = this.#unlinkAt(
+                  root,
+                  candidate.name,
+                  candidate.result.identity,
+                  'directory',
+                  'workspace_boundary_changed',
+                )
+                if (removed.status !== 'ok' && removed.status !== 'missing') replacementSafe = false
+              } catch { replacementSafe = false }
+            }
+            if (!replacementSafe) {
+              remaining.push(entry)
+              continue
+            }
+            const originalAfter = this.#lookupAt(
+              root, entry.original_name, 'workspace_boundary_changed',
+            )
+            if (originalAfter.status !== 'missing') {
+              remaining.push(entry)
+              continue
+            }
+            const restored = this.#renameManagedNoReplace(
+              root, entry.tombstone_name, entry.original_name, entry.identity,
+            )
+            const restoredIdentity = this.#lookupAt(
+              root, entry.original_name, 'workspace_boundary_changed',
+            )
             if (
-              original.status !== 'ok'
-              || !sameFileIdentity(original.identity, entry.identity)
-              || temporary.status !== 'missing'
+              restored.status !== 'ok'
+              || restoredIdentity.status !== 'ok'
+              || !sameFileIdentity(restoredIdentity.identity, entry.identity)
             ) {
               remaining.push(entry)
-            } else {
-              this.#restoreWorkspaceIdentity(entry.workspace_id, null, entry.identity)
-            }
-            continue
-          }
-          if (tombstone.status !== 'ok' || !sameFileIdentity(tombstone.identity, entry.identity)) {
-            remaining.push(entry)
-            continue
-          }
-          let replacementSafe = true
-          const candidates = entry.replacement_name === entry.original_name
-            ? [{name: entry.original_name, result: original}]
-            : [
-                {name: entry.original_name, result: original},
-                {name: entry.replacement_name, result: temporary},
-              ]
-          for (const candidate of candidates) {
-            if (candidate.result.status === 'missing') continue
-            if (candidate.result.status !== 'ok') {
-              replacementSafe = false
               continue
             }
-            const bound = entry.replacement_identity !== null
-              && sameFileIdentity(candidate.result.identity, entry.replacement_identity)
-            const reservedUnboundTemporary = entry.replacement_identity === null
-              && entry.replacement_name !== entry.original_name
-              && candidate.name === entry.replacement_name
-            if (!bound && !reservedUnboundTemporary) {
-              replacementSafe = false
-              continue
-            }
-            try {
-              const removed = this.#unlinkAt(
-                root,
-                candidate.name,
-                candidate.result.identity,
-                'directory',
-                'workspace_boundary_changed',
-              )
-              if (removed.status !== 'ok' && removed.status !== 'missing') replacementSafe = false
-            } catch { replacementSafe = false }
+            this.#restoreWorkspaceIdentity(
+              entry.workspace_id,
+              entry.replacement_identity,
+              entry.identity,
+            )
           }
-          if (!replacementSafe) {
-            remaining.push(entry)
-            continue
+          if (remaining.length === 0) {
+            await this.#syncManagedRoot()
+            await this.#clearMaintenanceJournal(journal.operation_id)
+            return [{status: 'clean'}, false]
           }
-          const originalAfter = this.#lookupAt(
-            root, entry.original_name, 'workspace_boundary_changed',
-          )
-          if (originalAfter.status !== 'missing') {
-            remaining.push(entry)
-            continue
+          if (remaining.length !== journal.entries.length) {
+            await this.#syncManagedRoot()
+            await this.#writeMaintenanceJournal(Object.freeze({
+              version: journal.version,
+              operation_id: journal.operation_id,
+              phase: 'prepared',
+              entries: Object.freeze(remaining.reverse()),
+            }))
           }
-          const restored = this.#renameManagedNoReplace(
-            root, entry.tombstone_name, entry.original_name, entry.identity,
-          )
-          const restoredIdentity = this.#lookupAt(
-            root, entry.original_name, 'workspace_boundary_changed',
-          )
-          if (
-            restored.status !== 'ok'
-            || restoredIdentity.status !== 'ok'
-            || !sameFileIdentity(restoredIdentity.identity, entry.identity)
-          ) {
-            remaining.push(entry)
-            continue
-          }
-          this.#restoreWorkspaceIdentity(
-            entry.workspace_id,
-            entry.replacement_identity,
-            entry.identity,
-          )
+          return [{status: 'rollback_pending'}, false]
+        }
+        const remaining: ManagedMaintenanceJournalEntry[] = []
+        for (const entry of journal.entries) {
+          const result = this.#callRootFile(() => this.#rootFiles.removeTreeAt(
+            root.fd, entry.tombstone_name, entry.identity,
+          ))
+          if (result.status !== 'ok' && result.status !== 'missing') remaining.push(entry)
+          else if (result.status === 'ok') this.#maintenanceCheckpoint('cleanup_entry_deleted')
         }
         if (remaining.length === 0) {
           await this.#syncManagedRoot()
@@ -936,35 +972,16 @@ export class ProjectStore {
           await this.#writeMaintenanceJournal(Object.freeze({
             version: journal.version,
             operation_id: journal.operation_id,
-            phase: 'prepared',
-            entries: Object.freeze(remaining.reverse()),
+            phase: 'committed',
+            entries: Object.freeze(remaining),
           }))
         }
-        return [{status: 'rollback_pending'}, false]
+        return [{status: 'cleanup_pending'}, false]
+      } finally {
+        if (owner !== null) {
+          try { await owner.release() } finally { await owner.file.close() }
+        }
       }
-      const remaining: ManagedMaintenanceJournalEntry[] = []
-      for (const entry of journal.entries) {
-        const result = this.#callRootFile(() => this.#rootFiles.removeTreeAt(
-          root.fd, entry.tombstone_name, entry.identity,
-        ))
-        if (result.status !== 'ok' && result.status !== 'missing') remaining.push(entry)
-        else if (result.status === 'ok') this.#maintenanceCheckpoint('cleanup_entry_deleted')
-      }
-      if (remaining.length === 0) {
-        await this.#syncManagedRoot()
-        await this.#clearMaintenanceJournal(journal.operation_id)
-        return [{status: 'clean'}, false]
-      }
-      if (remaining.length !== journal.entries.length) {
-        await this.#syncManagedRoot()
-        await this.#writeMaintenanceJournal(Object.freeze({
-          version: journal.version,
-          operation_id: journal.operation_id,
-          phase: 'committed',
-          entries: Object.freeze(remaining),
-        }))
-      }
-      return [{status: 'cleanup_pending'}, false]
     }, {wait: true})
   }
 

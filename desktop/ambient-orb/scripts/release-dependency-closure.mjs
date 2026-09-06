@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url'
 
 import { parseStrictJson } from './strict-json.mjs'
 
-const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
 const { satisfies: semverSatisfies } = createRequire(import.meta.url)('semver')
 const REQUIRED_RUNTIME_VERSIONS = Object.freeze({
   '@livekit/agents': '1.6.4',

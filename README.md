@@ -90,10 +90,11 @@ node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 ```
 
-Note that native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windows and Linux use
-  Chromium's audio stack.
-
-
+Native echo-cancelled capture (VoiceProcessingIO) is macOS-only. Wake detection uses that
+capture when available; Windows, Linux source runs, and macOS fallback use Chromium
+`getUserMedia` + AudioWorklet. While sleeping, microphone frames go only to the local
+wake-word Worker; explicit mute stops wake detection. See
+[wake-word setup](docs/getting-started.md#local-wake-word).
 
 ## 4. Documentation
 

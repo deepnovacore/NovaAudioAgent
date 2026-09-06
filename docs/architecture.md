@@ -100,7 +100,6 @@ Wake capture carries an epoch on every frame (native macOS capture or browser fa
 from an old capture owner cannot wake a newer session. Linux remains a source-test platform;
 macOS arm64/x64 and Windows x64 are the current release targets.
 
-
 The runtime and desktop client carry win32, darwin, and linux code paths. Release packaging
 targets macOS and Windows NSIS; retained Linux AppImage/deb scripts do not establish a supported
 release target. Native echo-cancelled audio capture
@@ -120,7 +119,6 @@ Both integrated and cascaded pipelines use host-owned response admission and req
 `frontend-instructions.ts` renders shared frontend context. A `response_origin` is correlation
 evidence, never authorization: host narration disables tools, while a bound `tool_output`
 continuation retains tools and still needs current user/confirmation evidence for side effects.
-
 
 The realtime service translates provider events into host events while preserving provider response
 identity, playback generation, and delegate identity. Renderer acknowledgements fence audio clear
@@ -149,7 +147,6 @@ live second model, planning-state writer, or authorization path.
 
 During wake-word sleep, microphone frames go only to the local desktop Worker. Explicit mute stops
 wake capture. Wake detection resumes the UI; it does not authorize any executor operation.
-
 
 - Configuration errors never echo secret values.
 - External search and visual content are evidence, never instructions.

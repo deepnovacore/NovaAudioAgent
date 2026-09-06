@@ -743,7 +743,7 @@ call chain and the user's approved decisions. Published history remains intact.
 - Windows candidate runs the narrowed runtime suite. Pending human acceptance no
   longer blocks candidate artifact construction; main and publication still require
   the acceptance ledger. No bypass of mandatory release acceptance was added.
-- I5 keeps the approved tool-result continuation permissions; ordinal/legacy digest
+- I5 keeps the [approved tool-result continuation permissions](../../decisions/2026-09-06-i5-tool-result-continuation.md); ordinal/legacy digest
   compatibility remains documented. Spec 04 maps its checklist to concrete evidence.
   Inline delivery scenarios and necessary test hooks remain; no cosmetic JSON or
   broad test-API refactor was added.
@@ -808,3 +808,62 @@ targeted Alibaba Windows retry could not establish a session; the user confirmed
 the machine was powered off and asked to leave it alone. No remote test pass is
 claimed. The resulting final HEAD receives normal CI; its exact run
 is available in branch checks without recursively committing its own hash here.
+
+### Third review: residual repairs and decision evidence (2026-09-06)
+
+Baseline **`7c97983c6e9c16e7df507ce9c65ea5f0a1dcec86`** passed hosted CI:
+[run 34037915786](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34037915786).
+All three electron jobs passed; dev correctly skipped release readiness and tag
+packaging. macOS/Ubuntu runtime was 2367 passed / 5 skipped; Windows runtime was
+2217 / 8. Desktop was macOS 893 / 3, Ubuntu 873 / 23, Windows 875 / 21; CLI was
+21/21 on each platform. Windows passed the repaired interrupted-download test and
+the real source-window startup smoke. This is the missing receipt for the fix of
+`4c9516c`, distinct from the earlier `883113d` receipt above.
+
+This follow-up was reviewed as one related repair batch:
+
+- R-F: `ProjectStore.open` only replays on live startup, but maintenance open and
+  refresh also call cleanup. Those calls now acquire a temporary owner lock before
+  modifying journal/workspace files, inside the existing tracked transaction.
+  Nonblocking owner acquisition avoids an owner/transaction lock-order deadlock.
+  Ordinary transaction contention becomes `degraded` with `lifecycleBusy`, so it
+  does not stop a live backend. Known pending/unsafe health survives subsequent
+  contention; only successful recovery can clear it. Real maintenance-open,
+  prepared/committed live-owner and downstream no-stop regressions cover this;
+  removing ownership or known-hazard retention makes the respective regression fail.
+- Settings: rejected rescan no longer reports success. Pending recovery has an
+  explicit controller phase; successful recovery clears its old notice without
+  introducing notices on ordinary edits or overwriting an unrelated restart notice.
+- Contracts: pin the six existing Windows runtime file exclusions and second-instance
+  wake routing. Windows-only candidate scope now runs desktop tests. Remove the
+  unused `RUNTIME_PACKAGE` constant. The six exclusions still omit some Windows
+  cases inside mixed POSIX suites; they were not silently widened or certified.
+- K-3: the proposed extra-reconnect defect does not occur during explicit stop or
+  restart: supervisor running/generation fencing rejects the old exit callback.
+  An executable regression uses the real supervisor, diagnostic collector and
+  shutdown helper with an `assembly_failed`/exit-2 child; stop/restart schedule no
+  retry, while unexpected exit still schedules one. Worker failure error semantics
+  remain unchanged.
+- I4: the actual silent epoch-revocation path rejects through ProviderSession, and
+  RealtimeSession already rolls back its exact request slot. A full cascaded-chain
+  regression pins no-terminal/no-provider-error rejection, retry, reconnect and
+  stale-epoch rejection. Removing the slot rollback makes the test fail; no new
+  production cancellation mechanism was necessary.
+- Documentation: remove the nonexistent `knowledge.autoRecall` default, add wake
+  Panel IA/capture paths, date the 55/65-test Knowledge evidence, mark the proven
+  fixture executor item, fix the reported layout issues, and preserve the exact
+  approved I5 instructions in a linked [decision record](../../decisions/2026-09-06-i5-tool-result-continuation.md).
+  That record explicitly identifies itself as a transcription of this conversation.
+
+Local verification of this repair batch ran serially: `check` passed (parity
+226 files / 385 occurrences; executor boundary 215 allowlisted), runtime
+2372 passed / 5 skipped, desktop 902 / 3, CLI 21/21. The documentation contract
+also passed 8/8. The real Electron capability-status smoke passed with isolated
+loopback fixtures: insufficient budget failed as expected, sufficient budget
+connected and stopped cleanly, with no readiness timeouts. The Windows-only
+source-startup smoke was skipped on this macOS host. `check:release-gate` still
+fails as expected on all 12 pending acceptance rows; none was marked complete.
+
+The powered-off Alibaba Windows development machine remains untouched. Human voice,
+installed-package acceptance and the release ledger remain separate from dev CI;
+no main merge, package publication or acceptance checkbox inflation is authorized.

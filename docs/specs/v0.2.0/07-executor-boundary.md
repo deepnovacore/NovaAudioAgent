@@ -453,7 +453,9 @@ Deterministic:
 - [ ] ESLint restricted-import blocks fail on a deliberately planted core →
       `executors/codex` import and executor → `realtime` import (negative
       tests in `runtime/test/eslint-boundary.test.ts` using ESLint's API).
-- [ ] Fixture executor test passes with no Codex module in the module registry.
+- [x] Fixture executor test passes with no Codex module in the module registry
+      (`executor-boundary-fixture.test.ts`: real assembly through terminal delivery;
+      module-loader assertion excludes `executors/codex/`).
 - [ ] Assembly by role: disabled unique coding role → intake absent and no
       `dispatch` / `cancel` compilation without `AssemblyError`; two enabled
       coding roles → `AssemblyError`; one → dispatch reaches it.

@@ -252,11 +252,11 @@ function render(view, _drafts, state) {
       : WORKSPACE_STATUS_TEXT.rollback_pending
   }
   settingsRestore.hidden = view.settingsRecoveryAvailable !== true
-  if (view.settingsApplyStatus === 'recovery_pending') {
-    restartNotice.hidden = false
-    restartNotice.textContent = '上次设置已还原，请点击恢复以确认后端可用'
-  } else if (view.settingsApplyStatus === 'recovery_failed') {
-    updateRestartNotice('recovery_failed')
+  if (view.settingsApplyStatus === 'recovery_pending' || view.settingsApplyStatus === 'recovery_failed') {
+    updateRestartNotice(view.settingsApplyStatus)
+  } else if (view.settingsApplyStatus === 'applied' && view.settingsRecoveryAvailable === false
+    && (restartNotice.dataset.state === 'recovery_pending' || restartNotice.dataset.state === 'recovery_failed')) {
+    updateRestartNotice('complete')
   }
   updateButtons()
 }
@@ -274,6 +274,10 @@ function updateRestartNotice(phase) {
   }
   if (phase === 'restart_failed') {
     restartNotice.textContent = '后端未启动：上次设置已保留，请恢复后端'
+    return
+  }
+  if (phase === 'recovery_pending') {
+    restartNotice.textContent = '上次设置已还原，请点击恢复以确认后端可用'
     return
   }
   if (phase === 'recovery_failed') {
@@ -406,8 +410,12 @@ settingsSave.addEventListener('click', () => { void saveAll() })
 codexRescan.addEventListener('click', async () => {
   statusLabel.textContent = '正在刷新 Codex…'
   try {
-    controller.syncView(await api.rescanCodex(), {trackRestart: false})
-    statusLabel.textContent = 'Codex 刷新完成'
+    const view = await api.rescanCodex()
+    controller.syncView(view, {trackRestart: false})
+    statusLabel.textContent = view.operationStatus === 'recovery_pending'
+      ? 'Codex 未刷新：请先恢复上次可用设置'
+      : view.operationStatus === 'busy' ? '另一项操作进行中，Codex 未刷新'
+      : view.operationStatus == null ? 'Codex 刷新完成' : 'Codex 刷新未完成'
   } catch {
     statusLabel.textContent = 'Codex 刷新失败'
   }

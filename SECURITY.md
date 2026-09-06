@@ -1,10 +1,5 @@
 # Security Policy
 
-The settings window is a trusted local configuration surface. Enabling an external
-MCP server authorizes its configured command to run with the user's permissions;
-review the command, arguments and environment before saving. Keep remote content
-out of this configuration authority.
-
 ## Reporting a vulnerability
 
 Please do not open a public issue for security problems. Instead, use
@@ -23,6 +18,11 @@ acknowledge reports as quickly as we can; this is an experimental project mainta
 best-effort basis.
 
 ## Scope notes
+
+The settings window is a trusted local configuration surface. Enabling an external
+MCP server authorizes its configured command to run with the user's permissions;
+review the command, arguments and environment before saving. Keep remote content
+out of this configuration authority.
 
 - The runtime treats external search results and visual content as evidence, never instructions;
   reports about prompt-injection boundaries are in scope and welcome.

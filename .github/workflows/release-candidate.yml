@@ -62,7 +62,7 @@ jobs:
       - run: node desktop/ambient-orb/node_modules/electron/install.js
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run test:desktop
-        if: inputs.candidate_scope == 'full'
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run test:cli
         if: inputs.candidate_scope == 'full'
       - name: Build unsigned candidate bytes

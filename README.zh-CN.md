@@ -86,9 +86,9 @@ node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 ```
 
-注意，原生回声消除采集（VoiceProcessingIO）仅 macOS 可用；Windows 与 Linux 走 Chromium AEC。
-
-
+原生回声消除采集（VoiceProcessingIO）仅 macOS 可用，唤醒检测在可用时复用该采集路径；
+Windows、Linux 源码运行及 macOS 回退路径使用 Chromium `getUserMedia` + AudioWorklet。
+休眠时麦克风帧仅送入本地唤醒 Worker，闭麦会停止唤醒检测。详见[本地唤醒设置](docs/getting-started.zh-CN.md#本地唤醒词)。
 
 ## 4. 文档
 

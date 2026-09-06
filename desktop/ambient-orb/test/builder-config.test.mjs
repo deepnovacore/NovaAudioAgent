@@ -19,6 +19,32 @@ const UNSIGNED_WORKFLOW_PATH = resolve(import.meta.dirname, '../../../.github/wo
 const ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.plist')
 const INHERIT_ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.inherit.plist')
 const HTML_PATH = resolve(import.meta.dirname, '../src/renderer/index.html')
+
+test('Windows runtime runner keeps its explicit deferred POSIX suite inventory', async () => {
+  const {runInNewContext} = await import('node:vm')
+  const source = await readFile(resolve(import.meta.dirname, '../../../runtime/scripts/test-windows.mjs'), 'utf8')
+  const excluded = [
+    'codex-credential-snapshot.test.js',
+    'codex-host-config.test.js',
+    'codex-process-owner.test.js',
+    'codex-project-store.test.js',
+    'knowledge-store.test.js',
+    'realtime-telemetry.test.js',
+  ]
+  let args
+  const process = {execPath: 'node', exitCode: undefined}
+  runInNewContext(source.replace(/^import .*\n/gmu, '').replaceAll('import.meta.dirname', 'scriptDirectory'), {
+    scriptDirectory: '/runtime/scripts', resolve, process,
+    Set: class extends Set {
+      constructor(values) { super(values); assert.deepEqual([...values], excluded) }
+    },
+    readdirSync: () => [...excluded, 'cross-platform.test.js', 'fixture.js'],
+    spawnSync: (_command, values) => {args = [...values]; return {status: 0}},
+  })
+  assert.deepEqual(args, ['--test', resolve('/runtime/dist/test/cross-platform.test.js')])
+  assert.equal(process.exitCode, 0)
+})
+
 const EXPECTED_BUILD_SCRIPTS = [
   'src/main/main.mjs',
   'src/main/wake-word/runtime.mjs',

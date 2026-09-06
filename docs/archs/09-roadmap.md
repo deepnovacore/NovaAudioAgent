@@ -2,8 +2,9 @@
 
 The current foundation includes the runtime spine, bounded memory views, executor ports, search,
 Codex with named Workspaces and Sessions, integrated and cascaded realtime voice, the opt-in
-workspace memory graph, the Ambient Orb, local Chinese wake-word detection and host-owned cascaded response scheduling. Vision's M1.5c thin-frontend contract and live/Windows
-acceptance remain pending evidence.
+workspace memory graph, the Ambient Orb, local Chinese wake-word detection and host-owned
+cascaded response scheduling. Vision's M1.5c thin-frontend contract and live/Windows acceptance
+remain pending evidence.
 
 Product direction for the next minor line is specified on branch `v0.2.0dev` in
 [`docs/specs/v0.2.0/`](../specs/v0.2.0/00-overview.md): cross-platform Codex approvals and YOLO,

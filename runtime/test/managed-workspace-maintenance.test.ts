@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 
 import {ManagedWorkspaceMaintenanceService} from '../src/managed-workspace-maintenance.js'
+import {ProjectStateError} from '../src/project-store.js'
 
 function record(id: string, origin: 'managed' | 'registered' = 'managed') {
   return Object.freeze({
@@ -407,11 +408,12 @@ test('external cleanup reconciliation is explicit and bounded', async () => {
 })
 
 test('capabilities bound complete snapshot failures as unavailable', async () => {
+  let busy = false
   const store = {
     cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
     loadManagedMaintenanceJournal: () => Promise.resolve(null),
-    currentMaintenanceSnapshot: () => Promise.reject(new Error('current unavailable')),
-    maintenanceSnapshot: () => Promise.reject(new Error('all unavailable')),
+    currentMaintenanceSnapshot: () => Promise.reject(busy ? new ProjectStateError('state_busy') : new Error('current unavailable')),
+    maintenanceSnapshot: () => Promise.reject(busy ? new ProjectStateError('state_busy') : new Error('all unavailable')),
     withCurrentManagedWorkspacePath: () => Promise.resolve(false),
     executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
   }
@@ -422,7 +424,40 @@ test('capabilities bound complete snapshot failures as unavailable', async () =>
     current: {available: false, display_name: null},
     all: {available: false, count: 0},
   })
+  busy = true
+  assert.deepEqual(await service.capabilities(), {
+    health: 'degraded', lifecycleBusy: true,
+    current: {available: false, display_name: null}, all: {available: false, count: 0},
+  })
   await service.close()
+})
+
+test('contention cannot clear an already observed recovery problem', async () => {
+  for (const problem of ['rollback_pending', 'cleanup_pending', 'unavailable'] as const) {
+    let phase: 'problem' | 'busy' | 'repaired' = 'problem'
+    const snapshot = {state_revision: 1, active_workspace_id: null, managed_targets: []}
+    const store = {
+      cleanupManagedMaintenanceJournal: () => {
+        if (phase === 'busy') return Promise.reject(new ProjectStateError('state_busy'))
+        if (phase === 'repaired') return Promise.resolve({status: 'clean' as const})
+        if (problem === 'unavailable') return Promise.reject(new Error('corrupt journal'))
+        return Promise.resolve({status: problem})
+      },
+      loadManagedMaintenanceJournal: () => Promise.resolve(null),
+      currentMaintenanceSnapshot: () => Promise.resolve(snapshot),
+      maintenanceSnapshot: () => Promise.resolve(snapshot),
+      withCurrentManagedWorkspacePath: () => Promise.resolve(false),
+      executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
+    }
+    const service = await ManagedWorkspaceMaintenanceService.open({store})
+    try {
+      phase = 'busy'
+      assert.equal((await service.capabilities()).health, problem)
+      assert.equal((await service.prepare('all_managed')).status, problem)
+      phase = 'repaired'
+      assert.equal((await service.capabilities()).health, 'ready')
+    } finally { await service.close() }
+  }
 })
 
 test('capability refresh retries pending journal recovery before inspecting targets', async () => {

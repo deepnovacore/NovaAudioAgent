@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events'
 import { WakeWordRuntime } from '../src/main/wake-word/runtime.mjs'
 import { WakeAudioRouter } from '../src/renderer/wake-audio.mjs'
 import { normalizeSettings, applySettingsUpdate, orbSettings } from '../src/main/settings-store.mjs'
+import { shouldOpenSettings } from '../src/main/launch-command.mjs'
 
 class Worker extends EventEmitter {
   messages = []
@@ -24,6 +25,37 @@ function setup() {
   const report = (idle = true, muted = false) => { runtime.lastIdle = idle; return runtime.report({idle, muted, activated: true, epoch: runtime.epoch}) }
   return {runtime, worker, report, time: value => { while (now + 1000 < value) { now += 1000; report(runtime.lastIdle ?? true) }; now = value }, shown: () => shown, hidden: () => hidden}
 }
+test('second-instance launch wakes sleeping or blocked audio before settings dispatch', () => {
+  const source = readFileSync(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const body = source.match(/app\.on\('second-instance', \(_event, argv\) => \{([\s\S]*?)\n  \}\)/)[1]
+  for (const state of ['sleeping', 'blocked']) {
+    for (const activeLaunchId of [null, 'launch-1']) {
+      for (const argv of [[], ['--open-settings']]) {
+        const s = setup()
+        s.report(); s.runtime.sleep()
+        if (state === 'blocked') s.worker.emit('error', new Error('detector failed'))
+        assert.equal(s.runtime.state, state)
+        const epoch = s.runtime.epoch, shown = s.shown(), muted = s.runtime.muted
+        const opened = []
+        const requested = new Function('wakeWord', 'argv', 'shouldOpenSettings', 'activeLaunchId', 'openSettingsWindow', `
+          let openSettingsRequested = false
+          ;(() => {${body}})()
+          return openSettingsRequested
+        `)(s.runtime, argv, shouldOpenSettings, activeLaunchId, id => {
+          assert.equal(s.runtime.state, 'active')
+          opened.push(id)
+        })
+        assert.equal(s.runtime.state, 'active')
+        assert.equal(s.runtime.epoch, epoch + 1)
+        assert.equal(s.shown(), shown + 1)
+        assert.equal(s.runtime.muted, muted, 'manual wake preserves the user or failure mute')
+        assert.equal(requested, argv.length > 0 && activeLaunchId === null)
+        assert.deepEqual(opened, argv.length > 0 && activeLaunchId !== null ? [activeLaunchId] : [])
+      }
+    }
+  }
+})
+
 test('sleep waits for settled work, heartbeat and model; duplicate/stale detections cannot wake', () => {
   const s = setup()
   s.report(); s.time(59000); s.report(false); s.time(60000); s.report()

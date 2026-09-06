@@ -213,6 +213,7 @@ Suggested tabs / sections (Chinese UI labels):
 | 能力 | module toggles, search provider, MCP editor / probe |
 | 知识库 | enable (link to module), paths, embedding provider, ingest UI entry |
 | 通知 | `progressBubbles` |
+| 语音唤醒 | `wakeWordEnabled`, `autoHideSeconds`, local model status / retry; desktop-only save without backend restart |
 | (existing) | appearance, proactivity, pipeline, Codex binary/workspace, API keys |
 
 Exact layout may reuse a single scroll page with headings if tabs are costly;

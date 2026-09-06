@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import {runInNewContext} from 'node:vm'
 import * as settingsController from '../src/renderer/settings-controller.mjs'
+import {createSecretRevisions} from '../src/renderer/secret-revisions.mjs'
+import * as voiceChoice from '../src/renderer/voice-choice.mjs'
 
 const { createSettingsController, mergePatch, settingsButtonState } = settingsController
 
@@ -47,6 +50,106 @@ function publicView(overrides = {}) {
     ...overrides,
   }
 }
+
+// Execute the panel's actual event handlers and render path, replacing only
+// DOM surfaces and unrelated child panels; controller and value helpers are real.
+async function mountSettingsPanel(initialView, apiOverrides = {}) {
+  const nodes = new Map()
+  function node(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, {
+      id: selector.slice(1), value: '', textContent: '', hidden: true, dataset: {},
+      listeners: {}, append() {},
+      addEventListener(event, listener) { this.listeners[event] = listener },
+    })
+    return nodes.get(selector)
+  }
+  let push
+  runInNewContext(script.replace(/^import[\s\S]*?from '[^']+'\n/gm, ''), {
+    ...settingsController, ...voiceChoice, createSecretRevisions,
+    createCapabilitiesEditor: () => ({render() {}}),
+    createKnowledgePanel: () => ({render() {}}),
+    document: {
+      querySelector: node, querySelectorAll: () => [], getElementById: id => node(`#${id}`),
+      createElement: () => ({}), addEventListener() {},
+    },
+    window: {novaAudioAgentDesktop: {settings: {
+      get: async () => initialView, onChanged: listener => { push = listener }, ...apiOverrides,
+    }}},
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  return {node, push, click: selector => node(selector).listeners.click()}
+}
+
+test('Codex refresh distinguishes recovery and lifecycle refusal from a completed rescan', async () => {
+  for (const [operationStatus, expected] of [
+    ['recovery_pending', 'Codex 未刷新：请先恢复上次可用设置'],
+    ['busy', '另一项操作进行中，Codex 未刷新'],
+    [undefined, 'Codex 刷新完成'],
+  ]) {
+    const view = publicView({operationStatus})
+    const panel = await mountSettingsPanel(view, {rescanCodex: async () => view})
+    await panel.click('#codex-rescan')
+    assert.equal(panel.node('#status').textContent, expected)
+  }
+})
+
+test('successful recovery clears the prior recovery notice through both pushes and the retry reply', async () => {
+  for (const phase of ['recovery_pending', 'recovery_failed']) {
+    for (const completion of ['push', 'reply']) {
+      const restored = publicView({settingsRecoveryAvailable: false, settingsApplyStatus: 'applied'})
+      const panel = await mountSettingsPanel(publicView({
+        settingsRecoveryAvailable: true, settingsApplyStatus: phase,
+      }), {retryBackend: async () => restored})
+      assert.equal(panel.node('#restart-notice').hidden, false)
+      assert.notEqual(panel.node('#restart-notice').textContent, '设置已生效')
+      if (completion === 'push') panel.push(restored)
+      else await panel.click('#settings-restore')
+      assert.equal(panel.node('#restart-notice').textContent, '设置已生效')
+      assert.equal(panel.node('#settings-restore').hidden, true)
+    }
+  }
+})
+
+test('ordinary applied views and local edits do not introduce a recovery completion notice', async () => {
+  const applied = publicView({settingsApplyStatus: 'applied', settingsRecoveryAvailable: false})
+  const panel = await mountSettingsPanel(applied)
+  assert.equal(panel.node('#restart-notice').hidden, true)
+  panel.push(applied)
+  panel.node('#integratedModel').value = 'draft-model'
+  panel.node('#integratedModel').listeners.input()
+  assert.equal(panel.node('#restart-notice').hidden, true)
+})
+
+test('rendering a confirmed applied view preserves an unrelated pending restart notice', async () => {
+  const panel = await mountSettingsPanel(publicView(), {
+    set: async ({settingsPatch}) => publicView({...settingsPatch,
+      settingsApplyStatus: 'applied', settingsRecoveryAvailable: false}),
+  })
+  panel.node('#integratedModel').value = 'saved-model'
+  panel.node('#integratedModel').listeners.input()
+  panel.click('#settings-save')
+  await new Promise(resolve => setImmediate(resolve))
+  // No disconnected transition was observed, so the controller still owns a
+  // pending restart notice even though its last confirmed reply says applied.
+  assert.equal(panel.node('#restart-notice').dataset.state, 'restarting')
+  panel.node('#integratedModel').value = 'new-draft-model'
+  panel.node('#integratedModel').listeners.input()
+  assert.equal(panel.node('#restart-notice').dataset.state, 'restarting')
+})
+
+test('a save refused during pending recovery preserves drafts and announces the recovery phase', async () => {
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({saved: false, settingsRecoveryAvailable: true,
+      settingsApplyStatus: 'recovery_pending', operationStatus: 'recovery_pending'})},
+    render() {}, status() {}, notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+  controller.stage({palette: 'graphite'})
+  assert.equal((await controller.save()).saved, false)
+  assert.equal(controller.dirty, true)
+  assert.deepEqual(notices, ['recovery_pending'])
+})
 
 test('public edits stage locally and one save emits one merged patch', async () => {
   const calls = []

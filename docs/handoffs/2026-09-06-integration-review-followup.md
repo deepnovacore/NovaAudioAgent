@@ -4,8 +4,8 @@ Base: `afc82dd`. Scope: repair and verify `v0.2.0dev`; no main merge or release.
 
 ## Decisions and verification
 
-- I5: retain tool-result continuation tools. The user's approved implementation plan explicitly
-  requested the narrower prohibition. Host factual narration remains tool-free, and response origin
+- I5: retain tool-result continuation tools. The [decision record](../decisions/2026-09-06-i5-tool-result-continuation.md)
+  transcribes the user's approved instructions requesting the narrower prohibition. Host factual narration remains tool-free, and response origin
   alone grants no authority. Amend the stale roadmap instead of reversing the approved behavior.
 - D-2: retain persistent last-good recovery and distinct saved/applied results, consistent with the
   approved recovery requirements. Repair the corrupt-journal startup dead end; do not erase recovery
@@ -21,7 +21,7 @@ Base: `afc82dd`. Scope: repair and verify `v0.2.0dev`; no main merge or release.
 
 | Review item | Finding and resolution | Regression evidence |
 | --- | --- | --- |
-| R-F | Confirmed: non-live desktop observers replayed journals without the live owner. Automatic replay now runs only during live startup; maintenance reports corrupt/busy journals as unavailable. | Contended observer takes no owner lock and preserves journal bytes; malformed observer open survives; failed live replay releases its owner before retry. |
+| R-F | `ProjectStore.open` replays only during live startup. Desktop maintenance can also request replay during open/refresh, but mutations now require a temporary owner lock inside the tracked transaction. Initial transaction contention is degraded/busy, not corrupt; previously observed pending/unsafe health is retained until successful recovery. | Live-owner prepared/committed journals remain byte-identical until owner exit; real contended maintenance open survives; busy observations cannot clear known hazards; malformed open remains unavailable. Removing either ownership or hazard retention fails the corresponding regression. |
 | I4 | Confirmed by replay after bounded-ledger eviction and by same-revision retry. Comparing the current revision would not fix either case. Each requested response now carries an echoed per-attempt `request_id`. | Old starts/terminals cannot release new requests; pre-start audio fences settle; quarantined responses cannot dispatch tools or disarm another request. Real cascaded wrapper propagation is covered; removing identity checks makes both replay regressions fail. |
 | I5 | Retain the user's approved tool-result continuation behavior; roadmap §3.5 now records the superseding decision. | Existing narration/continuation authorization regressions remain intact; no oracle fixture relaxation in this follow-up. |
 | HTTP rejection | Basic status tests already existed. Preserve the published production change and add a separately named knowledge commit for the missing partial-upload contract. | Unfinished requests receive complete 401/403/405/413/503 responses with close semantics and no adapter dispatch; drip timeout must receive 408, not merely a socket error. |

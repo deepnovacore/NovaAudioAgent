@@ -154,8 +154,8 @@ merges — not as part of this documentation phase.
 
 ### Deferred items that stay deferred
 
-- Unrestricted long-term memory search auto-injected into ContextView
-  (`knowledge.autoRecall` defaults off).
+- Automatic knowledge recall into ContextView; no `knowledge.autoRecall`
+  setting is implemented (see [04](04-knowledge-base.md#non-goals)).
 - Automatic privilege expansion beyond the reviewed broker shapes.
 - A universal workflow language for intake → plan → execute.
 
@@ -282,7 +282,9 @@ are deferred while Ubuntu source tests remain.
 
 - I5: only host factual narration disables tools. Bound `tool_output` continuations
   retain tools; user item / revision and confirmation checks remain authoritative.
-  The old blanket `tools: []` recommendation is retained as history in roadmap §3.5.
+  The [I5 decision record](../../decisions/2026-09-06-i5-tool-result-continuation.md)
+  preserves the approved instructions; the old blanket `tools: []` recommendation
+  is retained as history in roadmap §3.5.
 - Knowledge migration adds content digests while retaining existing IDs, vectors,
   jobs and legacy references. Ordinal reuse is positional and stale citations do
   not recover historical text; see [04](04-knowledge-base.md#locators).

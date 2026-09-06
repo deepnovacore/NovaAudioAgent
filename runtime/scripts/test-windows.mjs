@@ -2,6 +2,9 @@ import { readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
+// These mixed suites still depend on POSIX permissions/process/filesystem behavior.
+// Keep the inventory explicit until target-native Windows validation closes each gap;
+// their individual Windows cases are also excluded by this file-level filter.
 const posixTests = new Set([
   'codex-credential-snapshot.test.js',
   'codex-host-config.test.js',

@@ -226,6 +226,7 @@ export function createSettingsController({ api, render, status, notice = () => {
   }
 
   function applyFailurePhase() {
+    if (confirmedView?.settingsApplyStatus === 'recovery_pending') return 'recovery_pending'
     if (confirmedView?.settingsApplyStatus === 'recovery_failed') return 'recovery_failed'
     if (confirmedView?.settingsApplyStatus === 'failed') return 'failed'
     if (confirmedView?.settingsApplyStatus === 'restart_failed') return 'restart_failed'
