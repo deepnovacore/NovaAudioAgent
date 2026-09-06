@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   release-readiness:
-    if: github.base_ref == 'main' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    if: github.base_ref == 'main' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +52,8 @@ jobs:
 
   package:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [electron, release-readiness]
+    # Build candidate artifacts independently; release-publish enforces acceptance before publishing.
+    needs: [electron]
     strategy:
       fail-fast: false
       matrix:

@@ -6,6 +6,10 @@ and before publishing. M2, M3, M4, cascaded speech, and opt-in wake word are req
 those features remain disabled by default. Linux is deferred as a release target; Ubuntu source
 checks remain enabled.
 
+Tag CI may build candidate artifacts while acceptance is pending. That does not publish a release:
+the main branch check and `release-publish.yml` enforce this ledger. There is no acceptance bypass
+for a hotfix; validate the applicable candidate and supply evidence before publication.
+
 This table is the single release-readiness declaration read by `npm run check:release-gate`.
 Replace `pending` with `passed` only after reviewing linked evidence identifying the tested
 candidate commit, platform, procedure and results. Revalidate affected rows after product changes.
