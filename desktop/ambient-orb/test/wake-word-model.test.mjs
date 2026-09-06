@@ -38,16 +38,24 @@ test('signed PCM bytes retain their values for local inference', () => {
   assert.deepEqual([...pcm16Base64ToFloat32(pcm)], [-1, 0, 32767 / 32768])
 })
 
-test('terminated download workers clean only their own partial files', async () => {
+test('terminated download workers clean only their own partial files', async t => {
   const {Worker} = await import('node:worker_threads')
   const {once} = await import('node:events')
+  const {promises: fs} = await import('node:fs')
   const {WakeWordRuntime} = await import('../src/main/wake-word/runtime.mjs')
   const modelModule = new URL('../src/main/wake-word/model-manager.mjs', import.meta.url).href
   const root = await mkdtemp(join(tmpdir(), 'wake-interrupted-'))
+  const cleanups = []
+  const remove = fs.rm
+  t.mock.method(fs, 'rm', (path, options) => {
+    const cleanup = remove(path, options)
+    cleanups.push(cleanup)
+    return cleanup
+  })
   class DownloadWorker extends Worker {
     constructor(_url, options) {
       super(new URL('data:text/javascript,' + encodeURIComponent(`
-        import {parentPort, workerData} from 'node:worker_threads';
+        import {parentPort, workerData, threadId} from 'node:worker_threads';
         import {readdir, stat} from 'node:fs/promises';
         import {join} from 'node:path';
         import {ensureWakeWordModel} from ${JSON.stringify(modelModule)};
@@ -57,7 +65,8 @@ test('terminated download workers clean only their own partial files', async () 
         }))});
         const timer = setInterval(async () => {
           for (const name of await readdir(workerData.modelRoot, {recursive: true})) {
-            if (name.endsWith('.tar.bz2') && (await stat(join(workerData.modelRoot, name))).size) {
+            if (name === join('.wake-word-download-' + process.pid + '-' + threadId, 'model.tar.bz2')
+              && (await stat(join(workerData.modelRoot, name))).size) {
               clearInterval(timer); parentPort.postMessage({type: 'downloading'}); break;
             }
           }
@@ -78,17 +87,20 @@ test('terminated download workers clean only their own partial files', async () 
     const exited = once(first.worker, 'exit')
     first.stop()
     await exited
-    // Cleanup follows the exit event and may retry transient Windows handles.
-    for (let n = 0; n < 100 && (await readdir(root)).length !== activeFiles.length; n++) {
-      await new Promise(resolve => setTimeout(resolve, 20))
-    }
+    // The exit handler starts asynchronous removal; exit itself is not cleanup completion.
+    await Promise.all(cleanups)
     assert.deepEqual((await readdir(root)).sort(), activeFiles.sort())
     const secondExited = once(second.worker, 'exit')
     second.stop()
     await secondExited
+    await Promise.all(cleanups)
+    assert.deepEqual(await readdir(root), [])
   } finally {
+    const exits = [first.worker, second.worker].filter(Boolean).map(worker => once(worker, 'exit'))
     first.stop(); second.stop()
-    await rm(root, {recursive: true, force: true})
+    await Promise.allSettled(exits)
+    await Promise.allSettled(cleanups)
+    await rm(root, {recursive: true, force: true, maxRetries: 10, retryDelay: 100})
   }
 })
 

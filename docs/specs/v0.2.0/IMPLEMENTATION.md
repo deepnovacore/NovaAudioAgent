@@ -788,6 +788,23 @@ The main-only readiness job and tag-only package job were correctly skipped on d
 
 The earlier `da38a59` hosted-Windows startup timeout remains historically failed
 and unclassified. This new source-startup success is evidence for `883113d`, not a
-retrospective diagnosis. This receipt-only follow-up will itself receive normal CI;
-its final HEAD/run can be found in the branch checks without recursively editing
-this ledger to embed its own commit hash.
+retrospective diagnosis.
+
+The receipt-only `4c9516c` run subsequently passed macOS/Ubuntu but exposed an
+intermittent Windows test teardown race:
+[run 34036782632](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34036782632).
+Windows runtime and CLI passed; desktop's interrupted-download test reached fixture
+removal before the second Worker's exit-handler cleanup finished, producing `EPERM`
+on that owner's directory. Source startup was not reached in this failed run.
+
+The test now joins the actual asynchronous cleanup promises and, on failure paths,
+waits for owned Workers before removing the fixture root. The fake download-progress
+probe also checks its own thread's archive instead of another active download's
+file. No production lifecycle or retry budget changed. All seven model tests and
+20 consecutive repetitions of the interrupted-download case passed locally; the
+full desktop rerun passed 893 tests / 3 platform skips. Independent review confirmed
+the original removal promises still propagate errors on the assertion path. A
+targeted Alibaba Windows retry could not establish a session; the user confirmed
+the machine was powered off and asked to leave it alone. No remote test pass is
+claimed. The resulting final HEAD receives normal CI; its exact run
+is available in branch checks without recursively committing its own hash here.
