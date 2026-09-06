@@ -333,6 +333,12 @@ function publishCommittedSettings() {
 }
 
 async function rollbackSettings(refresh = true) {
+  // Restore only after the child using these files is confirmed stopped. This
+  // also guards retries after a previous stop failed or journal cleanup failed.
+  if (settingsRecoveryAvailable && backendSupervisor) {
+    await backendSupervisor.stop()
+    if (backendSupervisor.status().state !== 'stopped') throw new Error('backend termination unconfirmed')
+  }
   const restored = await restoreSettingsRecovery(settingsFile())
   if (restored === null) return
   currentSettings = restored

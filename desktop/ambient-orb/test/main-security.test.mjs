@@ -785,3 +785,57 @@ test('settings recovery precedes startup configuration and has one transaction s
   assert.match(body, /coordinator: lifecycleCoordinator/)
   assert.match(body, /rollback: rollbackSettings, complete: completeSettings/)
 })
+
+test('recovery cleanup failure stops the activated child before rollback and preserves candidate files when stop fails', async t => {
+  const {mkdtemp, rm} = await import('node:fs/promises')
+  const {tmpdir} = await import('node:os')
+  const {join} = await import('node:path')
+  const {default: vm} = await import('node:vm')
+  const {applySettingsTransaction} = await import('../src/main/settings-apply.mjs')
+  const {createLifecycleCoordinator} = await import('../src/main/lifecycle-coordinator.mjs')
+  const {saveSettings, loadSettings, saveSettingsRecovery, restoreSettingsRecovery} = await import('../src/main/settings-store.mjs')
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const helper = name => {
+    const start = source.indexOf(`async function ${name}(`)
+    return source.slice(start, source.indexOf('\n}', start) + 2)
+  }
+  for (const stopFails of [false, true]) {
+    const root = await mkdtemp(join(tmpdir(), 'nova-settings-quiesce-'))
+    t.after(() => rm(root, {recursive: true, force: true}))
+    const file = join(root, 'settings.json')
+    const previous = await saveSettings(file, {integratedModel: 'previous-model'})
+    await saveSettingsRecovery(file, previous)
+    const candidate = await saveSettings(file, {...previous, integratedModel: 'candidate-model'})
+    let stops = 0, state = 'connected'
+    const context = vm.createContext({
+      currentSettings: candidate, settingsRecoveryAvailable: true, settingsFile: () => file,
+      restoreSettingsRecovery,
+      clearSettingsRecovery: async () => {throw Object.assign(Error('unlink denied'), {code: 'EPERM'})},
+      refreshDesktopConfiguration: async () => {assert.equal(state, 'stopped')},
+      backendSupervisor: {
+        stop: async () => {stops++; if (stopFails) throw Error('child remains alive'); state = 'stopped'},
+        status: () => ({state}),
+      },
+    })
+    vm.runInContext(helper('rollbackSettings') + '\n' + helper('completeSettings'), context)
+    const result = await applySettingsTransaction({
+      coordinator: createLifecycleCoordinator(), patch: {}, write: async () => candidate,
+      publishCommitted: () => {}, prepareConfiguration: async () => ({}), commitConfiguration: async () => ({}),
+      restartBackend: async () => {state = 'connected'}, publishStatus: () => {},
+      rollback: context.rollbackSettings, complete: context.completeSettings,
+    })
+    assert.equal(stops, 1)
+    assert.equal(result.saved, false)
+    assert.equal(result.operationStatus, stopFails ? 'recovery_failed' : 'failed')
+    assert.deepEqual(await loadSettings(file), stopFails ? candidate : previous)
+    assert.deepEqual(context.currentSettings, stopFails ? candidate : previous)
+    assert.equal(context.settingsRecoveryAvailable, true)
+    await readFile(`${file}.recovery`)
+    // Every later save/retry goes through the same guard; it cannot restore under the surviving child.
+    if (stopFails) {
+      await assert.rejects(context.rollbackSettings(false))
+      assert.deepEqual(await loadSettings(file), candidate)
+      assert.deepEqual(context.currentSettings, candidate)
+    }
+  }
+})

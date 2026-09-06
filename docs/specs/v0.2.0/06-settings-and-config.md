@@ -168,8 +168,12 @@ separate `operationStatus` (`failed`, `restart_failed`, or `recovery_failed`). M
 restores the previous files and configuration, retains the recovery record, and
 exposes **恢复上次可用设置**. That action uses the existing coordinated backend
 retry entry point, restores the files again, prepares the restored configuration,
-and clears the record only after backend activation succeeds. Failed recovery
-keeps the record and does not report success. Unsaved panel drafts remain drafts;
+and clears the record only after backend activation succeeds. Before restoring
+live files, main confirms the backend supervisor has stopped the child. If stopping fails, candidate files and in-memory settings remain
+unchanged alongside the recovery record; later save/retry attempts must pass the
+same stop guard. This also covers recovery-record deletion failure after a
+successful activation. Failed recovery keeps the record and does not report
+success. Unsaved panel drafts remain drafts;
 failed secret updates are not acknowledged as saved.
 
 Startup restores a pending record before preparing configuration or spawning the
