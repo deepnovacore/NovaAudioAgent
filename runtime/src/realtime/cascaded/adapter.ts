@@ -17,6 +17,7 @@ import {
   type RealtimeProvider,
   type RealtimeProviderEvent,
   type ResponseAdaptationContext,
+  type ResponseOrigin,
   type SessionIdentity,
   type WorkspaceContextDeliveryRecord,
 } from '../protocol.js'
@@ -113,6 +114,7 @@ interface ActiveTts {
 }
 
 interface ActiveResponse {
+  readonly origin: ResponseOrigin
   readonly controller: AbortController
   id: string | null
   task: Promise<void>
@@ -138,7 +140,9 @@ interface EpochOwner {
   } | null
   responseAdaptation: {readonly revision: number; readonly content: string | null} | null
   consumptionGeneration: number
+  responseSequence: number
   pendingToolCallId: string | null
+  userInput: {readonly itemId: string; readonly text: string; submitted: boolean} | null
   responseStartBarrier: Promise<void> | null
   asr: ActiveAsr | null
   response: ActiveResponse | null
@@ -269,6 +273,7 @@ class BoundedEventQueue {
 }
 
 export class CascadedRealtimeAdapter implements RealtimeProvider {
+  readonly userResponseMode = 'requested' as const
   readonly #endpointing: EndpointingPort
   readonly #asrClient: AsrClient
   readonly #ttsClient: TtsClient
@@ -334,8 +339,10 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         workspaceContext: null,
         responseAdaptation: null,
         consumptionGeneration: 0,
+        responseSequence: 0,
         pendingToolCallId: null,
         responseStartBarrier: null,
+        userInput: null,
         asr: null,
         response: null,
         revoked: false,
@@ -526,21 +533,23 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         && owner.abandonedCalls.has(intent.item.call_id)) {
         owner.abandonedCalls.delete(intent.item.call_id)
         owner.pending.delete(intent.item.host_item_id)
-        this.#startSilentResponse(owner)
+        this.#startSilentResponse(owner, {kind: 'host_request', host_item_id: intent.item.host_item_id})
         await Promise.resolve()
         return
       }
       if (owner.consumed.delete(intent.item.host_item_id)) {
-        this.#startSilentResponse(owner)
+        this.#startSilentResponse(owner, {kind: 'host_request', host_item_id: intent.item.host_item_id})
         await Promise.resolve()
         return
       }
-      const inputs = this.#takeResponseInputs(owner, intent)
+      const {inputs, hostIds} = this.#selectResponseInputs(owner, intent)
       if (inputs.length === 0) throw new CascadedRealtimeError('missing_host_input')
       await this.#resolvePendingToolCall(owner, inputs)
       if (!this.#isCurrent(owner)) throw new CascadedRealtimeError('state')
       throwIfAborted(combineSignals(owner.controller.signal, signal))
-      this.#startResponse(owner, inputs)
+      for (const id of hostIds) owner.pending.delete(id)
+      this.#startResponse(owner, inputs, {kind: 'host_request', host_item_id: intent.item.host_item_id},
+        intent.item.kind === 'tool_output')
       await Promise.resolve()
     })
   }
@@ -564,7 +573,13 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     }
     this.#record('volcengine.response.cancel', {epoch: owner.epoch})
     response.controller.abort()
-    await settleWithin(response.task, this.#settleTimeoutMs)
+    if (!await settleWithin(response.task, this.#settleTimeoutMs)) {
+      // The LLM/TTS did not relinquish ownership. Reusing this epoch would overlap inference.
+      await this.#emitTerminal(owner, response, 'failed', 'cancel_timeout')
+      await this.#emit(owner, {kind: 'provider_error', session_epoch: owner.epoch,
+        code: 'cascaded_cancel_timeout', recoverable: false})
+      await this.#disconnectOwner(owner)
+    }
   }
 
   async *events(signal: AbortSignal): AsyncIterable<RealtimeProviderEvent> {
@@ -615,7 +630,8 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     active.terminal = true
     const terminal = realtimeProviderEventSchema.parse({
       kind: 'response_terminal', session_epoch: owner.epoch,
-      response_id: active.id, status: 'cancelled', reason: 'cancelled',
+      response_id: active.id,
+      ...(active.origin.kind === 'user_item' ? {origin: active.origin} : {}), status: 'cancelled', reason: 'cancelled',
     })
     if (!owner.queue.enqueue(terminal)) {
       owner.queue.overflow({
@@ -639,6 +655,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       this.#record('volcengine.asr.connect', {epoch: owner.epoch})
       session = await this.#asrClient.open(signal)
     } catch {
+      if (!this.#isCurrent(owner)) return
       await this.#emit(owner, {
         kind: 'user_speech_ended', session_epoch: owner.epoch,
         speech_id: speechId, provider_item_id: itemId,
@@ -651,6 +668,10 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         kind: 'user_transcript_failed', session_epoch: owner.epoch, item_id: itemId,
       })
       await Promise.resolve(this.#endpointing.reset()).catch(() => undefined)
+      return
+    }
+    if (!this.#isCurrent(owner)) {
+      await safeCallWithin(() => session.close(), this.#settleTimeoutMs)
       return
     }
     const controller = new AbortController()
@@ -741,13 +762,13 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
               kind: 'user_transcript_failed', session_epoch: owner.epoch, item_id: active.itemId,
             })
           } else {
+            owner.userInput = {itemId: active.itemId, text: transcript.text, submitted: false}
             await this.#emit(owner, {
               kind: 'user_transcript_final', session_epoch: owner.epoch,
               item_id: active.itemId, text: transcript.text,
             })
-            await this.#startUserResponse(owner, transcript.text)
           }
-          continue
+          return
         } else {
           this.#record('volcengine.asr.partial', {epoch: owner.epoch})
           await this.#emit(owner, {
@@ -808,34 +829,49 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     await settleWithin(active.task, this.#settleTimeoutMs)
   }
 
-  async #startUserResponse(owner: EpochOwner, text: string): Promise<void> {
-    await this.#serializeResponseStart(owner, async () => {
-      if (owner.response !== null) {
-        owner.response.controller.abort()
-        await settleWithin(owner.response.task, this.#settleTimeoutMs)
-      }
-      const {inputs, consumedIds} = this.#takeUserResponseInputs(owner)
-      this.#markConsumed(owner, consumedIds)
+  async ensureResponse(signal: AbortSignal, userItemId?: string, requestId?: string): Promise<boolean> {
+    const owner = this.#requiredOwner()
+    if (userItemId !== undefined && !realtimeIdentifierSchema.safeParse(userItemId).success) {
+      throw new CascadedRealtimeError('configuration')
+    }
+    if (requestId !== undefined && !realtimeIdentifierSchema.safeParse(requestId).success) {
+      throw new CascadedRealtimeError('configuration')
+    }
+    return this.#serializeResponseStart(owner, async () => {
+      throwIfAborted(combineSignals(owner.controller.signal, signal))
+      const input = owner.userInput
+      if (owner.response !== null || input === null
+        || (userItemId !== undefined && input.itemId !== userItemId)) return false
+      const {inputs, hostIds} = this.#selectResponseInputs(owner, null)
       await this.#resolvePendingToolCall(owner, inputs)
       if (!this.#isCurrent(owner)) throw new CascadedRealtimeError('state')
-      this.#startResponse(owner, [...inputs, {kind: 'user_text', text}])
+      throwIfAborted(combineSignals(owner.controller.signal, signal))
+      if (owner.userInput !== input) return false
+      this.#markConsumed(owner, hostIds)
+      // A retry continues the same conversation; appending the transcript again invents a user turn.
+      if (!input.submitted) inputs.push({kind: 'user_text', text: input.text})
+      this.#startResponse(owner, inputs, {kind: 'user_item', item_id: input.itemId,
+        ...(requestId === undefined ? {} : {request_id: requestId})})
+      return true
     })
   }
 
-  #startResponse(owner: EpochOwner, inputs: readonly CascadedLlmInput[]): void {
+  #startResponse(owner: EpochOwner, inputs: readonly CascadedLlmInput[], origin: ResponseOrigin,
+    allowTools = true): void {
     const controller = new AbortController()
     const active: ActiveResponse = {
-      controller, id: null, task: Promise.resolve(), terminal: false, tts: null,
+      controller, origin, id: `cascaded-response-${owner.epoch}-${++owner.responseSequence}`,
+      task: Promise.resolve(), terminal: false, tts: null,
     }
     owner.response = active
-    active.task = Promise.resolve().then(() => this.#runResponse(owner, active, inputs))
+    active.task = Promise.resolve().then(() => this.#runResponse(owner, active, inputs, allowTools))
     void active.task.catch(() => undefined)
   }
 
-  #startSilentResponse(owner: EpochOwner): void {
+  #startSilentResponse(owner: EpochOwner, origin: ResponseOrigin): void {
     const controller = new AbortController()
     const active: ActiveResponse = {
-      controller, id: null, task: Promise.resolve(), terminal: false, tts: null,
+      controller, origin, id: null, task: Promise.resolve(), terminal: false, tts: null,
     }
     owner.response = active
     active.task = Promise.resolve().then(async () => {
@@ -843,7 +879,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       active.id = responseId
       try {
         await this.#emit(owner, {
-          kind: 'response_started', session_epoch: owner.epoch, response_id: responseId,
+          kind: 'response_started', session_epoch: owner.epoch, response_id: responseId, origin: active.origin,
         })
         await this.#emitTerminal(owner, active, 'completed', 'completed')
       } finally {
@@ -857,7 +893,9 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     owner: EpochOwner,
     active: ActiveResponse,
     inputs: readonly CascadedLlmInput[],
+    allowTools: boolean,
   ): Promise<void> {
+    let llmResponseId: string | null = null
     let textSeen = false
     let toolSeen = false
     let pendingTool: Extract<CascadedLlmEvent, {kind: 'tool_call'}> | null = null
@@ -867,9 +905,14 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     const signal = combineSignals(owner.controller.signal, active.controller.signal)
     let continuationResetFailed = false
     try {
+      if (active.id === null) throw new Error('missing admitted response identity')
+      // Admission belongs to this adapter, independent of when a remote LLM sends its first byte.
+      await this.#emit(owner, {kind: 'response_started', session_epoch: owner.epoch,
+        response_id: active.id, origin: active.origin})
+      throwIfAborted(signal)
       for await (const event of owner.llm.stream({
         inputs: inputs.map(item => structuredClone(item)),
-        tools: owner.tools.map(tool => structuredClone(tool)),
+        tools: allowTools ? owner.tools.map(tool => structuredClone(tool)) : [],
         workspaceContext: owner.workspaceContext?.item.content ?? null,
         responseAdaptation: owner.responseAdaptation?.content ?? null,
         signal,
@@ -877,17 +920,14 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         throwIfAborted(signal)
         if (!this.#isCurrent(owner) || owner.response !== active) return
         if (event.kind === 'response_started') {
-          if (active.id !== null) throw new Error('duplicate LLM response identity')
-          active.id = event.response_id
+          if (llmResponseId !== null) throw new Error('duplicate LLM response identity')
+          llmResponseId = event.response_id
           this.#record('cascaded.llm.started', {epoch: owner.epoch})
-          await this.#emit(owner, {
-            kind: 'response_started', session_epoch: owner.epoch, response_id: event.response_id,
-          })
-          active.tts = this.#newTtsState(event.response_id, signal)
+          active.tts = this.#newTtsState(active.id, signal)
           this.#prewarmTts(owner, active.tts)
         } else if (event.kind === 'text_delta') {
           if (toolSeen) throw new MixedResponseFailure()
-          if (active.id === null || active.tts === null) throw new Error('LLM text before identity')
+          if (llmResponseId === null || active.tts === null) throw new Error('LLM text before identity')
           textSeen = true
           transcriptLength += [...event.text].length
           if (transcriptLength > MAX_REALTIME_TEXT) throw new Error('LLM response text overflow')
@@ -904,17 +944,17 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
           }
         } else if (event.kind === 'tool_call') {
           if (textSeen || toolSeen) throw new MixedResponseFailure()
-          if (active.id === null) throw new Error('LLM tool before identity')
+          if (llmResponseId === null) throw new Error('LLM tool before identity')
           toolSeen = true
           pendingTool = event
           owner.pendingToolCallId = event.call_id
           await this.#cancelTts(owner, active)
           this.#record('cascaded.llm.tool_call', {epoch: owner.epoch})
         } else if (event.kind === 'response_failed') {
-          active.id ??= event.response_id
+          if (llmResponseId !== null && event.response_id !== llmResponseId) throw new Error('LLM failure identity mismatch')
           throw new Error('LLM stable provider failure')
         } else {
-          if (active.id === null || event.response_id !== active.id) {
+          if (llmResponseId === null || event.response_id !== llmResponseId) {
             throw new Error('LLM terminal identity mismatch')
           }
           if (textSeen) {
@@ -937,6 +977,9 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
                 response_id: active.id,
               })
             }
+          }
+          if (active.origin.kind === 'user_item' && owner.userInput?.itemId === active.origin.item_id) {
+            owner.userInput.submitted = true
           }
           await this.#emitTerminal(owner, active, 'completed', 'completed')
           return
@@ -1171,45 +1214,36 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     active.terminal = true
     await this.#emit(owner, {
       kind: 'response_terminal', session_epoch: owner.epoch,
-      response_id: active.id, status, reason,
+      response_id: active.id,
+      ...(active.origin.kind === 'user_item' ? {origin: active.origin} : {}), status, reason,
     })
     this.#record('volcengine.response.terminal', {status})
   }
 
-  #takeResponseInputs(owner: EpochOwner, intent: HostResponseIntent): CascadedLlmInput[] {
-    if (!owner.pending.has(intent.item.host_item_id)) return []
-    const selected: CascadedLlmInput[] = []
-    for (const [hostId, pending] of [...owner.pending]) {
-      let include = hostId === intent.item.host_item_id
-        || pending.item.kind === 'recovery' || pending.item.kind === 'dialogue_context'
-      if (intent.item.kind === 'tool_output' && pending.item.kind === 'tool_output') include = true
-      if (!include) continue
-      selected.push(structuredClone(pending.input))
-      owner.pending.delete(hostId)
-    }
-    return selected
-  }
-
-  #takeUserResponseInputs(owner: EpochOwner): {
+  #selectResponseInputs(owner: EpochOwner, intent: HostResponseIntent | null): {
     readonly inputs: CascadedLlmInput[]
-    readonly consumedIds: string[]
+    readonly hostIds: string[]
   } {
     const inputs: CascadedLlmInput[] = []
-    const consumedIds: string[] = []
-    for (const [hostId, pending] of [...owner.pending]) {
-      if (pending.item.kind !== 'recovery' && pending.item.kind !== 'dialogue_context'
-        && pending.item.kind !== 'tool_output') continue
+    const hostIds: string[] = []
+    if (intent !== null && !owner.pending.has(intent.item.host_item_id)) return {inputs, hostIds}
+    for (const [hostId, pending] of owner.pending) {
+      const include = pending.item.kind === 'recovery' || pending.item.kind === 'dialogue_context'
+        || (intent === null ? pending.item.kind === 'tool_output'
+          : hostId === intent.item.host_item_id
+            || (intent.item.kind === 'tool_output' && pending.item.kind === 'tool_output'))
+      if (!include) continue
       inputs.push(structuredClone(pending.input))
-      consumedIds.push(hostId)
-      owner.pending.delete(hostId)
+      hostIds.push(hostId)
     }
-    return {inputs, consumedIds}
+    return {inputs, hostIds}
   }
 
   #markConsumed(owner: EpochOwner, hostIds: readonly string[]): void {
     if (hostIds.length === 0) return
     owner.consumptionGeneration += 1
     for (const hostId of hostIds) {
+      owner.pending.delete(hostId)
       owner.consumed.delete(hostId)
       owner.consumed.set(hostId, owner.consumptionGeneration)
     }

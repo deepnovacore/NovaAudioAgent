@@ -481,3 +481,32 @@ test('source deletion is opt-in and requires a matching durable tombstone receip
     await assert.rejects(malformed,{message:'personal_memory_unavailable'})
   } finally {await store.close()}
 })
+
+
+test('close is bounded and unreferences a worker whose terminate never settles', async () => {
+  const worker = new FakeWorker()
+  let unreferenced = false
+  Object.assign(worker, {unref: () => {unreferenced = true}, terminate: () => new Promise<number>(() => { /* emulate a stuck native worker */ })})
+  const {client: store} = client(worker)
+  const opening = store.open()
+  worker.respond(requestId(worker, 0), {response_adaptation: responseAdaptation()})
+  await opening
+  const start = performance.now()
+  await store.close()
+  assert.ok(performance.now() - start < 1_000)
+  assert.equal(unreferenced, true)
+})
+
+
+test('a stalled worker request rejects at its deadline and terminates its owner', async t => {
+  t.mock.timers.enable({apis: ['setTimeout']})
+  const {client: store, worker} = client()
+  const opening = store.open()
+  worker.respond(requestId(worker, 0), {response_adaptation: responseAdaptation()})
+  await opening
+  const recalled = assert.rejects(store.recall('tea'), {code: 'WORKER_ERROR'})
+  t.mock.timers.tick(5_000)
+  await recalled
+  assert.equal(worker.terminated, 1)
+  await store.close()
+})

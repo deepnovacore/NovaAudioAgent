@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import {EventEmitter} from 'node:events'
 import test from 'node:test'
 
+import {shutdownBackend} from '../src/main/backend.mjs'
+import {createBackendDiagnosticCollector} from '../src/main/backend-diagnostics.mjs'
 import {createBackendSupervisor} from '../src/main/backend-supervisor.mjs'
 
 function deferred() {
@@ -114,4 +117,52 @@ test('an unconfirmed stop is explicit and restart never starts a replacement bac
   assert.equal(starts.length, 1)
   assert.notEqual(supervisor.status().state, 'stopped')
   assert.equal(statuses.some(status => status.state === 'stopped'), false)
+})
+
+test('assembly cleanup failure on explicit stop or restart never schedules an extra reconnect', async () => {
+  for (const mode of ['stop', 'restart', 'unexpected']) {
+    let starts = 0
+    let child
+    const scheduled = []
+    const supervisor = createBackendSupervisor({
+      start: async onExit => {
+        starts += 1
+        const diagnostic = createBackendDiagnosticCollector()
+        const spawned = new EventEmitter()
+        child = spawned
+        // Model the utility process reporting a failed assembly cleanup while
+        // draining nova.shutdown, then exiting with the desktop entry's code 2.
+        const failCleanup = () => {
+          diagnostic.push('[runtime-diagnostic] assembly_failed')
+          spawned.emit('exit', 2)
+        }
+        spawned.postMessage = message => {
+          assert.deepEqual(message, {type: 'nova.shutdown'})
+          failCleanup()
+        }
+        spawned.failCleanup = failCleanup
+        spawned.once('exit', () => onExit(diagnostic.failure()))
+        return {backend: spawned, connection: {endpoint: 'ws://127.0.0.1:10/'}}
+      },
+      stopBackend: backend => shutdownBackend(backend),
+      schedule: (callback, delay) => {
+        const timer = {callback, delay}
+        scheduled.push(timer)
+        return timer
+      },
+      cancel: () => {},
+      onStatus: () => {},
+    })
+    try {
+      await supervisor.start()
+      if (mode === 'unexpected') child.failCleanup()
+      else await supervisor[mode]()
+      assert.equal(scheduled.length, mode === 'unexpected' ? 1 : 0, mode)
+      assert.equal(starts, mode === 'restart' ? 2 : 1, mode)
+      assert.equal(supervisor.status().state,
+        mode === 'unexpected' ? 'reconnecting' : mode === 'stop' ? 'stopped' : 'connected', mode)
+    } finally {
+      await supervisor.stop()
+    }
+  }
 })

@@ -30,6 +30,7 @@ worth it at all** (see the [historical design post](docs/blog/2026-08-proactive-
 - **Workspace management.** No need to manage your workspaces manually as in codex, our agent does that for you. Workspaces/sessions can be created/switched via pure voice control(proposed and confirmed).
 - **Revision-bound intake.** For under-specified requirements, host-owned intake slots clarify the request before dispatch. The M1.5c live validation gate is still pending; no token-saving percentage is claimed here.
 - **Real-time steering**. Our codex executor is built upon native codex app-server instead of ACP, which allows real-time steering.
+- **Local wake word.** Opt-in offline Chinese keyword detection hides the idle orb and wakes it locally; see [setup](docs/getting-started.md#local-wake-word).
 
 ## 2. Architecture
 
@@ -39,6 +40,7 @@ worth it at all** (see the [historical design post](docs/blog/2026-08-proactive-
 Floor guarding the single speech path.*
 
 Essential roles and ideas:
+
 * **FrontBrain model**: the realtime model that interacts with users, using the minimal host/native surface to dispatch work, cancel it, confirm host proposals, recall memory, and search. Revision-bound intake slots remain host-owned.
 * **Surrogate model**: decides **when to speak**. When events get written into memory or suggestion pool, the surrogate model judges whether it worth reporting to the users.
 * **Memory and ContextView**: short-term events from different capabilities are stored in different channels. Only bounded evidence and intake facts are compiled into ContextView for FrontBrain.
@@ -79,8 +81,7 @@ Get API key from [DashScope](https://platform.qianwenai.com) and [Tavily](https:
 ```bash
 npm run start:client
 ```
-The client includes microphone, camera, sound, settings, and workspace-graph surfaces. External MCP
-settings are not presented as shipped. Try hovering over the desktop orb to get surprised :) Also you
+The client includes microphone, camera, sound, settings, external MCP controls, and workspace-graph surfaces. Try hovering over the desktop orb to get surprised :) Also you
 may try build or run demo locally:
 
 ```bash
@@ -89,10 +90,11 @@ node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 ```
 
-Note that native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windows and Linux use
-  Chromium's audio stack.
-
-
+Native echo-cancelled capture (VoiceProcessingIO) is macOS-only. Wake detection uses that
+capture when available; Windows, Linux source runs, and macOS fallback use Chromium
+`getUserMedia` + AudioWorklet. While sleeping, microphone frames go only to the local
+wake-word Worker; explicit mute stops wake detection. See
+[wake-word setup](docs/getting-started.md#local-wake-word).
 
 ## 4. Documentation
 
@@ -105,10 +107,16 @@ Note that native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windo
 | [Historical design exploration: A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | Historical design-space essay |
 
 ## 5. Roadmap
-- [ ] **v0.2.0 (branch `v0.2.0dev`):** M1.5b → M1.5c thin frontend → 03a capability expansion. The M1.5c gate covers the final six-tool surface, Camera MCP + side VLM projection, Vision hidden watch/guard, policy-driven monitoring, and rerun of the 08 live acceptance; live and Windows evidence remain pending. External MCP settings are not shipped. Specs: [docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md).
+
+- [ ] **v0.2.0 (branch `v0.2.0dev`):** M1.5b → M1.5c thin frontend → 03a capability expansion. The M1.5c gate covers the final six-tool surface, Camera MCP + side VLM projection, Vision hidden watch/guard, policy-driven monitoring, and rerun of the 08 live acceptance; live and Windows evidence remain pending. External MCP settings are implemented; live acceptance remains pending. Specs: [docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md).
 - [ ] Support more end-to-end and cascaded frontend pipelines.
 - [ ] Integrate MyContext to support workspace-centric memory.
 - [ ] More coding agents through the executor port.
+- [ ] Cascaded response scheduling is host-owned; human voice and installed Windows wake-word acceptance remain pending.
+
+`v0.2.0dev` integrates after automated gates; `main` requires all feature and supported-platform
+acceptance in the [release ledger](docs/specs/v0.2.0/RELEASE-GATE.md). Linux releases are deferred;
+Ubuntu source tests remain.
 
 ## 6. Contribution
 

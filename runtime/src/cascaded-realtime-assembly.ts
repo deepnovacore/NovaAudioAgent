@@ -1,7 +1,7 @@
 import {capabilitiesFromSettings} from './config.js'
 /** Provider-neutral cascaded production assembly over closed, host-owned node registries. */
 
-import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
+import {buildAssembly, type AssemblyOptions} from './assembly.js'
 import {
   requireSelectedCascadedRealtimeConfig,
   type ArkCascadedLlmConfig,
@@ -25,7 +25,8 @@ import {personalMemoryFactory} from './memory/factory.js'
 import {OpenAIModelGateway, type ModelGateway} from './model-gateway.js'
 import {stripLikePython} from './python-text.js'
 import {
-  buildRealtimeAssembly,
+  composeRealtime,
+  validateCodingResource,
   filterDisabledCoding,
   defaultIntake,
   type RealtimeAssembly,
@@ -39,7 +40,7 @@ import {CascadedRealtimeProvider} from './realtime/cascaded/provider.js'
 import {createQwenCascadedLlmFactory} from './realtime/cascaded/qwen-llm.js'
 import {
   frontendInstructions,
-} from './realtime/qwen.js'
+} from './realtime/frontend-instructions.js'
 import {DoubaoAsrClient} from './realtime/volcengine/asr.js'
 import {
   createEndpointingCapabilityFactory,
@@ -50,7 +51,6 @@ import {
 import {LiveKitVolcEndpointing} from './realtime/volcengine/livekit-endpointing.js'
 import {SilenceVolcEndpointing} from './realtime/volcengine/silence-endpointing.js'
 import {DoubaoTtsClient} from './realtime/volcengine/tts.js'
-import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
 
 export type {
   ArkCascadedLlmConfig,
@@ -272,28 +272,14 @@ export function buildCascadedRealtimeAssembly(
     clock,
   )
   const core = buildAssembly({
-    ...(options.blackboard === undefined ? {} : {blackboard: options.blackboard}),
-    ...(options.conversationId === undefined ? {} : {conversationId: options.conversationId}),
+    ...options,
     settings: support.settings,
     clock,
     ids,
     gateway: support.gateway,
-    ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
-    ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...((options.executors === undefined && options.codexResource === undefined)
       ? {}
-      : {executors: [
-        ...(options.executors ?? []),
-        ...(options.codexResource === undefined ? [] : [options.codexResource.adapter]),
-      ]}),
-    ...(options.searchTransport === undefined ? {} : {searchTransport: options.searchTransport}),
-    ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
-    ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
-    ...(options.capabilities === undefined ? {} : {capabilities: options.capabilities}),
-    ...(options.externalMcp === undefined ? {} : {externalMcp: options.externalMcp}),
-    ...(options.knowledge === undefined ? {} : {knowledge: options.knowledge}),
-    ...(options.cameraModuleEnabled === undefined ? {} : {cameraModuleEnabled: options.cameraModuleEnabled}),
-    ...(options.agentDescriptors === undefined ? {} : {agentDescriptors: options.agentDescriptors}),
+      : {executors: [...(options.executors ?? []), ...(options.codexResource === undefined ? [] : [options.codexResource.adapter])]}),
   })
   const provider = new CascadedRealtimeProvider({
     endpointingFactory,
@@ -303,50 +289,16 @@ export function buildCascadedRealtimeAssembly(
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     idFactory: () => ids.next('cascaded'),
   })
-  const createWorkspaceGraph = () => workspaceGraphServiceFromSettings(
-    options.settings,
-    code => {
-      if (code === 'workspace_graph_open_failed') return
-      try { options.onDiagnostic?.(`[realtime-diagnostic] ${code}`) } catch { /* advisory */ }
-    },
-  )
   const intake = options.intake ?? defaultIntake(core, support.gateway, options.settings)
-  return buildRealtimeAssembly({
-    core,
-    provider,
+  return composeRealtime(core, provider, {
+    ...options,
     ...(intake === undefined ? {} : {intake}),
-    ...(options.onExecutorSuggestion === undefined ? {} : {onExecutorSuggestion: options.onExecutorSuggestion}),
     idFactory: () => ids.next('realtime'),
+  }, {
     controlledPreemptiveAlertReconnect: false,
     preemptiveAlertHistoryRecovery: 'none',
     preemptiveAlertHistoryPairs: 4,
-    createWorkspaceGraph,
     ...(createPersonalMemory === undefined ? {} : {createPersonalMemory}),
-    ...(options.providerToolView === undefined ? {} : {providerToolView: options.providerToolView}),
-    ...(options.onAudioFrame === undefined ? {} : {onAudioFrame: options.onAudioFrame}),
-    ...(options.onAudioClear === undefined ? {} : {onAudioClear: options.onAudioClear}),
-    ...(options.onAudioAlert === undefined ? {} : {onAudioAlert: options.onAudioAlert}),
-    ...(options.onAudioTerminal === undefined ? {} : {onAudioTerminal: options.onAudioTerminal}),
-    ...(options.onSpoken === undefined ? {} : {onSpoken: options.onSpoken}),
-    ...(options.onDelivery === undefined ? {} : {onDelivery: options.onDelivery}),
-    ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
-    ...(options.onExecutorState === undefined ? {} : {onExecutorState: options.onExecutorState}),
-    ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
-    ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
-    ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
-    ...(options.projectConfirmation === undefined
-      ? {}
-      : {projectConfirmation: options.projectConfirmation}),
-    ...(options.commitProjectOperation === undefined
-      ? {}
-      : {commitProjectOperation: options.commitProjectOperation}),
-    ...(options.projectExpiryStepTimeoutMs === undefined
-      ? {}
-      : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
-    ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
-    ...(options.codingAgentControllerFactory === undefined
-      ? {}
-      : {codingAgentControllerFactory: options.codingAgentControllerFactory}),
   })
 }
 
@@ -393,16 +345,6 @@ function supportComposition(
       clock,
       ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
     }),
-  }
-}
-
-function validateCodingResource(options: BuildCascadedRealtimeAssemblyOptions): void {
-  if (
-    options.codexResource !== undefined
-    && !options.settings.executors.includes(options.codexResource.adapter.manifest.name)
-  ) throw new AssemblyError('realtime coding resource selection mismatch')
-  if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {
-    throw new AssemblyError('realtime coding resource project mode mismatch')
   }
 }
 

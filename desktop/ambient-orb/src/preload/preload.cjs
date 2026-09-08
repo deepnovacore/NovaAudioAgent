@@ -1,6 +1,17 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
+  wakeWord: Object.freeze({
+    report: value => ipcRenderer.send('nova:wake-word:report', value),
+    audio: value => ipcRenderer.send('nova:wake-word:audio', value),
+    activity: () => ipcRenderer.send('nova:wake-word:activity'),
+    retry: () => ipcRenderer.invoke('nova:wake-word:retry'),
+    onChanged: callback => {
+      const listener = (_event, value) => callback(value)
+      ipcRenderer.on('nova:wake-word:changed', listener)
+      return () => ipcRenderer.removeListener('nova:wake-word:changed', listener)
+    },
+  }),
   bootstrap: () => ipcRenderer.invoke('nova:bootstrap'),
   onBackendExit: callback => {
     if (typeof callback !== 'function') return () => {}

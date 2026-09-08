@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import {mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {once} from 'node:events'
-import {Worker} from 'node:worker_threads'
 import {setTimeout as delay} from 'node:timers/promises'
 import type {BlackboardSessionOptions} from '../src/memory/blackboard-session.js'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import { setImmediate as yieldImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
+import {Worker} from 'node:worker_threads'
+import {parseCapabilityRegistry} from '../src/capability-registry.js'
+import {prepareKnowledge} from '../src/knowledge/assembly.js'
 import {
   AssemblyError,
   buildAssembly as buildAssemblyRaw,
@@ -170,13 +172,25 @@ async function settleNamed<T>(
 
 async function waitNamed(
   name: string,
-  condition: () => boolean,
+  condition: () => boolean | Promise<boolean>,
   timeoutMs = 1_500,
 ): Promise<void> {
-  await settleNamed(name, (async () => {
-    while (!condition()) await yieldImmediate()
-  })(), timeoutMs)
+  let waiting = true
+  try {
+    await settleNamed(name, (async () => {
+      while (waiting && !await condition()) await yieldImmediate()
+    })(), timeoutMs)
+  } finally { waiting = false }
 }
+
+test('a failed condition wait stops polling after its deadline', async () => {
+  let polls = 0
+  await assert.rejects(waitNamed('never ready', () => { polls++; return false }, 5), /did not settle/u)
+  const stoppedAt = polls
+  await yieldImmediate()
+  await yieldImmediate()
+  assert.equal(polls, stoppedAt)
+})
 
 async function assertPending(name: string, promise: Promise<unknown>): Promise<void> {
   const turn = deferred<'turn'>()
@@ -2688,6 +2702,8 @@ test('real assembly and graph service infer only weak metadata from committed ad
     await rm(directory, {recursive: true, force: true})
   })
 
+  // This test owns metadata transitions; cold Worker startup has a separate bounded-start test.
+  await settleNamed('graph fixture startup', graph.open(), 20_000)
   await realtime.start()
   await waitNamed('authoritative alpha graph open', () => (
     graph.publishedSnapshot.logical_workspaces.length === 1
@@ -2700,11 +2716,9 @@ test('real assembly and graph service infer only weak metadata from committed ad
     query: 'explain current workspace evidence',
     limit: 1,
   } as const
-  await settleNamed('authoritative alpha provider scope', (async () => {
-    while ((await graph.enrichAfterExplicitRecall(alphaProviderInput)).degraded) {
-      await yieldImmediate()
-    }
-  })())
+  await waitNamed('authoritative alpha provider scope', async () => (
+    !(await graph.enrichAfterExplicitRecall(alphaProviderInput)).degraded
+  ))
   assert.equal(providerScopeLookups, 1)
   const committed = [...workspaceObservers][0]
   const terminal = [...terminalObservers][0]
@@ -3254,8 +3268,10 @@ test('personal reply preferences refresh response style without invoking recall'
     assert.equal(provider.adaptations[0]!.content?.includes('source:'), false)
     assert.equal(recallCalls, 0)
 
+    await new Promise<void>(resolve => setImmediate(resolve))
     adaptation = {revision: 8, replyPreferences: []}
     await realtime.service.sendAudio(new Uint8Array([2, 3]))
+    await new Promise<void>(resolve => setImmediate(resolve))
     assert.deepEqual(provider.adaptations.at(-1), {revision: 8, content: null})
   } finally { await realtime.stop() }
 })
@@ -3947,6 +3963,40 @@ test('service close failure still stops core and preserves the first actual fail
   )
   assert.equal(frame.stops, 1)
   assert.equal(realtime.providerSession.state, 'closed')
+})
+
+test('knowledge forced close fits the outer core shutdown budget without requiring another stop', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'knowledge-realtime-close-'))
+  const capabilities = parseCapabilityRegistry({version: 1, modules: {search: {enabled: false}, coding: {enabled: false}, knowledge: {enabled: true}}}, {})
+  const settings = settingsSchema.parse({executors: [], model_api_key: 'test-key', knowledge_path: join(directory, 'knowledge.sqlite')})
+  const knowledge = await prepareKnowledge(settings, capabilities)
+  assert.ok(knowledge)
+  const frame = new RecordingFrameSource()
+  const core = buildAssembly({settings, capabilities, knowledge, frameSource: frame, gateway: new NeverCalledGateway()})
+  const diagnostics: string[] = []
+  const realtime = buildRealtimeAssembly({core, provider: new AbortAwareProvider(), onDiagnostic: line => diagnostics.push(line)})
+  const stop = t.mock.method(core, 'stop')
+  const original = Object.getOwnPropertyDescriptor(Worker.prototype, 'postMessage')!.value as Worker['postMessage']
+  const workers: Worker[] = []
+  const post = t.mock.method(Worker.prototype, 'postMessage', function (this: Worker, value: unknown) {
+    if ((value as {operation: string}).operation === 'close') {workers.push(this); return}
+    original.call(this, value)
+  })
+  try {
+    await realtime.start()
+    await settleNamed('knowledge deadline inside core budget', realtime.stop(), 1500)
+    assert.ok(workers[0])
+    assert.ok(!diagnostics.some(line => line.includes('assembly_core_stop_abandoned')))
+    assert.equal(frame.stops, 1)
+    await realtime.stop()
+    assert.equal(stop.mock.callCount(), 1)
+  } finally {
+    post.mock.restore()
+    await knowledge.close()
+    await workers[0]?.terminate()
+    await realtime.stop()
+    await rm(directory, {recursive: true, force: true})
+  }
 })
 
 test('outer service and core shutdown timeouts are bounded and content-safe', async () => {

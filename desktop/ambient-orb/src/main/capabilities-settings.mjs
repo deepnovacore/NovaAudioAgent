@@ -1,3 +1,4 @@
+import {restoreCapabilitySnapshot} from './settings-store.mjs'
 import {readFileSync, statSync} from 'node:fs'
 import {mkdir, rename, unlink, writeFile} from 'node:fs/promises'
 import {dirname, join, resolve} from 'node:path'
@@ -17,6 +18,7 @@ export function invalidCommit(reason = 'invalid_document') {
 export function capabilityDocumentRevision(settings, environment = {}) {
   const path = capabilityPath(settings, environment)
   try {
+    if (statSync(path).size > MAX_BYTES) throw invalidCommit('file_too_large')
     const bytes = readFileSync(path)
     if (bytes.byteLength > MAX_BYTES) throw invalidCommit('file_too_large')
     return createHmac('sha256', CAPABILITY_REVISION_KEY).update(path).update('\0').update(bytes).digest('base64url')
@@ -140,7 +142,7 @@ async function replaceBytes(path, bytes) {
     await rename(temp, path)
   } finally { await unlink(temp).catch(() => {}) }
 }
-export async function prepareCapabilityCommit({settings, sourceSettings = settings, document, expectedRevision, environment = {}, knownSecrets = []}) {
+export async function prepareCapabilityCommit({settings, sourceSettings = settings, document, expectedRevision, environment = {}, knownSecrets = [], beforeWrite = async () => {}}) {
   const nextDocument = document ?? readCapabilityDocument(settings, environment)
   assertEditorSafe(nextDocument, [...knownSecrets, ...referencedCapabilitySecrets(nextDocument, environment)])
   let registry
@@ -148,7 +150,7 @@ export async function prepareCapabilityCommit({settings, sourceSettings = settin
   catch (error) { throw invalidCommit(error?.reason ?? 'invalid_capabilities_configuration') }
   const failed = registry.serverStatuses.find(server => server.status === 'failed')
   if (failed) throw invalidCommit(failed.reason ?? 'invalid_mcp_server')
-  if (document === undefined) return
+  if (document === undefined) { await beforeWrite(null); return }
   const path = capabilityPath(settings, environment)
   let previous = null
   try { previous = readFileSync(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
@@ -163,8 +165,11 @@ export async function prepareCapabilityCommit({settings, sourceSettings = settin
     catch { throw invalidCommit('capabilities_document_changed') }
     if (expectedRevision !== currentRevision) throw invalidCommit('capabilities_document_changed')
   }
-  await replaceBytes(path, Buffer.from(JSON.stringify(document)))
-  return {rollback: () => previous === null ? unlink(path) : replaceBytes(path, previous)}
+  const bytes = Buffer.from(JSON.stringify(document))
+  const snapshot = {path, previous: previous === null ? null : previous.toString('base64'), written: bytes.toString('base64')}
+  await beforeWrite(snapshot)
+  await replaceBytes(path, bytes)
+  return {rollback: () => restoreCapabilitySnapshot(snapshot)}
 }
 export async function publicCapabilityProbe(config, probe = probeMcpServer, knownSecrets = []) {
   const secrets = [...knownSecrets, ...Object.entries(config.env ?? {}).filter(([name]) => !PUBLIC_IDENTITY_ENV.has(name)).map(([, value]) => value), ...Object.entries(config.headers ?? {}).filter(([name]) => !MCP_NON_AUTH_HEADERS.includes(name.toLowerCase())).flatMap(([, value]) => [value, value.replace(/^Bearer\s+/iu, '')])].filter(Boolean)

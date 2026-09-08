@@ -863,12 +863,6 @@ test('removed memory backend configuration fails explicitly instead of silently 
   }
 })
 
-test('mem0 is available only as a runtime-local provider', () => {
-  const env = {NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'local',NOVA_AUDIO_AGENT_MEMORY_PROVIDER:'mem0',
-    NOVA_AUDIO_AGENT_MODEL_API_KEY:'test',NOVA_AUDIO_AGENT_MODEL_BASE_URL:'https://example.com/v1'}
-  const config = requirePersonalMemory(loadSettings(env))
-  assert.ok(config?.connection === 'local')
-  assert.equal(config.provider, 'mem0')
-  assert.throws(() => loadSettings({...env,NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'remote'}), /only valid for a local/u)
-  assert.throws(() => loadSettings({...env,NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'disabled'}), /only valid for a local/u)
+test('deferred native memory provider is rejected explicitly', () => {
+  assert.throws(() => loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'local', NOVA_AUDIO_AGENT_MEMORY_PROVIDER: 'mem0'}), /MEMORY_PROVIDER/u)
 })

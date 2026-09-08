@@ -82,17 +82,28 @@ process, so project mode intentionally disables Codex prewarm. A persistent work
 refreshes its saved login when the host credential changes, using owner-only atomic files; a
 destination-only credential refresh is preserved while the host source is unchanged.
 
+## Local wake word
+
+Local Chinese wake-word detection is off by default. Enabling it in settings downloads the
+keyword model on first use and runs detection in a desktop Worker. The orb hides after 60
+idle seconds by default; choose `0` to disable auto-hide or `30..3600` seconds.
+The wake switch and idle timeout apply immediately without restarting the backend.
+
+macOS uses native capture; other platforms use browser capture as the fallback. While asleep,
+microphone frames go only to local wake detection. Explicit mute stops this capture too:
+speech cannot unmute the app, so unmute manually. Installed Windows Worker/WASM loading,
+model replacement and spoken wake-word acceptance remain pending.
+
+For manual Codex discovery on Windows select `codex.exe`, or the supported Node entry pairing
+`node.exe + codex.js`; `codex.cmd` is not a directly executable binary.
+
 ## Unsigned Windows development candidates
 
 The GitHub Actions workflow **Unsigned Windows packages** produces unsigned development
-candidates, not signed releases, and currently builds a Windows artifact only: download the
-`unsigned-win32-x64` workflow artifact and use the stable `nova-win32-x64.exe` inside it. Its
-Linux leg is temporarily disabled pending cross-platform CI restoration. Linux AppImage and deb
-targets exist as local packaging scripts (`npm run package:linux`) and as legs of the
-manual-dispatch release-candidate workflow (macOS, Windows, and Ubuntu legs; signing is required
-for macOS and Windows, while Linux artifacts are format-checked, not signed); the unsigned
-workflow does not currently publish Linux artifacts. Verify that a download came from the
-intended workflow run before using it.
+candidates. Download `unsigned-win32-x64` and use its `nova-win32-x64.exe`.
+Linux is deferred from release targets; Ubuntu still runs source builds and automated tests.
+Retained Linux packaging scripts do not establish a supported release candidate.
+Verify the intended workflow run before using a download.
 
 Windows may show a SmartScreen warning for the unsigned `nova-win32-x64.exe`. Keep SmartScreen and
 other Windows security protections enabled; verify the workflow run and file before deciding
@@ -162,6 +173,8 @@ recorded here as having run or passed. With an intentionally supplied DashScope 
 ```bash
 DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
 ```
+
+For opt-in live cascaded verification run `npm run smoke:cascaded --workspace @nova-audio-agent/runtime` with the provider credentials. The host controls response admission and request ownership; response origin is evidence, never authorization. Human acceptance remains pending.
 
 ## Workspace memory graph and MyContext provider
 
@@ -242,7 +255,7 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER` | `core` | No | dashscope | Knowledge embedding provider. |
 | `NOVA_AUDIO_AGENT_EMBEDDING_MODEL` | `core` | No | text-embedding-v4 | Knowledge embedding model. |
 | `NOVA_AUDIO_AGENT_MEMORY_CONNECTION` | `core` | No | disabled | Memory connection: disabled, local, or remote. |
-| `NOVA_AUDIO_AGENT_MEMORY_PROVIDER` | `core` | No | None | Local engine: voicemem (default) or mem0. Remote engines are service-owned. |
+| `NOVA_AUDIO_AGENT_MEMORY_PROVIDER` | `core` | No | None | Local engine: voicemem. Remote engines are service-owned. |
 | `NOVA_AUDIO_AGENT_BLACKBOARD_PATH` | `core` | No | ~/.nova-audio-agent/blackboard.sqlite | Conversation recovery database path. |
 | `NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID` | `core` | No | local | Stable conversation recovery owner. |
 | `NOVA_AUDIO_AGENT_MEMORY_URL` | `core` | When selected | None | HTTP memory service origin; HTTPS or numeric loopback HTTP. |
@@ -353,7 +366,7 @@ Use `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=local` for the local Node Worker and SDK
 
 Only `MEMORY_CONNECTION` and the local `MEMORY_PROVIDER` selector are supported. `MEMORY_BACKEND` has been removed and is rejected with a migration error. A provider without an enabled local connection is rejected rather than silently enabling memory.
 
-The runtime consumes `PersonalMemoryResource`, including optional `remember`, `forget`, and cached `responseAdaptation`. Adapter methods must only exist when their guarantees can be met. In particular, `stored` means durable admission, not merely acceptance or completed extraction. Evidence IDs must refer to real sources; provider relevance scores are not comparable across engines. The HTTP connector currently requires the documented v1 preferences, remember, recall and forget service contract. An arbitrary mem0 endpoint is not that contract. mem0 is supported only in the runtime-local mode described below. A read-only provider can be injected through the existing assembly factory without advertising writes.
+The runtime consumes `PersonalMemoryResource`, including optional `remember`, `forget`, and cached `responseAdaptation`. Adapter methods must only exist when their guarantees can be met. In particular, `stored` means durable admission, not merely acceptance or completed extraction. Evidence IDs must refer to real sources; provider relevance scores are not comparable across engines. The HTTP connector currently requires the documented v1 preferences, remember, recall and forget service contract. An arbitrary mem0 endpoint is not that contract. The native mem0 adapter remains in the integration source branch pending an isolated packaging contract. A read-only provider can be injected through the existing assembly factory without advertising writes.
 
 Company channels use one remote memory authority. The small preference cache is a disposable projection, not another writable memory store. The existing work-record ledger remains authoritative for corrected weekly-report states; historical recall alone cannot guarantee that a withdrawn claim disappears from every earlier utterance.
 
@@ -364,21 +377,3 @@ node runtime/scripts/check-memory-sdk.mjs /absolute/path/to/built-sdk
 ```
 
 This compiles current runtime sources into a temporary directory against the candidate exports and runs the actual Worker tests with a test-only module resolver. Required loopback tests must execute; permission failures cannot count as a pass. It does not replace installed dependencies. Check package origin, exact version and integrity before adopting an npm release. A local source snapshot passing this check is compatibility evidence, not a published release or a memory-quality benchmark.
-
-
-### Local mem0
-
-```dotenv
-NOVA_AUDIO_AGENT_MEMORY_CONNECTION=local
-NOVA_AUDIO_AGENT_MEMORY_PROVIDER=mem0
-```
-
-This selects `mem0ai/oss` in a local Node Worker, using the existing model API key/base URL, fast model and embedding model settings. No mem0 Platform account or shared memory service is used. The SDK still calls the configured model providers; local execution does not imply offline inference.
-
-SQLite files are isolated under `<MEMORY_PATH>.mem0/<sha256(MEMORY_USER_ID)>/`, separate from VoiceMem. Admission saves the source before inference; unfinished learning retries on reopen. Forgetting creates a durable tombstone and immediately excludes the source from recall while SDK cleanup runs in the background. Identical source replays are idempotent; conflicting payloads are rejected. Recall supplies actual source IDs and marks results degraded while sources remain pending. `recent` ranks only the latest five learned sources; `any` searches the owner's learned sources.
-
-The adapter deliberately omits automatic reply-preference adaptation. Empty SDK results cannot distinguish no facts from swallowed failures, so they remain pending and retry on reopen. Returned IDs must have persisted source records before learning is acknowledged. SDK-silent partial extraction omissions remain possible; durable admission is not proof of a complete weekly report. Model/embedding changes require a separate memory path or a deliberate migration. Do not run two runtimes against the same owner directory.
-
-Dependencies are pinned to `mem0ai@3.1.8`, `better-sqlite3@12.6.2`, and `pg@8.11.3`. `pg` is required by the SDK's eager module imports; this mode does not start PostgreSQL. After installing, ensure better-sqlite3 has a native binary for the Node runtime in use (`npm rebuild better-sqlite3` when changing Node versions). Local macOS Node acceptance does not cover Electron packaging or Windows/Linux native binaries.
-
-Run `npm run build --workspace runtime` followed by `node --test runtime/dist/test/mem0-store.test.js` for actual SDK/SQLite tests using synthetic loopback model responses.

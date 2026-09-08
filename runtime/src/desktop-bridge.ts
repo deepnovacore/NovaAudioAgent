@@ -1,3 +1,4 @@
+import {EXECUTOR_RESULT, EXECUTOR_RESULTS_RESET, DESKTOP_ACTIVITY, CLOCK_PING, CAPTION, PLAYBACK_TERMINAL} from './desktop-wire.js'
 /**
  * One-client transport adapter around an already-built `RealtimeService`.
  *
@@ -277,6 +278,10 @@ export class DesktopSocketBridge {
     this.#syncExecutorStateDelivery()
   }
 
+  onActivity(idle: boolean): void {
+    if (this.#authenticated) this.#enqueue(JSON.stringify({type: DESKTOP_ACTIVITY, idle}), {droppable: true})
+  }
+
   onProjectView(view: PublicProjectView): void {
     projectStateMessage(view)
     if (sameProjectView(view, this.#projectView)) return
@@ -315,7 +320,7 @@ export class DesktopSocketBridge {
   onExecutorProgress(input: ExecutorProgress, result?: ExecutorResult): void {
     const frame = executorProgressSchema.parse(input)
     if (result !== undefined) {
-      const parsed = executorResultSchema.parse({type: 'executor.result', work_id: frame.delegate_id, result})
+      const parsed = executorResultSchema.parse({type: EXECUTOR_RESULT, work_id: frame.delegate_id, result})
       const previous = this.#results.get(frame.delegate_id)
       const project = this.#projectView?.roster?.find(entry => entry.running.some(work => work.work_id === frame.delegate_id))
       const title = project?.running.find(work => work.work_id === frame.delegate_id)?.title ?? previous?.title
@@ -323,7 +328,7 @@ export class DesktopSocketBridge {
       const retained = {...(projectName === undefined ? {} : {project: projectName}), ...(title === undefined ? {} : {title})}
       const enriched = parsed.result === null ? null : {...parsed.result, ...retained}
       // Validate metadata too before changing retained state; serialization stays one bounded work per frame.
-      const wire = executorResultSchema.parse({type: 'executor.result', work_id: frame.delegate_id, result: enriched})
+      const wire = executorResultSchema.parse({type: EXECUTOR_RESULT, work_id: frame.delegate_id, result: enriched})
       if (Buffer.byteLength(JSON.stringify(wire)) > MAX_DESKTOP_JSON_BYTES) throw new DesktopProtocolError('desktop result frame is too large')
       const oldestFinished = [...this.#results].find(([, entry]) => entry.result !== null)?.[0]
       if (previous === undefined && this.#results.size >= 64 && oldestFinished === undefined) {
@@ -394,8 +399,8 @@ export class DesktopSocketBridge {
 
   #replayResults(): void {
     // A fresh snapshot also removes evicted entries from a connected renderer. Never aggregate 64 results into one frame.
-    this.#resultReplay = [JSON.stringify({type: 'executor.results.reset'}), ...[...this.#results].map(([work_id, entry]) =>
-      JSON.stringify({type: 'executor.result', work_id, result: entry.result}))]
+    this.#resultReplay = [JSON.stringify({type: EXECUTOR_RESULTS_RESET}), ...[...this.#results].map(([work_id, entry]) =>
+      JSON.stringify({type: EXECUTOR_RESULT, work_id, result: entry.result}))]
     if (this.#authenticated) this.#onOutboundAvailable?.()
   }
 
@@ -600,8 +605,8 @@ export class DesktopSocketBridge {
       return decodeAudioFrame(value).generation_epoch <= this.#fencedGenerationEpoch
     }
     if (
-      !value.startsWith('{"type":"caption"')
-      && !value.startsWith('{"type":"playback.terminal"')
+      !value.startsWith(`{"type":"${CAPTION}"`)
+      && !value.startsWith(`{"type":"${PLAYBACK_TERMINAL}"`)
     ) {
       return false
     }
@@ -710,7 +715,7 @@ export class DesktopSocketBridge {
     const ids: string[] = []
     for (let index = 0; index < count; index += 1) {
       const pingId = `ping-${index}`
-      if (this.#enqueue(`{"type":"clock.ping","ping_id":"${pingId}"}`, {droppable: true})) {
+      if (this.#enqueue(`{"type":"${CLOCK_PING}","ping_id":"${pingId}"}`, {droppable: true})) {
         this.registerPing(pingId)
         ids.push(pingId)
       }

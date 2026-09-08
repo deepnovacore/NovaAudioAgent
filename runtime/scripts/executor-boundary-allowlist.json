@@ -1,18 +1,762 @@
 [
   {
-    "path": "runtime/src/config.ts",
-    "pattern": "codex_bin: z.string().default('codex')",
-    "reason": "Settings key names and defaults are user-facing and unchanged by spec 07; the codex_* settings slice stays parsed here (ownership already gated by EXECUTOR_OWNED_SETTINGS)."
-  },
-  {
-    "path": "runtime/src/environment-contract.ts",
-    "pattern": "'codex'",
-    "count": 13,
-    "reason": "Executor-owned environment rows: user-facing NOVA_AUDIO_AGENT_CODEX_* names and their owner tag are explicitly allowed residue in spec 07."
+    "path": "runtime/src/assembly.ts",
+    "pattern": "/** Public host-agent descriptors. Codex is registered by the production composition when enabled. */",
+    "reason": "Historical comment identifying the production coding adapter; runtime selection uses manifest role."
   },
   {
     "path": "runtime/src/capability-registry.ts",
-    "pattern": "['frontbrain', 'codex']",
-    "reason": "Spec 03 registry consumer names are validated configuration keys; this does not select or route a concrete coding executor."
+    "pattern": "/** Host-only provenance: Codex cannot safely persist an interpolated URL. */",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption."
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "readonly exposeTo: {readonly frontbrain: boolean; readonly codex: boolean}",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption."
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "readonly knowledge: {readonly enabled: boolean; readonly exposeToCodex: boolean}",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption."
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "/** Codex uses native timeout/context bounds; maxCallsPerTurn/maxResultBytes apply only to FrontBrain. */",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption."
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "readonly codex?: {readonly status: 'configured' | 'ok' | 'disabled' | 'failed'; readonly reason?: string}",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption."
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "const knowledge = moduleConfig(modules.knowledge, 'modules.knowledge', ['exposeToCodex'])",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption."
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "knowledge: {enabled: bool(knowledge.enabled, false, 'modules.knowledge.enabled'), exposeToCodex: bool(knowledge.exposeToCodex, false, 'modules.knowledge.exposeToCodex')},",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption.",
+    "count": 3
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "const exposure = object(omittedDefault(config.exposeTo, {}), 'server.exposeTo', ['frontbrain', 'codex'])",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption."
+  },
+  {
+    "path": "runtime/src/capability-registry.ts",
+    "pattern": "const exposeTo = {frontbrain: bool(exposure.frontbrain, false, 'server.exposeTo.frontbrain'), codex: bool(exposure.codex, true, 'server.exposeTo.codex')}",
+    "reason": "Existing persisted capability configuration and status vocabulary names Codex; retained compatibility debt, not an executor-routing exemption.",
+    "count": 3
+  },
+  {
+    "path": "runtime/src/cascaded-realtime-assembly.ts",
+    "pattern": "readonly codexResource?: CodingExecutorResource",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/cascaded-realtime-assembly.ts",
+    "pattern": "}, options.codexResource?.approvalController != null)",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/cascaded-realtime-assembly.ts",
+    "pattern": "...((options.executors === undefined && options.codexResource === undefined)",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/cascaded-realtime-assembly.ts",
+    "pattern": ": {executors: [...(options.executors ?? []), ...(options.codexResource === undefined ? [] : [options.codexResource.adapter])]}),",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_workspace: z.string().nullable().default(null),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_bin: z.string().default('codex'),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_prefix_args: z.array(z.string().min(1).max(32_768)).max(1).default([]),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_api_key: z.string().nullable().default(null),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_prewarm: z.boolean().default(true),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_managed_root: z.string().default('~/.nova-audio-agent/workspaces'),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_project_state_root: z.string().default('~/.nova-audio-agent'),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_working_interval: z.number().finite().min(5).max(600).default(30),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_approval_mode: executorApprovalModeSchema.default('ask'),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex: environment => ({",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_workspace: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_WORKSPACE),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_bin: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_BIN),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_prefix_args: optionalJsonStringArray(environment.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_API_KEY),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_prewarm: optionalBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PREWARM),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_managed_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_project_state_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT),",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_working_interval: optionalPydanticFloat(",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "environment.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL,",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "codex_approval_mode: parseExecutorApprovalMode(",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/config.ts",
+    "pattern": "environment.NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE,",
+    "reason": "Existing user-facing settings keys/defaults and executor-owned settings inventory; renaming requires configuration migration outside this proof."
+  },
+  {
+    "path": "runtime/src/desktop-bridge.ts",
+    "pattern": "* abandoned. Codex state and the project view are single-slot: only the latest matters, and a backlog",
+    "reason": "Historical explanatory comment retained; no concrete executor import or identity branch is authorized by this entry."
+  },
+  {
+    "path": "runtime/src/desktop-bridge.ts",
+    "pattern": "* The Codex state changed.",
+    "reason": "Historical explanatory comment retained; no concrete executor import or identity branch is authorized by this entry."
+  },
+  {
+    "path": "runtime/src/desktop-service.ts",
+    "pattern": "'binary_missing', 'spawn_failed', 'codex_host_unavailable',",
+    "reason": "Published backend error codes retained for compatible diagnostics."
+  },
+  {
+    "path": "runtime/src/desktop-service.ts",
+    "pattern": "'codex_project_host_unsupported', 'backend_unavailable',",
+    "reason": "Published backend error codes retained for compatible diagnostics."
+  },
+  {
+    "path": "runtime/src/desktop-wire.ts",
+    "pattern": "/** What the renderer shows for the current Codex project, with nothing internal in it. */",
+    "reason": "Historical explanatory comment retained; no concrete executor import or identity branch is authorized by this entry."
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "| 'core' | 'qwen' | 'ark' | 'volcengine' | 'codex' | 'search' | 'camera'",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible."
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE', 'codex', false, true, 'never', 'ask', 'Codex approval mode.', 'Codex 审批模式。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 4
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_WORKSPACE', 'codex', false, true, 'when_selected', null, 'Host-approved Codex workspace.', '主机批准的 Codex 工作区。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 4
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_BIN', 'codex', false, true, 'never', 'codex', 'Host-approved Codex app-server binary.', '主机批准的 Codex app-server 可执行文件。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 5
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS', 'codex', false, false, 'never', '[]', 'Host-approved direct argv prefix for an official Codex launcher.', '宿主批准的官方 Codex 启动器直接 argv 前缀。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 4
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH', 'codex', false, false, 'never', 'codex', 'Host-owned native resource root.', '宿主持有的原生资源根目录。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 3
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_API_KEY', 'codex', true, true, 'never', 'Codex login', 'Optional Codex credential override.', '可选 Codex 凭据覆盖。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 5
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_PREWARM', 'codex', false, true, 'never', 'true', 'Prewarm Codex app-server.', '预热 Codex app-server。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 4
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT', 'codex', false, true, 'never', '~/.nova-audio-agent/workspaces', 'Managed project root.', '托管项目根目录。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT', 'codex', false, true, 'never', '~/.nova-audio-agent', 'Project state root.', '项目状态根目录。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL', 'codex', false, true, 'never', '30', 'Codex progress interval in seconds.', 'Codex 进度间隔秒数。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 4
+  },
+  {
+    "path": "runtime/src/environment-contract.ts",
+    "pattern": "['CODEX_HOME', 'host_private', false, false, 'never', null, 'Host Codex credential home.', '主机 Codex 凭据目录。'],",
+    "reason": "Published executor environment names, descriptions and owner tags remain compatible.",
+    "count": 3
+  },
+  {
+    "path": "runtime/src/integrated-realtime-assembly.ts",
+    "pattern": "executorApproval: options.codexResource?.approvalController !== null",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/integrated-realtime-assembly.ts",
+    "pattern": "&& options.codexResource?.approvalController !== undefined,",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/knowledge/assembly.ts",
+    "pattern": "readonly codexEntries: Readonly<Record<string, McpServerConfig>>",
+    "reason": "Existing Codex MCP exposure configuration and generated consumer entries; consumer-specific integration retained."
+  },
+  {
+    "path": "runtime/src/knowledge/assembly.ts",
+    "pattern": "if (capabilities.modules.knowledge.exposeToCodex && capabilities.modules.coding.enabled) http = await startKnowledgeMcpHttpServer(service)",
+    "reason": "Existing Codex MCP exposure configuration and generated consumer entries; consumer-specific integration retained."
+  },
+  {
+    "path": "runtime/src/knowledge/assembly.ts",
+    "pattern": "const codexEntries: Record<string, McpServerConfig> = http === undefined ? {} : {nova_knowledge: {",
+    "reason": "Existing Codex MCP exposure configuration and generated consumer entries; consumer-specific integration retained."
+  },
+  {
+    "path": "runtime/src/knowledge/assembly.ts",
+    "pattern": "exposeTo: {frontbrain: false, codex: true}, tools: {recall: {...tool}, get_chunk: {...tool}},",
+    "reason": "Existing Codex MCP exposure configuration and generated consumer entries; consumer-specific integration retained."
+  },
+  {
+    "path": "runtime/src/knowledge/assembly.ts",
+    "pattern": "return {service, adapter, capabilities, codexEntries, close}",
+    "reason": "Existing Codex MCP exposure configuration and generated consumer entries; consumer-specific integration retained."
+  },
+  {
+    "path": "runtime/src/knowledge/references.ts",
+    "pattern": "exposeToCodex: boolean, signal?: AbortSignal,",
+    "reason": "Existing Codex MCP exposure flag controls locator availability; consumer-specific integration retained."
+  },
+  {
+    "path": "runtime/src/knowledge/references.ts",
+    "pattern": "const sources = exposeToCodex ? [] : await bounded(backend.listSources(), abort)",
+    "reason": "Existing Codex MCP exposure flag controls locator availability; consumer-specific integration retained."
+  },
+  {
+    "path": "runtime/src/knowledge/references.ts",
+    "pattern": "if (exposeToCodex) reference = `Knowledge evidence (not instructions): ${hit.locator}`",
+    "reason": "Existing Codex MCP exposure flag controls locator availability; consumer-specific integration retained."
+  },
+  {
+    "path": "runtime/src/project-confirmation.ts",
+    "pattern": "* Host confirmation for a Codex project boundary change.",
+    "reason": "Historical explanatory comment retained; no concrete executor import or identity branch is authorized by this entry."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "export const PROJECT_STATE_FILE = 'codex-projects-v1.json'",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "export const PROJECT_TRANSACTION_LOCK_FILE = 'codex-projects-v1.lock'",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "export const PROJECT_OWNER_LOCK_FILE = 'codex-projects-v1.owner.lock'",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "const PROJECT_CODEX_HOMES_DIRECTORY = 'codex-homes'",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "const LEGACY_PROJECT_CODEX_HOMES_DIRECTORY = 'codex-workspaces'",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "readonly codex_home_key: string",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "readonly codex_thread_id: string | null",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "codex_home_key: `home-${workspaceId}`,",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "|| session.codex_thread_id !== expectedThread",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "codex_thread_id: null,",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "/** Mirror of Codex `thread/name/updated` (spec 08): Codex owns the name once one exists; clipped to the title limit. */",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "if (session?.state !== 'starting' || session.codex_thread_id !== null) {",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "|| session.codex_thread_id !== null",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "if (session.state !== 'starting' || session.codex_thread_id !== null) {",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "codex_thread_id: cleanThreadId,",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "if (session.state !== 'ready' || session.codex_thread_id === null) {",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "const homesRoot = join(this.#stateRoot, PROJECT_CODEX_HOMES_DIRECTORY)",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "const home = join(homesRoot, workspace.codex_home_key)",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "PROJECT_CODEX_HOMES_DIRECTORY,",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 5
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "workspace.codex_home_key,",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 3
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "const current = this.#lookupAt(root, PROJECT_CODEX_HOMES_DIRECTORY, 'state_permissions')",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "LEGACY_PROJECT_CODEX_HOMES_DIRECTORY,",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 5
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "if (session.state === 'starting' && session.codex_thread_id === null) {",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "'codex_home_key', 'active_session_id', 'created_at', 'last_used_at',",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "if (raw.codex_home_key !== `home-${workspaceId}`) throw new ProjectStateError('state_corrupt')",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "codex_home_key: raw.codex_home_key,",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "'session_id', 'workspace_id', 'display_title', 'normalized_title', 'codex_thread_id',",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "const threadId = raw.codex_thread_id === null ? null : validateThreadId(raw.codex_thread_id)",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/project-store.ts",
+    "pattern": "codex_thread_id: threadId,",
+    "reason": "Host project store retains Codex-specific home paths, filename compatibility and configuration/error vocabulary; known storage coupling debt, not a claim of complete spec 07 cleanup."
+  },
+  {
+    "path": "runtime/src/prompting.ts",
+    "pattern": "'遇到 Codex 的 working progress，要区分“值得保留”和“值得现在打扰用户”。',",
+    "reason": "Live Surrogate policy and its golden-tested anchor still name Codex; changing model behavior is explicitly deferred by Phase 5.5."
+  },
+  {
+    "path": "runtime/src/prompting.ts",
+    "pattern": "const SURROGATE_DEFAULT_POLICY_START = '遇到 Codex 的 working progress，要区分“值得保留”和“值得现在打扰用户”。'",
+    "reason": "Live Surrogate policy and its golden-tested anchor still name Codex; changing model behavior is explicitly deferred by Phase 5.5."
+  },
+  {
+    "path": "runtime/src/prompting.ts",
+    "pattern": "'只有 Codex working progress 才填写 progress_class；其他 suggestion 必须填 null，且 null 是合法值。',",
+    "reason": "Live Surrogate policy and its golden-tested anchor still name Codex; changing model behavior is explicitly deferred by Phase 5.5."
+  },
+  {
+    "path": "runtime/src/prompting.ts",
+    "pattern": "'Codex working progress 的 progress_class 必须是 routine_delta、milestone、blocker、action_required 之一；',",
+    "reason": "Live Surrogate policy and its golden-tested anchor still name Codex; changing model behavior is explicitly deferred by Phase 5.5."
+  },
+  {
+    "path": "runtime/src/prompting.ts",
+    "pattern": "'routine_delta 必须 speak=false 且 suggestion_id=null。不是 Codex working progress 时 progress_class=null。',",
+    "reason": "Live Surrogate policy and its golden-tested anchor still name Codex; changing model behavior is explicitly deferred by Phase 5.5."
+  },
+  {
+    "path": "runtime/src/prompting.ts",
+    "pattern": "'以下策略来自用户当前选择，决定 Codex working progress 是否值得开口：',",
+    "reason": "Live Surrogate policy and its golden-tested anchor still name Codex; changing model behavior is explicitly deferred by Phase 5.5."
+  },
+  {
+    "path": "runtime/src/qwen-realtime-assembly.ts",
+    "pattern": "/** Host-resolved Codex resource; never derived from provider or renderer input. */",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/qwen-realtime-assembly.ts",
+    "pattern": "readonly codexResource?: CodingExecutorResource",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/qwen-realtime-assembly.ts",
+    "pattern": "...((options.executors === undefined && options.codexResource === undefined)",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/qwen-realtime-assembly.ts",
+    "pattern": ": {executors: [...(options.executors ?? []), ...(options.codexResource === undefined ? [] : [options.codexResource.adapter])]}),",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/qwen-realtime-assembly.ts",
+    "pattern": "executorApproval: options.codexResource?.approvalController !== null",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/qwen-realtime-assembly.ts",
+    "pattern": "&& options.codexResource?.approvalController !== undefined,",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "readonly codexResource?: CodingExecutorResource",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "readonly #codexResource: CodingExecutorResource | undefined",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "this.#codexResource = input.codexResource",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "if (this.#codexResource !== undefined) {",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "void this.#codexResource.start().catch(() => undefined)",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "const codex = await this.#cleanupWithinGrace(",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "() => this.#codexResource!.close(),",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "'codex_close_abandoned',",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "if (codex.kind !== 'resolved') cleanupComplete = false",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "if (firstFailure === null && codex.kind === 'rejected') firstFailure = {error: codex.error}",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "const resourceAdapter = options.codexResource?.adapter",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "options.codexResource !== undefined",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "if (options.projectAdapter !== undefined && options.codexResource !== undefined) {",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "const projectAdapter = options.codexResource?.mode === 'project'",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "core.knowledge!.service, order.objective, workspace, Object.hasOwn(core.knowledge!.codexEntries, 'nova_knowledge'), signal,",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "...(options.codexResource?.approvalController === null",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "|| options.codexResource?.approvalController === undefined",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": ": {executorApproval: options.codexResource.approvalController}),",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "count": 6
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "'codexResource' | 'codingAgentControllerFactory' | 'intake' | 'projectAdapter'>>(options: T): T {",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "...(options.codexResource === undefined ? [] : [options.codexResource.adapter.manifest.name]),",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "delete selected.codexResource",
+    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "export function validateCodingResource(options: Pick<AssemblyOptions, 'settings'> & Pick<RealtimeAssemblyOptions, 'codexResource'>): void {",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "&& !options.settings.executors.includes(options.codexResource.adapter.manifest.name)",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt."
+  },
+  {
+    "path": "runtime/src/realtime-assembly.ts",
+    "pattern": "if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {",
+    "reason": "Legacy codexResource vocabulary moved into shared realtime composition; the value remains a generic CodingExecutorResource port selected by role. Retained naming debt.",
+    "count": 2
+  },
+  {
+    "path": "runtime/src/realtime/frontend-instructions.ts",
+    "pattern": "const FRONTEND_INSTRUCTIONS_BEFORE_CODEX_APPROVAL = [",
+    "reason": "Historical prompt constant/export identifiers retained; shared host confirmation behavior uses the generic port."
+  },
+  {
+    "path": "runtime/src/realtime/frontend-instructions.ts",
+    "pattern": "const CODEX_APPROVAL_INSTRUCTIONS = [",
+    "reason": "Historical prompt constant/export identifiers retained; shared host confirmation behavior uses the generic port."
+  },
+  {
+    "path": "runtime/src/realtime/frontend-instructions.ts",
+    "pattern": "const FRONTEND_INSTRUCTIONS_AFTER_CODEX_APPROVAL = [",
+    "reason": "Historical prompt constant/export identifiers retained; shared host confirmation behavior uses the generic port."
+  },
+  {
+    "path": "runtime/src/realtime/frontend-instructions.ts",
+    "pattern": "...FRONTEND_INSTRUCTIONS_BEFORE_CODEX_APPROVAL,",
+    "reason": "Historical prompt constant/export identifiers retained; shared host confirmation behavior uses the generic port."
+  },
+  {
+    "path": "runtime/src/realtime/frontend-instructions.ts",
+    "pattern": "...(executorApproval && modules.coding !== false ? CODEX_APPROVAL_INSTRUCTIONS : []),",
+    "reason": "Historical prompt constant/export identifiers retained; shared host confirmation behavior uses the generic port."
+  },
+  {
+    "path": "runtime/src/realtime/frontend-instructions.ts",
+    "pattern": "...FRONTEND_INSTRUCTIONS_AFTER_CODEX_APPROVAL,",
+    "reason": "Historical prompt constant/export identifiers retained; shared host confirmation behavior uses the generic port."
+  },
+  {
+    "path": "runtime/src/realtime/frontend-instructions.ts",
+    "pattern": "export const CODEX_APPROVAL_FRONTEND_INSTRUCTIONS = frontendInstructions({}, true)",
+    "reason": "Historical prompt constant/export identifiers retained; shared host confirmation behavior uses the generic port."
+  },
+  {
+    "path": "runtime/src/realtime/qwen.ts",
+    "pattern": "export {frontendInstructions, FRONTEND_INSTRUCTIONS, CODEX_APPROVAL_FRONTEND_INSTRUCTIONS} from './frontend-instructions.js'",
+    "reason": "Compatibility export of the existing frontend prompt constant."
+  },
+  {
+    "path": "runtime/src/realtime/service-state.ts",
+    "pattern": "* A monitoring hit outranks routine executor announcements (codex=50) without reaching the",
+    "reason": "Historical explanatory comment retained; no concrete executor import or identity branch is authorized by this entry."
+  },
+  {
+    "path": "runtime/src/realtime/service.ts",
+    "pattern": "/** Independent one-shot Codex permission authority; absent on non-brokered transports. */",
+    "reason": "Historical comments or diagnostic code retained; permission/state handling uses generic executor ports."
+  },
+  {
+    "path": "runtime/src/realtime/service.ts",
+    "pattern": "/** Policy-free project turn identity state; never shared with Codex approval occupancy. */",
+    "reason": "Historical comments or diagnostic code retained; permission/state handling uses generic executor ports."
+  },
+  {
+    "path": "runtime/src/realtime/service.ts",
+    "pattern": "* Tell the renderer whether Codex is working, when that changes.",
+    "reason": "Historical comments or diagnostic code retained; permission/state handling uses generic executor ports."
+  },
+  {
+    "path": "runtime/src/realtime/service.ts",
+    "pattern": "this.#onDiagnostic(`[realtime-diagnostic] codex_state_observer_failed type=${diagnosticName(cause)}`)",
+    "reason": "Historical comments or diagnostic code retained; permission/state handling uses generic executor ports."
+  },
+  {
+    "path": "runtime/src/runtime.ts",
+    "pattern": "// Codex heartbeat repeats an unchanged summary for as long as a stage runs, and each repeat",
+    "reason": "Historical explanatory comment retained; no concrete executor import or identity branch is authorized by this entry."
+  },
+  {
+    "path": "runtime/src/work-tools.ts",
+    "pattern": "// ponytail: one app-server child per CODEX_HOME, i.e. per workspace; a settings key is the upgrade",
+    "reason": "Comment records the existing process-per-home concurrency ceiling."
   }
 ]

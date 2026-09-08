@@ -64,7 +64,7 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_EMBEDDING_MODEL', 'core', false, true, 'never', 'text-embedding-v4', 'Knowledge embedding model.', '知识库 embedding 模型。'],
   ['NOVA_AUDIO_AGENT_MEMORY_BACKEND', 'core', false, false, 'never', null, 'Removed; rejected in favor of MEMORY_CONNECTION.', '已移除；使用时会报错，请改用 MEMORY_CONNECTION。'],
   ['NOVA_AUDIO_AGENT_MEMORY_CONNECTION', 'core', false, true, 'never', 'disabled', 'Memory connection: disabled, local, or remote.', '记忆连接：disabled、local 或 remote。'],
-  ['NOVA_AUDIO_AGENT_MEMORY_PROVIDER', 'core', false, true, 'never', null, 'Local engine: voicemem (default) or mem0. Remote engines are service-owned.', '本地引擎：voicemem（默认）或 mem0。远程引擎由服务端选择。'],
+  ['NOVA_AUDIO_AGENT_MEMORY_PROVIDER', 'core', false, true, 'never', null, 'Local engine: voicemem. Remote engines are service-owned.', '本地引擎：voicemem。远程引擎由服务端选择。'],
   ['NOVA_AUDIO_AGENT_BLACKBOARD_PATH', 'core', false, true, 'never', '~/.nova-audio-agent/blackboard.sqlite', 'Conversation recovery database path.', '会话恢复数据库路径。'],
   ['NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID', 'core', false, true, 'never', 'local', 'Stable conversation recovery owner.', '稳定的会话恢复所有者。'],
   ['NOVA_AUDIO_AGENT_MEMORY_URL', 'core', false, true, 'when_selected', null, 'HTTP memory service origin; HTTPS or numeric loopback HTTP.', 'HTTP 记忆服务地址；仅 HTTPS 或数字回环 HTTP。'],

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "v0.2.0dev"]
     tags: ["v*"]
   pull_request:
 
@@ -10,6 +10,16 @@ permissions:
   contents: read
 
 jobs:
+  release-readiness:
+    if: github.base_ref == 'main' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm run check:release-gate
+
   electron:
     strategy:
       fail-fast: false
@@ -28,10 +38,9 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run test:runtime
-        # The complete runtime suite asserts POSIX uid/mode and descriptor-lock
-        # contracts. Windows is covered by the desktop/native suite below and
-        # by the checkout-free installed NSIS smoke in unsigned-packages.yml.
         if: runner.os != 'Windows'
+      - run: npm run test:runtime:win
+        if: runner.os == 'Windows'
       - run: npm run test:cli
       # npm may restore the Electron package without its platform binary from
       # cache. The pinned install script is idempotent and closes that gap.
@@ -43,7 +52,8 @@ jobs:
 
   package:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: electron
+    # Build candidate artifacts independently; release-publish enforces acceptance before publishing.
+    needs: [electron]
     strategy:
       fail-fast: false
       matrix:

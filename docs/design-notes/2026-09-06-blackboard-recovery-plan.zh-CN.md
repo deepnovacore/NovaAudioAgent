@@ -1,6 +1,6 @@
 # Nova 会话恢复与可替换长期记忆
 
-状态：架构计划，尚未实现 blackboard 持久化。工作分支为 `feature/voicemem-nova-integration`，独立 worktree；本计划不表示 Nova 已具备重启恢复能力。
+状态：blackboard 持久化、恢复与清除已实现并有本地回归；本文保留原设计及验收边界。
 
 ## 已确定的边界
 
@@ -195,4 +195,4 @@ Nova 的清除基础使用单一 Memory 和既有 SQLite clear transaction。Ses
 
 打包 whitelist 显式包含 VoiceMem，以及独立 package 的编译入口和 Nova store Worker；没有放宽原有原生媒体依赖限制。完整测试发现的旧 preload 能力断言已更新。原生 addon 测试在独立临时目录运行：原先测试从指向外盘的 build 软链接创建目录，被既有 canonical-path 安全检查正确拒绝；没有修改产品的路径安全策略。由于内盘空间不足，本 worktree 的可再生成 `desktop/ambient-orb/build` 指向专用外盘目录，运行本机 build 时须挂载该卷；源码和锁文件不依赖此绝对路径。
 
-这些结果不替代真实麦克风/扬声器、Windows 桌面、代表性 LoCoMo/PersonaMem 质量、GPU 推理或付费 live 抽取验收。当前仅固定 default conversation；mem0 具体适配器和多会话 UX 未实现。上游 PR 尚未发布，须先由用户 review。长期记忆后端停用时，Nova 自有 blackboard 恢复与清除仍独立可用。
+这些结果不替代真实麦克风/扬声器、Windows 桌面、代表性 LoCoMo/PersonaMem 质量、GPU 推理或付费 live 抽取验收。持久会话身份由宿主 owner 派生，临时会话各自独立；多会话 UX 尚未实现。mem0 适配器保留在源集成分支，暂不进入桌面包。上游 PR 尚未发布，须先由用户 review。长期记忆后端停用时，Nova 自有 blackboard 恢复与清除仍独立可用。

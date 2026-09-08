@@ -9,7 +9,28 @@ import { createPackage, createPackageWithOptions, extractAll, listPackage } from
 
 import * as packageInspection from '../scripts/inspect-package.mjs'
 import { generateNativeResourceManifest } from '../scripts/native-resource-contract.mjs'
-import { deriveLockedProductionClosure } from '../scripts/release-dependency-closure.mjs'
+import { DESKTOP_DEPENDENCIES, deriveLockedProductionClosure } from '../scripts/release-dependency-closure.mjs'
+import { replacePackagedAsar } from '../scripts/build-owned-asar.mjs'
+
+test('final owned ASAR retains the sherpa JavaScript and WASM unpack contract', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-owned-asar-'))
+  const sourceRoot = resolve(root, 'source')
+  const archivePath = resolve(root, 'app.asar')
+  const files = ['node_modules/sherpa-onnx/sherpa-onnx.mjs', 'node_modules/sherpa-onnx/sherpa-onnx.wasm', 'node_modules/native/addon.node']
+  try {
+    for (const file of files) {
+      await mkdir(dirname(resolve(sourceRoot, file)), {recursive: true})
+      await writeFile(resolve(sourceRoot, file), file)
+    }
+    await createPackageWithOptions(sourceRoot, archivePath, {unpackDir: ['node_modules', 'sherpa-onnx'].join(sep)})
+    await replacePackagedAsar({sourceRoot, archivePath})
+    for (const file of files) {
+      assert.equal(await readFile(resolve(`${archivePath}.unpacked`, file), 'utf8'), file)
+    }
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
 
 const {
   PackageInspectionError,
@@ -29,7 +50,7 @@ const DESKTOP_FILES = [
 
 const DESKTOP_MANIFEST = Object.freeze({
   name: '@nova-audio-agent/ambient-orb',
-  dependencies: { '@nova-audio-agent/runtime': '0.1.1' },
+  dependencies: { '@nova-audio-agent/runtime': '0.1.1', 'sherpa-onnx': '1.13.4', 'tar-stream': '3.1.7', 'unbzip2-stream': '1.4.3' },
 })
 const RUNTIME_MANIFEST = Object.freeze({
   name: '@nova-audio-agent/runtime',
@@ -65,6 +86,9 @@ async function writeArtifactRoot(root, {
     ['src/main/main.mjs', 'export {}\n'],
     ['src/main/camera-source.mjs', 'export {}\n'],
     ['src/renderer/camera.mjs', 'export const camera = true\n'],
+    ...DESKTOP_DEPENDENCIES.filter(name => name !== '@nova-audio-agent/runtime').map(name => [
+      `node_modules/${name}/package.json`, JSON.stringify({name, version: DESKTOP_MANIFEST.dependencies[name]}),
+    ]),
     ['node_modules/@nova-audio-agent/runtime/package.json', JSON.stringify(runtimeManifest)],
     ['node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js', 'export {}\n'],
     ['node_modules/@nova-audio-agent/runtime/dist/src/voicemem/store-worker.js', 'export {}\n'],
@@ -147,6 +171,7 @@ function validArtifactFiles() {
     'src/main/main.mjs',
     'src/main/camera-source.mjs',
     'src/renderer/camera.mjs',
+    ...DESKTOP_DEPENDENCIES.filter(name => name !== '@nova-audio-agent/runtime').map(name => `node_modules/${name}/package.json`),
     'node_modules/@nova-audio-agent/runtime/package.json',
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
     'node_modules/@nova-audio-agent/runtime/dist/src/voicemem/store-worker.js',
@@ -371,7 +396,7 @@ test('artifact-root entry reads bounded manifests from the inspected artifact it
     await writeArtifactRoot(root)
     const result = await packageInspection.inspectArtifactRoot(root)
     assert.equal(result.cameraIncluded, true)
-    assert.deepEqual(result.productionDependencies, ['@nova-audio-agent/runtime'])
+    assert.deepEqual(result.productionDependencies, [...DESKTOP_DEPENDENCIES].sort())
 
     for (const missing of ['package.json', 'node_modules/@nova-audio-agent/runtime/package.json']) {
       await rm(resolve(root, missing))
@@ -1207,8 +1232,11 @@ test('release candidate report binds artifact SHA and rejects an external resour
       packages: {
         'desktop/ambient-orb': {
           name: '@nova-audio-agent/ambient-orb',
-          dependencies: { '@nova-audio-agent/runtime': '0.1.1' },
+          dependencies: DESKTOP_MANIFEST.dependencies,
         },
+        ...Object.fromEntries(DESKTOP_DEPENDENCIES.filter(name => name !== '@nova-audio-agent/runtime').map(name => [
+          `node_modules/${name}`, {version: DESKTOP_MANIFEST.dependencies[name]},
+        ])),
         'node_modules/@nova-audio-agent/runtime': { link: true, resolved: 'node/runtime' },
         'node/runtime': {
           name: '@nova-audio-agent/runtime', version: '0.1.1',
@@ -1447,4 +1475,24 @@ test('dependency report binds exact files while final native bytes belong only t
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('desktop direct dependencies are exact in artifact manifests and lockfiles', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-desktop-dependencies-'))
+  const lockPath = resolve(root, 'package-lock.json')
+  const original = JSON.parse(await readFile(new URL('../../../package-lock.json', import.meta.url), 'utf8'))
+  try {
+    for (const missing of DESKTOP_DEPENDENCIES) {
+      const dependencies = {...DESKTOP_MANIFEST.dependencies}
+      delete dependencies[missing]
+      assert.throws(() => inspectArtifact(validArtifactFiles().filter(file => !file.startsWith(`node_modules/${missing}/`)), {
+        desktopManifest: {...DESKTOP_MANIFEST, dependencies},
+      }), PackageInspectionError, `missing direct dependency ${missing}`)
+      const lock = structuredClone(original)
+      delete lock.packages['desktop/ambient-orb'].dependencies[missing]
+      await writeFile(lockPath, JSON.stringify(lock))
+      await assert.rejects(deriveLockedProductionClosure({lockPath, targetId: 'darwin-arm64'}),
+        error => error.code === 'desktop_dependency_invalid', `missing locked direct dependency ${missing}`)
+    }
+  } finally { await rm(root, {recursive: true, force: true}) }
 })

@@ -18,14 +18,23 @@ only after the corresponding volume is agreed.
 | [06 Settings and config](06-settings-and-config.md) | Settings v4, env contract, panel tabs |
 | [07 Executor boundary](07-executor-boundary.md) | Codex as a real plug-in behind `ports.ts`; role-based routing; host-owned confirmations; enforced by lint + script |
 | [08 Project, session and work](08-project-and-work.md) | `dispatch` / `cancel` / `confirm` host tools replace `codex__project`; coordinator sinks into the coding executor; per-project concurrency; explicit cancel; Codex-owned titles |
+| [11 Local wake word](11-local-wake-word.md) | Opt-in local KWS, presence epochs, model ownership and desktop-only settings |
 
 The public architecture volumes under [`docs/archs/`](../../archs/00-overview.md)
 remain the source of invariants. Specs here propose deltas; they do not silently
 rewrite those volumes.
 
+## Integration and release decision (2026-09-06)
+
+`v0.2.0dev` is an integration branch. Passing automated checks permits dev merges; human
+acceptance does not block integration. Merging into `main` is the release boundary. All
+supported features, including M2, M3, M4 and wake word, must complete the single checkable
+[release ledger](RELEASE-GATE.md) before a main PR or formal publication. No pending human
+item is implicitly passed. Linux is deferred from release targets; Ubuntu source CI remains.
+
 ## Goals
 
-1. **Trustworthy Codex execution on every platform.** macOS, Windows, and Linux
+1. **Trustworthy Codex execution on supported release platforms.** macOS and Windows
    use `approvalPolicy: on-request` with the existing workspace-write permission
    profile by default. Work inside the sandbox — including ordinary commands —
    proceeds without a prompt; sandbox escapes, network access, and permission
@@ -116,21 +125,10 @@ control.
 
 ### Release gate for 04
 
-Decision (2026-09-05): the product owner approved completing M4 in this cycle,
-using built-in Knowledge MCP instead of another native frontend tool. Module
-default remains off. This approves implementation, not release before the 04
-acceptance checks pass. Prior trade-offs are retained for context:
-
-- For shipping together: the user asked for RAG in this cycle; the module gate
-  (`modules.knowledge.enabled = false` by default) avoids allocating corpus
-  resources or adding retrieval tools for M1–M3 users; shared dependency changes still need regression testing.
-- For splitting: M4 carries new parsing deps (`pdfjs-dist`, `mammoth`, `jszip`,
-  embedding client), the FTS5 spike, and a data-flow disclosure that deserves
-  its own review. Shipping M1–M3 earlier gets the coding loop into daily use
-  sooner.
-
-M4 implementation proceeds after the M3 code checkpoint; deterministic and live
-verification are tracked separately in STATUS.
+Decision (2026-09-06): M4 ships only after its acceptance checks pass together with the other
+supported features. Its default-off setting does not exempt it from the main/release gate.
+The earlier proposal to release M1–M3 first is superseded. Dev integration may proceed with
+live checks still pending in [RELEASE-GATE.md](RELEASE-GATE.md).
 
 ## Proposed architecture deltas
 
@@ -156,8 +154,8 @@ merges — not as part of this documentation phase.
 
 ### Deferred items that stay deferred
 
-- Unrestricted long-term memory search auto-injected into ContextView
-  (`knowledge.autoRecall` defaults off).
+- Automatic knowledge recall into ContextView; no `knowledge.autoRecall`
+  setting is implemented (see [04](04-knowledge-base.md#non-goals)).
 - Automatic privilege expansion beyond the reviewed broker shapes.
 - A universal workflow language for intake → plan → execute.
 
@@ -274,10 +272,40 @@ Difference from qwen now narrowed deliberately: Nova adopts the backend
 coordinator pattern for project / session selection, but keeps clarification,
 work-order authorship, and admission on the host (02).
 
+### 2026-09-06 — branch integration and review decisions
+
+The user-approved integration plan supersedes the initial proposals in the
+[branch review roadmap](../../handoffs/2026-09-06-branch-review-and-merge-roadmap.md).
+Dev integration requires automated gates; merging to `main` requires all feature
+and supported-platform acceptance in [RELEASE-GATE](RELEASE-GATE.md). Linux releases
+are deferred while Ubuntu source tests remain.
+
+- I5: only host factual narration disables tools. Bound `tool_output` continuations
+  retain tools; user item / revision and confirmation checks remain authoritative.
+  The [I5 decision record](../../decisions/2026-09-06-i5-tool-result-continuation.md)
+  preserves the approved instructions; the old blanket `tools: []` recommendation
+  is retained as history in roadmap §3.5.
+- Knowledge migration adds content digests while retaining existing IDs, vectors,
+  jobs and legacy references. Ordinal reuse is positional and stale citations do
+  not recover historical text; see [04](04-knowledge-base.md#locators).
+- Settings retain the last usable configuration through an atomic recovery journal,
+  with separate saved/applied status and one application-status owner; see [06](06-settings-and-config.md).
+- Wake settings apply locally without a backend restart for wake-only saves.
+  Volume [11](11-local-wake-word.md) remains English-only by explicit user decision.
+
+The [provider-contract handoff](../../handoffs/2026-09-05-provider-contract-acceptance.md)
+and [cascaded handoff](../../handoffs/2026-09-05-cascaded-live-acceptance.md) preserve
+historical digital-audio evidence and its limits. Current SHA, rerun counts and CI
+belong in [IMPLEMENTATION](IMPLEMENTATION.md); none of these records closes the
+outstanding human microphone/speaker or installed Windows acceptance gates.
+The [integration review follow-up](../../handoffs/2026-09-06-integration-review-followup.md)
+maps each second-round finding to its resolution, retained decision and regression evidence.
+
 ## Document conventions
 
 - English body (matches `docs/archs/`); a short Chinese 摘要 at the top of each
-  file.
+  file. Volume [11](11-local-wake-word.md) is English-only by explicit user
+  decision on 2026-09-06.
 - Cite concrete current paths when describing baseline behaviour.
 - Prefer “must / must not / may” over soft wishlist language for acceptance
   criteria.

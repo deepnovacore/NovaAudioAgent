@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto'
 import { z } from 'zod'
 import {
   jsonValueSchema,
@@ -127,7 +128,7 @@ export const CONVERSATION_CHANNEL_POLICY: HandoffPolicy = handoffPolicySchema.pa
 })
 
 export const conversationScopeSchema = z.object({
-  conversation_id: z.string().min(1).default('default'),
+  conversation_id: z.string().min(1).default(() => randomUUID()),
 }).strict()
 
 export type ConversationScope = z.infer<typeof conversationScopeSchema>

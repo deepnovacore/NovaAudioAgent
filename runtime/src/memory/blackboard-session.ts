@@ -88,11 +88,12 @@ export class BlackboardSession {
   close(): Promise<void> {
     this.#closing ??= (async () => {
       const clearing = this.#clearing
+      const timer = setTimeout(() => { void this.#store.close().catch(() => undefined) }, 200)
       try {
         if (clearing !== undefined) await clearing
         else if (this.#opened) await this.#requestFlush(false)
       }
-      finally { this.#opened = false; await this.#store.close() }
+      finally { clearTimeout(timer); this.#opened = false; await this.#store.close() }
     })()
     return this.#closing
   }

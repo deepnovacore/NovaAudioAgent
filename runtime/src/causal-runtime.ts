@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto'
 import type { Clock } from './clock.js'
 import type { EventInput, EventRecord, JsonValue } from './events.js'
 import type { IdFactory } from './ids.js'
@@ -158,7 +159,9 @@ export class CausalRuntime {
     const modelSlots = SLOTS.filter(slot => this.#models[slot] !== undefined)
     this.core = new CoreRuntime({
       manifests: [...this.#executors.values()].map(adapter => adapter.manifest),
-      ...(options.conversationId === undefined ? {} : {conversationId: options.conversationId}),
+      ...(options.conversationId !== undefined ? {conversationId: options.conversationId}
+        : options.blackboard === undefined ? {}
+        : {conversationId: createHash('sha256').update(options.blackboard.ownerId).digest('hex')}),
       ids: options.ids,
       modelSlots,
       ...(options.retainRoutingHistory === undefined

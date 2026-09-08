@@ -275,7 +275,7 @@ export class RealtimeRuntimeBridge {
   /** Personal recall runs through the service-owned cancellable read path. */
   async acceptPersonalMemoryRecall(
     call: ToolCallReady,
-    options: {readonly originRef?: string | null} = {},
+    options: {readonly originRef?: string | null; readonly signal?: AbortSignal} = {},
   ): Promise<ToolAcceptance> {
     const binding = this.#tools.bindings.get(call.name)
     if (binding === undefined) return this.#refused(call, 'unknown_tool')
@@ -294,7 +294,7 @@ export class RealtimeRuntimeBridge {
       }, digest, startedAt)
     }
     try {
-      const result = await personal.recall(request.query, {scope: request.scope, limit: 5})
+      const result = await personal.recall(request.query, {scope: request.scope, limit: 5, ...(options.signal === undefined ? {} : {signal: options.signal})})
       const view = personalRecallView(result, request.scope)
       if (view === null) {
         return this.#personalMemoryResult(call, request, {
@@ -595,16 +595,16 @@ function personalRecallView(result: PersonalMemoryRecallResult, scope: RecallSco
     || result.hits.length > PERSONAL_RECALL_HIT_LIMIT
     || context.length > PERSONAL_RECALL_HIT_LIMIT
   ) return null
-  const hits = result.hits.map(personalRecallHit)
-  const contextHits = context.map(personalRecallHit)
-  if (hits.some(hit => hit === null) || contextHits.some(hit => hit === null)) return null
+  const hits = result.hits.map(personalRecallHit).filter(hit => hit !== null)
+  const contextHits = context.map(personalRecallHit).filter(hit => hit !== null)
+  const filtered = hits.length !== result.hits.length || contextHits.length !== context.length
   if (result.state === 'empty' && (hits.length > 0 || contextHits.length > 0)) return null
   if (result.state === 'ok' && hits.length === 0 && contextHits.length === 0) return null
   return {
     state: result.state,
-    hits: hits as PersonalRecallOutputHit[],
-    contextHits: contextHits as PersonalRecallOutputHit[],
-    degraded: result.degraded,
+    hits,
+    contextHits,
+    degraded: result.degraded || filtered,
   }
 }
 

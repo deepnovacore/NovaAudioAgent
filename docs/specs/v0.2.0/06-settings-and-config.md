@@ -4,7 +4,7 @@
 >
 > 修订（2026-09-03）：回应评审 P2-6（两文件提交顺序、busy / 重启失败导致三处状态不一致、search provider 三处来源）。
 
-## Baseline (today)
+## Baseline (before v0.2.0)
 
 - Desktop store: `SETTINGS_VERSION = 3`,
   [`desktop/ambient-orb/src/main/settings-store.mjs`](../../../desktop/ambient-orb/src/main/settings-store.mjs).
@@ -32,7 +32,8 @@
 - Redesigning unrelated existing tabs (palette, pipeline providers) beyond
   necessary links.
 - Live hot-reload of Codex / MCP without backend restart in v0.2.0 (keep
-  transaction + restart).
+  transaction + restart). Desktop-only wake settings in [11](11-local-wake-word.md)
+  apply immediately; a combined capability save still restarts the backend.
 - Storing MCP secrets inside `capabilities.json` plaintext; use `${ENV}` and
   desktop `safeStorage` secrets that populate env for the child.
 
@@ -51,6 +52,8 @@ New persisted fields (desktop `ambient-orb-settings.json`):
 | `embeddingModel` | string | provider default | 04 |
 | `capabilitiesConfigPath` | string | `""` → default `~/.nova-audio-agent/capabilities.json` | [03](03-capability-registry-and-mcp.md) |
 | `knowledgePath` | string | `""` → default knowledge sqlite path | 04 |
+| `wakeWordEnabled` | boolean | `false` | [11](11-local-wake-word.md), desktop-only |
+| `autoHideSeconds` | integer: `0` or `30..3600` | `60` | 11, desktop-only; `0` disables automatic hide |
 
 There is deliberately **no** `searchProvider` key in the desktop store. The
 provider lives only in `capabilities.json` (`modules.search.provider`); the
@@ -92,6 +95,8 @@ embeddings.
 `backendLaunchSpec` must map every desktop v4 field that affects the child
 into the corresponding env var (omit empties so parent `.env` can still win,
 matching current secret behaviour).
+`wakeWordEnabled` and `autoHideSeconds` stay in desktop settings and have no
+backend env mapping or restart requirement for a wake-only save.
 
 ## Capabilities file vs settings
 
@@ -104,15 +109,12 @@ Doctor / CLI validate both layers.
 
 ## Coordinated commit
 
-Today `applySettingsTransaction`
+`applySettingsTransaction`
 ([`settings-apply.mjs`](../../../desktop/ambient-orb/src/main/settings-apply.mjs))
-runs one `coordinator.run('settings_save')` that writes the settings file,
-publishes it, prepares and commits the backend configuration, and restarts the
-backend. It can return `busy` (nothing written), `failed` after the write
-(saved, not applied), or `restart_failed` (saved, committed, backend down). The
-earlier draft of this volume said “write `capabilities.json`, then run the
-transaction”, which would let the registry change land on disk while the
-settings step returned `busy`. That ordering is withdrawn.
+runs one `coordinator.run('settings_save')` for validation, durable recovery
+snapshot, file writes, configuration preparation, and backend activation. `busy`
+changes neither file. Failed activation restores the preceding files; saving is
+acknowledged only when the requested settings have applied.
 
 Rules:
 
@@ -133,19 +135,15 @@ Rules:
    `${VAR}` presence, per-server rules from 03). Any validation failure returns
    `{saved:false, operationStatus:'invalid', problems:[…]}` with nothing
    written; problems carry bounded, secret-free text for the panel.
-3. **Write both atomically enough.** Write each file to a temp sibling and
-   rename; write `capabilities.json` first, then the settings file. If the
-   second write fails, restore the previous `capabilities.json` from the
-   in-memory snapshot taken at step start, then report `failed` with
-   `saved:false`.
-4. **Saved vs applied.** After both writes succeed the result is at least
-   `saved:true`. `operationStatus` then follows the existing lattice:
-   `applied` (backend restarted on the new files), `failed` (prepare/commit
-   failed; disk changed, running backend still on old config),
-   `restart_failed` (committed but backend down). The panel must render the
-   three states differently: 已保存·未生效 for `failed`, 已保存·后端未启动 for
-   `restart_failed`, 已生效 for `applied`. It must never show 已生效 unless the
-   backend restarted with the new configuration.
+3. **Write both atomically enough.** Persist the recovery record first, then
+   write `capabilities.json` and settings using temporary siblings and rename.
+   On failure restore the exact prior capability bytes and sealed settings.
+   Keep the recovery record until successful activation, including across crashes.
+4. **Saved vs applied.** `saved:true` requires successful application. Failures
+   return `saved:false` with `failed` (prepare/commit failure), `restart_failed`
+   (backend activation failure), or `recovery_failed` (restoration incomplete).
+   The panel retains drafts and exposes the recovery action. It must never show
+   已生效 unless backend activation completed or the change is desktop-only.
 5. **Effective view.** `publishCommitted` carries both documents so the panel’s
    displayed state is the on-disk state, and the backend status view says which
    configuration generation the running child was started with. Three
@@ -156,6 +154,53 @@ Rules:
 
 Doctor reads the same validator, so `novaaudio doctor` and the panel disagree
 only if the file changed between runs.
+
+## Failed activation and recovery
+
+A settings transaction writes an atomic `settings.json.recovery` record before
+changing settings or capabilities. It contains the previous normalized settings
+(including the already sealed secret entries) and the exact previous bytes, or
+absence, of the capability file being replaced, plus the exact bytes this
+transaction writes. Recovery accepts only those written bytes or the already
+restored bytes; an external edit raises a recovery conflict and preserves both
+the external file and the recovery record. This detects edits between recovery
+attempts; it is not filesystem locking against an uncoordinated writer racing
+the comparison and rename. The existing atomic file writers
+remain the commit mechanism; no secret plaintext is returned to the renderer.
+
+Preparation, commit, or backend activation failure returns `saved: false` and a
+separate `operationStatus` (`failed`, `restart_failed`, or `recovery_failed`). Main
+restores the previous files and configuration, retains the recovery record, and
+exposes **恢复上次可用设置**. That action uses the existing coordinated backend
+retry entry point, restores the files again, prepares the restored configuration,
+and clears the record only after backend activation succeeds. Before restoring
+live files, main confirms the backend supervisor has stopped the child. If stopping fails, candidate files and in-memory settings remain
+unchanged alongside the recovery record; later save/retry attempts must pass the
+same stop guard. This also covers recovery-record deletion failure after a
+successful activation. Failed recovery keeps the record and does not report
+success. Unsaved panel drafts remain drafts;
+failed secret updates are not acknowledged as saved.
+
+Startup restores a pending record before preparing configuration or spawning the
+backend, so an interrupted transaction cannot replay the rejected settings on the
+next launch. An unreadable recovery record blocks backend startup while leaving
+the desktop and Settings recovery entry available. The recovery failure identifies
+the recovery-file problem without exposing sealed secret contents. A native dialog
+can open the configuration folder for manual repair; the existing recovery action
+retries after repair and clears the journal only after successful restoration and
+backend activation. It never silently resets settings or deletes the corrupt
+record. A successful save removes the record after
+activation; desktop-only wake/appearance changes retain their immediate apply
+path without restarting the backend unless a prior recovery remains pending.
+A pending recovery always requires backend activation before clearing its record.
+Startup exposes `recovery_pending` with the explicit recovery action, independently
+of the supervisor connection state. The transaction's `publishStatus` callback
+is the sole application-status writer; supervisor connection notifications only
+update backend status. The snapshot preserves the preceding committed settings;
+it does not claim a live provider or hardware acceptance test has passed.
+While recovery is pending, Codex rescan and workspace-maintenance restart paths
+cannot prepare or start a candidate backend. The settings recovery action remains
+the owner of restoration and activation.
 
 ## Panel IA
 
@@ -168,6 +213,7 @@ Suggested tabs / sections (Chinese UI labels):
 | 能力 | module toggles, search provider, MCP editor / probe |
 | 知识库 | enable (link to module), paths, embedding provider, ingest UI entry |
 | 通知 | `progressBubbles` |
+| 语音唤醒 | `wakeWordEnabled`, `autoHideSeconds`, local model status / retry; desktop-only save without backend restart |
 | (existing) | appearance, proactivity, pipeline, Codex binary/workspace, API keys |
 
 Exact layout may reuse a single scroll page with headings if tabs are costly;
@@ -189,8 +235,9 @@ Land schema + migration stubs early; wire controls as each feature merges:
 
 - [ ] Store migrate 3 → 4 idempotent; defaults applied once.
 - [ ] `check:env-contract` green after new rows.
-- [ ] Each new desktop key round-trips: panel → disk → `backendLaunchSpec` →
-      `loadSettings`.
+- [ ] Each new backend-affecting desktop key round-trips: panel → disk →
+      `backendLaunchSpec` → `loadSettings`; desktop-only wake keys round-trip
+      panel → disk → presence controller and apply without a backend restart.
 - [ ] YOLO warning visible only when mode is yolo (or always visible beside the
       control with stronger emphasis when selected).
 - [ ] Invalid enum values fail closed to defaults without crashing startup.

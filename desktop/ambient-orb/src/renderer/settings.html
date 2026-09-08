@@ -45,6 +45,21 @@
         </div>
       </section>
       <section class="setting-section">
+        <h2>语音唤醒</h2>
+        <fieldset>
+          <legend>本地语音唤醒</legend>
+          <label class="toggle-row"><input id="wake-word-enabled" type="checkbox">启用“你好星核”唤醒</label>
+          <small>空闲后隐藏悬浮球，仅在本机监听唤醒词；闭麦也会停止唤醒检测。首次开启需下载模型。</small>
+          <div class="field">
+            <label for="auto-hide-seconds">空闲休眠秒数</label>
+            <input id="auto-hide-seconds" type="number" min="0" max="3600" step="1" value="60">
+            <small>0 为关闭，或设置为 30–3600 秒。</small>
+          </div>
+          <p id="wake-word-status" role="status"></p>
+          <button id="wake-word-retry" type="button" hidden>重试唤醒模型</button>
+        </fieldset>
+      </section>
+      <section class="setting-section">
         <h2>权限</h2>
         <fieldset id="codex-approval-mode" class="segmented segmented-approval">
           <legend>Codex 审批模式</legend>
@@ -385,6 +400,7 @@
     <p id="restart-notice" class="warning" hidden></p>
     <footer>
       <p class="note">更改会暂存在本窗口；点击保存后，后台会自动重启并重新连接。</p>
+      <button type="button" id="settings-restore" hidden>恢复上次可用设置</button>
       <button type="button" id="settings-save" disabled>保存并重启</button>
     </footer>
     <script type="module" src="./settings.mjs"></script>

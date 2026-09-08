@@ -28,6 +28,7 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 - **语音管工作区。** 不必像 Codex 那样自己切工作区，Agent 帮你代劳，全程通过语音创建和、切换 workspace / session，提案会让你确认。
 - **先问清再派活。** 需求说不清时，主机拥有的 revision-bound intake slots 先澄清请求再下发；M1.5c 真实验证仍待完成，不在此宣称 token 节省比例。
 - **实时 steer 你的 coding agent。** Codex执行器基于原生 app-server而非ACP实现，任务进行中可以随时加约束。
+- **本地唤醒词。** 可选的离线中文关键词检测，空闲时隐藏悬浮球；唤醒音频留在本机，详见[使用指南](docs/getting-started.zh-CN.md#本地唤醒词)。
 
 ## 2. 设计架构
 
@@ -36,6 +37,7 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 *一个事件循环，两个模型端口共读一份 ContextView，Memory 当公共黑板，Floor 把守唯一说话通路。*
 
 几个关键角色：
+
 * **FrontBrain：** 实时前台模型，通过最小主机工具面派活、取消、确认主机提案、召回记忆和搜索；revision-bound intake slots 由主机拥有。
 * **Surrogate：** 决定**何时开口**。事件写入 Memory 或建议池后，由它判断值不值得告诉用户。
 * **Memory 与 ContextView：** Memory 短期、分通道；能力证据与 intake facts 受限编译进 ContextView 给 FrontBrain。
@@ -74,7 +76,7 @@ npm ci && cp .env.example .env
 ```bash
 npm run start:client
 ```
-客户端包含麦克风、摄像头、声音开关等按钮，以及设置面板和工作区图谱；外部 MCP 设置尚未作为已交付功能宣称。你也可以试试把鼠标悬在桌面 orb 上，会有惊喜）
+客户端包含麦克风、摄像头、声音开关等按钮，以及设置面板、外部 MCP 设置和工作区图谱。你也可以试试把鼠标悬在桌面 orb 上，会有惊喜）
 
 从 [DashScope](https://platform.qianwenai.com) 和 [Tavily](https://docs.tavily.com) 获取 API Key 并配置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。
 
@@ -84,9 +86,9 @@ node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 ```
 
-注意，原生回声消除采集（VoiceProcessingIO）仅 macOS 可用；Windows 与 Linux 走 Chromium AEC。
-
-
+原生回声消除采集（VoiceProcessingIO）仅 macOS 可用，唤醒检测在可用时复用该采集路径；
+Windows、Linux 源码运行及 macOS 回退路径使用 Chromium `getUserMedia` + AudioWorklet。
+休眠时麦克风帧仅送入本地唤醒 Worker，闭麦会停止唤醒检测。详见[本地唤醒设置](docs/getting-started.zh-CN.md#本地唤醒词)。
 
 ## 4. 文档
 
@@ -99,10 +101,15 @@ node runtime/dist/src/cli.js demo all
 | [历史设计探索：A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 历史设计博客 |
 
 ## 5. 路线图
-- [ ] **v0.2.0（分支 `v0.2.0dev`）：** M1.5b → M1.5c 薄前端 → 03a 能力扩展。M1.5c 需验证最终六工具面、Camera MCP + 侧边 VLM 投影、Vision 隐藏 watch/guard、策略驱动监控并重跑 08 live acceptance；live 与 Windows 证据仍待完成。外部 MCP 设置尚未交付。规格：[docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md)。
+
+- [ ] **v0.2.0（分支 `v0.2.0dev`）：** M1.5b → M1.5c 薄前端 → 03a 能力扩展。M1.5c 需验证最终六工具面、Camera MCP + 侧边 VLM 投影、Vision 隐藏 watch/guard、策略驱动监控并重跑 08 live acceptance；live 与 Windows 证据仍待完成。外部 MCP 设置已实现，真实验收仍待完成。规格：[docs/specs/v0.2.0](docs/specs/v0.2.0/00-overview.md)。
 - [ ] 支持更多端到端与级联前端管线。
 - [ ] 接入 MyContext，做以工作区为中心的记忆。
 - [ ] 通过 executor 端口接入更多 coding agent。
+- [ ] 级联管线已由宿主调度；真人语音与 Windows 安装包唤醒验收待完成。
+
+`v0.2.0dev` 通过自动化门禁即可集成；合入 `main` 前须完成
+[发布台账](docs/specs/v0.2.0/RELEASE-GATE.md)中的全部功能与支持平台验收。Linux 暂不发布，保留 Ubuntu 源码测试。
 
 ## 6. 贡献
 

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import {isAbsolute, resolve} from 'node:path'
 
 // `normalizeSettings` always rebuilds and stamps the latest shape, so an older file
 // keeps its provider choices while gaining packaged-desktop configuration.
@@ -43,6 +44,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   codexManagedRoot: '',
   modelBaseUrl: '',
   startListeningOnLaunch: false,
+  wakeWordEnabled: false,
+  autoHideSeconds: 60,
   pipelineMode: 'integrated',
   integratedProvider: 'qwen',
   integratedModel: 'qwen-audio-3.0-realtime-plus',
@@ -297,6 +300,15 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
       DEFAULT_SETTINGS.modelBaseUrl,
       validModelBaseUrl,
     ),
+    wakeWordEnabled: pick(
+      ownEnumerableDataValue(source, 'wakeWordEnabled'),
+      ownEnumerableDataValue(fallback, 'wakeWordEnabled'), false, validBoolean,
+    ),
+    autoHideSeconds: pick(
+      ownEnumerableDataValue(source, 'autoHideSeconds'),
+      ownEnumerableDataValue(fallback, 'autoHideSeconds'), 60,
+      value => Number.isInteger(value) && (value === 0 || value >= 30 && value <= 3600) ? value : null,
+    ),
     startListeningOnLaunch: pick(
       ownEnumerableDataValue(source, 'startListeningOnLaunch'),
       ownEnumerableDataValue(fallback, 'startListeningOnLaunch'),
@@ -419,6 +431,11 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
   }
 }
 
+export function backendSettings(settings) {
+  const {wakeWordEnabled, autoHideSeconds, ...backend} = normalizeSettings(settings)
+  return backend
+}
+
 // The renderer's whole view of the settings: no secrets object, not even an
 // empty one, so no future edit can widen it by accident.
 export function publicSettings(settings) {
@@ -434,6 +451,8 @@ export function publicSettings(settings) {
     codexManagedRoot: normalized.codexManagedRoot,
     modelBaseUrl: normalized.modelBaseUrl,
     startListeningOnLaunch: normalized.startListeningOnLaunch,
+    wakeWordEnabled: normalized.wakeWordEnabled,
+    autoHideSeconds: normalized.autoHideSeconds,
     pipelineMode: normalized.pipelineMode,
     integratedProvider: normalized.integratedProvider,
     integratedModel: normalized.integratedModel,
@@ -461,6 +480,8 @@ export function orbSettings(settings) {
   return Object.freeze({
     palette: normalized.palette,
     startListeningOnLaunch: normalized.startListeningOnLaunch,
+    wakeWordEnabled: normalized.wakeWordEnabled,
+    autoHideSeconds: normalized.autoHideSeconds,
   })
 }
 
@@ -607,6 +628,8 @@ export function applySettingsUpdate(current, patch, codec) {
     codexManagedRoot: ownEnumerableDataValue(source, 'codexManagedRoot'),
     modelBaseUrl: ownEnumerableDataValue(source, 'modelBaseUrl'),
     startListeningOnLaunch: ownEnumerableDataValue(source, 'startListeningOnLaunch'),
+    wakeWordEnabled: ownEnumerableDataValue(source, 'wakeWordEnabled'),
+    autoHideSeconds: ownEnumerableDataValue(source, 'autoHideSeconds'),
     pipelineMode: ownEnumerableDataValue(source, 'pipelineMode'),
     integratedProvider: ownEnumerableDataValue(source, 'integratedProvider'),
     integratedModel: ownEnumerableDataValue(source, 'integratedModel'),
@@ -694,14 +717,64 @@ export async function loadSettings(file) {
 
 export async function saveSettings(file, settings) {
   const normalized = normalizeSettings(settings)
+  await saveJson(file, normalized)
+  return normalized
+}
+
+async function saveJson(file, value) {
+  await replaceFile(file, JSON.stringify(value))
+}
+
+async function replaceFile(file, bytes) {
   // Same-directory tmp + rename keeps a crash from truncating the live file;
   // the random suffix keeps two writers from colliding on one tmp name.
   const temporary = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
   try {
-    await writeFile(temporary, JSON.stringify(normalized), { encoding: 'utf8', mode: 0o600 })
+    await writeFile(temporary, bytes, { encoding: 'utf8', mode: 0o600 })
     await rename(temporary, file)
   } finally {
     await unlink(temporary).catch(() => {})
   }
-  return normalized
+}
+
+// Persist the sealed pre-transaction settings before either live file changes.
+// A crash leaves this record pending; startup restores it before spawning.
+export async function saveSettingsRecovery(file, settings, capability = null) {
+  await saveJson(`${file}.recovery`, {version: 1, settings: normalizeSettings(settings), capability})
+}
+
+export async function restoreSettingsRecovery(file) {
+  let recovery
+  try { recovery = JSON.parse(await readFile(`${file}.recovery`, 'utf8')) }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error }
+  if (recovery?.version !== 1 || !isRecord(recovery.settings)) throw new Error('invalid settings recovery')
+  const capability = recovery.capability
+  if (capability !== null) {
+    if (!isRecord(capability) || typeof capability.path !== 'string' || !isAbsolute(capability.path)
+      || [resolve(file), resolve(`${file}.recovery`)].includes(resolve(capability.path))
+      || typeof capability.written !== 'string' || !BASE64.test(capability.written)
+      || (capability.previous !== null && (typeof capability.previous !== 'string'
+        || (capability.previous !== '' && !BASE64.test(capability.previous))))) throw new Error('invalid capability recovery')
+    await restoreCapabilitySnapshot(capability)
+  }
+  const settings = await saveSettings(file, recovery.settings)
+  // Keep the record until restored settings have activated successfully.
+  return settings
+}
+
+export async function clearSettingsRecovery(file) {
+  await unlink(`${file}.recovery`).catch(error => { if (error.code !== 'ENOENT') throw error })
+}
+
+// Accept only the transaction's bytes or the already-restored snapshot. A later
+// external edit belongs to its writer, including a file created after rollback.
+// ponytail: an external writer can race read/rename; shared CLI locking is needed for cross-process serialization.
+export async function restoreCapabilitySnapshot({path, previous, written}) {
+  let current = null
+  try { current = (await readFile(path)).toString('base64') }
+  catch (error) { if (error.code !== 'ENOENT') throw error }
+  if (current === previous) return
+  if (current !== written) throw Object.assign(new Error('capability changed during settings recovery'), {code: 'settings_recovery_conflict'})
+  if (previous === null) await unlink(path)
+  else await replaceFile(path, Buffer.from(previous, 'base64'))
 }

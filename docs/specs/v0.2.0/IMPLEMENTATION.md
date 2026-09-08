@@ -4,23 +4,25 @@ Branch: `v0.2.0dev`. Contract: [00-overview.md](00-overview.md).
 Implement M1 first, keeping package versions unchanged. Use the existing Node/TypeScript
 runtime, one-shot confirmation controllers, desktop settings transaction and test harness.
 
-- [x] 01: resolve ask / ask_headless / yolo once; derive process, thread and
+- [ ] 01 acceptance (implementation and deterministic checks complete; live pending): resolve ask / ask_headless / yolo once; derive process, thread and
   effective-config validation from the same profile. Validate the pinned Codex
   0.152.0 schema and exact per-kind approval results, including denial and expiry.
-- [x] 06 (M1): settings v4 migration, env contract, permissions/intake/notification
+- [ ] 06 (M1) acceptance (implementation complete; complete-flow acceptance pending): settings v4 migration, env contract, permissions/intake/notification
   controls; preserve safe defaults, encrypted secrets and saved/applied distinction.
-- [x] 02: bound intake assessment and WorkOrder compilation, request revisions,
+- [ ] 02 acceptance (implementation complete; human voice pending): bound intake assessment and WorkOrder compilation, request revisions,
   independent planning/execution gates, existing confirmation and admission paths.
-- [x] 05: sanitized executor progress, bounded bubble stack and native bounds
+- [ ] 05 acceptance (implementation complete; supported-platform acceptance pending): sanitized executor progress, bounded bubble stack and native bounds
   reservation, persistent last-result access independent of notification mode.
-- [x] Integration: runtime and desktop builds/tests run serially; review authorization,
+- [ ] Release integration (dev deterministic checks are tracked separately): runtime and desktop builds/tests run serially; review authorization,
   stale-result rejection, config migration and renderer bounds before completion.
 
 Live macOS/headset and Windows acceptance remains distinct from deterministic tests.
+The checkboxes above denote full acceptance, not merely implemented code.
+The authoritative release declarations are in [RELEASE-GATE.md](RELEASE-GATE.md).
 
 ## M1.5 (inserted before M2)
 
-- [x] 07 executor boundary: move Codex under `executors/codex/`, `roles` /
+- [ ] 07 complete acceptance (deterministic fixture proof complete; shared M1 live rows pending): move Codex under `executors/codex/`, `roles` /
   `display_name` / `approvals` on the manifest, `ApprovalBroker` port, role-based
   routing, `executor.*` / `project.*` wire, fixture executor,
   `check:executor-boundary`. Behaviour identical to M1. Deterministic list green;
@@ -566,3 +568,302 @@ This verifies rendering and interaction, not OS DPI behavior or live audio.
   approval fixture was migrated from `codex.approval` to the current
   `executor.approval` wire. This closes implementation gaps only; physical/live
   acceptance and the separate Task 10 ownership extraction remain open.
+
+
+## Local wake word (11)
+
+[11 Local wake word](11-local-wake-word.md) defines the opt-in desktop KWS feature.
+The 2026-09-06 branch fixes cover interrupted model downloads, manual-hide fallback,
+per-frame native capture epochs, heartbeat error isolation and lifecycle checks,
+and bounded Windows filesystem retries. Sherpa is unpacked from asar.
+The volume is English-only by explicit user decision, an exception to the series'
+Chinese-summary convention. Human microphone and Windows/Linux packaged acceptance
+remain open; prior synthetic macOS smoke results are not release acceptance.
+
+Wake integration candidate rebased onto `2356305`: root check passed (224 files,
+387 occurrences), desktop build and full suite passed (873/876, three platform
+skips; source startup smoke skipped), and backend desktop transport passed 57/57.
+Capability document commits retain backend restart even when paired with wake-only
+settings; main/knowledge VM contexts retain the dev settings and quit contracts.
+
+## 2026-09-06 branch integration and repair
+
+Two history-preserving merges landed on dev: voice-focus (`2356305`) and Chinese wake word
+(`dfc687d`). Integration is separate from main/release acceptance; all human rows stay pending
+in [RELEASE-GATE.md](RELEASE-GATE.md). This supersedes earlier proposals to exempt M2–M4.
+
+- Voice: missing-turn/fence ownership, admitted-without-start terminal cleanup and deterministic
+  race barriers repaired. Host narration has no tools; correlated tool-result continuations retain
+  tools while dispatch/confirmation still require current user evidence. Shared frontend instructions
+  retain Knowledge MCP guidance. See [cascaded acceptance](../../handoffs/2026-09-05-cascaded-live-acceptance.md).
+- Wake: backed-up original work, three feature commits, per-frame epochs, interrupted-download
+  ownership cleanup, bounded Windows file retries, hidden fallback, heartbeat exception isolation,
+  and sherpa WASM unpack configuration. [Spec 11](11-local-wake-word.md) records English-only
+  exception and outstanding installed/human acceptance.
+- Dev repairs at this checkpoint: maintenance quit drain 3 seconds; knowledge close rejected after
+  2 seconds (superseded by the review follow-up below); real content-digest migration and stale text
+  through MCP; visible FTS fallback; pending workspace maintenance journal replay on open (also
+  narrowed to live-owner startup below). Capability writes already used
+  same-directory temporary files plus rename; the roadmap's non-atomic-write finding was disproved.
+- Fixture executor exercises the real host assembly, intake, project confirmation, progress,
+  approval and terminal flow. ESM tracing observed 252 loaded modules and no Codex executor load.
+  Busy speech uses manifest display names; retired FASTBRAIN prompt/goldens removed. The broader
+  case-insensitive boundary check retains an explicit counted compatibility baseline.
+- Shared pipeline composition, runtime-generated renderer frame types and deterministic delivery
+  snapshots preserve existing host state machines. Settings preserve encrypted recovery data before
+  writes, roll back failed activation, expose recovery, and publish application state from one owner.
+- CI now runs on dev pushes; Windows excludes six POSIX-only files instead of the runtime suite.
+  Linux is deferred from release targets, with Ubuntu source builds retained. CI on `ed7c933`
+  passed macOS, Windows and Ubuntu: [run 34019081236](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34019081236).
+- Local intermediate evidence: merged voice runtime 2337 pass / 5 platform skips; desktop 847 pass /
+  3 skips; CLI 21/21. Knowledge integration 41/41 and independent migration/MCP/FTS review 10/10.
+  Capability utility smoke passed using dummy loopback services. Wake model smoke: synthetic positive
+  1 hit, negative 0, paced positive 127/127 frames accepted with zero dropped frames.
+
+The default node-backend utility smoke initially reported `backend_unavailable`: production now
+requires an explicit discovered Codex binary, while that invocation supplied the bare default.
+Capability-mode smoke proves the Electron utility path with an isolated dummy provider; neither it
+nor synthetic wake audio substitutes for human speech or Windows installed Worker/WASM acceptance.
+Final local verification (Node 24.8.0, Electron 43.2.0): `check` passed; runtime 2355 passed /
+5 platform skips; desktop 884 passed / 3 platform skips; CLI 21/21. Checks ran serially to avoid
+shared `runtime/dist` races. Three caption source assertions were updated to the generated wire
+constants after the full desktop run exposed their old literals. Capability utility smoke passed.
+Parity covers 226 files / 383 occurrences; the expanded boundary baseline is 215 occurrences.
+
+Settings follow-up review found and closed two ownership bugs: repeated rollback now refuses to
+overwrite externally changed capability bytes, and a desktop-only save cannot clear pending recovery
+without backend activation. Its 183 targeted checks and four independent regressions passed before
+final desktop validation. The byte comparison is not an atomic lock against an uncoordinated external
+writer changing the file between read and rename; the limitation remains explicit in spec 06.
+
+A normal utility-smoke retry with the discovered Codex binary and existing `.env` returned
+`configuration_required` before readiness. It is recorded as blocked by the current configuration,
+not passed. Source-startup smoke used its default skip. Human speech, long standby, installed Windows
+wake/Worker/WASM and all feature acceptance remain pending for main. The latest dev CI result and
+its remaining startup failure are recorded below; this integration is not claimed fully CI-green.
+
+The final failure-path review also reproduced recovery-journal deletion failure after successful
+backend activation. Recovery now confirms the candidate backend stopped before changing files;
+if stopping fails, candidate files and the recovery record remain together. The same guard covers
+subsequent retry/save calls. Its focused real-file/main-helper tests passed before the desktop rerun.
+
+CI on `86c3210` passed macOS and Ubuntu but exposed a Windows registry-cache bug: equal-length
+consecutive edits can share timestamps. The panel now reuses the existing content revision instead
+of filesystem metadata. A fixed-timestamp regression reproduced the failure and then passed;
+74 relevant checks passed. The final check, full desktop (884 pass / 3 skip), CLI (21/21) and
+capability utility smoke were rerun successfully after these desktop-only fixes. Runtime code is
+unchanged from the 2355-pass run; CI reruns the complete runtime suite on the final pushed commit.
+
+CI on `da38a59` passed macOS and Ubuntu. Windows passed its desktop tests (867 pass / 20 platform
+skips), then timed out in the real Electron source-window startup smoke after 20 seconds on both
+attempts: [run 34020908356](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34020908356).
+The timeout discarded captured child diagnostics, so a follow-up retains safe error classifications
+and whether the window-ready marker arrived. It does not extend the deadline, retry automatically,
+or mark the Windows failure fixed. Local regression checks passed, followed by the complete desktop
+suite (885 pass / 3 platform skips). A direct macOS source-window smoke against this checkout also
+passed with a private, canonical temporary home; an initial `/var` alias was correctly rejected by
+the project-store path boundary. This does not validate Windows window startup.
+
+At the user's request, further CI retries stopped in favor of local verification. At that checkpoint
+no Windows development machine was available. The diagnostic/evidence follow-up is committed with
+`[skip ci]`; the workflow remains enabled for ordinary dev pushes. Windows source startup remains
+an unresolved integration check, alongside the separately pending main/release acceptance items.
+
+### Windows development-machine follow-up
+
+The user subsequently supplied an Alibaba Cloud Windows Server 2022 machine (4 vCPU, 8 GB).
+Source-window startup passed as SYSTEM with Node 24.20.0 and Node 22.23.2, and independently in
+Administrator's interactive session. Administrator's Codex login status was also verified; this
+does not prove provider task execution or microphone acceptance. The initial full Windows desktop
+suite passed 868 tests with 20 platform skips, followed by its source startup smoke. These results
+make an environment-specific CI failure plausible, but do not identify the original runner's cause.
+
+Actual package inspection found a separate defect: the after-pack hook rebuilt `app.asar` with only
+native-library unpack rules, erasing the configured sherpa-onnx JS/WASM unpacking. The shared ASAR
+builder now preserves the sherpa directory; a real archive replacement regression failed before
+the fix and passed on both macOS and Windows afterward.
+
+Windows runtime execution also exposed three test timing assumptions. The startup-exit check now
+starts its two-second exit deadline after module loading, with an outer cold-start watchdog. MCP
+shutdown waits for an active tool call, and confirmation expiry waits for the expected state instead
+of assuming several timer steps complete within 30 ms. Production deadlines remain unchanged.
+An additional full-run failure exposed a test polling loop that survived its timeout and kept the
+process alive. The helper now stops polling; its regression verifies no further observations after
+timeout. The metadata-transition test opens its real graph fixture before assembly startup, so
+Windows Worker cold-start I/O does not accidentally exercise the separate one-second abandonment
+contract. Dedicated bounded-start tests retain that coverage.
+
+The actual Windows ASAR Worker/WASM smoke passed: synthetic positive audio produced one hit and
+negative audio produced zero. A paced positive run during runtime rebuilding produced one hit with
+126 frames offered, 124 accepted and 9 frames reported dropped. An idle-machine repeat produced
+one hit with 131/131 frames accepted and 2 reported dropped; neither is zero-drop or human audio
+acceptance. The unpacked application was built using the installed Electron 43.2.0 distribution
+after the initial Electron download stalled. NSIS creation then failed on a GitHub connection timeout
+(`ETIMEDOUT`), so the installer is not claimed built or validated.
+
+The [runner assessment](../../handoffs/2026-09-06-windows-runner-assessment.md) records capacity,
+account isolation and a proposed workflow; no runner was registered. This repository is public:
+standard GitHub-hosted runner minutes are currently free, correcting the earlier cost assumption.
+
+For the product/test tree committed as `afc82dd`, the final local serial
+`check → test:runtime → test:desktop → test:cli` passed:
+runtime 2356 pass / 5 skips, desktop 886 pass / 3 skips, CLI 21/21. Windows Node 22.23.2 `check`
+passed, and the final full Windows runtime suite passed 2208 tests / 8 platform skips in 241 seconds.
+The final Windows desktop suite reused the already built application and passed 869 tests / 20
+platform skips in 51 seconds; its real source-window startup smoke passed, followed by CLI 21/21.
+These Alibaba Windows results apply to the same `afc82dd` product/test tree: testing started from
+`860f108` with the final follow-up patches, then the six changed files were compared with the pushed
+dev tree before fast-forwarding the checkout. They are not evidence for later review fixes.
+At that checkpoint no further GitHub Actions runs were requested. The historical hosted-Windows source startup timeout
+remains unclassified; local Windows success does not retroactively make that run green. No main
+merge, release, runner registration, or human acceptance completion was performed.
+
+### Second integration review repairs (2026-09-06)
+
+The [review resolution map](../../handoffs/2026-09-06-integration-review-followup.md)
+records every finding, including proposals not adopted after checking the actual
+call chain and the user's approved decisions. Published history remains intact.
+
+- Journal replay now belongs to live-owner startup; non-live maintenance opens
+  survive corrupt or contended journals and report their unavailable state.
+- Requested responses carry per-attempt identities through the actual cascaded
+  provider. Tests reproduce both bounded-ledger eviction and same-revision retries;
+  comparing only the current revision would not fix them. Pre-start audio and
+  quarantined terminals cannot release or disarm another request.
+- Knowledge close resolves best-effort after a 500 ms graceful-exit budget, inside
+  assembly's 1-second cleanup budget. Real SQLite contention, forced close/reopen
+  and full assembly cleanup are covered; immediate lock release is not promised.
+  Partial HTTP rejection responses now have explicit completion assertions.
+- Corrupt settings recovery records preserve bytes and open the recovery UI while
+  blocking automatic backend startup, Codex rescan and workspace-clear restart
+  bypasses. Manual repair followed by the existing recovery action is covered.
+- All 15 desktop wire types have actual producer coverage; byte drift is part of
+  `npm run check`. Wake hide/helper/extraction gaps, exact dependency membership and
+  equality of both ASAR unpack declarations have regression coverage.
+- Windows candidate runs the narrowed runtime suite. Pending human acceptance no
+  longer blocks candidate artifact construction; main and publication still require
+  the acceptance ledger. No bypass of mandatory release acceptance was added.
+- I5 keeps the [approved tool-result continuation permissions](../../decisions/2026-09-06-i5-tool-result-continuation.md); ordinal/legacy digest
+  compatibility remains documented. Spec 04 maps its checklist to concrete evidence.
+  Inline delivery scenarios and necessary test hooks remain; no cosmetic JSON or
+  broad test-API refactor was added.
+
+On the repaired code tree through `154ae6c`, the local serial
+`check → test:runtime → test:desktop → test:cli` passed (Node 24.8.0):
+
+| Gate | Result |
+| --- | --- |
+| `check` | Passed; parity 226 files / 385 reviewed occurrences, boundary 215, generated wire drift check |
+| runtime | 2367 passed / 5 skips: 2 Windows-only, 3 opt-in live model evaluations without credentials |
+| desktop | 893 passed / 3 platform skips |
+| CLI | 21/21 |
+| documentation contract | 8/8 |
+
+The final native Electron capability smoke exposed an obsolete source-extraction
+endpoint in the smoke script after the settings startup guard changed. Extraction
+now ends at the supervisor block itself. Scoped lint and the real smoke passed:
+budget 1 yields `configuration_required`, budget 24 connects and shuts down cleanly,
+both have zero readiness timeouts; only dummy loopback services were used.
+
+The desktop command's Windows-only source-startup smoke is skipped on this Mac.
+Earlier Alibaba Windows results remain anchored to `afc82dd` above. No main merge
+or publication is part of this repair.
+
+Hosted CI on **`883113daf8b459f41efb62b99e4f77fa15e44727`** passed all three platform
+jobs: [run 34036272128](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34036272128).
+This ordinary dev push had no `[skip ci]` marker.
+
+| Hosted platform | Runtime pass / skip | Desktop pass / skip | Additional evidence |
+| --- | --- | --- | --- |
+| macOS | 2367 / 5 | 893 / 3 | CLI 21/21; real Electron capability smoke; final build |
+| Ubuntu | 2367 / 5 | 873 / 23 | CLI 21/21; source build, not a Linux release package |
+| Windows | 2217 / 8 | 875 / 21 | CLI 21/21; real source-window startup smoke; final build |
+
+All platform `check` gates passed. On macOS/Ubuntu, runtime skips comprise two
+Windows-specific cases and three opt-in live coordinator evaluations without keys;
+on Windows, the narrowed suite also skips five POSIX/symlink cases. Desktop skips
+cover platform-specific native helpers, visual cases and platform-specific release
+script fixtures. These counts do not certify skipped features or human acceptance.
+The main-only readiness job and tag-only package job were correctly skipped on dev.
+
+The earlier `da38a59` hosted-Windows startup timeout remains historically failed
+and unclassified. This new source-startup success is evidence for `883113d`, not a
+retrospective diagnosis.
+
+The receipt-only `4c9516c` run subsequently passed macOS/Ubuntu but exposed an
+intermittent Windows test teardown race:
+[run 34036782632](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34036782632).
+Windows runtime and CLI passed; desktop's interrupted-download test reached fixture
+removal before the second Worker's exit-handler cleanup finished, producing `EPERM`
+on that owner's directory. Source startup was not reached in this failed run.
+
+The test now joins the actual asynchronous cleanup promises and, on failure paths,
+waits for owned Workers before removing the fixture root. The fake download-progress
+probe also checks its own thread's archive instead of another active download's
+file. No production lifecycle or retry budget changed. All seven model tests and
+20 consecutive repetitions of the interrupted-download case passed locally; the
+full desktop rerun passed 893 tests / 3 platform skips. Independent review confirmed
+the original removal promises still propagate errors on the assertion path. A
+targeted Alibaba Windows retry could not establish a session; the user confirmed
+the machine was powered off and asked to leave it alone. No remote test pass is
+claimed. The resulting final HEAD receives normal CI; its exact run
+is available in branch checks without recursively committing its own hash here.
+
+### Third review: residual repairs and decision evidence (2026-09-06)
+
+Baseline **`7c97983c6e9c16e7df507ce9c65ea5f0a1dcec86`** passed hosted CI:
+[run 34037915786](https://github.com/deepnovacore/NovaAudioAgent/actions/runs/34037915786).
+All three electron jobs passed; dev correctly skipped release readiness and tag
+packaging. macOS/Ubuntu runtime was 2367 passed / 5 skipped; Windows runtime was
+2217 / 8. Desktop was macOS 893 / 3, Ubuntu 873 / 23, Windows 875 / 21; CLI was
+21/21 on each platform. Windows passed the repaired interrupted-download test and
+the real source-window startup smoke. This is the missing receipt for the fix of
+`4c9516c`, distinct from the earlier `883113d` receipt above.
+
+This follow-up was reviewed as one related repair batch:
+
+- R-F: `ProjectStore.open` only replays on live startup, but maintenance open and
+  refresh also call cleanup. Those calls now acquire a temporary owner lock before
+  modifying journal/workspace files, inside the existing tracked transaction.
+  Nonblocking owner acquisition avoids an owner/transaction lock-order deadlock.
+  Ordinary transaction contention becomes `degraded` with `lifecycleBusy`, so it
+  does not stop a live backend. Known pending/unsafe health survives subsequent
+  contention; only successful recovery can clear it. Real maintenance-open,
+  prepared/committed live-owner and downstream no-stop regressions cover this;
+  removing ownership or known-hazard retention makes the respective regression fail.
+- Settings: rejected rescan no longer reports success. Pending recovery has an
+  explicit controller phase; successful recovery clears its old notice without
+  introducing notices on ordinary edits or overwriting an unrelated restart notice.
+- Contracts: pin the six existing Windows runtime file exclusions and second-instance
+  wake routing. Windows-only candidate scope now runs desktop tests. Remove the
+  unused `RUNTIME_PACKAGE` constant. The six exclusions still omit some Windows
+  cases inside mixed POSIX suites; they were not silently widened or certified.
+- K-3: the proposed extra-reconnect defect does not occur during explicit stop or
+  restart: supervisor running/generation fencing rejects the old exit callback.
+  An executable regression uses the real supervisor, diagnostic collector and
+  shutdown helper with an `assembly_failed`/exit-2 child; stop/restart schedule no
+  retry, while unexpected exit still schedules one. Worker failure error semantics
+  remain unchanged.
+- I4: the actual silent epoch-revocation path rejects through ProviderSession, and
+  RealtimeSession already rolls back its exact request slot. A full cascaded-chain
+  regression pins no-terminal/no-provider-error rejection, retry, reconnect and
+  stale-epoch rejection. Removing the slot rollback makes the test fail; no new
+  production cancellation mechanism was necessary.
+- Documentation: remove the nonexistent `knowledge.autoRecall` default, add wake
+  Panel IA/capture paths, date the 55/65-test Knowledge evidence, mark the proven
+  fixture executor item, fix the reported layout issues, and preserve the exact
+  approved I5 instructions in a linked [decision record](../../decisions/2026-09-06-i5-tool-result-continuation.md).
+  That record explicitly identifies itself as a transcription of this conversation.
+
+Local verification of this repair batch ran serially: `check` passed (parity
+226 files / 385 occurrences; executor boundary 215 allowlisted), runtime
+2372 passed / 5 skipped, desktop 902 / 3, CLI 21/21. The documentation contract
+also passed 8/8. The real Electron capability-status smoke passed with isolated
+loopback fixtures: insufficient budget failed as expected, sufficient budget
+connected and stopped cleanly, with no readiness timeouts. The Windows-only
+source-startup smoke was skipped on this macOS host. `check:release-gate` still
+fails as expected on all 12 pending acceptance rows; none was marked complete.
+
+The powered-off Alibaba Windows development machine remains untouched. Human voice,
+installed-package acceptance and the release ledger remain separate from dev CI;
+no main merge, package publication or acceptance checkbox inflation is authorized.

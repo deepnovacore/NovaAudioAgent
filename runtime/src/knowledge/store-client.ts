@@ -11,6 +11,8 @@ import type {
 export interface KnowledgeStoreClientOptions {
   readonly path: string
   readonly maxSources?: number
+  /** Test seam for exercising the portable LIKE path on FTS-capable runtimes. */
+  readonly forceLexical?: boolean
 }
 
 export type KnowledgeStoreErrorCode =
@@ -42,6 +44,7 @@ interface KnowledgeStoreWorker {
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit', listener: (code: number) => void): unknown
   terminate(): Promise<number>
+  unref(): void
 }
 
 interface WorkerResponse {
@@ -65,20 +68,22 @@ export class KnowledgeStoreClient {
   #failed = false
   #expectedExit = false
   #exited = false
+  #closeTimer: ReturnType<typeof setTimeout> | undefined
+  #forcedExit = false
   #closing: Promise<void> | undefined
   #resolveClosing: (() => void) | undefined
   #rejectClosing: ((error: KnowledgeStoreClientError) => void) | undefined
 
   constructor(options: KnowledgeStoreClientOptions) {
     const workerUrl = new URL('./store-worker.js', import.meta.url)
-    const workerOptions: WorkerOptions = {workerData: {path: options.path, maxSources: options.maxSources}}
+    const workerOptions: WorkerOptions = {workerData: {path: options.path, maxSources: options.maxSources, forceLexical: options.forceLexical}}
     this.#worker = new Worker(workerUrl, workerOptions)
     this.#worker.on('message', message => this.#handleMessage(message))
     this.#worker.on('error', () => this.#fail('WORKER_ERROR'))
     this.#worker.on('exit', code => this.#handleExit(code))
   }
 
-  async open(): Promise<void> { await this.#request('open', {}) }
+  open(): Promise<{readonly fts: boolean}> { return this.#request('open', {}) }
 
   close(): Promise<void> {
     if (this.#closing !== undefined) return this.#closing
@@ -90,12 +95,14 @@ export class KnowledgeStoreClient {
       this.#resolveClosing = resolve
       this.#rejectClosing = reject
     })
+    // Reserve half of realtime assembly's 1s core shutdown budget for the other core resources.
+    this.#closeTimer = setTimeout(() => this.#terminateClosing(), 500)
     try {
       // This is deliberately not an RPC promise: existing requests were rejected above,
       // while the Worker drains its bounded SQLite call and exits after the close signal.
       this.#worker.postMessage({kind: 'request', request_id: this.#nextRequestId++, operation: 'close'})
     } catch {
-      void this.#worker.terminate().catch(() => undefined)
+      this.#terminateClosing('WORKER_PROTOCOL_FAILURE')
     }
     return this.#closing
   }
@@ -154,14 +161,29 @@ export class KnowledgeStoreClient {
     pending.resolve(response.result)
   }
 
+  #terminateClosing(code?: 'WORKER_PROTOCOL_FAILURE'): void {
+    if (this.#forcedExit) return
+    this.#forcedExit = true
+    clearTimeout(this.#closeTimer)
+    // Native SQLite can delay termination. Best-effort detachment lets lifecycle recovery proceed;
+    // reopening still uses SQLite's busy timeout and can fail if a native lock has not cleared.
+    if (code === undefined) this.#resolveClosing?.()
+    else this.#rejectClosing?.(new KnowledgeStoreClientError(code))
+    this.#resolveClosing = undefined
+    this.#rejectClosing = undefined
+    this.#worker.unref()
+    void this.#worker.terminate().catch(() => undefined)
+  }
+
   #handleExit(code: number): void {
+    clearTimeout(this.#closeTimer)
     this.#exited = true
     if (this.#resolveClosing !== undefined || this.#rejectClosing !== undefined) {
       const resolve = this.#resolveClosing
       const reject = this.#rejectClosing
       this.#resolveClosing = undefined
       this.#rejectClosing = undefined
-      if (code === 0) resolve?.()
+      if (code === 0 || this.#forcedExit) resolve?.()
       else reject?.(new KnowledgeStoreClientError('WORKER_EXITED'))
       return
     }

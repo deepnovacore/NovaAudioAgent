@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 
 import {
+  DESKTOP_DEPENDENCIES,
   deriveLockedProductionClosure,
   readReleaseTargets,
 } from '../scripts/release-dependency-closure.mjs'
@@ -18,7 +19,7 @@ function dependencyLock(resolved) {
     packages: {
       'desktop/ambient-orb': {
         name: '@nova-audio-agent/ambient-orb',
-        dependencies: { '@nova-audio-agent/runtime': '0.1.1' },
+        dependencies: Object.fromEntries(DESKTOP_DEPENDENCIES.map(name => [name, name === '@nova-audio-agent/runtime' ? '0.1.1' : '1.0.0'])),
       },
       'node_modules/@nova-audio-agent/runtime': { link: true, resolved: 'runtime' },
       runtime: {
@@ -31,6 +32,7 @@ function dependencyLock(resolved) {
           registry: '1.0.0',
         },
       },
+      ...Object.fromEntries(DESKTOP_DEPENDENCIES.filter(name => name !== '@nova-audio-agent/runtime').map(name => [`node_modules/${name}`, {version: '1.0.0'}])),
       'node_modules/@livekit/agents': { version: '1.6.4' },
       'node_modules/@livekit/rtc-node': { version: '0.13.33' },
       [`node_modules/${VOICEMEM_PACKAGE}`]: { version: '0.0.1', resolved },
@@ -93,16 +95,6 @@ test('release targets require each canonical tuple, installer, and resource exac
         installers: ['nsis'],
         native_resources: [
           'windows_job_guardian', 'project_native_addon', 'codex_sandbox_probe',
-          'livekit_local_inference', 'livekit_rtc',
-          'livekit_probe_manifest', 'livekit_probe_license',
-          'livekit_probe_silence', 'livekit_probe_speech',
-        ],
-      },
-      {
-        id: 'linux-x64-gnu', platform: 'linux', architecture: 'x64', libc: 'glibc',
-        installers: ['appimage', 'deb'],
-        native_resources: [
-          'project_native_addon', 'codex_sandbox_probe',
           'livekit_local_inference', 'livekit_rtc',
           'livekit_probe_manifest', 'livekit_probe_license',
           'livekit_probe_silence', 'livekit_probe_speech',
@@ -182,4 +174,11 @@ test('locked Git dependencies reject branches, tags, and short commits', async (
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+test('Linux source checks retain a locked closure without becoming a release target', async () => {
+  assert.equal((await readReleaseTargets()).targets.some(target => target.platform === 'linux'), false)
+  await assert.rejects(deriveLockedProductionClosure({targetId: 'linux-x64-gnu'}), error => error.code === 'unsupported_target')
+  const closure = await deriveLockedProductionClosure({targetId: 'linux-x64-gnu', sourceBuild: true})
+  assert.equal(closure.target, 'linux-x64-gnu')
+  assert.ok(closure.packages.some(item => item.name === '@livekit/local-inference-linux-x64-gnu'))
 })

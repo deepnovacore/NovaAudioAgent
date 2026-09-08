@@ -1,6 +1,7 @@
+import {tmpdir} from 'node:os'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {mkdtemp, readFile, rm, chmod} from 'node:fs/promises'
+import {mkdtemp, readFile, rm, chmod, realpath} from 'node:fs/promises'
 import {join} from 'node:path'
 import {parseCapabilityRegistry} from '../src/capability-registry.js'
 import {prepareManagedCodexMcp, managedMcpConfigToml} from '../src/executors/codex/managed-mcp.js'
@@ -18,7 +19,7 @@ test('private MCP config serializes only references and exact original tools; no
   assert.deepEqual(Object.keys(managed.servers), ['docs'])
   assert.deepEqual(managed.servers.docs?.enabled_tools, ['look-up.raw'])
   assert.equal(managed.servers.docs?.tool_timeout_sec, 9)
-  const directory = await mkdtemp('/private/tmp/nova-managed-mcp-')
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'nova-managed-mcp-')))
   await chmod(directory, 0o700)
   try {
     const home = hostCodexHomeForTest(directory, {ephemeral: true})

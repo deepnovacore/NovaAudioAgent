@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import test from 'node:test'
+import {OWNED_ASAR_UNPACK_DIR} from '../scripts/build-owned-asar.mjs'
 
 // electron-builder.yml is small and structurally simple (two-space indents,
 // no anchors/aliases, no flow collections except the `[a, b]` target lists),
@@ -18,8 +19,40 @@ const UNSIGNED_WORKFLOW_PATH = resolve(import.meta.dirname, '../../../.github/wo
 const ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.plist')
 const INHERIT_ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.inherit.plist')
 const HTML_PATH = resolve(import.meta.dirname, '../src/renderer/index.html')
+
+test('Windows runtime runner keeps its explicit deferred POSIX suite inventory', async () => {
+  const {runInNewContext} = await import('node:vm')
+  const source = await readFile(resolve(import.meta.dirname, '../../../runtime/scripts/test-windows.mjs'), 'utf8')
+  const excluded = [
+    'codex-credential-snapshot.test.js',
+    'codex-host-config.test.js',
+    'codex-process-owner.test.js',
+    'codex-project-store.test.js',
+    'knowledge-store.test.js',
+    'realtime-telemetry.test.js',
+  ]
+  let args
+  const process = {execPath: 'node', exitCode: undefined}
+  runInNewContext(source.replace(/^import .*\n/gmu, '').replaceAll('import.meta.dirname', 'scriptDirectory'), {
+    scriptDirectory: '/runtime/scripts', resolve, process,
+    Set: class extends Set {
+      constructor(values) { super(values); assert.deepEqual([...values], excluded) }
+    },
+    readdirSync: () => [...excluded, 'cross-platform.test.js', 'fixture.js'],
+    spawnSync: (_command, values) => {args = [...values]; return {status: 0}},
+  })
+  assert.deepEqual(args, ['--test', resolve('/runtime/dist/test/cross-platform.test.js')])
+  assert.equal(process.exitCode, 0)
+})
+
 const EXPECTED_BUILD_SCRIPTS = [
   'src/main/main.mjs',
+  'src/main/wake-word/runtime.mjs',
+  'src/main/wake-word/worker.mjs',
+  'src/main/wake-word/model-manager.mjs',
+  'src/main/wake-word/sherpa-detector.mjs',
+  'src/renderer/wake-audio.mjs',
+  'scripts/wake-word-smoke.mjs',
   'src/main/app-protocol.mjs',
   'src/main/camera-source.mjs',
   'src/main/backend.mjs',
@@ -31,6 +64,7 @@ const EXPECTED_BUILD_SCRIPTS = [
   'src/main/launch-command.mjs',
   'src/main/settings-store.mjs',
   'src/renderer/index.mjs',
+  'src/renderer/wire-frame-types.mjs',
   'src/renderer/camera.mjs',
   'src/renderer/release-camera.mjs',
   'src/renderer/release-camera-contract.mjs',
@@ -419,7 +453,7 @@ test('ordinary CI uploads package artifacts only for version tags', async () => 
   const workflow = parseYaml(text)
 
   assert.deepEqual(Object.keys(workflow.on), ['push', 'pull_request'])
-  assert.deepEqual(workflow.on.push.branches, ['main'])
+  assert.deepEqual(workflow.on.push.branches, ['main', 'v0.2.0dev'])
   assert.deepEqual(workflow.on.push.tags, ['v*'])
   assert.equal('python' in workflow.jobs, false)
   assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, [
@@ -427,6 +461,13 @@ test('ordinary CI uploads package artifacts only for version tags', async () => 
   ])
   const cliTest = workflow.jobs.electron.steps.find(step => step.run === 'npm run test:cli')
   assert.deepEqual(cliTest, {run: 'npm run test:cli'})
+  assert.deepEqual(
+    workflow.jobs.electron.steps.filter(step => step.run?.startsWith('npm run test:runtime')),
+    [
+      {run: 'npm run test:runtime', if: "runner.os != 'Windows'"},
+      {run: 'npm run test:runtime:win', if: "runner.os == 'Windows'"},
+    ],
+  )
   assert.equal(
     workflow.jobs.electron.steps.some(step => step.uses === 'actions/upload-artifact@v4'),
     false,
@@ -478,7 +519,7 @@ test('unsigned Windows workflow is manual-only and never creates a release', asy
   const packageRuns = packageSteps.map(step => step.run).filter(Boolean).join('\n')
   for (const command of [
     'npm run check',
-    'npm run test:runtime',
+    'npm run test:runtime:win',
     'npm run test:desktop',
     'npm run build',
     'npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb',
@@ -486,10 +527,10 @@ test('unsigned Windows workflow is manual-only and never creates a release', asy
     'npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}',
     'npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb',
   ]) assert.ok(packageRuns.includes(command), command)
-  const runtimeTests = packageSteps.find(step => step.run === 'npm run test:runtime')
-  assert.equal(runtimeTests?.if, "runner.os != 'Windows'")
+  const runtimeTests = packageSteps.find(step => step.run === 'npm run test:runtime:win')
+  assert.deepEqual(runtimeTests, {run: 'npm run test:runtime:win'})
   const desktopTests = packageSteps.find(step => step.run === 'npm run test:desktop')
-  assert.equal(desktopTests?.if, "runner.os != 'Windows'")
+  assert.deepEqual(desktopTests, {run: 'npm run test:desktop'})
   assert.equal(packageSteps.some(step => step.uses === 'actions/attest-build-provenance@v3'), false)
   assert.ok(packageSteps.some(step => step.uses === 'actions/upload-artifact@v4'))
   assert.doesNotMatch(text, /continue-on-error|\|\| true/u)
@@ -631,4 +672,10 @@ test('the dedicated camera-file script builds runtime before launching pinned El
     pkg.scripts['test:camera-file'],
     'npm run build --workspace @nova-audio-agent/runtime && electron scripts/camera-file-integration.mjs',
   )
+})
+
+test('sherpa WASM distribution is unpacked for worker filesystem loading', async () => {
+  const config = await readFile(CONFIG_PATH, 'utf8')
+  assert.deepEqual(parseYaml(config).asarUnpack, [`**/${OWNED_ASAR_UNPACK_DIR.replaceAll('\\', '/')}/**`],
+    'builder unpack rules must match the final owned-ASAR replacement')
 })

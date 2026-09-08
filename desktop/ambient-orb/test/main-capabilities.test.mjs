@@ -1,3 +1,4 @@
+import {tmpdir} from 'node:os'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import vm from 'node:vm'
@@ -6,14 +7,14 @@ import {statSync} from 'node:fs'
 import {join} from 'node:path'
 import {createBackendSupervisor} from '../src/main/backend-supervisor.mjs'
 import {classifyBackendFailure} from '../src/main/backend-diagnostics.mjs'
-import {capabilityPath, readCapabilityDocument} from '../src/main/capabilities-settings.mjs'
+import {capabilityPath, capabilityDocumentRevision, readCapabilityDocument} from '../src/main/capabilities-settings.mjs'
 
 const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 const launch = source.slice(source.indexOf('async function launchBackend('), source.indexOf('function initializeDesktopBootstrap('))
 const view = source.slice(source.indexOf('function settingsView()'), source.indexOf('async function loadMemoryBoardExport()'))
 
 test('actual main prelaunch registry failures stop the supervisor without scheduling reconnect', async t => {
-  const root = await mkdtemp('/private/tmp/nova-task4-prelaunch-')
+  const root = await mkdtemp(join(tmpdir(), 'nova-task4-prelaunch-'))
   t.after(() => rm(root, {recursive: true, force: true}))
   const path = join(root, 'cap.json')
   for (const bytes of ['invalid json', ' '.repeat(256 * 1024 + 1), null]) {
@@ -38,10 +39,10 @@ test('actual main keeps invalid model configuration visible when Coding is disab
 })
 test('actual settings view decrypts only for an open panel and caches the public generation', () => {
   let decrypts = 0
-  const context = vm.createContext({settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
+  const context = vm.createContext({wakeWord: null, settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
     readCapabilityDocument: () => ({version: 1}), decryptSecretsForSpawn: () => {decrypts++; return {}},
-    readCapabilityEditor: () => ({document: {version: 1}, revision: 'test-revision', problems: []}), capabilityEnvironment: () => ({}), capabilityPath, statSync,
-    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', managedWorkspacesView: () => ({}),
+    readCapabilityEditor: () => ({document: {version: 1}, revision: 'test-revision', problems: []}), capabilityEnvironment: () => ({}), capabilityPath, statSync, capabilityDocumentRevision: () => 'fixed',
+    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
     microphoneStatus: 'unknown', desktopConfig: null, secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})
   vm.runInContext(view, context)
   context.settingsView(); context.settingsView()
@@ -58,14 +59,16 @@ test('actual settings view decrypts only for an open panel and caches the public
 })
 
 test('actual main refreshes a hand-edited registry while the panel is open and on backend launch', async t => {
-  const root = await mkdtemp('/private/tmp/nova-task4-cache-')
+  const root = await mkdtemp(join(tmpdir(), 'nova-task4-cache-'))
   t.after(() => rm(root, {recursive: true, force: true}))
   const path = join(root, 'capabilities.json')
-  const context = vm.createContext({settingsWindow: {show() {}, focus() {}}, refreshManagedWorkspaceCapabilities: () => Promise.resolve(), sendToSettings: () => {}, capabilityEditorCache: null, settingsGeneration: 0,
+  const context = vm.createContext({wakeWord: null, settingsWindow: {show() {}, focus() {}}, refreshManagedWorkspaceCapabilities: () => Promise.resolve(), sendToSettings: () => {}, capabilityEditorCache: null, settingsGeneration: 0,
     currentSettings: {capabilitiesConfigPath: path}, process: {env: {}}, readCapabilityDocument, classifyBackendFailure,
     decryptSecretsForSpawn: () => ({}), capabilityEnvironment: () => ({}),
-    readCapabilityEditor: settings => ({document: readCapabilityDocument(settings, {}), revision: 'test-revision', problems: []}), capabilityPath, statSync,
-    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', managedWorkspacesView: () => ({}),
+    readCapabilityEditor: settings => ({document: readCapabilityDocument(settings, {}), revision: 'test-revision', problems: []}), capabilityPath, capabilityDocumentRevision,
+    // Windows can give consecutive same-size writes identical file timestamps.
+    statSync: () => ({dev: 1, ino: 1, size: 38, mtimeMs: 1, ctimeMs: 1}),
+    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
     microphoneStatus: 'unknown', desktopConfig: {modelConfigurationError: 'model_base_url_invalid'},
     secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})
   const open = source.slice(source.indexOf('function openSettingsWindow('), source.indexOf('function createTray('))

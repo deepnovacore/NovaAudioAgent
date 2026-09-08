@@ -37,3 +37,15 @@ test('disabled module discards late source list and clears consent', async () =>
   assert.equal(node('sources').children.length, 0)
   assert.equal(node('consent').checked, false)
 })
+
+test('panel displays FTS availability and its lexical fallback limitation', async () => {
+  let fts = false
+  const {panel, node} = fixture(async () => ({sources: [], jobs: [], fts}))
+  panel.render({capabilities: {runtime: {modules: {knowledge: {enabled: true}}}}})
+  await node('refresh').listeners.click()
+  assert.match(node('status').textContent, /FTS5 不可用.*基础词法匹配.*无相关性排序/u)
+  fts = true
+  await node('refresh').listeners.click()
+  assert.match(node('status').textContent, /FTS5 已启用/u)
+  assert.doesNotMatch(node('status').textContent, /不可用/u)
+})

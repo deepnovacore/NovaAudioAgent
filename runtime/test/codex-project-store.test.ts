@@ -602,7 +602,7 @@ class ReplaceManagedRestoreAfterMkdirRootFileAuthority
 
 class FailManagedLookupRootFileAuthority extends DescriptorRelativeRootFileAuthority {
   override lookupAt(rootDescriptor: number, name: string): ProjectRootFileLookupResult {
-    if (name.startsWith('managed-')) return {status: 'failed'}
+    if (name.startsWith('managed-') && name !== PROJECT_MAINTENANCE_JOURNAL_FILE) return {status: 'failed'}
     return super.lookupAt(rootDescriptor, name)
   }
 }
@@ -2137,6 +2137,60 @@ test('a later replacement failure restores every original in the prepared set', 
   }
 })
 
+test('desktop journal recovery waits for the live owner before changing managed files', async t => {
+  for (const phase of ['prepared', 'committed'] as const) {
+    await t.test(phase, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'nova-maintenance-live-owner-'))
+      const stateRoot = join(root, 'state'), managedRoot = join(root, 'managed')
+      await mkdir(stateRoot, {mode: 0o700})
+      await mkdir(managedRoot, {mode: 0o700})
+      const nativeLocks = new DescriptorLockAuthority()
+      const rootFiles = new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot])
+      const options = {
+        stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+        managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+        nativeLocks, rootFiles, live: true, idFactory: () => 'workspace-0001',
+        maintenanceFault: (step: string) => phase === 'prepared' && step === 'replacement_placed',
+      }
+      const store = await ProjectStore.open(options)
+      let maintenance: ManagedWorkspaceMaintenanceService | undefined
+      try {
+        const workspace = await store.createManaged('Alpha')
+        await writeFile(join(workspace.canonical_path, 'original.txt'), 'preserve until recovery')
+        const snapshot = await store.maintenanceSnapshot()
+        const target = snapshot.managed_targets[0]!
+        const replacing = store.executeManagedReplacement({
+          expected_state_revision: snapshot.state_revision,
+          targets: [{workspace_id: workspace.workspace_id, canonical_path: workspace.canonical_path,
+            identity: target.identity, tombstone_name: '.nova-maintenance-operation-0001-1'}],
+        })
+        if (phase === 'prepared') await assert.rejects(replacing, /maintenance fault/u)
+        else assert.equal((await replacing).status, 'committed')
+        const journalPath = join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE)
+        const before = await readFile(journalPath)
+        maintenance = await ManagedWorkspaceMaintenanceService.openFromDesktop({
+          stateRoot: await realpath(stateRoot), managedRoot: await realpath(managedRoot),
+          nativeHost: {nativeLocks, rootFiles} as unknown as Parameters<typeof ManagedWorkspaceMaintenanceService.openFromDesktop>[0]['nativeHost'],
+        })
+        assert.equal((await maintenance.capabilities()).health,
+          phase === 'prepared' ? 'rollback_pending' : 'cleanup_pending')
+        assert.deepEqual(await readFile(journalPath), before, 'observer cannot replay under a live owner')
+        assert.equal(await readFile(join(managedRoot, '.nova-maintenance-operation-0001-1', 'original.txt'), 'utf8'), 'preserve until recovery')
+        await store.close()
+        assert.equal((await maintenance.capabilities()).health, 'ready')
+        await assert.rejects(readFile(journalPath), /ENOENT/u)
+        if (phase === 'prepared') {
+          assert.equal(await readFile(join(workspace.canonical_path, 'original.txt'), 'utf8'), 'preserve until recovery')
+        } else assert.deepEqual(await readdir(workspace.canonical_path), [])
+      } finally {
+        await maintenance?.close()
+        await store.close().catch(() => undefined)
+        await rm(root, {recursive: true, force: true})
+      }
+    })
+  }
+})
+
 test('a prepared journal rolls back after restart without deleting a populated replacement', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-maintenance-recovery-'))
   const stateRoot = join(root, 'state')
@@ -2390,8 +2444,8 @@ test('a partially cleaned committed v1 maintenance journal remains decodable', a
     await store.close()
 
     rootFiles.failCleanupName = null
-    store = await ProjectStore.open(options)
-    assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'committed')
+    store = await ProjectStore.open({...options, live: true})
+    assert.equal(await store.loadManagedMaintenanceJournal(), null, 'live open replays legacy committed journals')
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
   } finally {
     await store.close().catch(() => undefined)
@@ -2497,7 +2551,40 @@ test('crash after tombstone deletion is idempotently completed from the committe
     assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'committed')
     await store.close()
 
-    store = await ProjectStore.open(baseOptions)
+    const journalBytes = await readFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE))
+    const busyLocks = new BusyThenDescriptorLockAuthority()
+    busyLocks.busyAttempts = Number.MAX_SAFE_INTEGER
+    const observer = await ProjectStore.open({...baseOptions, nativeLocks: busyLocks})
+    assert.equal(busyLocks.acquireCalls, 0, 'a desktop observer must not replay during open')
+    assert.deepEqual(await readFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE)), journalBytes)
+    await observer.close()
+
+    const contended = await ManagedWorkspaceMaintenanceService.openFromDesktop({
+      stateRoot: await realpath(stateRoot), managedRoot: await realpath(managedRoot),
+      nativeHost: {nativeLocks: busyLocks, rootFiles} as unknown as Parameters<typeof ManagedWorkspaceMaintenanceService.openFromDesktop>[0]['nativeHost'],
+    })
+    try {
+      assert.deepEqual(await contended.capabilities(), {
+        health: 'degraded', lifecycleBusy: true,
+        current: {available: false, display_name: null}, all: {available: false, count: 0},
+      }, 'a real maintenance observer reports contention without declaring corruption')
+      assert.deepEqual(await readFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE)), journalBytes)
+      busyLocks.busyAttempts = 0
+      assert.equal((await contended.capabilities()).health, 'ready')
+      await assert.rejects(readFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE)), /ENOENT/u)
+    } finally { await contended.close() }
+
+    await writeFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE), '{broken', {mode: 0o600})
+    const maintenance = await ManagedWorkspaceMaintenanceService.openFromDesktop({
+      stateRoot: await realpath(stateRoot), managedRoot: await realpath(managedRoot),
+      nativeHost: {nativeLocks: baseOptions.nativeLocks, rootFiles} as unknown as Parameters<typeof ManagedWorkspaceMaintenanceService.openFromDesktop>[0]['nativeHost'],
+    })
+    assert.equal((await maintenance.capabilities()).health, 'unavailable')
+    await maintenance.close()
+    await assert.rejects(ProjectStore.open({...baseOptions, live: true}))
+    await writeFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE), journalBytes, {mode: 0o600})
+    store = await ProjectStore.open({...baseOptions, live: true})
+    assert.equal(await store.loadManagedMaintenanceJournal(), null, 'failed live replay releases its owner lock for retry')
     assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
     assert.equal(await store.loadManagedMaintenanceJournal(), null)
     assert.deepEqual(await readdir(workspace.canonical_path), [])

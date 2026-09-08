@@ -1,3 +1,4 @@
+import {tmpdir} from 'node:os'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {parseCapabilityRegistry} from '../src/capability-registry.js'
@@ -307,7 +308,7 @@ test('real service carries private origin through queued dispatch; local onset d
 })
 
 async function stdioFixture(mode = 'normal') {
-  const directory = await mkdtemp('/private/tmp/nova-external-mcp-')
+  const directory = await mkdtemp(join(tmpdir(), 'nova-external-mcp-'))
   const path = join(directory, 'server.mjs')
   const marker = join(directory, 'pid')
   // dist/test is one level deeper; resolve from the repository path, never a user config or secret.

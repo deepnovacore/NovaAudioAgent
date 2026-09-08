@@ -11,7 +11,7 @@ import {readdirSync, readFileSync, statSync} from 'node:fs'
 import {relative, resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
-const PATTERN = /['"]codex['"]|codex__|Codex[A-Z]/gu
+const PATTERN = /codex/giu
 const COMPOSITION_ROOTS = new Set([
   'runtime/src/cli.ts',
   'runtime/src/desktop-entry.ts',
@@ -38,7 +38,7 @@ export function coreFiles() {
     .sort()
 }
 
-/** Every hit as `{path, line, match}`; the allowlist matches on `path` + `pattern` (a substring). */
+/** Every hit as `{path, line, match}`; the allowlist matches on `path` + `pattern` (the exact trimmed source line). */
 export function scanCore() {
   const hits = []
   for (const path of coreFiles()) {
@@ -65,7 +65,7 @@ export function unlistedHits(hits, allowlist) {
     for (const budget of budgets) {
       if (budget.remaining <= 0) continue
       const entry = budget.entry
-      if (entry.path !== hit.path || !hit.text.includes(entry.pattern)) continue
+      if (entry.path !== hit.path || hit.text.trim() !== entry.pattern) continue
       budget.remaining -= 1
       covered = true
       break
@@ -81,7 +81,7 @@ export function staleEntries(hits, allowlist) {
     for (const budget of budgets) {
       if (budget.remaining <= 0) continue
       const entry = budget.entry
-      if (entry.path !== hit.path || !hit.text.includes(entry.pattern)) continue
+      if (entry.path !== hit.path || hit.text.trim() !== entry.pattern) continue
       budget.remaining -= 1
       break
     }

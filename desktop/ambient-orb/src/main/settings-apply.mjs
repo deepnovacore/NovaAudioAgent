@@ -23,8 +23,8 @@ function rejectedSecretNames(written) {
   return Object.freeze(written.rejectedSecrets.filter(name => typeof name === 'string'))
 }
 
-function result(saved, operationStatus, rejectedSecrets) {
-  return Object.freeze({saved, operationStatus, rejectedSecrets})
+function result(saved, operationStatus, rejectedSecrets, restarted = false) {
+  return Object.freeze({saved, operationStatus, rejectedSecrets, restarted})
 }
 
 export async function applySettingsTransaction({
@@ -37,8 +37,19 @@ export async function applySettingsTransaction({
   discardConfiguration = async () => {},
   restartBackend,
   publishStatus,
+  needsBackendRestart = () => true,
+  rollback = async () => {},
+  complete = async () => {},
 }) {
   const coordinated = await coordinator.run('settings_save', async () => {
+    async function failed(status, rejectedSecrets) {
+      try {
+        await rollback()
+      } catch { status = 'recovery_failed' }
+      publishCommitted()
+      publishStatus(status)
+      return result(false, status, rejectedSecrets)
+    }
     publishStatus('saving')
     let written
     try {
@@ -48,12 +59,16 @@ export async function applySettingsTransaction({
         publishStatus('invalid')
         return {...result(false, 'invalid', Object.freeze([])), problems: error.problems}
       }
-      publishStatus('failed')
-      return result(false, 'failed', Object.freeze([]))
+      return failed('failed', Object.freeze([]))
     }
 
     const rejectedSecrets = rejectedSecretNames(written)
     publishCommitted(written)
+    if (!needsBackendRestart()) {
+      try { await complete() } catch { return failed('failed', rejectedSecrets) }
+      publishStatus('applied')
+      return result(true, 'applied', rejectedSecrets)
+    }
     publishStatus('refreshing')
     let prepared
     let preparedOwned = false
@@ -65,19 +80,18 @@ export async function applySettingsTransaction({
       preparedOwned = false
     } catch {
       if (preparedOwned) await discardConfiguration(prepared).catch(() => undefined)
-      publishStatus('failed')
-      return result(true, 'failed', rejectedSecrets)
+      return failed('failed', rejectedSecrets)
     }
 
     publishStatus('restarting')
     try {
       await restartBackend(committedConfiguration)
     } catch {
-      publishStatus('restart_failed')
-      return result(true, 'restart_failed', rejectedSecrets)
+      return failed('restart_failed', rejectedSecrets)
     }
+    try { await complete() } catch { return failed('failed', rejectedSecrets) }
     publishStatus('applied')
-    return result(true, 'applied', rejectedSecrets)
+    return result(true, 'applied', rejectedSecrets, true)
   })
   return coordinated.status === 'busy'
     ? result(false, 'busy', Object.freeze([]))

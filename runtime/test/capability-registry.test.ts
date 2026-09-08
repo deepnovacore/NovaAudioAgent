@@ -1,3 +1,4 @@
+import {tmpdir} from 'node:os'
 import assert from 'node:assert/strict'
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
@@ -14,7 +15,7 @@ const settings = () => settingsSchema.parse({executors: [], model_api_key: 'test
 const server = {transport: 'streamable-http', url: 'https://example.test/mcp', tools: {lookup: {enabled: true}}}
 
 test('registry default file absent is optional; explicit unreadable, malformed and invalid envelope fail redacted', () => {
-  const home = mkdtempSync('/private/tmp/nova-capabilities-')
+  const home = mkdtempSync(join(tmpdir(), 'nova-capabilities-'))
   try {
     const defaults = loadCapabilityRegistry({home, environment: {}})
     assert.deepEqual(defaults.modules, {search: {enabled: true, provider: 'tavily', tavily: {apiKeyEnv: 'TAVILY_API_KEY'}}, camera: {enabled: true}, coding: {enabled: true}, knowledge: {enabled: false, exposeToCodex: false}})

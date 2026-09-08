@@ -1,3 +1,4 @@
+export const DESKTOP_DEPENDENCIES = Object.freeze(['@nova-audio-agent/runtime', 'sherpa-onnx', 'tar-stream', 'unbzip2-stream'])
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
@@ -6,7 +7,6 @@ import { fileURLToPath } from 'node:url'
 
 import { parseStrictJson } from './strict-json.mjs'
 
-const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
 const { satisfies: semverSatisfies } = createRequire(import.meta.url)('semver')
 const REQUIRED_RUNTIME_VERSIONS = Object.freeze({
   '@livekit/agents': '1.6.4',
@@ -43,16 +43,6 @@ const CANONICAL_TARGETS = Object.freeze([
       'livekit_probe_silence', 'livekit_probe_speech',
     ]),
   }),
-  Object.freeze({
-    id: 'linux-x64-gnu', platform: 'linux', architecture: 'x64', libc: 'glibc',
-    installers: Object.freeze(['appimage', 'deb']),
-    native_resources: Object.freeze([
-      'project_native_addon', 'codex_sandbox_probe',
-      'livekit_local_inference', 'livekit_rtc',
-      'livekit_probe_manifest', 'livekit_probe_license',
-      'livekit_probe_silence', 'livekit_probe_speech',
-    ]),
-  }),
 ])
 
 export class ReleaseDependencyError extends Error {
@@ -84,7 +74,7 @@ export async function readReleaseTargets(path = resolve(
     throw new ReleaseDependencyError('target_manifest_invalid')
   }
   exactKeys(parsed, ['schema_version', 'electron', 'targets'], 'target_manifest_invalid')
-  if (parsed.schema_version !== 1 || !Array.isArray(parsed.targets) || parsed.targets.length !== 4) {
+  if (parsed.schema_version !== 1 || !Array.isArray(parsed.targets) || parsed.targets.length !== 3) {
     throw new ReleaseDependencyError('target_manifest_invalid')
   }
   exactKeys(parsed.electron, ['version', 'module_abi'], 'target_manifest_invalid')
@@ -208,9 +198,13 @@ function lockedIdentity(name, installKey, manifest) {
 export async function deriveLockedProductionClosure({
   lockPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../package-lock.json'),
   targetId,
+  sourceBuild = false,
 } = {}) {
   const targets = await readReleaseTargets()
   const target = targets.targets.find(candidate => candidate.id === targetId)
+    // Ubuntu exercises source builds only; packaged release inspection cannot opt in.
+    ?? (sourceBuild && targetId === 'linux-x64-gnu'
+      ? {id: targetId, platform: 'linux', architecture: 'x64', libc: 'glibc'} : undefined)
   if (!target) throw new ReleaseDependencyError('unsupported_target')
   let lock
   try {
@@ -227,7 +221,8 @@ export async function deriveLockedProductionClosure({
     throw new ReleaseDependencyError('lock_invalid')
   }
   const desktopDependencies = Object.keys(desktop.dependencies ?? {})
-  if (desktopDependencies.length !== 1 || desktopDependencies[0] !== RUNTIME_PACKAGE) {
+  if (desktopDependencies.length !== DESKTOP_DEPENDENCIES.length
+    || desktopDependencies.some(name => !DESKTOP_DEPENDENCIES.includes(name))) {
     throw new ReleaseDependencyError('desktop_dependency_invalid')
   }
 

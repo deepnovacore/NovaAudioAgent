@@ -169,7 +169,7 @@ test('provider session requires increasing epochs and resets through one reconne
   assert.equal(session.state, 'closed')
 })
 
-test('provider session applies cached response adaptation before the first PCM and deduplicates it', async () => {
+test('provider session applies adaptation without blocking PCM ingress', async () => {
   const provider = new FakeProvider()
   let context: {readonly revision: number; readonly content: string | null} | undefined = {
     revision: 1, content: 'Keep replies concise.',
@@ -185,6 +185,7 @@ test('provider session applies cached response adaptation before the first PCM a
   assert.deepEqual(provider.responseAdaptations, [{revision: 1, content: 'Keep replies concise.'}])
   context = {revision: 3, content: null}
   await session.sendAudio(new Uint8Array([3, 0]))
+  await session.ensureResponse()
   assert.deepEqual(provider.responseAdaptations.at(-1), {revision: 3, content: null})
   await session.close()
 })
@@ -224,6 +225,7 @@ test('a failed adaptation attempt is deduplicated until the cache publishes a ne
   await session.sendAudio(new Uint8Array([0, 0]))
   context = {revision: 2, content: 'Keep replies concise.'}
   await session.sendAudio(new Uint8Array([1, 0]))
+  await session.ensureResponse()
   assert.equal(provider.responseAdaptationCalls, 2)
   assert.deepEqual(diagnostics, ['replace_failed', 'replace_failed'])
   await session.close()
@@ -244,13 +246,15 @@ test('a response adaptation cache read failure is diagnostic-only and later read
   await session.connect()
   await session.sendAudio(new Uint8Array([0, 0]))
   await session.sendAudio(new Uint8Array([1, 0]))
+  await session.ensureResponse()
+  await session.ensureResponse()
   assert.equal(provider.sentAudio.length, 2)
   assert.deepEqual(provider.responseAdaptations, [{revision: 1, content: 'Use concise replies.'}])
   assert.deepEqual(diagnostics, ['read_failed'])
   await session.close()
 })
 
-test('audio is copied before an adaptation wait can yield to a caller mutation', async () => {
+test('PCM ingress proceeds while a response adaptation network call is blocked', async () => {
   const provider = new FakeProvider()
   const context: {value: {readonly revision: number; readonly content: string | null} | undefined} = {value: undefined}
   const gate = deferred<void>()
@@ -258,29 +262,25 @@ test('audio is copied before an adaptation wait can yield to a caller mutation',
   const session = new RealtimeProviderSession(provider, {responseAdaptation: () => context.value})
   await session.connect()
   context.value = {revision: 1, content: 'brief'}
+  const adapting = session.ensureResponse()
   const pcm = new Uint8Array([1, 0])
   const sending = session.sendAudio(pcm)
   pcm[0] = 9
-  gate.resolve(undefined)
   await sending
+  assert.equal(provider.sentAudio.length, 1)
+  gate.resolve(undefined)
+  await adapting
   assert.deepEqual(provider.sentAudio[0], new Uint8Array([1, 0]))
   await session.close()
 })
 
-test('an aborted adaptation wait cannot send its PCM afterward', async () => {
+test('already-aborted audio is never sent', async () => {
   const provider = new FakeProvider()
-  const context: {value: {readonly revision: number; readonly content: string | null} | undefined} = {value: undefined}
-  const gate = deferred<void>()
-  provider.adaptationGate = gate.promise
-  const session = new RealtimeProviderSession(provider, {responseAdaptation: () => context.value})
+  const session = new RealtimeProviderSession(provider)
   await session.connect()
-  context.value = {revision: 1, content: 'brief'}
   const stop = new AbortController()
-  const sending = session.sendAudio(new Uint8Array([1, 0]), stop.signal)
-  await new Promise<void>(resolve => { setImmediate(resolve) })
   stop.abort()
-  gate.resolve(undefined)
-  await assert.rejects(sending)
+  await assert.rejects(session.sendAudio(new Uint8Array([1, 0]), stop.signal))
   assert.equal(provider.sentAudio.length, 0)
   await session.close()
 })

@@ -35,7 +35,7 @@ flowchart TB
 | `runtime/src/floor.ts` | Exclusive ownership of the user-facing speaking path |
 | `runtime/src/ports.ts` | Executor manifests, operation contracts, requests, and typed handoffs |
 | `runtime/src/assembly.ts`, `production-realtime-assembly.ts` | Configuration-driven construction of runtime, executor, and realtime graphs; dispatches `integrated` vs `cascaded` |
-| `runtime/src/realtime/` | Provider transports, correlation, playback fencing, recovery, and telemetry |
+| `runtime/src/realtime/` | Host response admission/ownership, shared frontend-instructions, provider transports, playback fencing, recovery, and telemetry |
 | `runtime/src/codex-*.ts` | Codex app-server transport and contract, plus the Workspace/Session project store (`codex-project-store.ts`) |
 | `runtime/src/workspace-graph/` | Opt-in durable workspace memory graph: store worker, identity, projector, recall, context budgeter, provider seam |
 | `runtime/src/executors/` | Deterministic simulators and adapter implementations |
@@ -96,18 +96,29 @@ authorize a workspace switch. The memory layering rationale is in the
 
 ## Platform notes
 
-The runtime and desktop client carry win32, darwin, and linux code paths, with per-platform
-packaging targets (macOS, Windows NSIS, Linux AppImage/deb). Native echo-cancelled audio capture
+Wake capture carries an epoch on every frame (native macOS capture or browser fallback), so frames
+from an old capture owner cannot wake a newer session. Linux remains a source-test platform;
+macOS arm64/x64 and Windows x64 are the current release targets.
+
+The runtime and desktop client carry win32, darwin, and linux code paths. Release packaging
+targets macOS and Windows NSIS; retained Linux AppImage/deb scripts do not establish a supported
+release target. Native echo-cancelled audio capture
 (VoiceProcessingIO) exists on macOS only; Windows and Linux use Chromium's audio stack, and both
 camera paths use Chromium's capture pipeline on every platform. Cross-platform CI and hardware
 validation status must remain explicit in release evidence and test results.
 
-Desktop settings apply as a transaction rather than live. Panel edits accumulate as drafts inside
-the Settings window; an explicit save writes them, refreshes resolved configuration, and performs
-exactly one controlled backend restart. The runtime therefore never observes a half-applied
-configuration, and the palette commits on that same boundary instead of mutating a running session.
+Panel edits remain drafts until an explicit save. Backend-affecting settings use one coordinated
+transaction and controlled restart, with a recovery record retaining the last usable configuration
+if activation fails. Saved and applied status are separate. Desktop-only wake and appearance
+changes apply immediately after save; a combined capability save still restarts the backend.
+See [settings and recovery](specs/v0.2.0/06-settings-and-config.md).
 
 ## Realtime path
+
+Both integrated and cascaded pipelines use host-owned response admission and request ownership.
+`frontend-instructions.ts` renders shared frontend context. A `response_origin` is correlation
+evidence, never authorization: host narration disables tools, while a bound `tool_output`
+continuation retains tools and still needs current user/confirmation evidence for side effects.
 
 The realtime service translates provider events into host events while preserving provider response
 identity, playback generation, and delegate identity. Renderer acknowledgements fence audio clear
@@ -133,6 +144,9 @@ Neither is exposed by the text CLI; steering is also reachable through the expli
 live second model, planning-state writer, or authorization path.
 
 ## Security boundaries
+
+During wake-word sleep, microphone frames go only to the local desktop Worker. Explicit mute stops
+wake capture. Wake detection resumes the UI; it does not authorize any executor operation.
 
 - Configuration errors never echo secret values.
 - External search and visual content are evidence, never instructions.

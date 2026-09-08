@@ -1,3 +1,4 @@
+import {EXECUTOR_APPROVAL} from './wire-frame-types.mjs'
 const MAX_PROPOSAL_ID_CODE_POINTS = 128
 const PYTHON_BLANK_CHARACTERS = new Set([
   '\u0009', '\u000a', '\u000b', '\u000c', '\u000d',
@@ -150,7 +151,7 @@ export function parseCodexApprovalMessage(message) {
     : [...APPROVAL_BASE_KEYS].sort().join(',')
   if (
     keys !== expectedKeys
-    || message.type !== 'executor.approval'
+    || message.type !== EXECUTOR_APPROVAL
     || !validText(message.executor, 256)
     || !validText(message.display_name, 40)
     || typeof pending !== 'boolean'

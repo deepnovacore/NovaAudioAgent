@@ -308,10 +308,10 @@ function reject(response: ServerResponse, status: number): void {
   response.end('{"error":"request_rejected"}')
 }
 
-/** Rejection never starts a background drain. A consumed request keeps its reusable socket. */
+/** Flush the rejection before the HTTP server closes its socket; immediate destroy can reset it. */
 function rejectAndClose(request: IncomingMessage, response: ServerResponse, status: number): void {
+  if (!request.readableEnded) response.setHeader('Connection', 'close')
   reject(response, status)
-  if (!request.readableEnded && !request.destroyed) request.destroy()
 }
 
 export async function startKnowledgeMcpHttpServer(backend: KnowledgeRecallBackend): Promise<{readonly url: string; readonly token: string; close(): Promise<void>}> {

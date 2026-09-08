@@ -2,8 +2,9 @@
 
 The current foundation includes the runtime spine, bounded memory views, executor ports, search,
 Codex with named Workspaces and Sessions, integrated and cascaded realtime voice, the opt-in
-workspace memory graph, and the Ambient Orb. Vision's M1.5c thin-frontend contract and live/Windows
-acceptance remain pending evidence.
+workspace memory graph, the Ambient Orb, local Chinese wake-word detection and host-owned
+cascaded response scheduling. Vision's M1.5c thin-frontend contract and live/Windows acceptance
+remain pending evidence.
 
 Product direction for the next minor line is specified on branch `v0.2.0dev` in
 [`docs/specs/v0.2.0/`](../specs/v0.2.0/00-overview.md): cross-platform Codex approvals and YOLO,
@@ -37,3 +38,7 @@ the current architecture cannot express safely.
 
 Product-level direction also lives in the README Roadmap section; the items here remain
 evidence-backed engineering improvements alongside the v0.2.0 spec series.
+
+`v0.2.0dev` integration requires automated checks. Merging into `main` requires all feature
+acceptance in [RELEASE-GATE.md](../specs/v0.2.0/RELEASE-GATE.md), including human voice and
+installed Windows wake-word checks. Linux release artifacts are deferred; Ubuntu source tests remain.

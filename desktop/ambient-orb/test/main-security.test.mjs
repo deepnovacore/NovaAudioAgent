@@ -54,6 +54,11 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:settings:get',
     'nova:settings:open',
     'nova:settings:set',
+    'nova:wake-word:activity',
+    'nova:wake-word:audio',
+    'nova:wake-word:changed',
+    'nova:wake-word:report',
+    'nova:wake-word:retry',
     'nova:window-drag:end',
     'nova:window-drag:move',
     'nova:window-drag:start',
@@ -244,7 +249,7 @@ test('settings IPC is sender-validated and answers from main without an orb rela
 
   assert.match(source, /ipcMain\.handle\('nova:settings:get', async event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
   assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, payload\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
-  assert.match(source, /publishCommitted: \(\) => \{[\s\S]*sendToOrb\('nova:settings:changed', orbSettings\(currentSettings\)\)/)
+  assert.match(source, /function publishCommittedSettings\(\) \{[\s\S]*sendToOrb\('nova:settings:changed', orbSettings\(currentSettings\)\)/)
   // No requestId machinery: settings live in main, so nothing round-trips
   // through the orb renderer the way the memory board has to.
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
@@ -325,8 +330,10 @@ test('rollback recovery gates startup, save restart, rescan, and explicit backen
   assert.match(recoveryBody, /retryBackend:[\s\S]*backendSupervisor\.status\(\)\.state === 'connected'/)
   const settings = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
   const settingsHandler = settings.slice(0, settings.indexOf('\n  })'))
-  assert.match(settingsHandler, /managedWorkspaceBackendRecovery\.restart\(\)/)
-  assert.match(settingsHandler, /managedWorkspaceBackendRecovery\.retry\(\)/)
+  assert.match(settingsHandler, /restartBackend: restartSettingsBackend/)
+  const activation = source.slice(source.indexOf('async function restartSettingsBackend'))
+  assert.match(activation.slice(0, activation.indexOf('\n}')), /managedWorkspaceBackendRecovery\.restart\(\)/)
+  assert.match(activation.slice(0, activation.indexOf('\n}')), /managedWorkspaceBackendRecovery\.retry\(\)/)
 })
 
 test('no decrypted secret can reach the renderer or a log line', async () => {
@@ -427,7 +434,7 @@ test('the bootstrap payload carries only orb-owned settings', async () => {
 
   const assignment = source.slice(source.indexOf('bootstrap = Object.freeze({'))
   assert.match(assignment.slice(0, assignment.indexOf('})')), /settings: orbSettings\(currentSettings\)/)
-  assert.match(source, /currentSettings = await loadSettings\(settingsFile\(\)\)/)
+  assert.match(source, /currentSettings = recovered \?\? await loadSettings\(settingsFile\(\)\)/)
 })
 
 test('quitting drains the backend on the stdin sentinel instead of killing it', async () => {
@@ -516,9 +523,10 @@ test('a saved configuration reports bounded transaction phases without falsifyin
 
   assert.match(source, /settingsApplyStatus/)
   assert.match(handler, /publishStatus: publishSettingsApplyStatus/)
-  assert.match(handler, /backendSupervisor\?\.status\(\)\.state !== 'connected'/)
+  assert.match(handler, /restartBackend: restartSettingsBackend/)
+  assert.match(source, /backendSupervisor\?\.status\(\)\.state !== 'connected'/)
   assert.match(handler, /discardConfiguration: discardDesktopConfiguration/)
-  for (const phase of ['saving', 'refreshing', 'restarting', 'applied', 'failed', 'restart_failed']) {
+  for (const phase of ['saving', 'refreshing', 'restarting', 'applied']) {
     assert.match(apply, new RegExp(`publishStatus\\('${phase}'\\)`))
   }
   assert.match(handler, /return \{\.\.\.settingsView\(\), \.\.\.applied\}/)
@@ -758,8 +766,8 @@ test('the mute toggle drops microphone input at both ingress points', async () =
   const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
   // Both PCM ingress gates consult the mute gate before anything is consumed.
-  assert.match(renderer, /if \(!axes\.activated \|\| microphoneGated\(\) \|\| socket\?\.readyState !== WebSocket\.OPEN\) return/)
-  assert.match(renderer, /if \(!nativeReady \|\| microphoneGated\(\)\) return/)
+  assert.match(renderer, /if \(microphoneGated\(\) \|\| event\.data\?\.epoch !== wakeAudio\.epoch\) return/)
+  assert.match(renderer, /if \(!nativeReady \|\| microphoneGated\(\) \|\| event\.wakeEpoch !== wakeAudio\.epoch\) return/)
   // The gate covers mute itself plus a drain window after unmute, so capture
   // batches that straddle the unmute click (or arrive late from a stalled
   // queue) never leak audio that was recorded while muted.
@@ -770,4 +778,224 @@ test('the mute toggle drops microphone input at both ingress points', async () =
   assert.match(renderer, /axes\.muted = false/)
   assert.match(renderer, /muteToggle\.addEventListener\('click', \(\) => toggleMute\(\)\)/)
   assert.match(renderer, /openSettingsButton\.addEventListener\('click', \(\) => window\.novaAudioAgentDesktop\.orbMenu\.openSettings\?\.\(\)\)/)
+})
+
+test('quit bounds a maintenance drain without bypassing backend shutdown', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const {default: vm} = await import('node:vm')
+  let beforeQuit, releaseMaintenanceDeadline, releaseBackend, timeout
+  const exits = []
+  const context = vm.createContext({
+    app: {on: (name, handler) => { if (name === 'before-quit') beforeQuit = handler }, exit: code => exits.push(code)},
+    wakeWord: null, releaseSmokeChannel: null, globalShortcut: {unregisterAll() {}}, nativeAudio: null,
+    backendSupervisor: {stop: () => new Promise(resolve => { releaseBackend = resolve })}, backend: null,
+    managedWorkspaceMaintenance: {close: () => new Promise(() => {})}, quitDrain: null,
+    wait: milliseconds => { timeout = milliseconds; return new Promise(resolve => { releaseMaintenanceDeadline = resolve }) },
+  })
+  vm.runInContext(source.slice(source.indexOf("app.on('before-quit'")), context)
+  beforeQuit({preventDefault() {}})
+  assert.equal(timeout, 3000)
+  releaseMaintenanceDeadline()
+  await Promise.resolve()
+  assert.deepEqual(exits, [], 'backend still owns its shutdown deadline')
+  releaseBackend()
+  await context.quitDrain
+  assert.deepEqual(exits, [0])
+})
+
+test('settings IPC restarts for capability commits while wake-only updates stay local', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const {default: vm} = await import('node:vm')
+  const {backendSettings, DEFAULT_SETTINGS} = await import('../src/main/settings-store.mjs')
+  const start = source.indexOf("  ipcMain.handle('nova:settings:set'")
+  const handlerSource = source.slice(start, source.indexOf('\n  })', start) + 5)
+  for (const [payload, expectedRestart, pendingRecovery = false] of [
+    [{settingsPatch: {wakeWordEnabled: true}}, false],
+    [{settingsPatch: {autoHideSeconds: 120}}, false],
+    [{settingsPatch: {wakeWordEnabled: true}}, true, true],
+    [{settingsPatch: {}, capabilitiesDocument: {}}, true],
+    [{settingsPatch: {wakeWordEnabled: true}, capabilitiesDocument: {}}, true],
+    [{settingsPatch: {startListeningOnLaunch: true}}, true],
+  ]) {
+    let handler, restart
+    const sender = {}
+    const context = vm.createContext({
+      ipcMain: {handle: (_name, value) => { handler = value }}, settingsWindow: {webContents: sender},
+      currentSettings: {...DEFAULT_SETTINGS}, backendSettings, lifecycleCoordinator: {},
+      applySettingsTransaction: async options => { await options.write(payload); restart = options.needsBackendRestart(); return {} },
+      parseSettingsCommit: value => value,
+      settingsWriter: async (patch, prepare) => {
+        const next = {...context.currentSettings, ...patch}
+        await prepare(next); context.currentSettings = next; return next
+      },
+      validatePreparedSettings() {}, publicSettings: value => value,
+      capabilityPath: () => '/capabilities.json', resolve: value => value, settingsFile: () => '/settings.json',
+      readCapabilityDocument: () => ({}), decryptSecretsForSpawn: () => ({}), secretCodec: {},
+      capabilityEnvironment: () => ({}), prepareCapabilityCommit() {}, process: {env: {}},
+      commitDesktopConfiguration() {}, discardDesktopConfiguration() {}, publishSettingsApplyStatus() {},
+      settingsView: () => ({}), console, settingsRecoveryAvailable: pendingRecovery,
+      publishCommittedSettings() {}, rollbackSettings() {}, completeSettings() {}, restartSettingsBackend() {},
+    })
+    vm.runInContext(handlerSource, context)
+    await handler({sender}, payload)
+    assert.equal(restart, expectedRestart)
+  }
+})
+
+test('settings recovery precedes startup configuration and has one transaction status publisher', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const startup = source.slice(source.indexOf('async function startSelectedCamera'))
+  assert.ok(startup.indexOf('loadStartupSettings()') < startup.indexOf('await refreshDesktopConfiguration()'))
+  assert.match(startup, /if \(settingsReady\) await refreshDesktopConfiguration\(\)/u)
+  assert.match(startup, /if \(settingsReady\) void managedWorkspaceBackendRecovery.start\(\)/u)
+  assert.match(startup, /if \(!settingsReady\) \{[\s\S]*dialog.showMessageBox[\s\S]*shell.openPath\(dirname\(settingsFile\(\)\)\)/u)
+  const writers = source.match(/settingsApplyStatus\s*=(?!=)/gu)
+  assert.equal(writers.length, 2) // initial value and publishSettingsApplyStatus only
+  const retry = source.slice(source.indexOf("ipcMain.handle('nova:backend:retry'"))
+  const body = retry.slice(0, retry.indexOf('\n  })'))
+  assert.match(body, /if \(settingsRecoveryAvailable\)/)
+  assert.match(body, /coordinator: lifecycleCoordinator/)
+  assert.match(body, /rollback: rollbackSettings, complete: completeSettings/)
+})
+
+test('corrupt recovery keeps the startup settings UI available without starting the candidate', async () => {
+  const {mkdtemp, writeFile, rm} = await import('node:fs/promises')
+  const {tmpdir} = await import('node:os')
+  const {join} = await import('node:path')
+  const {default: vm} = await import('node:vm')
+  const {saveSettings, loadSettings, saveSettingsRecovery, restoreSettingsRecovery} = await import('../src/main/settings-store.mjs')
+  const root = await mkdtemp(join(tmpdir(), 'nova-corrupt-settings-recovery-'))
+  const file = join(root, 'settings.json')
+  try {
+    const previous = await saveSettings(file, {integratedModel: 'previous'})
+    const candidate = await saveSettings(file, {...previous, integratedModel: 'candidate'})
+    const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+    const helper = source.slice(source.indexOf('async function loadStartupSettings()'), source.indexOf('async function startSelectedCamera'))
+    for (const corrupt of ['{truncated', JSON.stringify({version: 999, settings: previous})]) {
+      await writeFile(`${file}.recovery`, corrupt, {mode: 0o600})
+      const context = vm.createContext({
+        settingsFile: () => file, loadSettings, restoreSettingsRecovery,
+        settingsRecoveryAvailable: false, openSettingsRequested: false,
+        publishSettingsApplyStatus: value => { context.phase = value },
+      })
+      vm.runInContext(helper, context)
+      assert.equal(await context.loadStartupSettings(), false)
+      assert.equal(context.openSettingsRequested, true)
+      assert.equal(context.settingsRecoveryAvailable, true)
+      assert.equal(context.phase, 'recovery_failed')
+      assert.deepEqual(context.currentSettings, candidate)
+      assert.equal(await readFile(`${file}.recovery`, 'utf8'), corrupt)
+      assert.deepEqual(await loadSettings(file), candidate)
+      // Repairing the retained record allows the same recovery path to proceed.
+      await saveSettingsRecovery(file, previous)
+      assert.equal(await context.loadStartupSettings(), true)
+      assert.deepEqual(context.currentSettings, previous)
+      assert.equal(context.phase, 'recovery_pending')
+      await saveSettings(file, candidate)
+    }
+  } finally { await rm(root, {recursive: true, force: true}) }
+})
+
+test('recovery cleanup failure stops the activated child before rollback and preserves candidate files when stop fails', async t => {
+  const {mkdtemp, rm} = await import('node:fs/promises')
+  const {tmpdir} = await import('node:os')
+  const {join} = await import('node:path')
+  const {default: vm} = await import('node:vm')
+  const {applySettingsTransaction} = await import('../src/main/settings-apply.mjs')
+  const {createLifecycleCoordinator} = await import('../src/main/lifecycle-coordinator.mjs')
+  const {saveSettings, loadSettings, saveSettingsRecovery, restoreSettingsRecovery} = await import('../src/main/settings-store.mjs')
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const helper = name => {
+    const start = source.indexOf(`async function ${name}(`)
+    return source.slice(start, source.indexOf('\n}', start) + 2)
+  }
+  for (const stopFails of [false, true]) {
+    const root = await mkdtemp(join(tmpdir(), 'nova-settings-quiesce-'))
+    t.after(() => rm(root, {recursive: true, force: true}))
+    const file = join(root, 'settings.json')
+    const previous = await saveSettings(file, {integratedModel: 'previous-model'})
+    await saveSettingsRecovery(file, previous)
+    const candidate = await saveSettings(file, {...previous, integratedModel: 'candidate-model'})
+    let stops = 0, state = 'connected'
+    const context = vm.createContext({
+      currentSettings: candidate, settingsRecoveryAvailable: true, settingsFile: () => file,
+      restoreSettingsRecovery,
+      clearSettingsRecovery: async () => {throw Object.assign(Error('unlink denied'), {code: 'EPERM'})},
+      refreshDesktopConfiguration: async () => {assert.equal(state, 'stopped')},
+      backendSupervisor: {
+        stop: async () => {stops++; if (stopFails) throw Error('child remains alive'); state = 'stopped'},
+        status: () => ({state}),
+      },
+    })
+    vm.runInContext(helper('rollbackSettings') + '\n' + helper('completeSettings'), context)
+    const result = await applySettingsTransaction({
+      coordinator: createLifecycleCoordinator(), patch: {}, write: async () => candidate,
+      publishCommitted: () => {}, prepareConfiguration: async () => ({}), commitConfiguration: async () => ({}),
+      restartBackend: async () => {state = 'connected'}, publishStatus: () => {},
+      rollback: context.rollbackSettings, complete: context.completeSettings,
+    })
+    assert.equal(stops, 1)
+    assert.equal(result.saved, false)
+    assert.equal(result.operationStatus, stopFails ? 'recovery_failed' : 'failed')
+    assert.deepEqual(await loadSettings(file), stopFails ? candidate : previous)
+    assert.deepEqual(context.currentSettings, stopFails ? candidate : previous)
+    assert.equal(context.settingsRecoveryAvailable, true)
+    await readFile(`${file}.recovery`)
+    // Every later save/retry goes through the same guard; it cannot restore under the surviving child.
+    if (stopFails) {
+      await assert.rejects(context.rollbackSettings(false))
+      assert.deepEqual(await loadSettings(file), candidate)
+      assert.deepEqual(context.currentSettings, candidate)
+    }
+  }
+})
+
+test('Codex rescan cannot prepare or restart a candidate while settings recovery is pending', async () => {
+  const {default: vm} = await import('node:vm')
+  const {coordinateCodexRescan} = await import('../src/main/settings-apply.mjs')
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf("  ipcMain.handle('nova:codex:rescan'")
+  const handlerSource = source.slice(start, source.indexOf("  ipcMain.handle('nova:backend:retry'", start))
+  const sender = {}
+  for (const phase of ['recovery_failed', 'recovery_pending']) {
+    let handler
+    const calls = []
+    const forbidden = name => () => { calls.push(name); assert.fail(`${name} must wait for settings recovery`) }
+    vm.runInNewContext(handlerSource, {
+      ipcMain: {handle: (_name, callback) => {handler = callback}},
+      settingsWindow: {webContents: sender}, settingsRecoveryAvailable: true,
+      settingsView: () => ({settingsRecoveryAvailable: true, settingsApplyStatus: phase}),
+      coordinateCodexRescan, lifecycleCoordinator: {run: forbidden('coordinator')},
+      desktopConfig: null, codexStatus: {status: 'missing'},
+      prepareDesktopConfiguration: forbidden('prepare'), commitDesktopConfiguration: forbidden('commit'),
+      discardDesktopConfiguration: forbidden('discard'),
+      backendSupervisor: {status: forbidden('backend-status')},
+      managedWorkspaceBackendRecovery: {restart: forbidden('restart'), retry: forbidden('retry')},
+    })
+    await assert.rejects(handler({sender: {}}), /Codex rescan rejected/)
+    assert.deepEqual({...await handler({sender})}, {
+      settingsRecoveryAvailable: true, settingsApplyStatus: phase, operationStatus: 'recovery_pending',
+    })
+    assert.deepEqual(calls, [])
+  }
+})
+
+test('workspace cleanup cannot restart a backend while settings recovery is pending', async () => {
+  const {default: vm} = await import('node:vm')
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf('const workspaceActions = createWorkspaceActions(')
+  const block = source.slice(start, source.indexOf('\nasync function launchBackend', start))
+  let callbacks, restarts = 0
+  const context = vm.createContext({
+    createWorkspaceActions: options => {callbacks = options}, lifecycleCoordinator: {},
+    managedWorkspaceMaintenance: {}, settingsWindow: null, dialog: {}, shell: {},
+    settingsRecoveryAvailable: true,
+    backendSupervisor: {restart: async () => {restarts++}, status: () => ({state: 'connected'})},
+  })
+  vm.runInContext(block, context)
+  assert.equal(await callbacks.restartBackendBounded(), false)
+  assert.equal(restarts, 0)
+  context.settingsRecoveryAvailable = false
+  assert.equal(await callbacks.restartBackendBounded(), true)
+  assert.equal(restarts, 1)
 })

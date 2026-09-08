@@ -33,6 +33,7 @@ type ProviderState = 'disconnected' | 'connecting' | 'connected' | 'closing'
 
 /** Lazily owns one complete, independently fenced cascaded epoch per successful connect. */
 export class CascadedRealtimeProvider implements RealtimeProvider {
+  readonly userResponseMode = 'requested' as const
   readonly #endpointingFactory: EndpointingFactory
   readonly #asrFactory: AsrFactory
   readonly #llmFactory: CascadedLlmFactory
@@ -147,6 +148,10 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
 
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void> {
     return this.#requiredAdapter().createResponse(intent, signal)
+  }
+
+  ensureResponse(signal: AbortSignal, userItemId?: string, requestId?: string): Promise<boolean> {
+    return this.#requiredAdapter().ensureResponse(signal, userItemId, requestId)
   }
 
   cancelResponse(responseId: string, signal: AbortSignal): Promise<void> {

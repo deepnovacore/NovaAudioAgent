@@ -1,4 +1,4 @@
-import {createHash} from 'node:crypto'
+import {createHash, randomUUID} from 'node:crypto'
 import { canonicalJson, compareCodePoints } from './canonical-json.js'
 import type { Diagnostic, ExecutorEffect, FloorDecisionRecord } from './effects.js'
 import {
@@ -211,7 +211,7 @@ export class CoreRuntime {
   }) {
     for (const manifest of options.manifests) this.#manifests.set(manifest.name, manifest)
     this.memory = new Memory({policies: options.manifests.map(manifest => manifest.policy),
-      scope: {conversation_id: options.conversationId ?? 'default'},
+      scope: {conversation_id: options.conversationId ?? randomUUID()},
       ...(options.recovery === undefined ? {} : {recovery: options.recovery})})
     this.#ids = options.ids
     this.#wiredSlots = new Set(options.modelSlots ?? [])

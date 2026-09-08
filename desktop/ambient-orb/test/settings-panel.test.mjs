@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import {runInNewContext} from 'node:vm'
 import * as settingsController from '../src/renderer/settings-controller.mjs'
+import {createSecretRevisions} from '../src/renderer/secret-revisions.mjs'
+import * as voiceChoice from '../src/renderer/voice-choice.mjs'
 
 const { createSettingsController, mergePatch, settingsButtonState } = settingsController
 
@@ -47,6 +50,106 @@ function publicView(overrides = {}) {
     ...overrides,
   }
 }
+
+// Execute the panel's actual event handlers and render path, replacing only
+// DOM surfaces and unrelated child panels; controller and value helpers are real.
+async function mountSettingsPanel(initialView, apiOverrides = {}) {
+  const nodes = new Map()
+  function node(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, {
+      id: selector.slice(1), value: '', textContent: '', hidden: true, dataset: {},
+      listeners: {}, append() {},
+      addEventListener(event, listener) { this.listeners[event] = listener },
+    })
+    return nodes.get(selector)
+  }
+  let push
+  runInNewContext(script.replace(/^import[\s\S]*?from '[^']+'\n/gm, ''), {
+    ...settingsController, ...voiceChoice, createSecretRevisions,
+    createCapabilitiesEditor: () => ({render() {}}),
+    createKnowledgePanel: () => ({render() {}}),
+    document: {
+      querySelector: node, querySelectorAll: () => [], getElementById: id => node(`#${id}`),
+      createElement: () => ({}), addEventListener() {},
+    },
+    window: {novaAudioAgentDesktop: {settings: {
+      get: async () => initialView, onChanged: listener => { push = listener }, ...apiOverrides,
+    }}},
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  return {node, push, click: selector => node(selector).listeners.click()}
+}
+
+test('Codex refresh distinguishes recovery and lifecycle refusal from a completed rescan', async () => {
+  for (const [operationStatus, expected] of [
+    ['recovery_pending', 'Codex 未刷新：请先恢复上次可用设置'],
+    ['busy', '另一项操作进行中，Codex 未刷新'],
+    [undefined, 'Codex 刷新完成'],
+  ]) {
+    const view = publicView({operationStatus})
+    const panel = await mountSettingsPanel(view, {rescanCodex: async () => view})
+    await panel.click('#codex-rescan')
+    assert.equal(panel.node('#status').textContent, expected)
+  }
+})
+
+test('successful recovery clears the prior recovery notice through both pushes and the retry reply', async () => {
+  for (const phase of ['recovery_pending', 'recovery_failed']) {
+    for (const completion of ['push', 'reply']) {
+      const restored = publicView({settingsRecoveryAvailable: false, settingsApplyStatus: 'applied'})
+      const panel = await mountSettingsPanel(publicView({
+        settingsRecoveryAvailable: true, settingsApplyStatus: phase,
+      }), {retryBackend: async () => restored})
+      assert.equal(panel.node('#restart-notice').hidden, false)
+      assert.notEqual(panel.node('#restart-notice').textContent, '设置已生效')
+      if (completion === 'push') panel.push(restored)
+      else await panel.click('#settings-restore')
+      assert.equal(panel.node('#restart-notice').textContent, '设置已生效')
+      assert.equal(panel.node('#settings-restore').hidden, true)
+    }
+  }
+})
+
+test('ordinary applied views and local edits do not introduce a recovery completion notice', async () => {
+  const applied = publicView({settingsApplyStatus: 'applied', settingsRecoveryAvailable: false})
+  const panel = await mountSettingsPanel(applied)
+  assert.equal(panel.node('#restart-notice').hidden, true)
+  panel.push(applied)
+  panel.node('#integratedModel').value = 'draft-model'
+  panel.node('#integratedModel').listeners.input()
+  assert.equal(panel.node('#restart-notice').hidden, true)
+})
+
+test('rendering a confirmed applied view preserves an unrelated pending restart notice', async () => {
+  const panel = await mountSettingsPanel(publicView(), {
+    set: async ({settingsPatch}) => publicView({...settingsPatch,
+      settingsApplyStatus: 'applied', settingsRecoveryAvailable: false}),
+  })
+  panel.node('#integratedModel').value = 'saved-model'
+  panel.node('#integratedModel').listeners.input()
+  panel.click('#settings-save')
+  await new Promise(resolve => setImmediate(resolve))
+  // No disconnected transition was observed, so the controller still owns a
+  // pending restart notice even though its last confirmed reply says applied.
+  assert.equal(panel.node('#restart-notice').dataset.state, 'restarting')
+  panel.node('#integratedModel').value = 'new-draft-model'
+  panel.node('#integratedModel').listeners.input()
+  assert.equal(panel.node('#restart-notice').dataset.state, 'restarting')
+})
+
+test('a save refused during pending recovery preserves drafts and announces the recovery phase', async () => {
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({saved: false, settingsRecoveryAvailable: true,
+      settingsApplyStatus: 'recovery_pending', operationStatus: 'recovery_pending'})},
+    render() {}, status() {}, notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+  controller.stage({palette: 'graphite'})
+  assert.equal((await controller.save()).saved, false)
+  assert.equal(controller.dirty, true)
+  assert.deepEqual(notices, ['recovery_pending'])
+})
 
 test('public edits stage locally and one save emits one merged patch', async () => {
   const calls = []
@@ -208,13 +311,33 @@ test('the complete successful apply sequence clears only the submitted draft', a
   assert.deepEqual(notices, ['restarting', 'complete'])
 })
 
-test('a durable save clears accepted drafts and secrets while reporting restart failure separately', async () => {
+test('an explicitly local-only save does not wait for a backend restart', async () => {
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({
+      wakeWordEnabled: true,
+      restarted: false,
+      settingsApplyStatus: 'applied',
+      backendStatus: 'connected',
+    })},
+    render: () => {},
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+  controller.stage({wakeWordEnabled: true})
+  assert.equal((await controller.save()).saved, true)
+  controller.syncView(publicView({settingsApplyStatus: 'applied', backendStatus: 'connected'}))
+  assert.deepEqual(notices, ['complete'])
+})
+
+test('a failed restart retains drafts and secrets for recovery', async () => {
   const statuses = []
   const notices = []
   const controller = createSettingsController({
     api: {set: async () => publicView({
       palette: 'graphite',
-      saved: true,
+      saved: false, settingsRecoveryAvailable: true,
       operationStatus: 'restart_failed',
       settingsApplyStatus: 'restart_failed',
     })},
@@ -225,15 +348,15 @@ test('a durable save clears accepted drafts and secrets while reporting restart 
   controller.setView(publicView())
   controller.stage({palette: 'graphite'})
   const result = await controller.save({dashscopeApiKey: 'write-only'})
-  assert.equal(result.saved, true)
-  assert.equal(controller.dirty, false)
-  assert.deepEqual(controller.snapshot().drafts, {})
-  assert.deepEqual(result.acceptedSecrets, ['dashscopeApiKey'])
-  assert.equal(statuses.at(-1), '已保存·后端未启动')
+  assert.equal(result.saved, false)
+  assert.equal(controller.dirty, true)
+  assert.deepEqual(controller.snapshot().drafts, {palette: 'graphite'})
+  assert.deepEqual(result.acceptedSecrets, [])
+  assert.equal(statuses.at(-1), '未生效，已保留上次设置；请恢复后端')
   assert.deepEqual(notices, ['restart_failed'])
 })
 
-test('apply failure retains only rejected leaves and edits newer than the durable save', async () => {
+test('apply failure retains submitted leaves and newer edits', async () => {
   const response = deferred()
   const controller = createSettingsController({
     api: {set: () => response.promise},
@@ -252,16 +375,17 @@ test('apply failure retains only rejected leaves and edits newer than the durabl
     palette: 'graphite',
     codexHeartbeatSeconds: 30,
     integratedModel: 'submitted-model',
-    saved: true,
+    saved: false, settingsRecoveryAvailable: true,
     operationStatus: 'failed',
     settingsApplyStatus: 'failed',
   }))
 
   const result = await saving
   assert.equal(result.saved, false)
-  assert.deepEqual(result.rejectedPublicFields, ['codexHeartbeatSeconds'])
-  assert.deepEqual(result.acceptedSecrets, ['dashscopeApiKey'])
+  assert.deepEqual(result.rejectedPublicFields, [])
+  assert.deepEqual(result.acceptedSecrets, [])
   assert.deepEqual(controller.snapshot().drafts, {
+    palette: 'graphite',
     codexHeartbeatSeconds: 45,
     integratedModel: 'newer-model',
   })
@@ -543,11 +667,10 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(html, /保存并重启/)
   assert.match(html, /<p id="restart-notice" class="warning" hidden><\/p>/)
   assert.match(script, /已保存，后台正在重启并重新连接/u)
-  assert.match(script, /已生效：后台已重启并重新连接/u)
-  assert.match(script, /已保存·未生效：后台仍在使用旧配置/u)
-  assert.match(script, /已保存·后端未启动：请检查后台状态后重试/u)
-  assert.match(controllerScript, /已保存·未生效/u)
-  assert.match(controllerScript, /已保存·后端未启动/u)
+  assert.match(script, /设置已生效/u)
+  assert.match(script, /未生效：请恢复上次可用设置/u)
+  assert.match(script, /后端未启动：上次设置已保留/u)
+  assert.doesNotMatch(controllerScript, /已保存·(?:未生效|后端未启动)/u)
   assert.match(controllerScript, /announce\('complete'\)/)
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })
@@ -834,7 +957,7 @@ test('the Orb receives one committed palette notification only inside the save t
   assert.equal(notifications.length, 1)
   const handler = mainScript.slice(mainScript.indexOf("ipcMain.handle('nova:settings:set'"))
   const body = handler.slice(0, handler.indexOf('\n  })'))
-  assert.match(body, /publishCommitted: \(\) => \{[\s\S]*sendToOrb\(/)
+  assert.match(body, /publishCommitted: publishCommittedSettings/)
   assert.ok(body.indexOf('write: async value') < body.indexOf('publishCommitted:'))
 })
 
@@ -867,4 +990,23 @@ test('a stale capability document keeps its draft and asks the user to reopen se
   assert.equal((await controller.save()).saved, false)
   assert.equal(controller.snapshot().dirty, true)
   assert.match(note, /关闭并重新打开设置/u)
+})
+
+test('failed application exposes recovery without clearing unsaved drafts or accepting secret changes', async () => {
+  const {createSettingsController} = await import('../src/renderer/settings-controller.mjs')
+  const controller = createSettingsController({
+    api: {set: async () => ({integratedModel: 'previous-model', saved: false,
+      settingsApplyStatus: 'restart_failed', settingsRecoveryAvailable: true})},
+    render: () => {}, status: () => {},
+  })
+  controller.setView({integratedModel: 'previous-model'})
+  controller.stage({integratedModel: 'bad-model'})
+  const result = await controller.save({dashscopeApiKey: 'new-key'})
+  assert.equal(result.saved, false)
+  assert.deepEqual(result.acceptedSecrets, [])
+  assert.equal(controller.snapshot().dirty, true)
+  assert.equal(controller.snapshot().view.settingsRecoveryAvailable, true)
+  assert.equal(controller.snapshot().view.integratedModel, 'bad-model')
+  assert.match(html, /id="settings-restore" hidden>恢复上次可用设置/)
+  assert.match(script, /settingsRestore\.addEventListener\('click',[\s\S]*api\.retryBackend\(\)/)
 })

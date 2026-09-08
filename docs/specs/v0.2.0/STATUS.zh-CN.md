@@ -1,6 +1,6 @@
 # v0.2.0 进度说明（给同事 review 用）
 
-> 日期：2026-09-05 · 分支：`v0.2.0dev` · M4 集成候选（验证结果见 IMPLEMENTATION）
+> 日期：2026-09-06 · 分支：`v0.2.0dev` · M4、唤醒词与级联调度已集成；当前 SHA / CI 结果见 IMPLEMENTATION
 > 这份文档用大白话讲"我们做到哪了、怎么验的、接下来干什么、想请你们拍板什么"。
 > 细节以各卷 spec 和 [`IMPLEMENTATION.md`](IMPLEMENTATION.md) 为准。
 
@@ -15,17 +15,24 @@ Nova 是一个语音助手（前台是通义 Qwen 实时语音模型）。v0.2.0
 | 里程碑 | 一句话 | 状态 |
 |---|---|---|
 | **M1** 一条完整的编码体验 | 提任务 → 只问必要的问题 → 工作单 → 审批 → 执行 → 看到结果；三平台统一审批策略，可选 YOLO | ✅ 代码 + 单测完成；真人语音/耳机、Windows 验收仍待做 |
-| **M1.5a** 执行器边界（spec 07） | Codex 变成一个真正的"插件"，核心代码不再认识 "codex" 这个词，只认角色（coding）；用 lint + 脚本强制 | ✅ 完成并经独立 review |
+| **M1.5a** 执行器边界（spec 07） | Codex 变成一个真正的"插件"，核心代码不再认识 "codex" 这个词，只认角色（coding）；用 lint + 脚本强制 | 🟡 确定性边界验证完成；真人语音/耳机与 Windows 验收仍未完成 |
 | **M1.5b** 项目 / 会话 / 任务（spec 08） | 阶段性三工具前台；"在哪个项目、开不开新会话、停哪个任务"由编码执行器自己判断；支持多项目并发；显式取消；会话有可读标题（阶段性 surface 已被 M1.5c 取代） | 🟡 代码与测试完成，三轮 review 的已知阻断项均已修并带测试；语音端到端与并发审批真机未验，**不勾**（见第四、五节） |
 | **M1.5c** 前台变薄（spec 03 / 07） | 默认六工具面；Camera MCP + side-VLM 投影；Vision controller 持有隐藏 `watch` / `guard`；监控由宿主策略驱动；桌面发布依赖闭包包含 MCP SDK 及其传递依赖 | 🟡 代码与定向确定性覆盖已完成；旧 08 live 行、真人语音、macOS camera、Windows 与完整发布验收仍待做 |
 | **M2** 能力注册表（spec 03a） | `capabilities.json`、模块开关、MCP 搜索可选接入 | 🟡 代码/定向测试完成；百炼 Search macOS live 已通过，Windows 与默认翻转仍待验 |
 | **M3** 外部 MCP（spec 03b） | 用户自配 MCP 服务器接入，并投影到 Codex | 🟡 代码/定向测试完成；live 与发布验收仍待验 |
 | **M4** 知识库（spec 04） | 本地 SQLite 私人知识库 + 混合检索 + 内置 Knowledge MCP | 🟡 代码、确定性清单和本机全量回归完成；Node 22/24 真实 embedding→检索→MCP smoke 通过；Windows/真人语音未验 |
+| **本地唤醒词**（spec 11） | 默认关闭的离线中文检测；休眠音频留在桌面 Worker；presence epoch 隔离旧帧 | 🟡 代码与确定性覆盖已集成；真人麦克风/噪声、Windows 安装包 Worker/WASM 与模型替换待验 |
+| **级联宿主调度** | 宿主发起回复并核对来源；事实播报无工具，绑定用户的工具结果续接保留工具 | 🟡 代码与确定性覆盖已集成；历史数字 PCM provider 证据不替代当前分支的真人麦克风/扬声器验收 |
 
-M4 最终证据：runtime 2301 通过 / 5 跳过，desktop 846 通过 / 3 Windows 跳过，CLI 21/21，
+M4 集成前历史证据（2026-09-05）：runtime 2301 通过 / 5 跳过，desktop 846 通过 / 3 Windows 跳过，CLI 21/21，
 fixtures 19/19，`npm run check` 全绿；Node 22 的 Knowledge 专项 55/55。Node 22.13 没有 FTS5，
 已实现有界 LIKE 回退；回到 Node 24 时从正文事务重建派生索引。Terra/Sol 独立复审的阻断项已关闭。
-外部 Claude 代码复审 20 分钟无返回后终止，**未记为通过**。没有推送、发布或切换 Search 默认值。
+外部 Claude 代码复审 20 分钟无返回后终止，**未记为通过**。该轮没有推送、发布或切换 Search 默认值；
+后续提交与 CI 以 [IMPLEMENTATION](IMPLEMENTATION.md) 的最新记录为准。
+
+新增集成项：本地中文唤醒词与宿主控制的级联 response 调度已合入。真人语音、
+Windows 安装包内 Worker/WASM 和唤醒体验仍待验收，未验项不会阻挡 dev CI。
+M1 与 M1.5a 的代码完成不等于发布验收完成；以下历史测试快照不能替代当前发布台账。
 
 ## 三、最近两天干了什么（07 + 08）
 
@@ -112,7 +119,7 @@ fixtures 19/19，`npm run check` 全绿；Node 22 的 Knowledge 专项 55/55。N
 
 ## 四、我们是怎么验的
 
-**当前确定性 validation（2026-09-05）**
+**M1.5c 确定性 validation 历史快照（2026-09-05；当前结果见 IMPLEMENTATION）**
 
 | 套件 | 结果 |
 |---|---|
@@ -181,10 +188,17 @@ desktop 套件精确复现并通过。这里不把它冒充真人语音、物理
 | 别名 | 用户说"博客"、项目叫 `blog` 会被反问一次（"是在 blog 里做吗？"），这是有意保守 | 体验上多一句话 |
 | coordinator 模型的系统性失分 | 状态提问被判成 `steer` 时由宿主 intent gate 阻止副作用；前缀重名和编造证据由唯一证据校验 + 项目确认拦下。安全有兜底，但回答体验仍不理想 | 下一版 prompt 要针对状态提问 / 前缀重名修，并换一组新的 holdout |
 | Windows / 耳机 | M1 起就挂着的真机验收 | 发布前必须 |
+| 本地唤醒词 | 真人麦克风、旁人语音/环境噪声、静音与恢复体验；Windows 已安装产品 Worker/WASM 和模型替换 | 合入 main 前必须；自动化通过不等于设备验收 |
+| 级联语音 | 现有数字 PCM 和播放确认回调证据未覆盖物理麦克风/扬声器；最终集成版本需核对工具续接与打断恢复 | 合入 main 前必须；origin 不能替代用户授权 |
 
 ## 六、下一步计划
 
-**第一步：M1.5c / 08 收尾（建议 1～2 天，需要真人）**
+**第一步：集成版本自动化收口**
+
+修复审查确认的问题并对最终 SHA 运行自动化门禁与 CI；测试数字、跳过原因及 CI 链接
+统一登记在 [IMPLEMENTATION](IMPLEMENTATION.md)。dev 不等待真人验收，但不能把历史快照当成本次通过。
+
+**第二步：M1.5c / 08 真人验收与平台收尾**
 
 先按新六工具面重跑适用的 08 真人语音行，再补 headset、并发审批、macOS
 camera、Windows 和完整发布验收；当前定向确定性测试通过不替代这些 live gate。
@@ -204,23 +218,25 @@ camera、Windows 和完整发布验收；当前定向确定性测试通过不替
 
 加上：有桌面的机器上跑 Electron smoke；针对状态提问 / 前缀重名出第二版 assess prompt 并换一组新 holdout。
 
-**第二步：M2 能力注册表（spec 03a，代码已落地）**
+**第三步：已有功能的发布验收（M2 / M3 / M4、唤醒词与级联）**
 
 - `capabilities.json` + 桌面模块开关（搜索 / 摄像头 / Codex / 知识库）；
 - MCP 搜索提供方（百炼 / DashScope）作为可选接入，Tavily 保留；
 - 默认前台六工具 + 用户显式 MCP 工具；显式 MCP 工具计入注册表配置的前台预算，
   超预算 fail-closed。Search 默认仍为 Tavily，**先 live 验证再翻**（03a-flip 是单独一步）。
 
-**第三步：M3 外部 MCP（spec 03b，代码已落地但 live 待验）**，然后 **M4 知识库（spec 04）**。
+M2 能力注册表、M3 外部 MCP 和 M4 知识库均已有实现；接下来补齐外部 MCP、知识库、
+真人唤醒词及级联物理音频验收，并验证 Windows 安装包。以
+[RELEASE-GATE](RELEASE-GATE.md) 全部适用行关闭作为合入 main 的前置条件；Linux 暂不发布，Ubuntu 继续跑源码测试。
 
 ## 七、想请大家拍板 / 重点 review 的点
 
-第一轮 review 已定（2026-09-04）：编排下沉到执行器 ✅；会话只有 `latest / new` ✅；**任何改变当前项目的操作都确认** ✅（原稿"切换不确认"作废）；并发 1 + 3 作为首版默认 ✅；别名保守反问 ✅，以后可加用户显式维护的确定性别名，不交回模型模糊匹配；M4 不阻塞 v0.2 ✅；文本前脑删除 ✅。
+第一轮 review 已定（2026-09-04）：编排下沉到执行器 ✅；会话只有 `latest / new` ✅；**任何改变当前项目的操作都确认** ✅（原稿"切换不确认"作废）；并发 1 + 3 作为首版默认 ✅；别名保守反问 ✅，以后可加用户显式维护的确定性别名，不交回模型模糊匹配；M4 不阻塞 dev 集成；合 main 前须完成验收（2026-09-06 更新）；文本前脑删除 ✅。
 
 仍开放：
 
 1. **Agent 契约**：AgentController registry 统一拥有公开的 `dispatch` / `cancel` 路由；coding intake 仍是 coding controller 的私有编排实现。非 agent 的 MCP direct path 已按用户显式 allowlist 装配，并可投影到 Codex。接 AutoGLM 前再评估是否把更多 executor 端口（roster / running / resolve）抽成通用契约。
-2. **发布门槛**建议定为：M1.5 全绿 + 真人语音链路（上面 10 条）+ 并发审批真机。M2/M3 不作为 v0.2 发布前置？
+2. **发布门槛已定（2026-09-06）**：dev 通过自动化即可集成；main 才是发布边界，M1–M4、真人语音、并发审批、级联与唤醒词以及支持平台全部验收。单一台账为 [RELEASE-GATE.md](RELEASE-GATE.md)。Linux 暂不发布，保留 Ubuntu 测试。
 3. **holdout 的两类系统性失分**（状态提问→steer、前缀重名）：安全副作用已由宿主兜底；是接受当前模型体验，还是要求 prompt 第二版把 holdout 提到 ≥9/10 再进真人验收？
 
 ## 八、相关文件
@@ -229,4 +245,7 @@ camera、Windows 和完整发布验收；当前定向确定性测试通过不替
 - 执行器边界：[`07-executor-boundary.md`](07-executor-boundary.md)
 - 项目 / 会话 / 任务：[`08-project-and-work.md`](08-project-and-work.md)（文末有 live 验收清单，未勾的就是第五节的缺口）
 - 实现台账与全部验证证据：[`IMPLEMENTATION.md`](IMPLEMENTATION.md)
+- 级联数字音频历史证据：[`provider-contract acceptance`](../../handoffs/2026-09-05-provider-contract-acceptance.md)、[`cascaded acceptance`](../../handoffs/2026-09-05-cascaded-live-acceptance.md)
 - 关键代码：`runtime/src/work-tools.ts`（三个工具）、`runtime/src/executors/coding/intake.ts`（coordinator）、`runtime/src/executors/codex/adapter-project.ts`（并发槽 / 取消 / 标题）、`runtime/src/realtime/service.ts`（拦截与 `confirm` 分流）
+
+调度归属关键代码补充：`runtime/src/realtime/session.ts`、`runtime/src/realtime/frontend-instructions.ts`。

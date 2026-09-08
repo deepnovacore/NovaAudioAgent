@@ -16,7 +16,7 @@
     "start:client": "node scripts/start-client.mjs",
     "start:client_demo": "node scripts/start-client-demo.mjs",
     "build": "npm run build --workspaces --if-present",
-    "check": "npm run typecheck --workspace @nova-audio-agent/runtime && npm run lint --workspace @nova-audio-agent/runtime && npm run check:env-contract && npm run check:node-parity && npm run check:executor-boundary && node runtime/scripts/check-capabilities.mjs --check",
+    "check": "npm run typecheck --workspace @nova-audio-agent/runtime && npm run lint --workspace @nova-audio-agent/runtime && npm run check:env-contract && node --test desktop/ambient-orb/test/wire-frame-types.test.mjs && npm run check:node-parity && npm run check:executor-boundary && node runtime/scripts/check-capabilities.mjs --check",
     "check:executor-boundary": "node runtime/scripts/check-executor-boundary.mjs --check",
     "check:env-contract": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/check-env-contract.mjs --check",
     "check:node-parity": "node runtime/scripts/node-parity-audit.mjs --check",
@@ -34,7 +34,9 @@
     "test:cli": "npm test --workspace nova-audio-agent",
     "test:desktop": "npm test --workspace @nova-audio-agent/ambient-orb",
     "test:runtime": "npm test --workspace @nova-audio-agent/runtime",
-    "runtime:smoke:search:mcp": "npm run smoke:search:mcp --workspace @nova-audio-agent/runtime"
+    "test:runtime:win": "npm run test:win --workspace @nova-audio-agent/runtime",
+    "runtime:smoke:search:mcp": "npm run smoke:search:mcp --workspace @nova-audio-agent/runtime",
+    "check:release-gate": "node runtime/scripts/check-release-gate.mjs"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

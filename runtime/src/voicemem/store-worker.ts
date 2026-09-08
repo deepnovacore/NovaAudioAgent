@@ -191,12 +191,14 @@ function remember(request: Request): VoiceMemAdmissionReceipt {
 function scheduleDrain(): void {
   const opened=memory
   if(opened===undefined||data.extractionModel===undefined||drain!==undefined)return
-  drain=drainPending(opened).finally(()=>{
+  drain=drainPending(opened).then(() => {
     drain=undefined
-    if(memory===opened&&opened.store.pending(data.userId,PERSONAL_SCOPE).some(source=>!failedSourceIds.has(source.id))) scheduleDrain()
-  }).catch(() => {
+    try {
+      if(memory===opened&&opened.store.pending(data.userId,PERSONAL_SCOPE).some(source=>!failedSourceIds.has(source.id))) scheduleDrain()
+    } catch { console.error('[personal-memory] background_learning_failed') }
+  }, () => {
     drain=undefined
-    // Keep admitted sources durable. Retry after a later admission or reopen, never spin on storage errors.
+    // Keep admitted sources durable; retry after admission or reopen, never spin on storage errors.
     console.error('[personal-memory] background_learning_failed')
   })
 }

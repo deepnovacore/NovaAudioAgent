@@ -120,3 +120,13 @@ test('close aborts deferred reindex and a late embedding release cannot overwrit
     await rm(directory, {recursive: true, force: true})
   }
 })
+
+test('knowledge status exposes forced lexical fallback from the real worker', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'knowledge-status-'))
+  const service = new KnowledgeService({store: new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite'), forceLexical: true}),
+    embedding: {id: 'fake-v1', dims: 2, embed: texts => Promise.resolve(texts.map(() => new Float32Array([1, 0])))}})
+  try {
+    await service.open()
+    assert.deepEqual(await service.handle('knowledge.status', {}), {fts: false, sources: [], jobs: []})
+  } finally {await service.close(); await rm(directory, {recursive: true, force: true})}
+})

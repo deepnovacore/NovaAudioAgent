@@ -92,6 +92,7 @@ export interface PersonalMemoryStoreWorker {
   on(event: 'message', listener: (message: unknown) => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit', listener: (code: number) => void): unknown
+  unref?(): void
   terminate(): Promise<number>
 }
 
@@ -114,6 +115,7 @@ interface Pending<Result> {
 }
 
 const CLOSE_GRACE_MS = 250
+const REQUEST_TIMEOUT_MS = 5_000
 const MAX_QUERY_CHARS = 4_000
 const MAX_LIMIT = 5
 const MAX_REPLY_PREFERENCES = 8
@@ -151,6 +153,7 @@ export class PersonalMemoryStoreClient implements PersonalMemoryResource {
 
   constructor(options: PersonalMemoryStoreClientOptions) {
     validateOptions(options)
+    if (options.supportsForget === true && options.workerFactory === undefined) throw new Error('Forget requires a worker with durable tombstones')
     this.#workerOptions = {workerData: {
       path: options.path,
       userId: options.userId,
@@ -238,7 +241,8 @@ export class PersonalMemoryStoreClient implements PersonalMemoryResource {
         // Termination below owns a Worker that cannot accept the close signal.
       }
     }
-    try { await worker.terminate() } catch { /* already gone */ }
+    worker.unref?.()
+    try { await Promise.race([worker.terminate(), wait(CLOSE_GRACE_MS)]) } catch { /* already gone */ }
     this.#rejectPending('CLIENT_CLOSED')
     this.#dropped.clear()
   }
@@ -253,6 +257,7 @@ export class PersonalMemoryStoreClient implements PersonalMemoryResource {
       this.#pending.delete(sent.requestId)
       this.#dropped.add(sent.requestId)
       pending.reject(abortReason(signal))
+      if (this.#dropped.size > 256) this.#fail('WORKER_ERROR')
     }
     signal.addEventListener('abort', onAbort, {once: true})
     if (signal.aborted) onAbort()
@@ -262,12 +267,16 @@ export class PersonalMemoryStoreClient implements PersonalMemoryResource {
   #send<Result>(operation: string, payload: Record<string, unknown>): {readonly requestId: number; readonly promise: Promise<Result>} {
     const requestId = this.#nextRequestId++
     const promise = new Promise<Result>((resolve, reject) => {
-      this.#pending.set(requestId, {resolve: resolve as (result: unknown) => void, reject})
+      const timer = setTimeout(() => this.#fail('WORKER_ERROR'), REQUEST_TIMEOUT_MS)
+      this.#pending.set(requestId, {
+        resolve: result => { clearTimeout(timer); resolve(result as Result) },
+        reject: error => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))) },
+      })
       try {
         this.#worker!.postMessage({...payload, kind: 'request', request_id: requestId, operation})
       } catch {
+        this.#pending.get(requestId)?.reject(new PersonalMemoryStoreClientError('WORKER_PROTOCOL_FAILURE'))
         this.#pending.delete(requestId)
-        reject(new PersonalMemoryStoreClientError('WORKER_PROTOCOL_FAILURE'))
       }
     })
     return {requestId, promise}
@@ -314,6 +323,7 @@ export class PersonalMemoryStoreClient implements PersonalMemoryResource {
     this.#failed = true
     this.#failure = code
     this.#rejectPending(code)
+    this.#worker?.unref?.()
     void this.#worker?.terminate().catch(() => undefined)
   }
 

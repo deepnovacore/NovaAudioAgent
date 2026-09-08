@@ -183,3 +183,10 @@ test('default integrated Qwen delegates without acquiring its socket before star
   assert.ok(realtime.provider instanceof QwenAudioRealtimeAdapter)
   assert.equal(connections, 0)
 })
+
+test('integrated selection rejects a missing own registry entry before provider construction', () => {
+  assert.throws(() => buildIntegratedRealtimeAssembly({
+    settings: loadSettings({DASHSCOPE_API_KEY: 'selected-dash-secret'}),
+  }, Object.create({qwen: () => { throw new Error('inherited factory invoked') }}) as IntegratedProviderRegistry),
+  /NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER/)
+})

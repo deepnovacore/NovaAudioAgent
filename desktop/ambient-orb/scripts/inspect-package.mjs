@@ -13,6 +13,7 @@ import { extractAll, getRawHeader, listPackage } from '@electron/asar'
 
 import {
   deriveLockedProductionClosure,
+  DESKTOP_DEPENDENCIES,
   readReleaseTargets,
 } from './release-dependency-closure.mjs'
 import {
@@ -295,10 +296,10 @@ function assertDependencyContract(productionDependencies, runtimeDependencies) {
   const production = [...productionDependencies].sort()
   const runtime = [...runtimeDependencies].sort()
   const violations = []
-  if (production.length !== 1 || production[0] !== RUNTIME_PACKAGE) {
-    violations.push(...production.filter(name => name !== RUNTIME_PACKAGE))
-    if (!production.includes(RUNTIME_PACKAGE)) violations.push(RUNTIME_PACKAGE)
-  }
+  violations.push(
+    ...DESKTOP_DEPENDENCIES.filter(name => !production.includes(name)),
+    ...production.filter(name => !DESKTOP_DEPENDENCIES.includes(name)),
+  )
   if (
     runtime.length !== EXPECTED_RUNTIME_DEPENDENCIES.length
     || runtime.some((name, index) => name !== EXPECTED_RUNTIME_DEPENDENCIES[index])
@@ -512,6 +513,7 @@ export async function inspectConfiguredPackage({
   const closure = await deriveLockedProductionClosure({
     lockPath: resolve(repositoryRoot, 'package-lock.json'),
     targetId,
+    sourceBuild: true,
   })
   const dependencyIncluded = (await Promise.all(closure.packages
     .filter(value => value.name !== RUNTIME_PACKAGE)

@@ -19,6 +19,11 @@ best-effort basis.
 
 ## Scope notes
 
+The settings window is a trusted local configuration surface. Enabling an external
+MCP server authorizes its configured command to run with the user's permissions;
+review the command, arguments and environment before saving. Keep remote content
+out of this configuration authority.
+
 - The runtime treats external search results and visual content as evidence, never instructions;
   reports about prompt-injection boundaries are in scope and welcome.
 - Configuration errors must not echo secret values; any counterexample is a bug.

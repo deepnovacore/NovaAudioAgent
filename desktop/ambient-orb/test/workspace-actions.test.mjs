@@ -143,6 +143,17 @@ function recoveryFixture(overrides = {}) {
   }
 }
 
+test('maintenance contention does not stop an otherwise live backend', async () => {
+  const capabilities = workspaceActionModule.publicManagedWorkspaceCapabilities({
+    health: 'degraded', lifecycleBusy: true,
+    current: {available: false, display_name: null}, all: {available: false, count: 0},
+  })
+  const value = recoveryFixture({capabilities})
+  assert.deepEqual(await value.recovery.observe(capabilities), {status: 'idle'})
+  assert.deepEqual(await value.recovery.observe({...capabilities}), {status: 'idle'})
+  assert.deepEqual(value.events, [])
+})
+
 test('known rollback remains latched across passive ready refresh and fails closed on unavailable retry', async () => {
   assert.equal(typeof workspaceActionModule.createManagedWorkspaceBackendRecovery, 'function')
   const rollback = {

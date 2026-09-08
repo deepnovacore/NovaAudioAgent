@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {
   RealtimeDesktopService,
+  startDesktopActivityHeartbeat,
   workspaceGraphBoardForRealtime,
 } from '../src/desktop-service.js'
 import type {PublishedGraphSnapshot} from '../src/workspace-graph/store.js'
@@ -75,4 +76,42 @@ test('desktop graph composition always answers disabled and degraded states safe
   } as never)) as {availability: string; publication_revision: number}
   assert.equal(degraded.availability, 'degraded')
   assert.equal(degraded.publication_revision, 4)
+})
+
+test('activity heartbeat isolates failures, covers every idle axis, unrefs and stops on abort', t => {
+  const originalInterval = globalThis.setInterval
+  let tick: () => void = () => { throw new Error('timer not installed') }
+  t.mock.method(globalThis, 'setInterval', (callback: () => void) => {
+    tick = callback
+    return originalInterval(callback, 60_000)
+  })
+  const clear = t.mock.method(globalThis, 'clearInterval')
+  const session = {foregroundIdle: true, floor: {state: 'idle'}, snapshot: () => ({active_delegates: [] as unknown[]})}
+  const service = {session, executorState: 'idle'}
+  const stop = new AbortController()
+  const seen: boolean[] = []
+  let publishThrows = false
+  const timer = startDesktopActivityHeartbeat(service as never, idle => {
+    if (publishThrows) throw new Error('transport failed')
+    seen.push(idle)
+  }, stop.signal)
+  t.after(() => stop.abort())
+  assert.equal(timer.hasRef(), false)
+  tick(); assert.equal(seen.at(-1), true)
+  session.foregroundIdle = false; tick(); assert.equal(seen.at(-1), false); session.foregroundIdle = true
+  session.floor.state = 'speaking'; tick(); assert.equal(seen.at(-1), false); session.floor.state = 'idle'
+  session.snapshot = () => ({active_delegates: [{}]}); tick(); assert.equal(seen.at(-1), false)
+  session.snapshot = () => ({active_delegates: []})
+  service.executorState = 'busy'; tick(); assert.equal(seen.at(-1), false); service.executorState = 'idle'
+  Object.defineProperty(service, 'session', {configurable: true, get() { throw new Error('session unavailable') }})
+  assert.doesNotThrow(tick); assert.equal(seen.at(-1), false)
+  Object.defineProperty(service, 'session', {value: session})
+  publishThrows = true; assert.doesNotThrow(tick)
+  publishThrows = false; tick(); assert.equal(seen.at(-1), true)
+  stop.abort(); assert.equal(clear.mock.callCount(), 1)
+  const before = seen.length
+  tick(); assert.equal(seen.length, before)
+  const aborted = startDesktopActivityHeartbeat(service as never, () => { throw new Error('must not publish') }, stop.signal)
+  assert.equal(aborted.hasRef(), false)
+  assert.equal(clear.mock.callCount(), 2)
 })

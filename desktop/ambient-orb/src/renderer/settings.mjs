@@ -57,12 +57,17 @@ let workspaceBusy = false
 const statusLabel = document.querySelector('#status')
 const restartNotice = document.querySelector('#restart-notice')
 const warning = document.querySelector('#keyring-warning')
+const settingsRestore = document.querySelector('#settings-restore')
 const settingsSave = document.querySelector('#settings-save')
 const workspaceOpenCurrent = document.querySelector('#workspace-open-current')
 const workspaceClearCurrent = document.querySelector('#workspace-clear-current')
 const workspaceClearAll = document.querySelector('#workspace-clear-all')
 const workspaceRetryRecovery = document.querySelector('#workspace-retry-recovery')
 const workspaceActionStatus = document.querySelector('#workspace-action-status')
+const wakeEnabled = document.querySelector('#wake-word-enabled')
+const autoHideSeconds = document.querySelector('#auto-hide-seconds')
+const wakeStatus = document.querySelector('#wake-word-status')
+const wakeRetry = document.querySelector('#wake-word-retry')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
 const pipelineModeInputs = [...document.querySelectorAll('input[name="pipelineMode"]')]
@@ -184,6 +189,7 @@ function updateButtons() {
   workspaceClearCurrent.disabled = state.currentDisabled
   workspaceClearAll.disabled = state.workspaceDisabled
   workspaceRetryRecovery.disabled = state.recoveryDisabled
+  settingsRestore.disabled = controllerState.busy || workspaceBusy || currentView?.managedWorkspaces?.lifecycleBusy === true
 }
 
 function render(view, _drafts, state) {
@@ -193,6 +199,11 @@ function render(view, _drafts, state) {
   knowledgePanel.render(view)
   for (const input of capabilitySettings) input.value = view[input.id] ?? ''
   controllerState = state
+  wakeEnabled.checked = view.wakeWordEnabled === true
+  autoHideSeconds.value = String(view.autoHideSeconds ?? 60)
+  wakeStatus.textContent = ({off: '未开启', loading: '正在准备唤醒模型…', ready: '本地唤醒已就绪', error: '唤醒模型不可用，请重试；可用托盘显示窗口。'})[view.wakeWord?.status] ?? ''
+  wakeRetry.hidden = view.wakeWord?.status !== 'error'
+
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
   for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
@@ -240,6 +251,13 @@ function render(view, _drafts, state) {
       ? WORKSPACE_STATUS_TEXT.recovery_failed
       : WORKSPACE_STATUS_TEXT.rollback_pending
   }
+  settingsRestore.hidden = view.settingsRecoveryAvailable !== true
+  if (view.settingsApplyStatus === 'recovery_pending' || view.settingsApplyStatus === 'recovery_failed') {
+    updateRestartNotice(view.settingsApplyStatus)
+  } else if (view.settingsApplyStatus === 'applied' && view.settingsRecoveryAvailable === false
+    && (restartNotice.dataset.state === 'recovery_pending' || restartNotice.dataset.state === 'recovery_failed')) {
+    updateRestartNotice('complete')
+  }
   updateButtons()
 }
 
@@ -251,14 +269,22 @@ function updateRestartNotice(phase) {
     return
   }
   if (phase === 'failed') {
-    restartNotice.textContent = '已保存·未生效：后台仍在使用旧配置'
+    restartNotice.textContent = '未生效：请恢复上次可用设置，再检查未保存的草稿'
     return
   }
   if (phase === 'restart_failed') {
-    restartNotice.textContent = '已保存·后端未启动：请检查后台状态后重试'
+    restartNotice.textContent = '后端未启动：上次设置已保留，请恢复后端'
     return
   }
-  restartNotice.textContent = '已生效：后台已重启并重新连接'
+  if (phase === 'recovery_pending') {
+    restartNotice.textContent = '上次设置已还原，请点击恢复以确认后端可用'
+    return
+  }
+  if (phase === 'recovery_failed') {
+    restartNotice.textContent = '设置恢复未完成，恢复记录已保留；若重试仍失败，请修复配置目录中的 settings.json.recovery 或配置冲突后再恢复'
+    return
+  }
+  restartNotice.textContent = '设置已生效'
 }
 
 const controller = createSettingsController({
@@ -275,6 +301,18 @@ function bindStage(element, event, patch) {
   element.addEventListener(event, () => { controller.stage(patch()) })
 }
 
+bindStage(wakeEnabled, 'change', () => ({wakeWordEnabled: wakeEnabled.checked}))
+bindStage(autoHideSeconds, 'change', () => {
+  const value = Number(autoHideSeconds.value)
+  const valid = Number.isInteger(value) && (value === 0 || value >= 30 && value <= 3600)
+  autoHideSeconds.setCustomValidity(valid ? '' : '请输入 0 或 30–3600 的整数')
+  autoHideSeconds.reportValidity()
+  return valid ? {autoHideSeconds: value} : {}
+})
+wakeRetry.addEventListener('click', () => { void window.novaAudioAgentDesktop.wakeWord.retry() })
+for (const event of ['pointerdown', 'keydown']) {
+  document.addEventListener(event, () => window.novaAudioAgentDesktop.wakeWord.activity())
+}
 for (const input of paletteInputs) bindStage(input, 'change', () => ({palette: input.value}))
 for (const input of proactivityInputs) bindStage(input, 'change', () => ({proactivity: input.value}))
 for (const input of pipelineModeInputs) bindStage(input, 'change', () => ({pipelineMode: input.value}))
@@ -372,8 +410,12 @@ settingsSave.addEventListener('click', () => { void saveAll() })
 codexRescan.addEventListener('click', async () => {
   statusLabel.textContent = '正在刷新 Codex…'
   try {
-    controller.syncView(await api.rescanCodex(), {trackRestart: false})
-    statusLabel.textContent = 'Codex 刷新完成'
+    const view = await api.rescanCodex()
+    controller.syncView(view, {trackRestart: false})
+    statusLabel.textContent = view.operationStatus === 'recovery_pending'
+      ? 'Codex 未刷新：请先恢复上次可用设置'
+      : view.operationStatus === 'busy' ? '另一项操作进行中，Codex 未刷新'
+      : view.operationStatus == null ? 'Codex 刷新完成' : 'Codex 刷新未完成'
   } catch {
     statusLabel.textContent = 'Codex 刷新失败'
   }
@@ -405,6 +447,18 @@ async function runWorkspaceAction(action) {
     updateButtons()
   }
 }
+
+settingsRestore.addEventListener('click', async () => {
+  workspaceBusy = true
+  updateButtons()
+  try {
+    const view = await api.retryBackend()
+    controller.syncView(view, {trackRestart: false})
+    statusLabel.textContent = view.settingsRecoveryAvailable === false && view.settingsApplyStatus === 'applied'
+      ? '上次设置已恢复并生效；草稿尚未保存' : '恢复未完成，请重试'
+  } catch { statusLabel.textContent = '恢复未完成，请重试' }
+  finally { workspaceBusy = false; updateButtons() }
+})
 
 workspaceOpenCurrent.addEventListener('click', () => {
   void runWorkspaceAction(() => api.openCurrentManagedWorkspace())

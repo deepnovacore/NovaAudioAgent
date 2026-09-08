@@ -25,7 +25,7 @@ const append = (memory: Memory, text: string) => memory.append('conversation', {
 test('session flush covers records added while a real SQLite commit is waiting', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-session-'))
   const options = {path: join(directory, 'board.sqlite'), ownerId: 'local'}
-  let memory = new Memory()
+  let memory = new Memory({scope: {conversation_id: 'session-test'}})
   let session = new BlackboardSession(memory, options)
   let blocker: Worker | undefined
   try {
@@ -48,14 +48,14 @@ test('session flush covers records added while a real SQLite commit is waiting',
     blocker.postMessage('release')
     await Promise.all([first, second])
     await session.close()
-    memory = new Memory()
+    memory = new Memory({scope: {conversation_id: 'session-test'}})
     session = new BlackboardSession(memory, options)
     await session.open()
     assert.deepEqual(memory.channels.get('conversation')!.items.map(item => item.content.text), ['first', 'second'])
     assert.equal(append(memory, 'third').seq, 3)
     // close also drains direct host records even when no reducer event follows them.
     await session.close()
-    memory = new Memory()
+    memory = new Memory({scope: {conversation_id: 'session-test'}})
     session = new BlackboardSession(memory, options)
     await session.open()
     assert.equal(memory.channels.get('conversation')!.items.at(-1)?.content.text, 'third')
@@ -64,7 +64,7 @@ test('session flush covers records added while a real SQLite commit is waiting',
 
 test('session applies retention receipts and rejects stale compression and uncommitted local pruning', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-session-'))
-  const memory = new Memory()
+  const memory = new Memory({scope: {conversation_id: 'session-test'}})
   const session = new BlackboardSession(memory, {path: join(directory, 'board.sqlite'), ownerId: 'local', retention: {maxItems: 2}})
   try {
     await session.open()
@@ -88,7 +88,7 @@ test('session applies retention receipts and rejects stale compression and uncom
 
 test('session maintenance expires idle records while keeping the memory object and sequence highwater', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-session-'))
-  const memory = new Memory()
+  const memory = new Memory({scope: {conversation_id: 'session-test'}})
   const session = new BlackboardSession(memory, {path: join(directory, 'board.sqlite'), ownerId: 'local', retention: {ttlMs: 100}})
   try {
     await session.open()
@@ -109,7 +109,7 @@ test('session maintenance expires idle records while keeping the memory object a
 test('session clear drains unflushed writes, keeps channel highwater and recovers only new records', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-clear-'))
   const options = {path: join(directory, 'board.sqlite'), ownerId: 'local'}
-  let memory = new Memory()
+  let memory = new Memory({scope: {conversation_id: 'session-test'}})
   let session = new BlackboardSession(memory, options)
   try {
     await session.open()
@@ -128,7 +128,7 @@ test('session clear drains unflushed writes, keeps channel highwater and recover
     await session.flush()
     await session.close()
 
-    memory = new Memory()
+    memory = new Memory({scope: {conversation_id: 'session-test'}})
     session = new BlackboardSession(memory, options)
     await session.open()
     const recovered = memory.channels.get('conversation')!
@@ -141,7 +141,7 @@ test('session clear drains unflushed writes, keeps channel highwater and recover
 test('session clear makes concurrent flush and close wait for its committed receipt', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-clear-'))
   const options = {path: join(directory, 'board.sqlite'), ownerId: 'local'}
-  let memory = new Memory()
+  let memory = new Memory({scope: {conversation_id: 'session-test'}})
   let session = new BlackboardSession(memory, options)
   let blocker: Worker | undefined
   try {
@@ -156,7 +156,7 @@ test('session clear makes concurrent flush and close wait for its committed rece
     blocker.postMessage('release')
     await Promise.all([priorFlush, clearing, joiningFlush, closing])
 
-    memory = new Memory()
+    memory = new Memory({scope: {conversation_id: 'session-test'}})
     session = new BlackboardSession(memory, options)
     await session.open()
     const channel = memory.channels.get('conversation')!
@@ -169,7 +169,7 @@ test('session clear makes concurrent flush and close wait for its committed rece
 test('session clear latches a failed receipt and leaves the live projection unchanged', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-clear-'))
   const options = {path: join(directory, 'board.sqlite'), ownerId: 'local'}
-  const memory = new Memory()
+  const memory = new Memory({scope: {conversation_id: 'session-test'}})
   const session = new BlackboardSession(memory, options)
   let mutator: Worker | undefined
   try {
@@ -192,7 +192,7 @@ test('session clear latches a failed receipt and leaves the live projection unch
 test('session splits count and byte limited batches and advances only committed cursors', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-batches-'))
   const options = {path: join(directory, 'board.sqlite'), ownerId: 'local', retention: {maxItems: 600, maxBytes: 16 * 1024 * 1024}}
-  let memory = new Memory()
+  let memory = new Memory({scope: {conversation_id: 'session-test'}})
   let session = new BlackboardSession(memory, options)
   try {
     await session.open()
@@ -202,7 +202,7 @@ test('session splits count and byte limited batches and advances only committed 
     memory.channels.get('conversation')!.replaceSummary('all committed records', 545, 0)
     await session.flush()
     await session.close()
-    memory = new Memory()
+    memory = new Memory({scope: {conversation_id: 'session-test'}})
     session = new BlackboardSession(memory, options)
     await session.open()
     const channel = memory.channels.get('conversation')!
@@ -327,7 +327,7 @@ test('storage failure rejects ingress and never calls the model or publishes an 
     await rejectedServe
     assert.equal(calls, 0)
     assert.equal(runtime.core.appliedEvents.some(event => event.kind === 'model_done'), false)
-    const memory = new Memory()
+    const memory = new Memory({scope: {conversation_id: 'session-test'}})
     const session = new BlackboardSession(memory, blackboard)
     try { await session.open(); assert.equal(memory.channels.get('conversation')!.items.length, 0) }
     finally { await session.close() }
@@ -407,4 +407,31 @@ test('session recall waits for an outstanding real commit before publishing opti
     assert.equal(result.accepted, true)
     assert.match(result.host_item.content, /optimistic milestone/u)
   } finally { stop.abort(); await blocker?.terminate(); await serving; await rm(directory, {recursive: true, force: true}) }
+})
+
+test('shutdown bounds a blackboard flush blocked by another SQLite writer', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-close-'))
+  const options = {path: join(directory, 'board.sqlite'), ownerId: 'local'}
+  const memory = new Memory()
+  const session = new BlackboardSession(memory, options)
+  let blocker: Worker | undefined
+  try {
+    await session.open()
+    blocker = new Worker(`
+      const {parentPort,workerData}=require('node:worker_threads');
+      const {DatabaseSync}=require('node:sqlite');
+      const db=new DatabaseSync(workerData); db.exec('BEGIN IMMEDIATE');
+      parentPort.on('message', () => {});
+      parentPort.postMessage('locked');
+    `, {eval: true, workerData: options.path})
+    await once(blocker, 'message')
+    append(memory, 'not acknowledged')
+    const started = performance.now()
+    await assert.rejects(session.close())
+    assert.ok(performance.now() - started < 1_500)
+  } finally {
+    await blocker?.terminate()
+    await session.close().catch(() => undefined)
+    await rm(directory, {recursive: true, force: true})
+  }
 })

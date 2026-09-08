@@ -1,6 +1,8 @@
 import {createPackageWithOptions} from '@electron/asar'
 import {lstat, mkdtemp, rename, rm} from 'node:fs/promises'
-import {basename, dirname, resolve} from 'node:path'
+import {basename, dirname, join, resolve} from 'node:path'
+
+export const OWNED_ASAR_UNPACK_DIR = join('node_modules', 'sherpa-onnx')
 
 export async function replacePackagedAsar({sourceRoot, archivePath}) {
   if (basename(archivePath) !== 'app.asar') throw new Error('owned ASAR build rejected')
@@ -11,6 +13,7 @@ export async function replacePackagedAsar({sourceRoot, archivePath}) {
   try {
     await createPackageWithOptions(sourceRoot, pendingArchive, {
       unpack: resolve(sourceRoot, '**/*.{node,dylib,dll,so,so.*}'),
+      unpackDir: OWNED_ASAR_UNPACK_DIR,
     })
     const status = await lstat(pendingArchive)
     if (!status.isFile() || status.size <= 0) throw new Error('owned ASAR build rejected')

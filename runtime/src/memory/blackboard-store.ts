@@ -115,7 +115,10 @@ export class BlackboardStore {
   }
 
   close(): Promise<void> {
-    this.#closing ??= this.#close()
+    this.#closing ??= (async () => {
+      const timer = setTimeout(() => this.#fail(new BlackboardStoreError('unavailable')), 400)
+      try { await this.#close() } finally { clearTimeout(timer) }
+    })()
     return this.#closing
   }
 
@@ -162,6 +165,12 @@ export class BlackboardStore {
     if (pending !== undefined) { clearTimeout(pending.timer); pending.reject(error) }
     const worker = this.#worker
     this.#worker = undefined
-    if (worker !== undefined) this.#termination = worker.terminate().catch(() => undefined)
+    if (worker !== undefined) {
+      worker.unref()
+      this.#termination = Promise.race([
+        worker.terminate().catch(() => undefined),
+        new Promise<void>(resolve => { setTimeout(resolve, 200) }),
+      ])
+    }
   }
 }

@@ -1,7 +1,8 @@
 import {createBackendControl} from './backend-control.mjs'
 import {createKnowledgeActions} from './knowledge-actions.mjs'
-import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, invalidCommit} from './capabilities-settings.mjs'
+import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, capabilityDocumentRevision, invalidCommit} from './capabilities-settings.mjs'
 import {parseCapabilityRegistry} from '@nova-audio-agent/runtime/desktop'
+import { WakeWordRuntime } from './wake-word/runtime.mjs'
 import {
   app,
   BrowserWindow,
@@ -76,7 +77,9 @@ import {
 import { reportStartupFailure } from './startup-diagnostics.mjs'
 import {
   createSafeStorageCodec,
+  backendSettings,
   createSettingsWriter,
+  saveSettingsRecovery, restoreSettingsRecovery, clearSettingsRecovery,
   hasPlaintextSecret,
   loadSettings,
   orbSettings,
@@ -157,10 +160,12 @@ let runtimeCapabilities = null
 let capabilityEditorCache = null
 let backendControl = null
 let settingsApplyStatus = 'idle'
+let settingsRecoveryAvailable = false
 let mainWindow = null
 let boardWindow = null
 let clearingConversation = null
 let settingsWindow = null
+let wakeWord = null
 let tray = null
 let bootstrap = null
 let activeLaunchId = null
@@ -242,11 +247,8 @@ function settingsView() {
   let capabilities = capabilityEditorCache?.view ?? {document: null, problems: []}
   let capabilityDiskVersion = null
   if (settingsWindow) {
-    const path = capabilityPath(currentSettings, process.env)
-    try {
-      const stat = statSync(path)
-      capabilityDiskVersion = `${path}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
-    } catch { capabilityDiskVersion = `${path}:missing` }
+    try { capabilityDiskVersion = capabilityDocumentRevision(currentSettings, process.env) }
+    catch { capabilityDiskVersion = 'unreadable' }
   }
   if (settingsWindow && (capabilityEditorCache?.generation !== settingsGeneration
     || capabilityEditorCache?.diskVersion !== capabilityDiskVersion)) {
@@ -268,8 +270,10 @@ function settingsView() {
     backendDiagnostic: backendStatus.diagnostic,
     backendRetryInMs: backendStatus.retryInMs,
     settingsApplyStatus,
+    settingsRecoveryAvailable,
     managedWorkspaces: managedWorkspacesView(),
     microphoneStatus,
+    wakeWord: wakeWord?.snapshot(),
     effectivePaths: desktopConfig ? Object.freeze({
       stateRoot: desktopConfig.stateRoot,
       managedRoot: desktopConfig.managedRoot,
@@ -317,6 +321,44 @@ const settingsWriter = createSettingsWriter({
   save: next => saveSettings(settingsFile(), next),
   codec: secretCodec,
 })
+
+function publishCommittedSettings() {
+  capabilityEditorCache = null
+  wakeWord?.configure(currentSettings)
+  settingsGeneration += 1
+  sendToOrb('nova:settings:changed', orbSettings(currentSettings))
+  sendToSettings('nova:settings:changed', settingsView())
+}
+
+async function rollbackSettings(refresh = true) {
+  // Restore only after the child using these files is confirmed stopped. This
+  // also guards retries after a previous stop failed or journal cleanup failed.
+  if (settingsRecoveryAvailable && backendSupervisor) {
+    await backendSupervisor.stop()
+    if (backendSupervisor.status().state !== 'stopped') throw new Error('backend termination unconfirmed')
+  }
+  const restored = await restoreSettingsRecovery(settingsFile())
+  if (restored === null) return
+  currentSettings = restored
+  settingsRecoveryAvailable = true
+  if (refresh) await refreshDesktopConfiguration()
+}
+
+async function completeSettings() {
+  await clearSettingsRecovery(settingsFile())
+  settingsRecoveryAvailable = false
+}
+
+async function restartSettingsBackend(committedConfiguration) {
+  const externalWorkspaceReset = committedConfiguration?.externalWorkspaceReset === true
+  const recovery = externalWorkspaceReset
+    ? await managedWorkspaceBackendRecovery.retry()
+    : await managedWorkspaceBackendRecovery.restart()
+  if (recovery.status !== (externalWorkspaceReset ? 'retried' : 'restarted')
+    || backendSupervisor?.status().state !== 'connected') {
+    throw new Error('backend activation unavailable')
+  }
+}
 
 // The orb is a single fixed size, so "which display's work area applies"
 // depends only on where the candidate position would put its center.
@@ -448,15 +490,20 @@ function trayImage() {
   )
 }
 
+function hideOrb() {
+  if (wakeWord?.state === 'blocked') wakeWord.wake()
+  else if (!wakeWord?.enabled || !wakeWord.sleep()) mainWindow?.hide()
+}
+
 function createTray() {
   const next = new Tray(trayImage())
   next.setToolTip('Nova Audio Agent Ambient Orb')
   next.setContextMenu(Menu.buildFromTemplate([
-    { label: '显示', click: () => mainWindow?.show() },
+    { label: '显示', click: () => wakeWord?.wake() },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]))
-  next.on('click', () => mainWindow?.isVisible() ? mainWindow.hide() : mainWindow?.show())
+  next.on('click', () => mainWindow?.isVisible() ? hideOrb() : wakeWord?.wake())
   return next
 }
 
@@ -633,7 +680,7 @@ const workspaceActions = createWorkspaceActions({
     return backendSupervisor.status().state === 'stopped'
   },
   restartBackendBounded: async () => {
-    if (!backendSupervisor) return false
+    if (settingsRecoveryAvailable || !backendSupervisor) return false
     await backendSupervisor.restart()
     return backendSupervisor.status().state === 'connected'
   },
@@ -756,6 +803,7 @@ function initializeDesktopBootstrap(cameraSource) {
     binary: nativeBinary,
     onEvent: event => sendToOrb('nova:native-audio:event', event),
   }) : null
+  nativeAudio?.setCaptureEpoch(wakeWord?.epoch ?? 0)
   bootstrap = Object.freeze({
     audioMode: 'inactive',
     nativeAvailable,
@@ -766,14 +814,42 @@ function initializeDesktopBootstrap(cameraSource) {
   })
 }
 
+async function loadStartupSettings() {
+  try {
+    const recovered = await restoreSettingsRecovery(settingsFile())
+    settingsRecoveryAvailable = recovered !== null
+    currentSettings = recovered ?? await loadSettings(settingsFile())
+    if (recovered) publishSettingsApplyStatus('recovery_pending')
+    return true
+  } catch {
+    currentSettings = await loadSettings(settingsFile())
+    settingsRecoveryAvailable = true
+    publishSettingsApplyStatus('recovery_failed')
+    openSettingsRequested = true
+    return false
+  }
+}
+
 async function startSelectedCamera(camera, backendKind, smokeChannel) {
-  currentSettings = await loadSettings(settingsFile())
-  await refreshDesktopConfiguration()
+  const settingsReady = await loadStartupSettings()
+  if (settingsReady) await refreshDesktopConfiguration()
   initializeDesktopBootstrap(camera.source)
   const launchId = randomBytes(8).toString('hex')
   activeLaunchId = launchId
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
+  wakeWord = new WakeWordRuntime({
+    modelRoot: resolve(app.getPath('userData'), 'models/wake-word'),
+    show: () => { mainWindow?.show(); mainWindow?.focus() },
+    hide: () => mainWindow?.hide(),
+    changed: value => {
+      nativeAudio?.setCaptureEpoch(value.epoch)
+      sendToOrb('nova:wake-word:changed', value)
+      sendToSettings('nova:settings:changed', settingsView())
+    },
+  })
+  wakeWord.configure(currentSettings)
+
   const windowShown = sourceStartupSmoke
     ? new Promise((resolveShown, rejectShown) => {
         if (mainWindow.isVisible()) {
@@ -953,6 +1029,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('Codex rescan rejected')
     }
+    if (settingsRecoveryAvailable) return {...settingsView(), operationStatus: 'recovery_pending'}
     return coordinateCodexRescan({
       coordinator: lifecycleCoordinator,
       currentConfiguration: () => Object.freeze({config: desktopConfig, codexStatus}),
@@ -981,6 +1058,20 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   ipcMain.handle('nova:backend:retry', async (event, ...args) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
       throw new Error('backend retry rejected')
+    }
+    if (settingsRecoveryAvailable) {
+      const applied = await applySettingsTransaction({
+        coordinator: lifecycleCoordinator, patch: null,
+        write: async () => { await rollbackSettings(); return currentSettings },
+        publishCommitted: publishCommittedSettings,
+        prepareConfiguration: prepareDesktopConfiguration,
+        commitConfiguration: commitDesktopConfiguration,
+        discardConfiguration: discardDesktopConfiguration,
+        restartBackend: restartSettingsBackend,
+        rollback: rollbackSettings, complete: completeSettings,
+        publishStatus: publishSettingsApplyStatus,
+      })
+      return {...settingsView(), ...applied}
     }
     const recovery = await coordinateBackendRetry({
       coordinator: lifecycleCoordinator,
@@ -1061,37 +1152,60 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       return coordinated.status === 'busy' ? {status: 'busy', tools: []} : coordinated.value
     } catch { return {status: 'failed', reason: 'invalid_capabilities_configuration', tools: []} }
   })
+  ipcMain.on('nova:wake-word:report', (event, value) => {
+    if (event.sender === mainWindow?.webContents) wakeWord?.report(value)
+  })
+  ipcMain.on('nova:wake-word:audio', (event, value) => {
+    if (event.sender === mainWindow?.webContents) wakeWord?.accept(value)
+  })
+  ipcMain.on('nova:wake-word:activity', event => {
+    if (event.sender === mainWindow?.webContents || event.sender === settingsWindow?.webContents) wakeWord?.activity()
+  })
+  ipcMain.handle('nova:wake-word:retry', event => {
+    if (event.sender !== settingsWindow?.webContents) throw new Error('wake word retry rejected')
+    wakeWord?.start()
+    return settingsView()
+  })
   ipcMain.handle('nova:settings:set', async (event, payload) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings update rejected')
     }
-    // Plaintext values exist only in the inbound patch and the queued writer.
-    // Every later callback receives committed settings or prepared public
-    // configuration, and every reply contains secret key names only.
+    // Plaintext keys travel from the panel into the writer, and are decrypted
+    // only in main for validation or backend spawn. Public settings replies
+    // contain presence flags and rejected key names, never secret values.
+    const previousSettings = currentSettings
+    const recoveryPending = settingsRecoveryAvailable
+    let capabilitiesChanged = false
     const applied = await applySettingsTransaction({
+      needsBackendRestart: () => recoveryPending || capabilitiesChanged || JSON.stringify(backendSettings(previousSettings))
+        !== JSON.stringify(backendSettings(currentSettings)),
       coordinator: lifecycleCoordinator,
       patch: payload,
       write: async value => {
         try {
+          if (settingsRecoveryAvailable) await rollbackSettings(false)
           const commit = parseSettingsCommit(value)
+          capabilitiesChanged = commit.capabilitiesDocument !== undefined
           return await settingsWriter(commit.settingsPatch ?? {}, next => {
             validatePreparedSettings(commit.settingsPatch, publicSettings(next))
-            if (capabilityPath(next, process.env) === resolve(settingsFile())) throw invalidCommit('capability_settings_path_conflict')
+            if ([resolve(settingsFile()), resolve(`${settingsFile()}.recovery`)].includes(capabilityPath(next, process.env))) throw invalidCommit('capability_settings_path_conflict')
             const document = commit.capabilitiesDocument ?? readCapabilityDocument(next, process.env)
             const secrets = decryptSecretsForSpawn(next, secretCodec)
             return prepareCapabilityCommit({settings: next, sourceSettings: currentSettings, document: commit.capabilitiesDocument, expectedRevision: commit.capabilitiesBaseRevision,
-              environment: capabilityEnvironment(next, secrets, process.env, document), knownSecrets: Object.values(secrets)})
+              environment: capabilityEnvironment(next, secrets, process.env, document), knownSecrets: Object.values(secrets),
+              beforeWrite: async capability => {
+                await saveSettingsRecovery(settingsFile(), currentSettings, capability)
+                settingsRecoveryAvailable = true
+              }})
           })
         } catch (error) {
           console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
           throw error
         }
       },
-      publishCommitted: () => {
-        settingsGeneration += 1
-        sendToOrb('nova:settings:changed', orbSettings(currentSettings))
-        sendToSettings('nova:settings:changed', settingsView())
-      },
+      publishCommitted: publishCommittedSettings,
+      rollback: rollbackSettings,
+      complete: completeSettings,
       prepareConfiguration: async () => {
         try {
           return await prepareDesktopConfiguration()
@@ -1102,16 +1216,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       },
       commitConfiguration: commitDesktopConfiguration,
       discardConfiguration: discardDesktopConfiguration,
-      restartBackend: async committedConfiguration => {
-        const externalWorkspaceReset = committedConfiguration?.externalWorkspaceReset === true
-        const recovery = externalWorkspaceReset
-          ? await managedWorkspaceBackendRecovery.retry()
-          : await managedWorkspaceBackendRecovery.restart()
-        if (recovery.status !== (externalWorkspaceReset ? 'retried' : 'restarted')
-          || backendSupervisor?.status().state !== 'connected') {
-          throw new Error('backend activation unavailable')
-        }
-      },
+      restartBackend: restartSettingsBackend,
       publishStatus: publishSettingsApplyStatus,
     })
     return {...settingsView(), ...applied}
@@ -1123,6 +1228,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // invoke time — the frozen startup payload predates every death it would have to report.
     return {
       ...readBootstrap(event.sender),
+      wakeWord: wakeWord?.snapshot(),
       backend: backendStatus.connection,
       backendStatus: backendStatus.state,
     }
@@ -1242,7 +1348,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   })
   tray = createTray()
   const shortcutRegistered = globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    mainWindow?.isVisible() ? mainWindow.hide() : mainWindow?.show()
+    mainWindow?.isVisible() ? hideOrb() : wakeWord?.wake()
   })
   // Wayland/XWayland sessions may silently refuse global shortcuts; surface
   // that instead of leaving the user to wonder why the hotkey never fires.
@@ -1263,15 +1369,6 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
         backendGeneration += 1
         if (runtimeCapabilities) runtimeCapabilities = {...runtimeCapabilities, state: 'running'}
       }
-      if (status.state === 'connected' && settingsApplyStatus === 'restarting') {
-        settingsApplyStatus = 'applied'
-      } else if (
-        settingsApplyStatus === 'restarting'
-        && ['configuration_required', 'authentication_failed', 'unavailable', 'stopped']
-          .includes(status.state)
-      ) {
-        settingsApplyStatus = 'restart_failed'
-      }
       if (runtimeCapabilities?.state === 'running' && status.state !== 'connected') runtimeCapabilities = {...runtimeCapabilities, state: 'stopped'}
       sendToSettings('nova:settings:changed', settingsView())
       sendToOrb('nova:backend-status', status)
@@ -1282,10 +1379,19 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       }
     },
   })
-  void managedWorkspaceBackendRecovery.start()
+  if (settingsReady) void managedWorkspaceBackendRecovery.start()
   if (openSettingsRequested) {
     openSettingsRequested = false
     openSettingsWindow(launchId)
+  }
+  if (!settingsReady) {
+    void dialog.showMessageBox(mainWindow, {
+      type: 'error', message: '设置恢复未完成，后端尚未启动',
+      detail: `恢复记录已保留：${settingsFile()}.recovery\n请修复该文件或配置冲突，再在设置中点击“恢复上次可用设置”。`,
+      buttons: ['打开配置目录', '稍后处理'], cancelId: 1,
+    }).then(result => {
+      if (result.response === 0) return shell.openPath(dirname(settingsFile()))
+    }).catch(() => console.error('[desktop-diagnostic] settings_recovery_help_unavailable'))
   }
 }
 
@@ -1385,7 +1491,7 @@ if (packagedSourceRollbackUnavailable) {
   )
 } else {
   app.on('second-instance', (_event, argv) => {
-    mainWindow?.show()
+    wakeWord?.wake()
     if (!shouldOpenSettings(argv)) return
     if (activeLaunchId === null) {
       openSettingsRequested = true
@@ -1410,6 +1516,7 @@ app.on('before-quit', event => {
   app.isQuitting = true
   releaseSmokeChannel?.close()
   globalShortcut.unregisterAll()
+  wakeWord?.stop()
   void nativeAudio?.deactivate()
   if (!backendSupervisor && !backend && !managedWorkspaceMaintenance) return
   // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
@@ -1422,7 +1529,7 @@ app.on('before-quit', event => {
     : backend ? shutdownBackendBestEffort(backend) : Promise.resolve()
   const maintenance = managedWorkspaceMaintenance
   managedWorkspaceMaintenance = null
-  const maintenanceDrain = maintenance?.close() ?? Promise.resolve()
+  const maintenanceDrain = Promise.race([Promise.resolve().then(() => maintenance?.close()), wait(3000)])
   const drain = Promise.all([backendDrain, maintenanceDrain])
   quitDrain = drain.then(() => app.exit(0), () => app.exit(0))
 })

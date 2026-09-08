@@ -116,7 +116,7 @@ export const settingsSchema = z.object({
   blackboard_path: z.string().min(1).default('~/.nova-audio-agent/blackboard.sqlite'),
   blackboard_owner_id: z.string().min(1).max(512).default('local'),
   memory_connection: memoryConnectionSchema.default('disabled'),
-  memory_provider: z.enum(['voicemem', 'mem0']).nullable().default(null),
+  memory_provider: z.enum(['voicemem']).nullable().default(null),
   memory_url: z.string().default(''),
   memory_token: z.string().nullable().default(null),
   memory_path: z.string().min(1).default('~/.nova-audio-agent/memory.sqlite'),
@@ -187,7 +187,7 @@ export type PersonalMemoryConfig = {readonly connection: 'remote'; readonly url:
 
 interface LocalPersonalMemoryConfig {
   readonly connection: 'local'
-  readonly provider: 'voicemem' | 'mem0'
+  readonly provider: 'voicemem'
   readonly extractionModel: string
   readonly path: string
   readonly userId: string

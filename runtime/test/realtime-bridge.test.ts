@@ -497,7 +497,8 @@ test('personal recall shares schema and trusted-origin gates, then emits bounded
     kind: 'tool_call_ready' as const, session_epoch: 1, call_id: 'personal-1', item_id: 'tool-1',
     name: 'memory__recall', arguments: {query: 'tea', scope: 'recent', source: 'personal'}, response_id: 'r-1',
   }
-  const result = await bridge.acceptPersonalMemoryRecall(call, {originRef: `${origin.channel}:${origin.seq}`})
+  const signal = new AbortController().signal
+  const result = await bridge.acceptPersonalMemoryRecall(call, {originRef: `${origin.channel}:${origin.seq}`, signal})
   assert.equal(result.accepted, true)
   assert.equal(result.inline_fulfilled, true)
   assert.ok([...result.host_item.content].length <= 3_000)
@@ -512,7 +513,7 @@ test('personal recall shares schema and trusted-origin gates, then emits bounded
   assert.ok([...content.hits, ...content.context_hits].every(item => (
     item.source === 'personal' && [...item.text].length === 800
   )), 'whole trailing hits are omitted; hit text is never truncated')
-  assert.deepEqual(calls, [{query: 'tea', options: {scope: 'recent', limit: 5}}])
+  assert.deepEqual(calls, [{query: 'tea', options: {scope: 'recent', limit: 5, signal}}])
 
   const malformed = await bridge.acceptPersonalMemoryRecall({...call, call_id: 'bad', arguments: {
     query: 'tea', scope: 'recent', source: 'private',

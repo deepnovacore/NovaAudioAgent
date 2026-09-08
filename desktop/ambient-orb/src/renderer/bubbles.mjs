@@ -1,3 +1,4 @@
+import {EXECUTOR_PROGRESS, EXECUTOR_RESULT} from './wire-frame-types.mjs'
 const DETAIL_MS = 6_000
 const MILESTONE_MS = 12_000
 const MAX_BUBBLES = 3
@@ -6,7 +7,7 @@ const RESULT_OUTCOMES = new Set(['ok', 'failed', 'refused', 'unknown', 'cancelle
 
 export function parseProgressFrame(frame) {
   if (!frame || typeof frame !== 'object'
-    || frame.type !== 'executor.progress'
+    || frame.type !== EXECUTOR_PROGRESS
     || !validText(frame.delegate_id, 128)
     || !validText(frame.executor, 128)
     || !PROGRESS_PHASES.has(frame.phase)
@@ -23,7 +24,7 @@ export function parseProgressFrame(frame) {
 
 /** `null` clears only frame.work_id; `undefined` is a malformed frame. */
 export function parseLastResultFrame(frame) {
-  if (!frame || typeof frame !== 'object' || frame.type !== 'executor.result'
+  if (!frame || typeof frame !== 'object' || frame.type !== EXECUTOR_RESULT
     || !validText(frame.work_id, 128)
     || new TextEncoder().encode(JSON.stringify(frame)).length > 16 * 1024) return undefined
   if (frame.result === null) return null

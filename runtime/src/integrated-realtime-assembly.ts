@@ -38,14 +38,14 @@ export function buildIntegratedRealtimeAssembly(
 ): RealtimeAssembly {
   options = filterDisabledCoding(options)
   const provider = options.settings.integrated_provider
-  if (provider !== 'qwen') {
+  if (!Object.hasOwn(registry, provider)) {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER 无效')
   }
   const config = Object.freeze({...requireIntegratedRealtime(options.settings)})
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const capabilities = options.capabilities ?? capabilitiesFromSettings(options.settings)
-  const qwenProvider = registry.qwen({
+  const qwenProvider = registry[provider]({
     config,
     ...(options.connector === undefined ? {} : {connector: options.connector}),
     idFactory: () => ids.next('qwen'),

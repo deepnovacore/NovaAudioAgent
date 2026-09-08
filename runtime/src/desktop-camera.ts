@@ -1,3 +1,4 @@
+import {CAMERA_CAPTURE, CAMERA_PERMISSION} from './desktop-wire.js'
 export const CAMERA_FRAME_MAGIC = new Uint8Array([
   0x4e, 0x56, 0x43, 0x41, 0x4d, 0x01, 0x0d, 0x0a,
 ])
@@ -149,12 +150,12 @@ export function serializeCameraCapture(input: CameraCaptureInput): string {
   validateRequestId(input.request_id)
   if (input.source === 'local') {
     if ('position_ms' in input) invalid()
-    return JSON.stringify({type: 'camera.capture', request_id: input.request_id, source: 'local'})
+    return JSON.stringify({type: CAMERA_CAPTURE, request_id: input.request_id, source: 'local'})
   }
   if (input.source !== 'file' || !('position_ms' in input)) invalid()
   validatePosition(input.position_ms)
   return JSON.stringify({
-    type: 'camera.capture',
+    type: CAMERA_CAPTURE,
     request_id: input.request_id,
     source: 'file',
     position_ms: input.position_ms,
@@ -163,17 +164,17 @@ export function serializeCameraCapture(input: CameraCaptureInput): string {
 
 export function parseCameraCapture(raw: string): CameraCapture {
   const {value, integerSources} = parseCameraJson(raw, ['position_ms'])
-  if (!isPlainObject(value) || value.type !== 'camera.capture') invalid()
+  if (!isPlainObject(value) || value.type !== CAMERA_CAPTURE) invalid()
   validateRequestId(value.request_id)
   if (value.source === 'local') {
     if (!hasExactKeys(value, localCaptureKeys)) invalid()
-    return {type: 'camera.capture', request_id: value.request_id, source: 'local'}
+    return {type: CAMERA_CAPTURE, request_id: value.request_id, source: 'local'}
   }
   if (value.source !== 'file' || !hasExactKeys(value, fileCaptureKeys)) invalid()
   validatePosition(value.position_ms)
   if (!/^(?:-?0|[1-9]\d*)$/u.test(integerSources.get('position_ms') ?? '')) invalid()
   return {
-    type: 'camera.capture',
+    type: CAMERA_CAPTURE,
     request_id: value.request_id,
     source: 'file',
     position_ms: value.position_ms,
@@ -199,15 +200,15 @@ export function parseCameraError(raw: string): CameraErrorFrame {
 
 export function serializeCameraPermissionRequest(input: {readonly request_id: string}): string {
   validateRequestId(input.request_id)
-  return JSON.stringify({type: 'camera.permission', request_id: input.request_id})
+  return JSON.stringify({type: CAMERA_PERMISSION, request_id: input.request_id})
 }
 
 export function parseCameraPermissionRequest(raw: string): CameraPermissionRequest {
   const {value} = parseCameraJson(raw, [])
   if (!isExactObject(value, cameraPermissionRequestKeys)) invalid()
-  if (value.type !== 'camera.permission') invalid()
+  if (value.type !== CAMERA_PERMISSION) invalid()
   validateRequestId(value.request_id)
-  return {type: 'camera.permission', request_id: value.request_id}
+  return {type: CAMERA_PERMISSION, request_id: value.request_id}
 }
 
 export function serializeCameraPermissionResult(input: {

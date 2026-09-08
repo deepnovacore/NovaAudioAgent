@@ -94,6 +94,7 @@ test('remote memory shares state across channels and bounds untrusted responses 
 })
 
 test('remote memory accepts only HTTPS or numeric loopback HTTP without embedded credentials', () => {
+  for (const token of ['x'.repeat(8193), 'has whitespace']) assert.throws(() => new RemotePersonalMemoryResource({url: 'https://example.com', token}))
   for (const url of ['http://example.com','http://0.0.0.0','https://user:pass@example.com','http://127.0.0.1/?token=x']) {
     assert.throws(() => new RemotePersonalMemoryResource({url,token:'test'}))
   }
@@ -139,7 +140,7 @@ test('HTTP recall with absent optional metadata reaches the realtime bridge with
     req.resume()
     res.setHeader('content-type','application/json')
     res.end(JSON.stringify(req.url === '/v1/preferences' ? {revision:0,replyPreferences:[]} : {
-      source:'personal',state:'ok',scope:'recent',hits:[hit],contextHits:[{...hit,memoryId:'context-1'}],degraded:false,
+      source:'personal',state:'ok',scope:'recent',hits:[hit,{...hit,memoryId:'too-long',text:'x'.repeat(801)}],contextHits:[{...hit,memoryId:'context-1'}],degraded:false,
     }))
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -159,9 +160,10 @@ test('HTTP recall with absent optional metadata reaches the realtime bridge with
       kind:'tool_call_ready',session_epoch:1,call_id:'recall-1',item_id:'tool-1',response_id:'response-1',
       name:'memory__recall',arguments:{query:'tea',scope:'recent',source:'personal'},
     }, {originRef:`${origin.channel}:${origin.seq}`})
-    const content = JSON.parse(result.host_item.content) as {state:string;hits:{memory_id:string;evidence_ids:string[]}[];context_hits:{memory_id:string;evidence_ids:string[]}[]}
+    const content = JSON.parse(result.host_item.content) as {state:string;degraded:boolean;hits:{memory_id:string;evidence_ids:string[]}[];context_hits:{memory_id:string;evidence_ids:string[]}[]}
     assert.equal(result.accepted,true)
     assert.equal(content.state,'ok')
+    assert.equal(content.degraded,true)
     assert.deepEqual(content.hits.map(item => [item.memory_id,item.evidence_ids]), [['fact-1',['source-1']]])
     assert.deepEqual(content.context_hits.map(item => [item.memory_id,item.evidence_ids]), [['context-1',['source-1']]])
   } finally {

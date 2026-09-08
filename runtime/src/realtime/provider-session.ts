@@ -69,6 +69,7 @@ export class RealtimeProviderSession {
   readonly #responseAdaptation: (() => ResponseAdaptationContext | undefined) | undefined
   readonly #onDiagnostic: RealtimeProviderSessionOptions['onDiagnostic']
   #responseAdaptationTail: Promise<void> = Promise.resolve()
+  #audioAdaptationRefresh: Promise<void> | undefined
   #responseAdaptationReadFailureDiagnosedEpoch: number | null = null
   #responseAdaptationAttempt: {
     readonly epoch: number
@@ -84,6 +85,10 @@ export class RealtimeProviderSession {
     this.#provider = provider
     this.#responseAdaptation = options.responseAdaptation
     this.#onDiagnostic = options.onDiagnostic
+  }
+
+  get userResponseMode(): 'automatic' | 'requested' {
+    return this.#provider.userResponseMode ?? 'automatic'
   }
 
   get state(): RealtimeProviderSessionState {
@@ -134,6 +139,7 @@ export class RealtimeProviderSession {
       this.#lastEpoch = identity.epoch
       this.#identity = Object.freeze({...identity})
       this.#responseAdaptationTail = Promise.resolve()
+      this.#audioAdaptationRefresh = undefined
       this.#responseAdaptationReadFailureDiagnosedEpoch = null
       this.#responseAdaptationAttempt = null
       this.#state = 'connected'
@@ -191,7 +197,12 @@ export class RealtimeProviderSession {
     const owned = pcm.slice()
     const owner = this.#requiredConnectionOwner()
     try {
-      await this.#refreshResponseAdaptation(owner, signal)
+      if (this.#audioAdaptationRefresh === undefined) {
+        const refresh = this.#refreshResponseAdaptation(owner, signal).catch(() => undefined).finally(() => {
+          if (this.#audioAdaptationRefresh === refresh) this.#audioAdaptationRefresh = undefined
+        })
+        this.#audioAdaptationRefresh = refresh
+      }
       this.#assertCurrentConnection(owner)
       signal?.throwIfAborted()
       await this.#provider.sendAudio(
@@ -313,7 +324,7 @@ export class RealtimeProviderSession {
     }
   }
 
-  async ensureResponse(signal?: AbortSignal): Promise<void> {
+  async ensureResponse(userItemId?: string, signal?: AbortSignal, requestId?: string): Promise<boolean> {
     if (this.#provider.ensureResponse === undefined) {
       throw new RealtimeProtocolError('provider response ensuring is unavailable')
     }
@@ -321,8 +332,13 @@ export class RealtimeProviderSession {
     try {
       await this.#refreshResponseAdaptation(owner, signal)
       this.#assertCurrentConnection(owner)
-      await this.#provider.ensureResponse(combinedSignal(owner.controller.signal, signal))
+      if (userItemId !== undefined) realtimeIdentifierSchema.parse(userItemId)
+      if (requestId !== undefined) realtimeIdentifierSchema.parse(requestId)
+      const accepted = await this.#provider.ensureResponse(
+        combinedSignal(owner.controller.signal, signal), userItemId, requestId,
+      )
       this.#assertCurrentConnection(owner)
+      return accepted !== false
     } catch (error) {
       throw protocolFailure('provider response ensuring failed', error)
     }

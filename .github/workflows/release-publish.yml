@@ -38,6 +38,7 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+      - run: npm run check:release-gate
       - run: npm install --global npm@11.6.0
       - name: Verify candidate identity, platform builds, version, and release authority
         env:
@@ -50,6 +51,7 @@ jobs:
           set -euo pipefail
           node -e 'if (!/^\d+\.\d+\.\d+$/.test(process.argv[1])) process.exit(1)' "$RELEASE_VERSION"
           test "$EXPECTED_COMMIT" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$EXPECTED_COMMIT" origin/main
           test "$(node -p "require('./cli/package.json').version")" = "$RELEASE_VERSION"
           test "$(node -p "require('./desktop/ambient-orb/package.json').version")" = "$RELEASE_VERSION"
           gh run view "$CANDIDATE_RUN_ID" --json headSha,jobs,name > candidate-run.json

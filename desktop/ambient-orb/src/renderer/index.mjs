@@ -1,3 +1,5 @@
+import { WakeAudioRouter, canAutoSleep } from './wake-audio.mjs'
+import {DESKTOP_ACTIVITY, CLOCK_PING, PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT} from './wire-frame-types.mjs'
 import {
   activateCaptureMode,
   AlertTone,
@@ -561,6 +563,35 @@ function scheduleNativeFrames() {
 const UNMUTE_DRAIN_MS = 120
 let muteDrainUntil = 0
 
+const wakeAudio = new WakeAudioRouter({
+  upload: pcm => {
+    if (socket?.readyState !== WebSocket.OPEN) return
+    socket.send(pcm)
+    detectLocalOnset(pcm)
+  },
+  detect: value => window.novaAudioAgentDesktop.wakeWord.audio(value),
+})
+let backendIdle = false
+let backendIdleAt = -Infinity
+function reportWakeActivity() {
+  window.novaAudioAgentDesktop.wakeWord.report({
+    epoch: wakeAudio.epoch, activated: axes.activated, muted: axes.muted,
+    idle: canAutoSleep(axes, backendIdle, backendIdleAt, performance.now()),
+  })
+}
+function applyWakeState(value) {
+  wakeAudio.apply(value)
+  onsetTracker.reset()
+  axes.capture = 'idle'
+  // Fence frames already queued in the worklet; the acknowledgement tags subsequent capture.
+  processor?.port.postMessage({epoch: wakeAudio.epoch})
+  if (value?.state === 'blocked') {
+    axes.muted = true
+  }
+  reportWakeActivity()
+  render()
+}
+
 function microphoneGated() {
   return axes.muted || performance.now() < muteDrainUntil
 }
@@ -574,6 +605,7 @@ function toggleMute() {
   } else {
     muteDrainUntil = performance.now() + UNMUTE_DRAIN_MS
   }
+  reportWakeActivity()
   render()
 }
 
@@ -608,6 +640,7 @@ async function activateCapture() {
   } finally {
     axes.activationPending = false
   }
+  reportWakeActivity()
   render()
 }
 
@@ -623,13 +656,12 @@ async function startBrowserCapture() {
     }
     const nextSource = context.createMediaStreamSource(nextMedia)
     const nextProcessor = new AudioWorkletNode(context, 'nova-capture')
+    nextProcessor.port.postMessage({epoch: wakeAudio.epoch})
     nextProcessor.port.onmessage = event => {
-      if (!axes.activated || microphoneGated() || socket?.readyState !== WebSocket.OPEN) return
-      const samples = event.data
+      if (microphoneGated() || event.data?.epoch !== wakeAudio.epoch) return
+      const samples = event.data.samples
       if (!(samples instanceof Float32Array) || !samples.length) return
-      const pcm = floatToPcm16(samples, context.sampleRate)
-      socket.send(pcm)
-      detectLocalOnset(pcm)
+      wakeAudio.accept(floatToPcm16(samples, context.sampleRate), axes)
     }
     nextSource.connect(nextProcessor)
     nextProcessor.connect(context.destination)
@@ -675,6 +707,7 @@ async function deactivateCapture() {
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     onsetTracker.reset()
+    reportWakeActivity()
     return render()
   }
   axes.activationPending = true
@@ -692,6 +725,7 @@ async function deactivateCapture() {
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     axes.activationPending = false
+    reportWakeActivity()
     render()
   }
 }
@@ -735,7 +769,7 @@ function clearCaption() {
 }
 
 async function handleControl(message) {
-  if (message.type === 'playback.clear') {
+  if (message.type === PLAYBACK_CLEAR) {
     clearAssistantCaption()
     const backend = playback.current?.backend
     const cleared = playback.clear(message.utterance_id, message.generation_epoch)
@@ -771,7 +805,7 @@ async function handleControl(message) {
       played_ms: playedMs,
       t_render_ms: performance.now(),
     })
-  } else if (message.type === 'playback.alert') {
+  } else if (message.type === PLAYBACK_ALERT) {
     clearAssistantCaption()
     const hasIdentity = Object.hasOwn(message, 'utterance_id')
     const result = await applyAlertCommand(playback, message, {
@@ -792,7 +826,7 @@ async function handleControl(message) {
         t_render_ms: performance.now(),
       })
     }
-  } else if (message.type === 'playback.terminal') {
+  } else if (message.type === PLAYBACK_TERMINAL) {
     const backend = playback.current?.backend
     const acknowledgement = playback.markProviderTerminal(
       message.utterance_id,
@@ -805,16 +839,20 @@ async function handleControl(message) {
         message.generation_epoch,
       )
     }
-  } else if (message.type === 'clock.ping') {
+  } else if (message.type === DESKTOP_ACTIVITY) {
+    backendIdle = message.idle === true
+    backendIdleAt = performance.now()
+    reportWakeActivity()
+  } else if (message.type === CLOCK_PING) {
     send({ type: 'clock.pong', ping_id: message.ping_id, t_render_ms: performance.now() })
-  } else if (message.type === 'caption') {
+  } else if (message.type === CAPTION) {
     captionLabel.textContent = message.text
     captionLabel.dataset.role = message.role
     captionLabel.hidden = !message.text
-  } else if (message.type === 'executor.state') {
+  } else if (message.type === EXECUTOR_STATE) {
     axes.codex = message.state === 'running' ? 'working' : 'idle'
     if (typeof message.display_name === 'string') axes.executorName = message.display_name
-  } else if (message.type === 'project.state') {
+  } else if (message.type === PROJECT_STATE) {
     const keys = Object.keys(message).sort().join(',')
     const workspace = message.workspace_display_name
     const session = message.session_title
@@ -897,7 +935,7 @@ async function handleControl(message) {
       confirmationPresentation.sync('project', pillPending)
       applyConfirmationPresentation()
     }
-  } else if (message.type === 'executor.approval') {
+  } else if (message.type === EXECUTOR_APPROVAL) {
     const approval = parseCodexApprovalMessage(message)
     if (approval !== null) {
       axes.executorName = approval.display_name
@@ -920,23 +958,21 @@ async function handleControl(message) {
       confirmationPresentation.sync('codex', approval.pending_approval)
       applyConfirmationPresentation()
     }
-  } else if (message.type === 'executor.progress') {
+  } else if (message.type === EXECUTOR_PROGRESS) {
     const frame = parseProgressFrame(message)
     if (frame !== null) void progressBubbles.push(frame)
-  } else if (message.type === 'executor.results.reset') {
+  } else if (message.type === EXECUTOR_RESULTS_RESET) {
     if (Object.keys(message).length === 1) {
       retainedResults.clear()
       updateResultButton()
     }
-  } else if (message.type === 'executor.result') {
+  } else if (message.type === EXECUTOR_RESULT) {
     const result = parseLastResultFrame(message)
     if (result !== undefined) {
       if (result === null) retainedResults.delete(message.work_id)
       else if (retainedResults.has(message.work_id) || retainedResults.size < 64) retainedResults.set(message.work_id, result)
       updateResultButton()
     }
-  } else if (message.type === 'error') {
-    axes.error = 'backend'
   }
   render()
 }
@@ -986,6 +1022,8 @@ function handleBackendExit() {
 }
 
 function resetRendererConnection(processReplaced, {closeSocket = true} = {}) {
+  backendIdle = false
+  backendIdleAt = -Infinity
   if (closeSocket) {
     activeConnection?.close(false)
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
@@ -1107,6 +1145,12 @@ async function boot() {
     paletteHover.reset(bootstrap.settings?.palette)
     if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
+    window.novaAudioAgentDesktop.wakeWord.onChanged(applyWakeState)
+    applyWakeState(bootstrap.wakeWord)
+    setInterval(reportWakeActivity, 1000)
+    for (const event of ['pointerdown', 'keydown']) {
+      document.addEventListener(event, () => window.novaAudioAgentDesktop.wakeWord.activity())
+    }
     window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
     window.novaAudioAgentDesktop.onBackendReady(connectBackend)
     window.novaAudioAgentDesktop.onBackendStatus?.(status => {
@@ -1122,10 +1166,8 @@ async function boot() {
     window.novaAudioAgentDesktop.settings?.onChanged?.(next => paletteHover.reset(next.palette))
     window.novaAudioAgentDesktop.nativeAudio.onEvent(event => {
       if (event.type === 'audio') {
-        if (!nativeReady || microphoneGated()) return
-        const pcm = new Uint8Array(event.pcm)
-        detectLocalOnset(pcm)
-        if (socket?.readyState === WebSocket.OPEN) socket.send(pcm)
+        if (!nativeReady || microphoneGated() || event.wakeEpoch !== wakeAudio.epoch) return
+        wakeAudio.accept(new Uint8Array(event.pcm), axes)
       } else if (event.type === 'playback.started') {
         axes.playback = 'speaking'
         if (

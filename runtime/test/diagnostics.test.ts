@@ -1,3 +1,4 @@
+import {tmpdir} from 'node:os'
 import {mkdtempSync, writeFileSync, rmSync} from 'node:fs'
 import {join} from 'node:path'
 import assert from 'node:assert/strict'
@@ -234,7 +235,7 @@ test('diagnose CLI emits one canonical line with exact exit behavior', async () 
 })
 
 test('diagnostics validate configured modules and require only the selected search credentials', async () => {
-  const directory = mkdtempSync('/private/tmp/nova-diagnose-registry-')
+  const directory = mkdtempSync(join(tmpdir(), 'nova-diagnose-registry-'))
   const path = join(directory, 'capabilities.json')
   try {
     writeFileSync(path, JSON.stringify({version: 1, modules: {search: {enabled: false}}}))

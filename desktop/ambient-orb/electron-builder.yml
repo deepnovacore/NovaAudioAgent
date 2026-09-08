@@ -2,6 +2,8 @@ appId: ai.deepnovacore.nova-audio-agent.orb
 productName: Nova Audio Agent Ambient Orb
 electronVersion: 43.2.0
 asar: true
+asarUnpack:
+  - '**/node_modules/sherpa-onnx/**'
 npmRebuild: true
 beforeBuild: scripts/before-build.cjs
 afterPack: scripts/after-pack.cjs

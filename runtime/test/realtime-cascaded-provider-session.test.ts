@@ -194,6 +194,7 @@ async function collectTerminal(session: RealtimeProviderSession): Promise<Realti
   const events: RealtimeProviderEvent[] = []
   for await (const event of session.events()) {
     events.push(event)
+    if (event.kind === 'user_transcript_final') await session.ensureResponse(event.item_id)
     if (event.kind === 'response_terminal') return events
   }
   throw new Error('provider-session stream ended before terminal')
@@ -240,6 +241,7 @@ async function guardReconnectInputs(historyMode: 'none' | 'packed'): Promise<{
   await waitFor('old LLM response start', () => firstLlm.calls.length === 1)
   await session.accept({
     kind: 'response_started', session_epoch: 1, response_id: 'response-old',
+    origin: {kind: 'host_request', host_item_id: 'old-host'},
   })
   await session.accept({
     kind: 'response_audio_delta', session_epoch: 1, response_id: 'response-old',
@@ -277,7 +279,7 @@ async function guardReconnectInputs(historyMode: 'none' | 'packed'): Promise<{
   return {inputs, outcome}
 }
 
-test('formal provider session reconnect closes the epoch LLM, swaps streams, and deep-copies tools',
+test('formal provider session reconnect closes the epoch LLM, swaps streams, and restricts host tools',
   async () => {
     const firstLlm = new EpochLlm()
     const secondLlm = new EpochLlm([
@@ -320,9 +322,7 @@ test('formal provider session reconnect closes the epoch LLM, swaps streams, and
     const events = await settleWithin('second epoch response', collecting)
 
     assert.deepEqual(events.map(event => event.session_epoch), [2, 2])
-    assert.deepEqual(secondLlm.calls[0]?.tools, [
-      {name: 'weather__get', parameters: {type: 'object'}},
-    ])
+    assert.deepEqual(secondLlm.calls[0]?.tools, [])
     await session.close()
     assert.equal(secondLlm.closed, true)
   })
@@ -351,7 +351,7 @@ test('formal provider cancellation resets a terminal-window continuation before 
       origin_spoken: false})
     await llm.committed.promise
 
-    const cancelling = session.cancelResponse('provider-window')
+    const cancelling = session.cancelResponse('cascaded-response-1-1')
     await llm.aborted.promise
     llm.releaseTerminal()
     await cancelling
@@ -532,4 +532,172 @@ test('adapter-connect failure closes each constructed owner once in reverse orde
     'endpointing', 'asr', 'llm', 'tts', 'llm.close', 'endpointing.close',
   ])
   assert.equal(llm.closed, true)
+})
+
+
+test('real provider starts bind host facts and continuations before createResponse returns', async () => {
+  for (const mode of ['host', 'continuation']) {
+    let nextId = 0
+    const ids = (): string => `admission-${++nextId}`
+    const port = new RealtimeProviderSession(providerFor({
+      llms: [new EpochLlm([
+        {kind: 'response_started', response_id: 'wire-fast'},
+        {kind: 'response_completed', response_id: 'wire-fast'},
+      ])], idFactory: ids,
+    }))
+    const started = deferred<void>()
+    const release = deferred<void>()
+    const create = port.createResponse.bind(port)
+    port.createResponse = async intent => {
+      await create(intent)
+      await release.promise
+    }
+    const session = new RealtimeSession({provider: port, idFactory: ids, clock: new VirtualClock(),
+      playback: new PlaybackRegistry({idFactory: ids, onFrame: () => undefined, onClear: () => undefined}),
+      onDiagnostic: () => undefined})
+    await session.connect({tools: []})
+    const bound: string[][] = []
+    const reader = (async () => {
+      for await (const event of port.events()) {
+        await session.accept(event)
+        if (event.kind === 'response_started') {
+          bound.push([...session.responseEventIds(event.response_id)])
+          started.resolve()
+        }
+        if (event.kind === 'response_terminal') return
+      }
+    })()
+    try {
+      let delivery: Promise<unknown>
+      if (mode === 'host') {
+        delivery = session.deliverHostItem({kind: 'progress', host_item_id: 'host-fast', event_id: 'event-fast',
+          content: 'fact', call_id: null})
+      } else {
+        const item: HostContextItem = {kind: 'tool_output', host_item_id: 'host-fast', event_id: 'event-fast',
+          content: '{"value":"ok"}', call_id: 'call-fast'}
+        await session.injectToolOutput(item)
+        delivery = session.requestToolContinuation([{kind: 'tool_result', item, task_summary: null, origin_spoken: false}])
+      }
+      await settleWithin('start before command release', started.promise)
+      assert.deepEqual(bound, [['event-fast']], 'ownership binds while createResponse is held')
+      release.resolve()
+      await delivery
+      await settleWithin('fast admitted response', reader)
+      assert.deepEqual(bound, [['event-fast']])
+      assert.equal(session.providerIdle, true)
+    } finally { release.resolve(); await port.close() }
+  }
+})
+
+test('host request identity crosses the production cascaded provider and returns on start and terminal', async () => {
+  const llm = new EpochLlm([{kind: 'response_started', response_id: 'wire-response'},
+    {kind: 'response_completed', response_id: 'wire-response'}])
+  let sequence = 0, feeds = 0
+  const nextId = () => `request-proof-${++sequence}`
+  const port = new RealtimeProviderSession(providerFor({llms: [llm], idFactory: nextId,
+    endpointingFactory: () => Promise.resolve({
+      feed: pcm => Promise.resolve(++feeds === 1 ? [{kind: 'speech_start', pcm}] : [{kind: 'speech_end', commit: true}]),
+      reset: () => undefined, close: () => Promise.resolve(),
+    }),
+    asrFactory: () => ({open: () => Promise.resolve({append: () => Promise.resolve(),
+      finish: () => Promise.resolve(), close: () => Promise.resolve(),
+      async *events() {await Promise.resolve(); yield {text: 'request proof', final: true}},
+    })}),
+  }))
+  const session = new RealtimeSession({provider: port,
+    playback: new PlaybackRegistry({idFactory: nextId, onFrame: () => undefined, onClear: () => undefined}),
+    idFactory: nextId, clock: new VirtualClock(), onDiagnostic: () => undefined})
+  await session.connect({tools: []})
+  const origins: unknown[] = []
+  const reader = (async () => {
+    for await (const event of port.events()) {
+      await session.accept(event)
+      if (event.kind === 'response_started' || event.kind === 'response_terminal') origins.push(event.origin)
+      if (event.kind === 'response_terminal') return
+      await session.requestPendingUserResponse()
+    }
+  })()
+  try {
+    await port.sendAudio(new Uint8Array([0, 0]))
+    await port.sendAudio(new Uint8Array([0, 0]))
+    await settleWithin('request identity round trip', reader)
+    assert.equal(origins.length, 2)
+    assert.deepEqual(origins[0], origins[1])
+    assert.match((origins[0] as {request_id: string}).request_id, /^user-response-/u)
+    assert.equal(session.providerIdle, true, 'the formal host accepted the correlated response')
+  } finally {await port.close(); await reader}
+})
+
+test('silent cascaded epoch revocation rejects and releases the user request before reconnect', async () => {
+  const firstLlm = new class extends EpochLlm {
+    override abandonPendingResponse(): Promise<void> {
+      return Promise.reject(new Error('continuation cannot be abandoned'))
+    }
+  }([
+    {kind: 'response_started', response_id: 'old-response'},
+    {kind: 'tool_call', item_id: 'old-tool-item', call_id: 'old-call', name: 'weather', arguments: {}},
+    {kind: 'response_completed', response_id: 'old-response'},
+  ])
+  const secondLlm = new EpochLlm([
+    {kind: 'response_started', response_id: 'new-response'},
+    {kind: 'response_completed', response_id: 'new-response'},
+  ])
+  let sequence = 0, feeds = 0
+  const nextId = (): string => `revocation-proof-${++sequence}`
+  const port = new RealtimeProviderSession(providerFor({llms: [firstLlm, secondLlm], idFactory: nextId,
+    endpointingFactory: () => Promise.resolve({
+      feed: pcm => Promise.resolve(++feeds % 2 === 1
+        ? [{kind: 'speech_start', pcm}] : [{kind: 'speech_end', commit: true}]),
+      reset: () => undefined, close: () => Promise.resolve(),
+    }),
+    asrFactory: () => ({open: () => Promise.resolve({append: () => Promise.resolve(),
+      finish: () => Promise.resolve(), close: () => Promise.resolve(),
+      async *events() {await Promise.resolve(); yield {text: 'next question', final: true}},
+    })}),
+  }))
+  const session = new RealtimeSession({provider: port,
+    playback: new PlaybackRegistry({idFactory: nextId, onFrame: () => undefined, onClear: () => undefined}),
+    idFactory: nextId, clock: new VirtualClock(), onDiagnostic: () => undefined})
+  const tools = [{type: 'function', function: {name: 'weather', parameters: {type: 'object'}}}]
+  await session.connect({tools})
+  const events: RealtimeProviderEvent[] = []
+  const readEpoch = async (): Promise<void> => {
+    for await (const event of port.events()) {
+      assert.equal(await session.accept(event), true)
+      events.push(event)
+    }
+  }
+  let reader = readEpoch()
+  const speak = async (transcripts: number): Promise<void> => {
+    await port.sendAudio(new Uint8Array([0, 0]))
+    await port.sendAudio(new Uint8Array([0, 0]))
+    await waitFor('user transcript', () => events.filter(event => event.kind === 'user_transcript_final').length === transcripts)
+  }
+  try {
+    await speak(1)
+    assert.equal(await session.requestPendingUserResponse(), true)
+    await waitFor('tool response terminal', () => events.some(event => event.kind === 'response_terminal'))
+    await speak(2)
+    const beforeRequest = events.length
+    await assert.rejects(session.requestPendingUserResponse(), /user response request failed/u)
+    await settleWithin('revoked epoch stream', reader)
+    assert.deepEqual(events.slice(beforeRequest), [], 'revocation emits neither terminal nor provider_error')
+    assert.equal(firstLlm.closed, true)
+    // A leaked slot would return false without reaching the now-revoked provider.
+    await assert.rejects(session.requestPendingUserResponse(), /user response request failed/u)
+    assert.equal(firstLlm.calls.length, 1)
+
+    await session.reconnect({tools})
+    assert.equal(session.sessionEpoch, 2)
+    assert.equal(session.providerIdle, true)
+    const staleTranscript = events.findLast(event => event.kind === 'user_transcript_final')!
+    assert.equal(await session.accept(staleTranscript), false)
+    assert.equal(await session.requestPendingUserResponse(), false, 'old input cannot arm the fresh epoch')
+    reader = readEpoch()
+    await speak(3)
+    assert.equal(await session.requestPendingUserResponse(), true)
+    await waitFor('fresh epoch terminal', () => events.some(event => event.kind === 'response_terminal' && event.session_epoch === 2))
+    assert.equal(secondLlm.calls.length, 1)
+    assert.equal(session.providerIdle, true, 'fresh response was admitted without an inherited fence or slot')
+  } finally {await port.close(); await reader}
 })

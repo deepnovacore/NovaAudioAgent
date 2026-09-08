@@ -15,7 +15,7 @@
   `TAVILY_API_KEY` is required for production assembly.
 - Codex spawn forces `mcp_servers={}` and `validateEffectiveCodexConfig`
   requires an empty `mcp_servers` map
-  ([`runtime/src/codex-app-server-schema.ts`](../../../runtime/src/codex-app-server-schema.ts)).
+  ([`runtime/src/executors/codex/app-server-schema.ts`](../../../runtime/src/executors/codex/app-server-schema.ts)).
 - `compileToolSchema` ([`runtime/src/tool-schema.ts`](../../../runtime/src/tool-schema.ts)):
   every manifest needs ≥1 `readonly` op (the probe entry for `unknown`
   outcomes, see `sims.ts` contract 2 and `context-view.ts` `compileProbes`);
@@ -282,8 +282,9 @@ the separate Codex-side allowlist and visibility checks below.
 
 ### MCP search transport
 
-Port the shape of qwen’s `McpWebSearchProvider`
-(`thirdparty/qwen-audio-agent/server/src/providers/search/mcp.mjs`):
+The search transport follows the shape of qwen’s `McpWebSearchProvider`
+([upstream source](https://github.com/QwenAudio/qwen-audio-agent/blob/main/server/src/providers/search/mcp.mjs));
+Nova's implementation is `runtime/src/executors/search-mcp.ts`:
 
 - Streamable HTTP client via `@modelcontextprotocol/sdk`.
 - Discover tools; require the configured tool name (default `web_search`).

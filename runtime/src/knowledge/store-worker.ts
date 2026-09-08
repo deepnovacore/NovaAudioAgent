@@ -40,6 +40,7 @@ class StoreError extends Error {
 interface WorkerData {
   readonly path: string
   readonly maxSources?: number
+  readonly forceLexical?: boolean
 }
 
 interface Request extends Record<string, unknown> {
@@ -96,7 +97,7 @@ function execute(request: Request): unknown {
   }
 }
 
-function open(): null {
+function open(): {readonly fts: boolean} {
   if (database !== undefined) throw new StoreError('STORE_ALREADY_OPEN')
   ftsAvailable = false
   let opened: DatabaseSync | undefined
@@ -112,7 +113,8 @@ function open(): null {
       );
       CREATE TABLE IF NOT EXISTS chunks (
         id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-        heading_path TEXT NOT NULL, text TEXT NOT NULL, token_estimate INTEGER NOT NULL
+        heading_path TEXT NOT NULL, text TEXT NOT NULL, token_estimate INTEGER NOT NULL,
+        ordinal INTEGER NOT NULL, content_digest TEXT NOT NULL, legacy_digest TEXT
       );
       CREATE TABLE IF NOT EXISTS embeddings (
         chunk_id TEXT PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
@@ -122,22 +124,50 @@ function open(): null {
         id TEXT PRIMARY KEY, source_id TEXT NOT NULL, state TEXT NOT NULL,
         error_code TEXT, updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS knowledge_metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      INSERT OR IGNORE INTO knowledge_metadata(key, value) VALUES ('fts_dirty', 1);
       CREATE INDEX IF NOT EXISTS chunks_source_idx ON chunks(source_id);
       CREATE INDEX IF NOT EXISTS embeddings_model_idx ON embeddings(provider_id, dims);
       CREATE INDEX IF NOT EXISTS jobs_updated_idx ON jobs(updated_at DESC, id DESC);
     `)
+    migrateChunkDigests(opened)
     ftsAvailable = enableFts(opened)
     secureSidecar(path, '-wal')
     secureSidecar(path, '-shm')
     database = opened
     opened = undefined
-    return null
+    return {fts: ftsAvailable}
   } catch (error) {
     try { opened?.close() } catch { /* stable error only */ }
     database = undefined
     ftsAvailable = false
     if (error instanceof StoreError) throw error
     throw new StoreError('STORE_WRITE_FAILED')
+  }
+}
+
+/** Upgrade the original identity-tag schema without replacing rows or losing citations. */
+function migrateChunkDigests(opened: DatabaseSync): void {
+  if (opened.prepare('PRAGMA table_info(chunks)').all().some(row => row.name === 'content_digest')) return
+  try {
+    opened.exec(`BEGIN IMMEDIATE;
+      ALTER TABLE chunks ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE chunks ADD COLUMN content_digest TEXT NOT NULL DEFAULT '';
+      ALTER TABLE chunks ADD COLUMN legacy_digest TEXT;
+    `)
+    const rows = opened.prepare(`SELECT c.id, c.source_id, c.heading_path, c.text, s.title
+      FROM chunks c JOIN sources s ON s.id = c.source_id ORDER BY c.source_id, c.rowid`).all() as Row[]
+    const update = opened.prepare('UPDATE chunks SET ordinal = ?, content_digest = ?, legacy_digest = ? WHERE id = ?')
+    let sourceId = '', ordinal = 0
+    for (const row of rows) {
+      const source = textValue(row, 'source_id'), id = textValue(row, 'id')
+      if (source !== sourceId) {sourceId = source; ordinal = 0}
+      update.run(ordinal++, contentDigest(textValue(row, 'title'), textValue(row, 'heading_path'), textValue(row, 'text')), locatorDigest(source, id), id)
+    }
+    opened.exec('COMMIT')
+  } catch (error) {
+    try {opened.exec('ROLLBACK')} catch { /* no active transaction */ }
+    throw error
   }
 }
 
@@ -154,18 +184,23 @@ function close(): null {
 }
 
 function enableFts(opened: DatabaseSync): boolean {
-  if (!supportsFts5(opened)) return false
+  if (data.forceLexical || !supportsFts5(opened)) return false
   try {
     opened.exec('BEGIN IMMEDIATE')
+    const exists = opened.prepare("SELECT 1 FROM sqlite_master WHERE name = 'chunks_fts'").get() !== undefined
+    const dirty = opened.prepare("SELECT value FROM knowledge_metadata WHERE key = 'fts_dirty'").get()?.value !== 0
     opened.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
         chunk_id UNINDEXED, source_id UNINDEXED, text, heading_path
       );
+    `)
+    if (!exists || dirty) opened.exec(`
       DELETE FROM chunks_fts;
       INSERT INTO chunks_fts(chunk_id, source_id, text, heading_path)
       SELECT id, source_id, text, heading_path FROM chunks;
-      COMMIT;
+      UPDATE knowledge_metadata SET value = 0 WHERE key = 'fts_dirty';
     `)
+    opened.exec('COMMIT')
     return true
   } catch {
     try { opened.exec('ROLLBACK') } catch { /* no active transaction */ }
@@ -201,7 +236,9 @@ function replaceSource(value: unknown): null {
 
   try {
     opened.exec('BEGIN IMMEDIATE')
+    const previous = opened.prepare('SELECT id, content_digest, legacy_digest FROM chunks WHERE source_id = ? ORDER BY ordinal').all(input.source.id) as Row[]
     if (ftsAvailable) opened.prepare('DELETE FROM chunks_fts WHERE source_id = ?').run(input.source.id)
+    else opened.exec("UPDATE knowledge_metadata SET value = 1 WHERE key = 'fts_dirty'")
     opened.prepare('DELETE FROM sources WHERE id = ?').run(input.source.id)
     opened.prepare(`
       INSERT INTO sources(id, title, kind, locator, mime, fingerprint, bytes, created_at, updated_at, status)
@@ -212,7 +249,7 @@ function replaceSource(value: unknown): null {
       input.source.status,
     )
     const chunkStatement = opened.prepare(`
-      INSERT INTO chunks(id, source_id, heading_path, text, token_estimate) VALUES (?, ?, ?, ?, ?)
+      INSERT INTO chunks(id, source_id, heading_path, text, token_estimate, ordinal, content_digest, legacy_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const embeddingStatement = opened.prepare(`
       INSERT INTO embeddings(chunk_id, provider_id, dims, vector) VALUES (?, ?, ?, ?)
@@ -220,9 +257,13 @@ function replaceSource(value: unknown): null {
     const ftsStatement = ftsAvailable ? opened.prepare(`
       INSERT INTO chunks_fts(chunk_id, source_id, text, heading_path) VALUES (?, ?, ?, ?)
     `) : undefined
-    for (const chunk of input.chunks) {
-      const id = randomUUID()
-      chunkStatement.run(id, input.source.id, chunk.heading_path, chunk.text, chunk.token_estimate)
+    // ponytail: ordinal correspondence; use semantic matching only if stable section tracking is required.
+    for (const [ordinal, chunk] of input.chunks.entries()) {
+      const old = previous[ordinal]
+      const id = old === undefined ? randomUUID() : textValue(old, 'id')
+      const digest = contentDigest(input.source.title, chunk.heading_path, chunk.text)
+      const legacy = old?.content_digest === digest ? old.legacy_digest ?? null : null
+      chunkStatement.run(id, input.source.id, chunk.heading_path, chunk.text, chunk.token_estimate, ordinal, digest, legacy)
       embeddingStatement.run(id, input.provider_id, input.dims, vectorBlob(chunk.vector))
       ftsStatement?.run(id, input.source.id, chunk.text, chunk.heading_path)
     }
@@ -241,6 +282,7 @@ function removeSource(value: unknown): null {
   try {
     opened.exec('BEGIN IMMEDIATE')
     if (ftsAvailable) opened.prepare('DELETE FROM chunks_fts WHERE source_id = ?').run(id)
+    else opened.exec("UPDATE knowledge_metadata SET value = 1 WHERE key = 'fts_dirty'")
     opened.prepare('DELETE FROM sources WHERE id = ?').run(id)
     opened.exec('COMMIT')
     return null
@@ -260,7 +302,7 @@ function recall(queryValue: unknown, vectorValue: unknown, providerValue: unknow
   const dims = vector.length
   const candidates = new Map<string, {readonly vectorRank?: number; readonly lexicalRank?: number}>()
   const vectors = opened.prepare(`
-    SELECT c.id, c.source_id, s.title, c.heading_path, c.text, e.vector
+    SELECT c.id, c.source_id, c.content_digest, s.title, c.heading_path, c.text, e.vector
     FROM chunks c JOIN sources s ON s.id = c.source_id JOIN embeddings e ON e.chunk_id = c.id
     WHERE e.provider_id = ? AND e.dims = ?
   `).all(providerId, dims) as Row[]
@@ -294,13 +336,12 @@ function getChunk(value: unknown): KnowledgeChunkResult {
   const parsed = parseLocator(boundedString(value, 600))
   if (parsed === undefined) return {status: 'gone'}
   const row = db().prepare(`
-    SELECT c.id, c.source_id, c.heading_path, c.text, s.title
+    SELECT c.id, c.source_id, c.content_digest, c.legacy_digest, c.heading_path, c.text, s.title
     FROM chunks c JOIN sources s ON s.id = c.source_id WHERE c.id = ? AND c.source_id = ?
   `).get(parsed.chunkId, parsed.sourceId) as Row | undefined
   if (row === undefined) return {status: 'gone'}
-  if (locatorDigest(parsed.sourceId, parsed.chunkId) !== parsed.digest) return {status: 'stale'}
   return {
-    status: 'ok', text: redactOutput(textValue(row, 'text')), title: redactOutput(textValue(row, 'title')),
+    status: textValue(row, 'content_digest').slice(0, 12) === parsed.digest || row.legacy_digest === parsed.digest ? 'ok' : 'stale', text: redactOutput(textValue(row, 'text')), title: redactOutput(textValue(row, 'title')),
     heading_path: redactOutput(textValue(row, 'heading_path')), source_id: textValue(row, 'source_id'),
   }
 }
@@ -408,7 +449,7 @@ function hitFrom(row: Row, score: number): KnowledgeRecallHit {
   const sourceId = textValue(row, 'source_id')
   const id = textValue(row, 'id')
   return {
-    locator: `knowledge://${sourceId}/${id}?d=${locatorDigest(sourceId, id)}`,
+    locator: `knowledge://${sourceId}/${id}?d=${textValue(row, 'content_digest').slice(0, 12)}`,
     source_id: sourceId, title: redactOutput(textValue(row, 'title')), heading_path: redactOutput(textValue(row, 'heading_path')),
     text: redactOutput(truncateCodePoints(textValue(row, 'text'), 600)), score,
   }
@@ -433,7 +474,8 @@ function db(): DatabaseSync {
 function parseWorkerData(value: unknown): Required<WorkerData> {
   if (!isRecord(value) || typeof value.path !== 'string') throw new Error('invalid knowledge worker data')
   const maxSources = value.maxSources === undefined ? DEFAULT_MAX_SOURCES : positiveInteger(value.maxSources, DEFAULT_MAX_SOURCES)
-  return {path: value.path, maxSources}
+  if (value.forceLexical !== undefined && typeof value.forceLexical !== 'boolean') throw new Error('invalid knowledge worker data')
+  return {path: value.path, maxSources, forceLexical: value.forceLexical === true}
 }
 
 function parseRequest(value: unknown): Request | undefined {
@@ -526,7 +568,7 @@ function lexicalCandidates(opened: DatabaseSync, query: string): readonly Row[] 
   if (terms.length === 0) return []
   if (ftsAvailable) {
     return opened.prepare(`
-      SELECT c.id, c.source_id, s.title, c.heading_path, c.text
+      SELECT c.id, c.source_id, c.content_digest, s.title, c.heading_path, c.text
       FROM chunks_fts f JOIN chunks c ON c.id = f.chunk_id JOIN sources s ON s.id = c.source_id
       WHERE chunks_fts MATCH ?
       ORDER BY bm25(chunks_fts), f.chunk_id ASC LIMIT 50
@@ -538,11 +580,15 @@ function lexicalCandidates(opened: DatabaseSync, query: string): readonly Row[] 
     return [pattern, pattern]
   })
   return opened.prepare(`
-    SELECT c.id, c.source_id, s.title, c.heading_path, c.text
+    SELECT c.id, c.source_id, c.content_digest, s.title, c.heading_path, c.text
     FROM chunks c JOIN sources s ON s.id = c.source_id
     WHERE ${clauses}
     ORDER BY c.source_id ASC, c.id ASC LIMIT 50
   `).all(...values) as Row[]
+}
+
+function contentDigest(title: string, heading: string, text: string): string {
+  return createHash('sha256').update(JSON.stringify([title, heading, text])).digest('hex')
 }
 
 function locatorDigest(sourceId: string, chunkId: string): string {
@@ -603,16 +649,17 @@ function ensurePrivateParent(parent: string): string {
   return current
 }
 
+// O_NOFOLLOW is unavailable on Windows; retain lstat and descriptor identity checks there.
 function ensurePrivateDatabaseFile(path: string): void {
   let descriptor: number | undefined
   try {
     try {
       const info = lstatSync(path)
       if (info.isSymbolicLink() || !info.isFile() || !privateFile(info)) throw new StoreError('STORE_WRITE_FAILED')
-      descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW)
+      descriptor = openSync(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0))
     } catch (error) {
       if (error instanceof StoreError) throw error
-      descriptor = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+      descriptor = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
     }
     const fromDescriptor = fstatSync(descriptor)
     const fromPath = lstatSync(path)

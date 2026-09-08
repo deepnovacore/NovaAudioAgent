@@ -392,6 +392,26 @@ module loaded** (asserted via `require.cache` / module registry inspection).
 If that test cannot be written without importing Codex, the boundary is not
 real and this volume is not done.
 
+Phase 5.5 implementation note (2026-09-06): registration is the existing
+`buildAssembly({executors})` adapter map plus `settings.executors` selection,
+followed by the realtime host's coding-role resolution. Both production and
+the fixture supply their resource/controller through these ports. The
+`executors/index.ts` file is a public export barrel, not a factory registry;
+like the production compositions, the proof imports the selected package's
+dedicated entry point so the barrel does not eagerly import unrelated
+executors. The fixture factory rejects `NODE_ENV=production` and is never
+selected by production configuration. The test uses Node's ESM loader hooks
+to inspect actual loaded modules (CommonJS `require.cache` cannot prove this).
+The scripted boundaries are the provider, intake model answers and the
+in-memory executor; assembly, intake, runtime, confirmation capabilities,
+approval broker and service delivery are the actual host implementations.
+
+The broadened case-insensitive scan deliberately retains an exact-line,
+counted baseline for existing settings/storage names, composition field
+names, live prompt policy and historical comments. These are documented
+debt, not a claim that the stricter env-only acceptance checklist is done.
+
+
 ## Enforcement
 
 - ESLint (`eslint.config.mjs`): add a block for
@@ -401,7 +421,7 @@ real and this volume is not done.
   `**/*-assembly*`.
 - Script `runtime/scripts/check-executor-boundary.mjs --check` (same shape as
   `node-parity-audit.mjs`): scans core for the regex
-  `['"]codex['"]|codex__|Codex[A-Z]` and fails on any hit not in the allowlist
+  `/codex/giu` and fails on any hit not in the allowlist
   file `runtime/scripts/executor-boundary-allowlist.json` (each entry: path,
   pattern, reason). Wired as `check:executor-boundary` in
   `package.json` `check`.
@@ -433,7 +453,9 @@ Deterministic:
 - [ ] ESLint restricted-import blocks fail on a deliberately planted core →
       `executors/codex` import and executor → `realtime` import (negative
       tests in `runtime/test/eslint-boundary.test.ts` using ESLint's API).
-- [ ] Fixture executor test passes with no Codex module in the module registry.
+- [x] Fixture executor test passes with no Codex module in the module registry
+      (`executor-boundary-fixture.test.ts`: real assembly through terminal delivery;
+      module-loader assertion excludes `executors/codex/`).
 - [ ] Assembly by role: disabled unique coding role → intake absent and no
       `dispatch` / `cancel` compilation without `AssemblyError`; two enabled
       coding roles → `AssemblyError`; one → dispatch reaches it.

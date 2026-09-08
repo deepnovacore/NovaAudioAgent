@@ -8,6 +8,7 @@ import type {
 } from './project-store.js'
 import {
   ProjectStore,
+  ProjectStateError,
   hostManagedProjectRootFromConfig,
   hostProjectRootFromConfig,
 } from './project-store.js'
@@ -121,7 +122,7 @@ export class ManagedWorkspaceMaintenanceService {
   readonly #ttlMs: number
   readonly #closeStore: (() => Promise<void>) | null
   #closed = false
-  #journalHealth: 'ready' | 'cleanup_pending' | 'rollback_pending' | 'unavailable' = 'ready'
+  #journalHealth: 'ready' | 'cleanup_pending' | 'rollback_pending' | 'unavailable' | 'busy' = 'ready'
   #closePromise: Promise<void> | null = null
 
   private constructor(options: {
@@ -193,16 +194,24 @@ export class ManagedWorkspaceMaintenanceService {
 
     let currentSnapshot: ProjectMaintenanceSnapshot | null = null
     let completeSnapshot: ProjectMaintenanceSnapshot | null = null
-    try { currentSnapshot = await this.#store.currentMaintenanceSnapshot() } catch { /* bounded below */ }
-    try { completeSnapshot = await this.#store.maintenanceSnapshot() } catch { /* bounded below */ }
+    let busy = false
+    let failed = false
+    try { currentSnapshot = await this.#store.currentMaintenanceSnapshot() } catch (error) {
+      if (error instanceof ProjectStateError && error.code === 'state_busy') busy = true
+      else failed = true
+    }
+    try { completeSnapshot = await this.#store.maintenanceSnapshot() } catch (error) {
+      if (error instanceof ProjectStateError && error.code === 'state_busy') busy = true
+      else failed = true
+    }
     const current = currentSnapshot?.managed_targets.find(
       target => target.workspace.workspace_id === currentSnapshot?.active_workspace_id,
     )
     return Object.freeze({
       health: currentSnapshot !== null && completeSnapshot !== null
         ? 'ready'
-        : currentSnapshot !== null || completeSnapshot !== null ? 'degraded' : 'unavailable',
-      lifecycleBusy: false,
+        : currentSnapshot !== null || completeSnapshot !== null || (busy && !failed) ? 'degraded' : 'unavailable',
+      lifecycleBusy: busy,
       current: Object.freeze({
         available: current !== undefined,
         display_name: current?.workspace.display_name ?? null,
@@ -242,7 +251,7 @@ export class ManagedWorkspaceMaintenanceService {
 
   async prepare(scope: ManagedWorkspaceScope): Promise<ManagedWorkspacePrepareResult> {
     if (this.#closed) return Object.freeze({status: 'unavailable'})
-    if (this.#journalHealth !== 'ready') return Object.freeze({status: this.#journalHealth})
+    if (this.#journalHealth !== 'ready') return Object.freeze({status: this.#journalHealth === 'busy' ? 'unavailable' : this.#journalHealth})
     let snapshot: ProjectMaintenanceSnapshot
     try {
       snapshot = scope === 'all_managed'
@@ -389,7 +398,7 @@ export class ManagedWorkspaceMaintenanceService {
     callback: (path: string) => void | Promise<void>,
   ): Promise<ManagedWorkspaceOpenResult> {
     if (this.#closed) return Object.freeze({status: 'unavailable'})
-    if (this.#journalHealth !== 'ready') return Object.freeze({status: this.#journalHealth})
+    if (this.#journalHealth !== 'ready') return Object.freeze({status: this.#journalHealth === 'busy' ? 'unavailable' : this.#journalHealth})
     let callbackInvoked = false
     let completion = Promise.resolve()
     let opened: boolean
@@ -432,13 +441,16 @@ export class ManagedWorkspaceMaintenanceService {
   }
 
   async #refreshJournalHealth(): Promise<
-    'ready' | 'cleanup_pending' | 'rollback_pending' | 'unavailable'
+    'ready' | 'cleanup_pending' | 'rollback_pending' | 'unavailable' | 'busy'
   > {
     try {
       const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
       this.#journalHealth = cleanup.status === 'clean' ? 'ready' : cleanup.status
-    } catch {
-      this.#journalHealth = 'unavailable'
+    } catch (error) {
+      if (error instanceof ProjectStateError && error.code === 'state_busy') {
+        // Contention cannot prove that an already observed journal problem was repaired.
+        if (this.#journalHealth === 'ready' || this.#journalHealth === 'busy') this.#journalHealth = 'busy'
+      } else this.#journalHealth = 'unavailable'
     }
     return this.#journalHealth
   }
@@ -449,11 +461,11 @@ function staleResult(): ManagedWorkspaceExecuteResult {
 }
 
 function unavailableCapabilities(
-  health: 'cleanup_pending' | 'rollback_pending' | 'unavailable',
+  health: 'cleanup_pending' | 'rollback_pending' | 'unavailable' | 'busy',
 ): ManagedWorkspaceCapabilities {
   return Object.freeze({
-    health,
-    lifecycleBusy: false,
+    health: health === 'busy' ? 'degraded' : health,
+    lifecycleBusy: health === 'busy',
     current: Object.freeze({available: false, display_name: null}),
     all: Object.freeze({available: false, count: 0}),
   })

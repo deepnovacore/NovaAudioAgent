@@ -72,14 +72,25 @@ Workspace；未命名 Session 使用便于朗读的“任务 N”。每个工作
 owner-only 的原子文件刷新；如果只更新了 workspace home 内的凭据而宿主源没有变化，这次
 destination-only 更新会被保留。
 
+## 本地唤醒词
+
+本地中文唤醒默认关闭。在设置中启用后，首次使用会下载关键词模型；检测在桌面 Worker
+中完成。空闲默认 60 秒后隐藏悬浮球，时长可设 `0`（禁用自动隐藏）或 `30..3600` 秒。
+唤醒开关和空闲时长保存后立即生效，不重启后端。
+
+macOS 使用原生采集，其他平台使用浏览器采集回退。隐藏休眠时麦克风帧只送本地
+唤醒检测；显式静音会停止这条采集，不能靠说唤醒词解除静音，需手动解除。
+Windows 安装包的 Worker、WASM、模型替换和实际语音唤醒仍需验收。
+
+Windows 手动配置 Codex 时请选择 `codex.exe`，或通过支持的 Node 入口组合
+`node.exe + codex.js`；`codex.cmd` 不能作为直接可执行文件。
+
 ## 未签名 Windows 开发候选包
 
-GitHub Actions 工作流 **Unsigned Windows packages** 产出的是未签名开发候选包，而非已签名
-发布版，且目前只构建 Windows artifact：请下载 `unsigned-win32-x64` 工作流 artifact，并使用其中
-稳定的 `nova-win32-x64.exe`。其 Linux 分支在跨平台 CI 恢复之前暂时停用。Linux AppImage 与 deb
-仍以本地打包脚本（`npm run package:linux`）和仅手动触发的 release-candidate 工作流（macOS、
-Windows、Ubuntu 三平台；macOS 与 Windows 腿要求签名，Linux artifact 仅做格式校验、不签名）
-形式存在；unsigned 工作流目前不发布 Linux artifact。使用前先确认下载来自预期的工作流运行。
+GitHub Actions 工作流 **Unsigned Windows packages** 产出未签名开发候选包。下载
+`unsigned-win32-x64` artifact 并使用其中的 `nova-win32-x64.exe`。
+Linux 已暂时移出发布目标，Ubuntu 保留源码构建与自动化测试；已有 Linux 打包脚本
+不代表可发布的候选包。使用前确认下载来自预期的工作流运行。
 
 未签名的 `nova-win32-x64.exe` 在 Windows 上可能触发 SmartScreen 警告。请保持 SmartScreen 和其他
 Windows 安全防护开启；先核验工作流运行和文件，再决定是否使用该候选包。每个候选包的构建和验证
@@ -139,6 +150,8 @@ M1.5c 薄前端验收、真实 provider、麦克风/扬声器、Camera、Codex �
 ```bash
 DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
 ```
+
+级联管线的可选真实验证：`npm run smoke:cascaded --workspace @nova-audio-agent/runtime`。需要相应 provider 凭据；宿主控制 response admission 和请求归属，模型 response origin 不是授权。真人验收仍待完成。
 
 ## Workspace 记忆图谱与 MyContext provider
 
@@ -212,7 +225,7 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 | `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER` | `core` | 否 | dashscope | 知识库 embedding 提供方。 |
 | `NOVA_AUDIO_AGENT_EMBEDDING_MODEL` | `core` | 否 | text-embedding-v4 | 知识库 embedding 模型。 |
 | `NOVA_AUDIO_AGENT_MEMORY_CONNECTION` | `core` | 否 | disabled | 记忆连接：disabled、local 或 remote。 |
-| `NOVA_AUDIO_AGENT_MEMORY_PROVIDER` | `core` | 否 | 无 | 本地引擎：voicemem（默认）或 mem0。远程引擎由服务端选择。 |
+| `NOVA_AUDIO_AGENT_MEMORY_PROVIDER` | `core` | 否 | 无 | 本地引擎：voicemem。远程引擎由服务端选择。 |
 | `NOVA_AUDIO_AGENT_BLACKBOARD_PATH` | `core` | 否 | ~/.nova-audio-agent/blackboard.sqlite | 会话恢复数据库路径。 |
 | `NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID` | `core` | 否 | local | 稳定的会话恢复所有者。 |
 | `NOVA_AUDIO_AGENT_MEMORY_URL` | `core` | 选择该能力时 | 无 | HTTP 记忆服务地址；仅 HTTPS 或数字回环 HTTP。 |
@@ -296,7 +309,7 @@ Windows 和真人语音验收仍需独立完成。
 
 仅支持 `MEMORY_CONNECTION` 和本地 `MEMORY_PROVIDER`。旧 `MEMORY_BACKEND` 已移除，填写时会明确报错。单独填写 provider 不会自动启用记忆。
 
-运行时继续依赖 `PersonalMemoryResource`，通过可选的 `remember`、`forget`、缓存式 `responseAdaptation` 表达能力。适配器只有在满足接口保证时才能提供对应方法：`stored` 表示已经可靠保存原始记录，不代表仅接受请求，也不代表已完成抽取。证据 ID 必须有真实来源，不比较不同引擎的相关性分数。当前 HTTP 连接器要求服务满足 v1 的 preferences、remember、recall、forget 契约，不能直接指向任意 mem0 地址。mem0 目前仅支持下述 Runtime 本地模式。只读实现可通过现有 assembly factory 注入，不暴露写入能力。
+运行时继续依赖 `PersonalMemoryResource`，通过可选的 `remember`、`forget`、缓存式 `responseAdaptation` 表达能力。适配器只有在满足接口保证时才能提供对应方法：`stored` 表示已经可靠保存原始记录，不代表仅接受请求，也不代表已完成抽取。证据 ID 必须有真实来源，不比较不同引擎的相关性分数。当前 HTTP 连接器要求服务满足 v1 的 preferences、remember、recall、forget 契约，不能直接指向任意 mem0 地址。原生 mem0 适配器保留在源集成分支，等待独立打包契约。只读实现可通过现有 assembly factory 注入，不暴露写入能力。
 
 公司渠道共用一份远程记忆，客户端偏好缓存只是可重建的投影。已存在的工作记录仍是周报修订状态的权威来源；历史记忆不能保证另一段旧话语中的同义陈述也被撤回。
 
@@ -307,21 +320,3 @@ node runtime/scripts/check-memory-sdk.mjs /absolute/path/to/built-sdk
 ```
 
 该命令针对候选包的类型导出，将当前 runtime 源码编译到临时目录，再通过仅用于测试的模块解析器让真实 Worker 使用候选 SDK，不替换已安装依赖。回环权限不足导致的测试跳过不会被当作验收通过。采用 npm 版本前还要核对来源、确切版本及完整性。源码快照通过兼容检查不等于已发布，也不等于记忆效果评测通过。
-
-
-### 本地 mem0
-
-```dotenv
-NOVA_AUDIO_AGENT_MEMORY_CONNECTION=local
-NOVA_AUDIO_AGENT_MEMORY_PROVIDER=mem0
-```
-
-这会在本地 Node Worker 中使用 `mem0ai/oss`，复用当前模型 API key/base URL、fast model 和 embedding model 配置，不需要 mem0 Platform 账号或共享记忆服务。SDK 仍调用配置的模型服务，本地执行不等于离线推理。
-
-SQLite 数据位于 `<MEMORY_PATH>.mem0/<sha256(MEMORY_USER_ID)>/`，与 VoiceMem 分开。先可靠保存原始记录再抽取，未完成的抽取在重新打开时重试。删除先持久化墓碑并立即从召回中排除该来源，再后台清理 SDK 派生记录。相同来源重放不重复入库，内容冲突会拒绝；召回返回真实来源 ID，有待处理记录时标记 degraded。`recent` 仅对最近五个已学习来源排序，`any` 查询该用户已学习的来源。
-
-首版不提供自动回复偏好适配。SDK 空结果无法区分没有事实与被吞掉的失败，因此保留为待处理并在重新打开时重试。确认学习完成前会验证返回的记忆 ID 已持久化到对应来源。SDK 静默遗漏部分抽取结果仍有可能；可靠保存原始记录不代表周报已经完整。更换模型或 embedding 时使用独立路径或明确迁移，不要让两个 runtime 同时使用同一用户目录。
-
-依赖锁定为 `mem0ai@3.1.8`、`better-sqlite3@12.6.2`、`pg@8.11.3`。SDK 导入阶段需要 pg，但此模式不启动 PostgreSQL。安装后确保 better-sqlite3 的原生二进制匹配当前 Node 版本，更换 Node 后可运行 `npm rebuild better-sqlite3`。本机 macOS Node 验收不代表 Electron 打包及 Windows/Linux 原生二进制已验收。
-
-执行 `npm run build --workspace runtime`，再运行 `node --test runtime/dist/test/mem0-store.test.js`，可用合成的回环模型响应验证真实 SDK 与 SQLite。

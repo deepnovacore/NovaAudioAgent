@@ -316,8 +316,22 @@ export const userTranscriptFinalSchema = sessionEvent(
   z.literal('user_transcript_final'),
   itemTextShape,
 )
+/** Provider evidence, never a host turn identity or an authorization decision.
+ * Omission preserves automatic-provider legacy correlation; explicit unknown must not claim a user item.
+ * Requested responses echo the host's per-attempt request_id on start and terminal. This identity
+ * settles generation ownership, never authorization or the current user-input revision.
+ */
+export const responseOriginSchema = z.discriminatedUnion('kind', [
+  z.object({kind: z.literal('user_item'), item_id: realtimeIdentifierSchema,
+    request_id: realtimeIdentifierSchema.optional()}).strict(),
+  z.object({kind: z.literal('host_request'), host_item_id: realtimeIdentifierSchema}).strict(),
+  z.object({kind: z.literal('unknown')}).strict(),
+])
+export type ResponseOrigin = z.infer<typeof responseOriginSchema>
+
 export const responseStartedSchema = sessionEvent(z.literal('response_started'), {
   response_id: realtimeIdentifierSchema,
+  origin: responseOriginSchema.optional(),
 })
 /**
  * Inbound provider audio is bounded by alignment, not by size.
@@ -354,6 +368,7 @@ export const itemConfirmedSchema = sessionEvent(z.literal('item_confirmed'), {
   provider_item_id: realtimeIdentifierSchema,
 })
 export const responseTerminalSchema = sessionEvent(z.literal('response_terminal'), {
+  origin: responseOriginSchema.optional(),
   response_id: realtimeIdentifierSchema,
   status: z.enum(['completed', 'cancelled', 'failed']),
   reason: boundedText(),
@@ -399,6 +414,11 @@ export const responseAdaptationContextSchema = z.object({
 }).strict()
 
 export interface RealtimeProvider {
+  /** Automatic providers may start before transcript final; requested providers wait for the host.
+   * Omission preserves existing third-party adapters' automatic contract. Production adapters declare it.
+   */
+  readonly userResponseMode?: 'automatic' | 'requested'
+
   /** Absent and false both prohibit original-media injection. */
   readonly mediaCapability?: RealtimeProviderMediaCapability
   /** Optional bounded response-guidance replacement capability. */
@@ -426,8 +446,13 @@ export interface RealtimeProvider {
   /** Remove a previously confirmed host item from the provider conversation, when supported. */
   retireHostItem?(providerItemId: string, signal: AbortSignal): Promise<void>
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void>
-  /** Ask the provider to finish the current user turn with normal tool availability. */
-  ensureResponse?(signal: AbortSignal): Promise<void>
+  /** Request normal tool availability for an exact user item (or the current item for retries).
+   * false means no work was admitted (busy or stale input); void/true means one request was admitted.
+   * A requested provider must never preempt another response inside this command.
+   * When requestId is supplied, echo it as user_item.request_id on start and terminal, including
+   * a terminal emitted before start; retries for the same item have distinct request IDs.
+   */
+  ensureResponse?(signal: AbortSignal, userItemId?: string, requestId?: string): Promise<void | boolean>
   cancelResponse(responseId: string, signal: AbortSignal): Promise<void>
   events(signal: AbortSignal): AsyncIterable<unknown>
   close(): Promise<void>

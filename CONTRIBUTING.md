@@ -38,6 +38,19 @@ The README ships in two languages — [README.md](README.md) and
 [docs/getting-started.zh-CN.md](docs/getting-started.zh-CN.md). A change to either file of a pair
 must be mirrored in the other.
 
+## Integration and release history
+
+`v0.2.0dev` is the integration branch: deterministic checks permit integration.
+Merging into `main` is the release boundary and requires every applicable feature
+and platform acceptance in [the release ledger](docs/specs/v0.2.0/RELEASE-GATE.md).
+Human acceptance stays pending until evidence is recorded; it does not block dev CI.
+Linux source tests remain on Ubuntu; Linux installers are deferred.
+
+Before cherry-picking unshared work, autosquash its fixup/squash commits on its
+own branch (`git rebase -i --autosquash <base>`), then verify the resulting commits.
+Do not rewrite commits already shared with collaborators. Preserve feature history
+with `--no-ff` when following the branch integration roadmap.
+
 ## What a change must preserve
 
 The runtime invariants in [docs/glossary.md](docs/glossary.md) are the review baseline. In short:

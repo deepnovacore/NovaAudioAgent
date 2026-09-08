@@ -28,7 +28,7 @@ async function startReadyNativeAudio({ onCommand = () => {}, now } = {}) {
     binary: '/tmp/macos-voice-io',
     spawnImpl: () => {
       queueMicrotask(() => child.stdout.write(
-        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true}\n',
+        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true,"captureEpochSupported":true}\n',
       ))
       return child
     },
@@ -224,7 +224,7 @@ test('native audio attributes stdin backpressure and drain latency to one genera
     binary: '/tmp/macos-voice-io',
     spawnImpl: () => {
       queueMicrotask(() => child.stdout.write(
-        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true}\n',
+        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true,"captureEpochSupported":true}\n',
       ))
       return child
     },
@@ -296,7 +296,7 @@ test('uses VoiceProcessingIO readiness and preserves Nova Audio Agent generation
       assert.equal(command, '/tmp/macos-voice-io')
       assert.deepEqual(args, [])
       queueMicrotask(() => child.stdout.write(
-        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true}\n',
+        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true,"captureEpochSupported":true}\n',
       ))
       return child
     },
@@ -377,7 +377,7 @@ test('bounds an unresponsive identity-qualified native clear', {
     binary: '/tmp/macos-voice-io',
     spawnImpl: () => {
       queueMicrotask(() => child.stdout.write(
-        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true}\n',
+        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true,"captureEpochSupported":true}\n',
       ))
       return child
     },
@@ -618,7 +618,7 @@ test('native close resolves only after the helper process exits', {
     binary: '/tmp/macos-voice-io',
     spawnImpl: () => {
       queueMicrotask(() => child.stdout.write(
-        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true}\n',
+        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true,"captureEpochSupported":true}\n',
       ))
       return child
     },
@@ -632,4 +632,50 @@ test('native close resolves only after the helper process exits', {
   assert.equal(settled, false)
   child.emit('close', 0)
   await closing
+})
+
+test('native capture epochs survive delayed stdout and accept matching producer frames before acknowledgement', {skip: process.platform !== 'darwin'}, async () => {
+  const {audio, child, events, commands} = await startReadyNativeAudio()
+  const emit = value => child.stdout.write(JSON.stringify(value) + '\n')
+  assert.equal(audio.setCaptureEpoch(7), true)
+  assert.deepEqual(commands.at(-1), {type: 'capture_epoch', wakeEpoch: 7})
+  emit({type: 'audio', audio: 'AAA=', wakeEpoch: 6})
+  emit({type: 'audio', audio: 'AAA=', wakeEpoch: 7})
+  assert.equal(events.length, 1)
+  emit({type: 'capture.epoch', wakeEpoch: 7})
+  emit({type: 'audio', audio: 'AAA=', wakeEpoch: 7})
+  assert.equal(events.at(-1).wakeEpoch, 7)
+  assert.equal(audio.setCaptureEpoch(8), true)
+  emit({type: 'capture.epoch', wakeEpoch: 7})
+  emit({type: 'audio', audio: 'AAA=', wakeEpoch: 7})
+  emit({type: 'audio', audio: 'AAA=', wakeEpoch: 8})
+  assert.equal(events.length, 3)
+  emit({type: 'capture.epoch', wakeEpoch: 8})
+  emit({type: 'audio', audio: 'AAA=', wakeEpoch: 8})
+  assert.equal(events.length, 4)
+  assert.equal(events.at(-1).wakeEpoch, 8)
+  child.emit('exit', 0)
+})
+
+test('native readiness rejects helpers without capture epoch support', {
+  skip: process.platform !== 'darwin',
+}, async () => {
+  for (const captureEpochSupported of [undefined, false]) {
+    const child = new EventEmitter()
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    const signals = []
+    child.kill = signal => signals.push(signal)
+    await assert.rejects(startNativeAudio({
+      binary: '/tmp/old-macos-voice-io',
+      spawnImpl: () => {
+        queueMicrotask(() => child.stdout.write(JSON.stringify({
+          type: 'ready', aecMode: 'voice_processing_io', systemAEC: true, captureEpochSupported,
+        }) + '\n'))
+        return child
+      },
+    }), /native capture epoch protocol unavailable/)
+    assert.deepEqual(signals, ['SIGTERM'])
+  }
 })
