@@ -12,6 +12,8 @@ import {
   type VolcBinarySocket,
 } from '../src/realtime/volcengine/websocket.js'
 
+import type {UsageReport, UsageReporter} from '../src/realtime/usage.js'
+
 const acknowledgement = new Uint8Array([0x11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
 class ScriptedSocket implements VolcBinarySocket {
@@ -94,8 +96,8 @@ async function settleWithin<T>(label: string, promise: Promise<T>, milliseconds 
   }
 }
 
-function serverTranscript(sequence: number, text: string, final = false): Uint8Array {
-  const payload = gzipSync(new TextEncoder().encode(JSON.stringify({result: {text}})))
+function serverTranscript(sequence: number, text: string, final = false, duration?: number): Uint8Array {
+  const payload = gzipSync(new TextEncoder().encode(JSON.stringify({result: {text}, audio_info: {duration}})))
   const frame = new Uint8Array(12 + payload.byteLength)
   frame.set([0x11, final ? 0x93 : 0x91, 0x11, 0])
   const view = new DataView(frame.buffer)
@@ -112,6 +114,7 @@ function audioPacket(frame: Uint8Array): {readonly sequence: number; readonly pc
 }
 
 function client(socket: ScriptedSocket, options: {
+  readonly onUsage?: UsageReporter
   readonly chunkMs?: number
   readonly receiveTimeoutMs?: number
   readonly idFactory?: () => string
@@ -120,6 +123,7 @@ function client(socket: ScriptedSocket, options: {
   return {
     value: new DoubaoAsrClient({
       endpoint: 'wss://speech.example/asr?secret=endpoint-nonce',
+      ...(options.onUsage === undefined ? {} : {onUsage: options.onUsage}),
       apiKey: 'asr-api-secret',
       resourceId: 'asr-resource-secret',
       chunkMs: options.chunkMs ?? 1,
@@ -250,4 +254,48 @@ test('ASR handshake timeout closes the allocated socket and chunk cap rejects be
     },
   }), (error: unknown) => error instanceof DoubaoAsrFailure && error.code === 'configuration')
   assert.equal(dialed, false)
+})
+
+
+test('ASR reports final cumulative provider duration once and marks interrupted work missing', async () => {
+  const reports: UsageReport[] = []
+  const onUsage = (report: UsageReport): void => { reports.push(report) }
+  const socket = new ScriptedSocket([acknowledgement,
+    serverTranscript(1, 'partial', false, 100), serverTranscript(-2, 'final', true, 250)])
+  const session = await client(socket, {onUsage}).value.open()
+  await session.append(new Uint8Array(34))
+  await session.finish()
+  for await (const event of session.events()) void event
+  await session.close()
+  await session.close()
+  assert.equal(reports.length, 1)
+  assert.equal(reports[0]?.audioDurationMs, 250)
+  assert.equal(reports[0]?.status, 'complete')
+  const interrupted = await client(new ScriptedSocket(), {onUsage}).value.open()
+  await interrupted.append(new Uint8Array(34))
+  await interrupted.close()
+  assert.equal(reports[1]?.status, 'missing')
+  assert.equal(reports[1]?.audioDurationMs, undefined)
+  assert.notEqual(reports[0]?.id, reports[1]?.id)
+  const empty = await client(new ScriptedSocket(), {onUsage}).value.open()
+  await empty.close()
+  assert.equal(reports.length, 2)
+})
+
+
+test('ASR aborted consumption does not turn partial cumulative duration into complete usage', async () => {
+  const reports: UsageReport[] = []
+  const socket = new ScriptedSocket([acknowledgement, serverTranscript(1, 'partial', false, 100)])
+  const session = await client(socket, {onUsage: report => { reports.push(report) }}).value.open()
+  await session.append(new Uint8Array(34))
+  const controller = new AbortController()
+  const events = session.events(controller.signal)[Symbol.asyncIterator]()
+  await events.next()
+  const waiting = events.next()
+  controller.abort()
+  await assert.rejects(waiting, {name: 'AbortError'})
+  await session.close()
+  assert.equal(reports.length, 1)
+  assert.equal(reports[0]?.status, 'missing')
+  assert.equal(reports[0]?.audioDurationMs, undefined)
 })

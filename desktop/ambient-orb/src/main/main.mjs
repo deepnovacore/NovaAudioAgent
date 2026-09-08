@@ -1,3 +1,4 @@
+import {createFrontendUsage} from './frontend-usage.mjs'
 import {createBackendControl} from './backend-control.mjs'
 import {createKnowledgeActions} from './knowledge-actions.mjs'
 import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, capabilityDocumentRevision, invalidCommit} from './capabilities-settings.mjs'
@@ -179,6 +180,7 @@ let quitDrain = null
 let releaseSmokeChannel = null
 // Settings and debug boards are main-owned IPC surfaces. Neither relays through
 // the orb renderer or shares the realtime voice socket.
+const frontendUsage = createFrontendUsage()
 let currentSettings = null
 let desktopConfig = null
 let codexStatus = Object.freeze({
@@ -265,6 +267,7 @@ function settingsView() {
     capabilities: {...capabilities, document: undefined, revision: undefined, diskGeneration: settingsGeneration, runtime: runtimeCapabilities},
     ...publicSettings(currentSettings),
     codexStatus,
+    frontendUsage: frontendUsage.snapshot(),
     backendStatus: backendStatus.state,
     backendDiagnostic: backendStatus.diagnostic,
     backendRetryInMs: backendStatus.retryInMs,
@@ -751,7 +754,10 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
     })
     backend = spawnedBackend
     backendControl?.close()
-    backendControl = createBackendControl(spawnedBackend, {onStatus: status => {
+    backendControl = createBackendControl(spawnedBackend, {onUsage: report => {
+      if (backend !== spawnedBackend || launchGeneration !== generation) return
+      if (frontendUsage.add(generation, report)) sendToSettings('nova:settings:changed', settingsView())
+    }, onStatus: status => {
       if (backend !== spawnedBackend || launchGeneration !== generation) return
       runtimeCapabilities = {...status, generation, diskGeneration, state: backendStatus.state === 'connected' ? 'running' : status.state}
       sendToSettings('nova:settings:changed', settingsView())

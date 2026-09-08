@@ -1,3 +1,4 @@
+import {usageReporterForEndpoint, type UsageReporter} from './realtime/usage.js'
 /** Production Qwen composition above the provider-neutral realtime owner. */
 
 import {buildAssembly, type AssemblyOptions} from './assembly.js'
@@ -48,6 +49,7 @@ export interface BuildQwenRealtimeAssemblyOptions
 
 /** Narrow provider-only form used by the integrated provider registry. */
 export interface BuildQwenRealtimeProviderOptions {
+  readonly onUsage?: UsageReporter
   readonly config: QwenRealtimeConfig
   readonly connector?: QwenConnector
   readonly idFactory: () => string
@@ -74,6 +76,7 @@ export function buildQwenRealtimeAssembly(
 ): RealtimeAssembly | QwenAudioRealtimeAdapter {
   if ('config' in options) {
     return new QwenAudioRealtimeAdapter({
+      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, options.config.url)!}),
       url: options.config.url,
       apiKey: options.config.apiKey,
       model: options.config.model,
@@ -112,6 +115,7 @@ export function buildQwenRealtimeAssembly(
       : {executors: [...(options.executors ?? []), ...(options.codexResource === undefined ? [] : [options.codexResource.adapter])]}),
   })
   const provider = options.qwenProvider ?? buildQwenRealtimeAssembly({
+    ...(options.onUsage === undefined ? {} : {onUsage: options.onUsage}),
     config: qwen,
     ...(options.connector === undefined ? {} : {connector: options.connector}),
     idFactory: () => ids.next('qwen'),

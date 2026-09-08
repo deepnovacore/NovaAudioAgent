@@ -120,6 +120,7 @@ const exitCode = await runDesktopEntryWithStopSources({
         })
         const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
           settings,
+          onUsage: report => parentPort?.postMessage({type: 'nova.usage', report}),
           capabilities,
           externalMcp,
           ...(knowledge === undefined ? {} : {knowledge}),

@@ -1,3 +1,4 @@
+import {frontendUsageText} from '../src/renderer/frontend-usage.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
@@ -65,7 +66,7 @@ async function mountSettingsPanel(initialView, apiOverrides = {}) {
   }
   let push
   runInNewContext(script.replace(/^import[\s\S]*?from '[^']+'\n/gm, ''), {
-    ...settingsController, ...voiceChoice, createSecretRevisions,
+    ...settingsController, ...voiceChoice, createSecretRevisions, frontendUsageText,
     createCapabilitiesEditor: () => ({render() {}}),
     createKnowledgePanel: () => ({render() {}}),
     document: {
@@ -1009,4 +1010,23 @@ test('failed application exposes recovery without clearing unsaved drafts or acc
   assert.equal(controller.snapshot().view.integratedModel, 'bad-model')
   assert.match(html, /id="settings-restore" hidden>恢复上次可用设置/)
   assert.match(script, /settingsRestore\.addEventListener\('click',[\s\S]*api\.retryBackend\(\)/)
+})
+
+
+test('usage stays current through a stale save reply and renders a compact summary', async () => {
+  const response = deferred()
+  const renders = []
+  const controller = createSettingsController({api: {set: () => response.promise}, render: view => renders.push(view), status: () => {}})
+  const usage = {requests: 2, costCny: 0.12, pricedReports: 2, missingReports: 0, unpricedReports: 0, rows: [], priceDate: '2026-09-08'}
+  controller.setView(publicView({frontendUsage: {...usage, requests: 1}}))
+  controller.stage({palette: 'graphite'})
+  const saving = controller.save()
+  controller.syncView(publicView({frontendUsage: usage}))
+  response.resolve(publicView({frontendUsage: {...usage, requests: 1}, restarted: false}))
+  await saving
+  assert.equal(renders.at(-1).frontendUsage.requests, 2)
+  const panel = await mountSettingsPanel(publicView({frontendUsage: usage}))
+  assert.match(panel.node('#frontend-usage').textContent, /¥0.120000/)
+  assert.doesNotMatch(panel.node('#frontend-usage').textContent, /官方按量/)
+  assert.match(panel.node('#frontend-usage-details').textContent, /官方按量/)
 })

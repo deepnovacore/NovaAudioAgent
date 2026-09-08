@@ -1,3 +1,5 @@
+import {randomUUID} from 'node:crypto'
+import {reportUsage, type UsageReporter, type UsageReport} from '../usage.js'
 import type { Clock } from '../../clock.js'
 import type { JsonObject } from '../protocol.js'
 import { codePointLengthLikePython } from '../../python-text.js'
@@ -29,12 +31,13 @@ export class QwenCascadedLlmFailure extends Error {
 export interface QwenCascadedLlmFactoryOptions {
   readonly baseUrl: string; readonly apiKey: string; readonly model: string; readonly instructions: string
   readonly fetchImpl?: typeof globalThis.fetch; readonly idFactory?: () => string; readonly clock?: Clock
+  readonly onUsage?: UsageReporter
   readonly idleTimeoutMs?: number; readonly closeTimeoutMs?: number
 }
 interface Call { readonly id: string; readonly type: 'function'; readonly function: {readonly name: string; readonly arguments: string} }
 interface Message { readonly role: 'system' | 'user' | 'assistant' | 'tool'; readonly content: string | null; readonly tool_calls?: readonly Call[]; readonly tool_call_id?: string }
 interface Fragment { id: string | null; name: string; arguments: string }
-interface Active { readonly controller: AbortController; reader: ReadableStreamDefaultReader<Uint8Array> | null; failureCode: QwenCascadedLlmFailureCode | null }
+interface Active { completion: Promise<void> | null; usageDeadline: number | null; readonly controller: AbortController; reader: ReadableStreamDefaultReader<Uint8Array> | null; failureCode: QwenCascadedLlmFailureCode | null }
 
 function fail(code: QwenCascadedLlmFailureCode, statusCode: number | null = null): QwenCascadedLlmFailure { return new QwenCascadedLlmFailure(code, statusCode) }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && !Array.isArray(value) && typeof value === 'object' }
@@ -47,10 +50,12 @@ function schema(tool: CascadedLlmTool): JsonObject { return {type: 'function', f
 function size(units: readonly (readonly Message[])[]): {items: number; codepoints: number} { const all = units.flat(); return {items: all.length, codepoints: all.reduce((sum, item) => sum + codePointLengthLikePython(JSON.stringify(item)), 0)} }
 
 class Session implements CascadedLlmSession {
+  readonly #onUsage: UsageReporter | undefined
   readonly #endpoint: string; readonly #apiKey: string; readonly #model: string; readonly #instructions: string; readonly #fetch: typeof fetch
   readonly #idleTimeoutMs: number; readonly #closeTimeoutMs: number; readonly #active = new Set<Active>()
   #history: Message[][] = []; #unresolved: Message[] | null = null; #closed = false; #closePromise: Promise<void> | null = null
   constructor(options: QwenCascadedLlmFactoryOptions) {
+    this.#onUsage = options.onUsage
     if (!options.apiKey || !options.model || !options.instructions) throw fail('configuration')
     this.#endpoint = endpoint(options.baseUrl); this.#apiKey = options.apiKey; this.#model = options.model; this.#instructions = options.instructions; this.#fetch = options.fetchImpl ?? globalThis.fetch
     this.#idleTimeoutMs = options.idleTimeoutMs ?? 30_000; this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000
@@ -67,10 +72,16 @@ class Session implements CascadedLlmSession {
     const messages = [{role: 'system' as const, content: systemContent}, ...this.#history.flat(), ...(unresolved ?? []), ...current]
     const body: Record<string, JsonValue> = {model: this.#model, messages: messages as unknown as JsonValue, stream: true, stream_options: {include_usage: true}}
     if (input.tools.length > 0) { body.tools = input.tools.map(schema); body.parallel_tool_calls = false }
-    const active: Active = {controller: new AbortController(), reader: null, failureCode: null}
+    const active: Active = {completion: null, usageDeadline: null, controller: new AbortController(), reader: null, failureCode: null}
     const stop = (): void => { active.failureCode ??= 'aborted'; active.controller.abort(); void this.#cancel(active.reader) }
     input.signal.addEventListener('abort', stop, {once: true}); this.#active.add(active)
     let responseId: string | null = null, terminal = false
+    const usageId = randomUUID()
+    let usage: Record<string, unknown> | undefined
+    let events: AsyncIterator<Record<string, unknown>> | undefined
+    const captureUsage = (event: Record<string, unknown>): void => {
+      if (object(event.usage)) usage = event.usage
+    }
     try {
       let response: Response
       try { response = await this.#timed(this.#fetch(this.#endpoint, {method: 'POST', headers: {authorization: `Bearer ${this.#apiKey}`, 'content-type': 'application/json', accept: 'text/event-stream'}, body: JSON.stringify(body), signal: active.controller.signal}), active) }
@@ -80,7 +91,12 @@ class Session implements CascadedLlmSession {
       active.reader = response.body.getReader()
       let started = false, text = '', sawText = false
       const fragments = new Map<number, Fragment>()
-      for await (const event of this.#events(active)) {
+      events = this.#events(active)[Symbol.asyncIterator]()
+      while (true) {
+        const next = await events.next()
+        if (next.done) break
+        const event = next.value
+        captureUsage(event)
         if (event.id !== undefined) {
           if (!id(event.id) || (responseId !== null && responseId !== event.id)) throw fail('protocol')
           responseId ??= event.id
@@ -112,6 +128,7 @@ class Session implements CascadedLlmSession {
       }
       if (!terminal) throw fail(active.failureCode ?? (this.#closed ? 'closed' : input.signal.aborted ? 'aborted' : 'protocol'))
     } catch (error) {
+      if (terminal) return
       const stable = error instanceof QwenCascadedLlmFailure
         ? error : fail(active.failureCode ?? (this.#closed ? 'closed' : input.signal.aborted ? 'aborted' : 'network'))
       if (responseId !== null && !terminal) {
@@ -119,7 +136,28 @@ class Session implements CascadedLlmSession {
         return
       }
       throw stable
-    } finally { input.signal.removeEventListener('abort', stop); await this.#cancel(active.reader); this.#active.delete(active) }
+    } finally {
+      const finish = async (): Promise<void> => {
+        // Metering outlives semantic ownership; the next voice turn must not wait for this tail.
+        if (terminal && this.#onUsage !== undefined && events !== undefined && !active.controller.signal.aborted) {
+          active.usageDeadline = Date.now() + Math.min(this.#closeTimeoutMs, 1000)
+          try { while (true) { const next = await events.next(); if (next.done) break; captureUsage(next.value) } } catch { /* Metering cannot change a completed response. */ }
+        }
+        const details = object(usage?.prompt_tokens_details) ? usage.prompt_tokens_details : {}
+        const outputDetails = object(usage?.completion_tokens_details) ? usage.completion_tokens_details : {}
+        reportUsage(this.#onUsage, {
+          id: usageId, service: 'llm', provider: 'qwen', model: this.#model,
+          status: terminal && usage !== undefined ? 'complete' : 'missing',
+          ...(terminal && usage !== undefined ? {
+            inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens,
+            cachedTokens: details.cached_tokens, reasoningTokens: outputDetails.reasoning_tokens,
+          } : {}),
+        } as UsageReport)
+        input.signal.removeEventListener('abort', stop); await this.#cancel(active.reader); this.#active.delete(active)
+      }
+      if (terminal && this.#onUsage !== undefined) active.completion = finish()
+      else await finish()
+    }
   }
   #fragment(fragments: Map<number, Fragment>, value: unknown): void {
     if (!object(value) || typeof value.index !== 'number' || !Number.isSafeInteger(value.index) || value.index !== 0 || (value.function !== undefined && !object(value.function))) throw fail('protocol')
@@ -163,14 +201,15 @@ class Session implements CascadedLlmSession {
       if (timer !== undefined) clearTimeout(timer)
     }
   }
-  async #timed<T>(promise: Promise<T>, active: Active): Promise<T> { let timer: ReturnType<typeof setTimeout> | undefined; try { return await Promise.race([promise, new Promise<T>((_resolve, reject) => { timer = setTimeout(() => { active.failureCode ??= 'timeout'; active.controller.abort(); void this.#cancel(active.reader); reject(fail('timeout')) }, this.#idleTimeoutMs) })]) } finally { if (timer !== undefined) clearTimeout(timer) } }
+  async #timed<T>(promise: Promise<T>, active: Active): Promise<T> { let timer: ReturnType<typeof setTimeout> | undefined; try { return await Promise.race([promise, new Promise<T>((_resolve, reject) => { timer = setTimeout(() => { active.failureCode ??= 'timeout'; active.controller.abort(); void this.#cancel(active.reader); reject(fail('timeout')) }, active.usageDeadline === null ? this.#idleTimeoutMs : Math.max(1, Math.min(this.#idleTimeoutMs, active.usageDeadline - Date.now()))) })]) } finally { if (timer !== undefined) clearTimeout(timer) } }
   close(): Promise<void> {
     if (this.#closePromise !== null) return this.#closePromise
     this.#closed = true
-    const cancellations = [...this.#active].map(active => {
+    const cancellations = [...this.#active].map(async active => {
       active.failureCode ??= 'closed'
       active.controller.abort()
-      return this.#cancel(active.reader)
+      await this.#cancel(active.reader)
+      await active.completion
     })
     this.#closePromise = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined

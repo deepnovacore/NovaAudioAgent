@@ -1,3 +1,5 @@
+import {randomUUID} from 'node:crypto'
+import {reportUsage, type UsageReporter, type UsageReport} from '../usage.js'
 import { jsonValueSchema, type JsonValue } from '../../events.js'
 import { codePointLengthLikePython, stripLikePython } from '../../python-text.js'
 import { MAX_REALTIME_TEXT, type JsonObject } from '../protocol.js'
@@ -86,6 +88,7 @@ export interface FetchArkResponsesGatewayOptions {
   readonly apiKey: string
   readonly model: string
   readonly instructions: string
+  readonly onUsage?: UsageReporter
   readonly fetchImpl?: typeof globalThis.fetch
   readonly idleTimeoutMs?: number
   readonly closeTimeoutMs?: number
@@ -242,6 +245,7 @@ function normalizeProviderEvent(value: JsonObject): ArkEvent | null {
 }
 
 class FetchArkResponsesGateway implements ArkResponsesGateway {
+  readonly #onUsage: UsageReporter | undefined
   readonly #endpoint: string
   readonly #apiKey: string
   readonly #model: string
@@ -254,6 +258,7 @@ class FetchArkResponsesGateway implements ArkResponsesGateway {
   #closePromise: Promise<void> | null = null
 
   constructor(options: FetchArkResponsesGatewayOptions) {
+    this.#onUsage = options.onUsage
     this.#endpoint = resolveResponsesEndpoint(options.baseUrl)
     this.#apiKey = options.apiKey
     this.#model = options.model
@@ -305,6 +310,8 @@ class FetchArkResponsesGateway implements ArkResponsesGateway {
     input.signal?.addEventListener('abort', onCallerAbort, {once: true})
     this.#active.add(active)
 
+    const usageId = randomUUID()
+    let usageReported = false
     try {
       let response: Response
       try {
@@ -387,7 +394,21 @@ class FetchArkResponsesGateway implements ArkResponsesGateway {
           throw new ArkResponsesFailure('protocol')
         }
         if (!isJsonObject(parsed)) throw new ArkResponsesFailure('protocol')
-        return normalizeProviderEvent(parsed)
+        const event = normalizeProviderEvent(parsed)
+        if (event?.kind === 'response_completed' || event?.kind === 'response_failed') {
+          const response = isJsonObject(parsed.response) ? parsed.response : {}
+          const usage = event.kind === 'response_completed' && isJsonObject(response.usage) ? response.usage : undefined
+          const details = isJsonObject(usage?.input_tokens_details) ? usage.input_tokens_details : {}
+          const outputDetails = isJsonObject(usage?.output_tokens_details) ? usage.output_tokens_details : {}
+          reportUsage(this.#onUsage, {
+            id: usageId, service: 'llm', provider: 'ark', model: this.#model,
+            status: usage === undefined ? 'missing' : 'complete',
+            ...(usage === undefined ? {} : {inputTokens: usage.input_tokens, outputTokens: usage.output_tokens,
+              cachedTokens: details.cached_tokens, reasoningTokens: outputDetails.reasoning_tokens}),
+          } as UsageReport)
+          usageReported = true
+        }
+        return event
       }
 
       while (!terminal) {
@@ -440,6 +461,9 @@ class FetchArkResponsesGateway implements ArkResponsesGateway {
       if (active.failureCode !== null) throw new ArkResponsesFailure(active.failureCode)
       throw new ArkResponsesFailure('protocol')
     } finally {
+      if (!usageReported) reportUsage(this.#onUsage, {
+        id: usageId, service: 'llm', provider: 'ark', model: this.#model, status: 'missing',
+      })
       input.signal?.removeEventListener('abort', onCallerAbort)
       try {
         await active.reader?.cancel()

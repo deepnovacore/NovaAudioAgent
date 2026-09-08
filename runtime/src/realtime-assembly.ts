@@ -1,3 +1,4 @@
+import type {UsageReporter} from './realtime/usage.js'
 import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
 import {capabilityStatus, type CapabilityStatus} from './capability-registry.js'
 import { randomUUID } from 'node:crypto'
@@ -93,6 +94,7 @@ interface AdmittedCommittedWorkspace {
 }
 
 export interface RealtimeAssemblyOptions {
+  readonly onUsage?: UsageReporter
   readonly intake?: {readonly models: IntakeModels; readonly settings: IntakeSettings}
   readonly onExecutorSuggestion?: (suggestion: Suggestion) => void
   readonly core: Assembly

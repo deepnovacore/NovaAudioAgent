@@ -723,3 +723,5 @@ footer {
 #capabilities-editor textarea { width: 100%; min-height: 76px; resize: vertical; font: inherit; }
 #capabilities-editor .field input[type="checkbox"] { width: auto; justify-self: start; }
 #capabilities-state, #capabilities-problems, #capabilities-editor p { overflow-wrap: anywhere; }
+
+#frontend-usage, #frontend-usage-details { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }

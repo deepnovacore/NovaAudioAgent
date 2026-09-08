@@ -1,3 +1,4 @@
+import type {UsageReport} from '../src/realtime/usage.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
@@ -466,4 +467,66 @@ test('Qwen maps midstream abort and idle timeout to safe response_failed events'
   }).open()
   const afterTimeout = await collect(timed.stream({inputs: [], tools: [], signal: new AbortController().signal}))
   assert.deepEqual(afterTimeout, [{kind: 'response_failed', response_id: 'resp-timeout', code: 'timeout'}])
+})
+
+
+test('Qwen captures trailing usage even when consumer stops at terminal; missing usage stays explicit', async () => {
+  const reports: UsageReport[] = []
+  const session = createQwenCascadedLlmFactory({
+    baseUrl: 'https://example.invalid/v1', apiKey: 'key', model: 'qwen-flash', instructions: 'system',
+    onUsage: report => reports.push(report),
+    fetchImpl: () => Promise.resolve(sse([
+      {id: 'reused-id', choices: [{delta: {content: 'ok'}, finish_reason: 'stop'}]},
+      {choices: [], usage: {prompt_tokens: 20, completion_tokens: 5,
+        prompt_tokens_details: {cached_tokens: 4}, completion_tokens_details: {reasoning_tokens: 2}}},
+    ])),
+  }).open()
+  const input = {inputs: [{kind: 'user_text' as const, text: 'hi'}], tools: [], signal: new AbortController().signal}
+  for await (const event of session.stream(input)) if (event.kind === 'response_completed') break
+  await collect(session.stream(input))
+  await settlesWithin('usage reports', (async () => { while (reports.length < 2) await new Promise(resolve => setTimeout(resolve, 1)) })())
+  assert.equal(reports.length, 2)
+  assert.equal(reports[0]?.status, 'complete')
+  assert.equal(reports[0]?.inputTokens, 20)
+  assert.equal(reports[0]?.cachedTokens, 4)
+  assert.equal(reports[0]?.reasoningTokens, 2)
+  assert.notEqual(reports[0]?.id, reports[1]?.id)
+  await session.close()
+  for (const source of [sse([{id: 'r', choices: [{delta: {}, finish_reason: 'stop'}]}]), new Response('', {status: 500})]) {
+    const missing = createQwenCascadedLlmFactory({baseUrl: 'https://example.invalid/v1', apiKey: 'key', model: 'qwen-flash', instructions: 'system',
+      onUsage: report => reports.push(report), fetchImpl: () => Promise.resolve(source)}).open()
+    await collect(missing.stream(input)).catch(() => undefined)
+    await missing.close()
+    assert.equal(reports.at(-1)?.status, 'missing')
+  }
+})
+
+
+test('Qwen bounds missing metering tail after terminal without changing completed semantics', async () => {
+  for (const stopAtTerminal of [false, true]) {
+    const reports: UsageReport[] = []
+    let cancelled = false
+    const session = createQwenCascadedLlmFactory({
+      baseUrl: 'https://example.invalid/v1', apiKey: 'key', model: 'qwen-flash', instructions: 'system',
+      onUsage: report => reports.push(report), idleTimeoutMs: 30_000, closeTimeoutMs: 20,
+      fetchImpl: () => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode('data: {"id":"r","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n')) },
+        cancel() { cancelled = true },
+      }), {headers: {'content-type': 'text/event-stream'}})),
+    }).open()
+    const events: CascadedLlmEvent[] = []
+    await settlesWithin('usage tail', (async () => {
+      for await (const event of session.stream({inputs: [{kind: 'user_text', text: 'hi'}], tools: [], signal: new AbortController().signal})) {
+        events.push(event)
+        if (stopAtTerminal && event.kind === 'response_completed') break
+      }
+    })())
+    assert.equal(events.at(-1)?.kind, 'response_completed')
+    assert.equal(cancelled, false)
+    await settlesWithin('background usage', (async () => { while (reports.length === 0) await new Promise(resolve => setTimeout(resolve, 1)) })())
+    assert.equal(cancelled, true)
+    assert.equal(reports.length, 1)
+    assert.equal(reports[0]?.status, 'missing')
+    await session.close()
+  }
 })

@@ -1,3 +1,4 @@
+import type {UsageReport} from '../src/realtime/usage.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
@@ -313,4 +314,25 @@ test('failed and incomplete response terminals retain only their stable category
     }))))
     assert.deepEqual(seen, [{kind: 'response_failed', response_id: `resp-${code}`, code}])
   }
+})
+
+
+test('Ark reports raw completed usage once, with failures missing and preflight abort uncharged', async () => {
+  const reports: UsageReport[] = []
+  const sources = [
+    eventStream(sse({type: 'response.completed', response: {id: 'r', usage: {input_tokens: 30, output_tokens: 6,
+      input_tokens_details: {cached_tokens: 10}, output_tokens_details: {reasoning_tokens: 3}}}})),
+    eventStream(sse({type: 'response.failed', response: {id: 'r'}})),
+    new Response('', {status: 500}),
+  ]
+  const gateway = createFetchArkResponsesGateway({baseUrl: 'https://example.invalid/v3', apiKey: 'key', model: 'model', instructions: 'system',
+    onUsage: report => reports.push(report), fetchImpl: () => Promise.resolve(sources.shift()!)})
+  for (let i = 0; i < 3; i++) await collect(gateway).catch(() => undefined)
+  assert.deepEqual(reports.map(report => report.status), ['complete', 'missing', 'missing'])
+  assert.equal(reports[0]?.cachedTokens, 10)
+  assert.equal(reports[0]?.reasoningTokens, 3)
+  assert.equal(new Set(reports.map(report => report.id)).size, 3)
+  await assert.rejects(collect(gateway, {signal: AbortSignal.abort()}))
+  assert.equal(reports.length, 3)
+  await gateway.close()
 })

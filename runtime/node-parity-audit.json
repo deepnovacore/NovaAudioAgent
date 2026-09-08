@@ -14,6 +14,7 @@
     "desktop/ambient-orb/src/main/desktop-startup.mjs",
     "desktop/ambient-orb/src/main/drag-controller.mjs",
     "desktop/ambient-orb/src/main/executor-result.mjs",
+    "desktop/ambient-orb/src/main/frontend-usage.mjs",
     "desktop/ambient-orb/src/main/knowledge-actions.mjs",
     "desktop/ambient-orb/src/main/launch-command.mjs",
     "desktop/ambient-orb/src/main/lifecycle-coordinator.mjs",
@@ -42,6 +43,7 @@
     "desktop/ambient-orb/src/renderer/confirmation-controls.mjs",
     "desktop/ambient-orb/src/renderer/confirmation-countdown.mjs",
     "desktop/ambient-orb/src/renderer/drag-gesture.mjs",
+    "desktop/ambient-orb/src/renderer/frontend-usage.mjs",
     "desktop/ambient-orb/src/renderer/index.mjs",
     "desktop/ambient-orb/src/renderer/knowledge-panel.mjs",
     "desktop/ambient-orb/src/renderer/memory-board.mjs",
@@ -192,6 +194,7 @@
     "runtime/src/realtime/session.ts",
     "runtime/src/realtime/speech-prep.ts",
     "runtime/src/realtime/telemetry.ts",
+    "runtime/src/realtime/usage.ts",
     "runtime/src/realtime/user-origin-binding.ts",
     "runtime/src/realtime/volcengine/ark.ts",
     "runtime/src/realtime/volcengine/asr.ts",
@@ -723,6 +726,15 @@
       "disposition": "wire_json",
       "behavior": "transportFields",
       "test": "desktop/ambient-orb/scripts/renderer-capabilities-smoke.mjs"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/frontend-usage.mjs",
+      "kind": "number_format",
+      "occurrence_index": 0,
+      "snippet_sha256": "3d5ab6f5ea30156f1b875236d99d61b5d6619465ceba4ffaf742efa762267ae6",
+      "disposition": "wire_json",
+      "test": "desktop/ambient-orb/test/frontend-usage.test.mjs",
+      "behavior": "read-only UI distinguishes no reports, partial estimates and actual service units"
     },
     {
       "file": "desktop/ambient-orb/src/renderer/memory-board.mjs",
@@ -3627,6 +3639,24 @@
       "disposition": "intentional_utf16",
       "behavior": "speech preparation uses Python regex boundaries around Unicode prose",
       "test": "runtime/test/realtime-speech-prep.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/usage.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "7e92eef3b51447a4d5b53de1f436fa156e09a995f31759e9832d0cb5445e0265",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-usage.test.ts",
+      "behavior": "usage validates meters, strips extraneous fields and isolates reporting failures"
+    },
+    {
+      "file": "runtime/src/realtime/usage.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "4e3e250c27f9d3dd12deee52f65c37deb05014982c4e87c90a43900e1a54d780",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-usage.test.ts",
+      "behavior": "usage validates meters, strips extraneous fields and isolates reporting failures"
     },
     {
       "file": "runtime/src/realtime/user-origin-binding.ts",

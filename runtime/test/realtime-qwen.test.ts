@@ -1,3 +1,4 @@
+import type {UsageReport} from '../src/realtime/usage.js'
 import assert from 'node:assert/strict'
 import {execFile} from 'node:child_process'
 import { getEventListeners } from 'node:events'
@@ -1210,4 +1211,43 @@ test('the close deadline keeps an otherwise idle child alive until cleanup settl
   })
   assert.equal(result.stdout, 'closed\n')
   assert.equal(result.stderr, '')
+})
+
+
+test('Qwen realtime reports completed modality usage once and pending disconnects as missing', async () => {
+  const reports: UsageReport[] = []
+  const script = scriptedSocket([...handshake,
+    {type: 'response.created', response: {id: 'done'}},
+    {type: 'response.done', response: {id: 'done', status: 'completed', usage: {input_tokens: 12, output_tokens: 9,
+      input_tokens_details: {text_tokens: 5, audio_tokens: 7}, output_tokens_details: {text_tokens: 3, audio_tokens: 6}}}},
+    {type: 'response.done', response: {id: 'done', status: 'completed'}},
+    {type: 'response.created', response: {id: 'cancelled'}},
+    {type: 'response.done', response: {id: 'cancelled', status: 'cancelled'}},
+    {type: 'response.created', response: {id: 'pending'}},
+  ])
+  script.end()
+  const adapter = adapterFor(script, {onUsage: (report: UsageReport) => reports.push(report)})
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+  for await (const event of adapter.events(signal)) void event
+  await adapter.close()
+  assert.deepEqual(reports.map(report => report.status), ['complete', 'missing', 'missing'])
+  assert.equal(reports[0]?.inputAudioTokens, 7)
+  assert.equal(reports[0]?.outputAudioTokens, 6)
+  assert.equal(reports[0]?.outputModality, 'audio')
+  assert.equal(new Set(reports.map(report => report.id)).size, 3)
+})
+
+test('Qwen realtime close without request has no usage; dispatched response missing before created', async () => {
+  const reports: UsageReport[] = []
+  for (const dispatched of [false, true]) {
+    const script = scriptedSocket(handshake)
+    const adapter = adapterFor(script, {onUsage: (report: UsageReport) => reports.push(report)})
+    const signal = new AbortController().signal
+    await adapter.connect({tools: [], signal})
+    if (dispatched) await adapter.ensureResponse(signal)
+    await adapter.close()
+    assert.equal(reports.length, dispatched ? 1 : 0)
+  }
+  assert.equal(reports[0]?.status, 'missing')
 })

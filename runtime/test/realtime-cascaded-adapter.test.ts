@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { RealtimeProviderEvent } from '../src/realtime/protocol.js'
+import {createQwenCascadedLlmFactory} from '../src/realtime/cascaded/qwen-llm.js'
+import type {UsageReport} from '../src/realtime/usage.js'
 import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
 import {
   CASCADED_PREEMPTIVE_ALERT_POLICY,
@@ -2116,4 +2118,70 @@ test('tool output continuations retain configured tools for the next hop', async
     assert.deepEqual(llm.calls[0]?.tools, [{name: 'weather', parameters: {type: 'object'}}])
     assert.ok(events.some(event => event.kind === 'tool_call_ready' && event.call_id === 'call-2'))
   } finally { await adapter.close() }
+})
+
+
+test('Qwen usage tail does not block immediate cascaded tool continuation after terminal', async () => {
+  const reports: UsageReport[] = []
+  const requests: Record<string, unknown>[] = []
+  let trailer: ReadableStreamDefaultController<Uint8Array> | undefined
+  const encode = (event: object): Uint8Array => new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)
+  const llm = createQwenCascadedLlmFactory({
+    baseUrl: 'https://speech.example/v1', apiKey: 'fixture', model: 'qwen-flash',
+    instructions: 'fixture', onUsage: report => { reports.push(report) },
+    fetchImpl: (_url, init) => {
+      assert.equal(typeof init?.body, 'string')
+      requests.push(JSON.parse(init?.body as string) as Record<string, unknown>)
+      const first = requests.length === 1
+      const body = new ReadableStream<Uint8Array>({start(controller) {
+        if (first) {
+          trailer = controller
+          controller.enqueue(encode({id: 'tool-response', choices: [{delta: {
+            tool_calls: [{index: 0, id: 'call-1', type: 'function', function: {name: 'weather', arguments: '{}'}}],
+          }, finish_reason: 'tool_calls'}]}))
+        } else {
+          controller.enqueue(encode({id: 'continuation-response', choices: [{delta: {}, finish_reason: 'stop'}],
+            usage: {prompt_tokens: 20, completion_tokens: 2}}))
+          controller.close()
+        }
+      }})
+      return Promise.resolve(new Response(body, {headers: {'content-type': 'text/event-stream'}}))
+    },
+  }).open()
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(
+      [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}], [{kind: 'speech_end', commit: true}],
+    ),
+    asr: new FakeAsrClient(new FakeAsrSession({text: 'weather', final: true})), llm,
+    tts: new FakeTtsClient(new FakeTtsSession(), new FakeTtsSession()),
+    idFactory: ids('usage-session', 'usage-speech', 'usage-item', 'usage-result'),
+  })
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [{type: 'function', function: {name: 'weather', parameters: {type: 'object'}}}], signal})
+  const watching = observe(adapter)
+  try {
+    await adapter.sendAudio(new Uint8Array([0, 0]), signal)
+    await adapter.sendAudio(new Uint8Array([0, 0]), signal)
+    await waitFor('first semantic terminal before usage', () => watching.events.some(event => event.kind === 'response_terminal'))
+    assert.equal(reports.length, 0)
+    const result = {kind: 'tool_output' as const, host_item_id: 'tool-result', event_id: 'tool-result-event',
+      content: '{"temperature":20}', call_id: 'call-1'}
+    await adapter.injectHostItem(result, directOptions())
+    await adapter.createResponse({kind: 'tool_result', item: result, task_summary: null, origin_spoken: false}, signal)
+    await waitFor('continuation terminal before first usage', () => watching.events.filter(event => event.kind === 'response_terminal').length === 2)
+    assert.equal(requests.length, 2)
+    assert.deepEqual((requests[1]?.messages as {role: string; content: string; tool_call_id?: string}[]).at(-1),
+      {role: 'tool', content: '{"temperature":20}', tool_call_id: 'call-1'})
+    assert.ok(trailer)
+    trailer.enqueue(encode({id: 'tool-response', choices: [], usage: {prompt_tokens: 10, completion_tokens: 3}}))
+    trailer.close()
+    await waitFor('both usage reports', () => reports.length === 2)
+    await adapter.close()
+    assert.deepEqual(reports.map(report => [report.status, report.inputTokens, report.outputTokens]).sort(),
+      [['complete', 10, 3], ['complete', 20, 2]])
+    assert.equal(new Set(reports.map(report => report.id)).size, 2)
+  } finally {
+    await adapter.close()
+    await watching.stop()
+  }
 })

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import {reportUsage, type UsageReporter} from '../usage.js'
 import { isWellFormed, stripLikePython } from '../../python-text.js'
 import type {TtsAudio, TtsClient, TtsSession} from '../cascaded/ports.js'
 import { MAX_REALTIME_TEXT } from '../protocol.js'
@@ -109,10 +110,12 @@ export function ttsHeaders(input: {
     'X-Api-Key': input.apiKey,
     'X-Api-Resource-Id': input.resourceId,
     'X-Api-Connect-Id': connectId,
+    'X-Control-Require-Usage-Tokens-Return': 'text_words',
   })
 }
 
 export interface DoubaoTtsClientOptions {
+  readonly onUsage?: UsageReporter
   readonly endpoint: string
   readonly apiKey: string
   readonly resourceId: string
@@ -125,7 +128,8 @@ export interface DoubaoTtsClientOptions {
 }
 
 export class DoubaoTtsClient implements TtsClient {
-  readonly #options: Required<Omit<DoubaoTtsClientOptions, 'connector' | 'idFactory'>>
+  readonly #options: Required<Omit<DoubaoTtsClientOptions, 'connector' | 'idFactory' | 'onUsage'>>
+  readonly #onUsage: UsageReporter | undefined
   readonly #connector: VolcBinaryConnector
   readonly #idFactory: () => string
 
@@ -148,6 +152,7 @@ export class DoubaoTtsClient implements TtsClient {
       connectTimeoutMs,
       receiveTimeoutMs,
     }
+    this.#onUsage = options.onUsage
     this.#connector = options.connector ?? webSocketVolcBinaryConnector
     this.#idFactory = options.idFactory ?? randomUUID
   }
@@ -186,6 +191,8 @@ export class DoubaoTtsClient implements TtsClient {
         socket, EventType.SESSION_STARTED, sessionId, this.#options.receiveTimeoutMs, signal,
       )
       return new DoubaoTtsSession({
+        model: this.#options.resourceId,
+        ...(this.#onUsage === undefined ? {} : {onUsage: this.#onUsage}),
         socket,
         sessionId,
         voice: this.#options.voice,
@@ -209,6 +216,11 @@ export class DoubaoTtsClient implements TtsClient {
 }
 
 export class DoubaoTtsSession implements TtsSession {
+  readonly #onUsage: UsageReporter | undefined
+  readonly #model: string
+  readonly #usageId = randomUUID()
+  #dispatched = false
+  #usageReported = false
   readonly #socket: VolcBinarySocket
   readonly #sessionId: string
   readonly #voice: string
@@ -222,6 +234,8 @@ export class DoubaoTtsSession implements TtsSession {
   #closePromise: Promise<void> | undefined
 
   constructor(input: {
+    readonly onUsage?: UsageReporter
+    readonly model?: string
     readonly socket: VolcBinarySocket
     readonly sessionId: string
     readonly voice: string
@@ -229,6 +243,8 @@ export class DoubaoTtsSession implements TtsSession {
     readonly receiveTimeoutMs: number
     readonly idFactory: () => string
   }) {
+    this.#onUsage = input.onUsage
+    this.#model = input.model ?? 'seed-tts-2.0'
     this.#socket = input.socket
     this.#sessionId = input.sessionId
     this.#voice = input.voice
@@ -245,6 +261,7 @@ export class DoubaoTtsSession implements TtsSession {
       throwTtsIfAborted(signal)
       if (this.#terminal !== undefined || this.#closed) throw new DoubaoTtsFailure('session')
       try {
+        this.#dispatched = true
         await this.#socket.send(message(EventType.TASK_REQUEST, this.#sessionId, ttsPayload({
           voice: this.#voice,
           sampleRate: this.#sampleRate,
@@ -270,38 +287,60 @@ export class DoubaoTtsSession implements TtsSession {
   async *events(signal?: AbortSignal): AsyncIterable<TtsAudio> {
     if (this.#eventsClaimed) throw new DoubaoTtsFailure('session')
     this.#eventsClaimed = true
-    while (!this.#closed) {
-      const raw = await ttsReceiveWithTimeout(
-        this.#socket, this.#receiveTimeoutMs, signal, 'receive',
-      )
-      let decoded: VolcMessage
-      try {
-        decoded = VolcMessage.unmarshal(raw)
-      } catch {
-        throw new DoubaoTtsFailure('receive')
-      }
-      if (decoded.sessionId !== null && decoded.sessionId !== this.#sessionId) continue
-      if (decoded.messageType === MessageType.AUDIO_ONLY_SERVER) {
-        if (decoded.payload.byteLength === 0) continue
+    try {
+      while (!this.#closed) {
+        const raw = await ttsReceiveWithTimeout(
+          this.#socket, this.#receiveTimeoutMs, signal, 'receive',
+        )
+        let decoded: VolcMessage
         try {
-          yield {pcm: volcengineOutputPcm(decoded.payload).pcm}
+          decoded = VolcMessage.unmarshal(raw)
         } catch {
           throw new DoubaoTtsFailure('receive')
         }
-        continue
+        if (decoded.sessionId !== null && decoded.sessionId !== this.#sessionId) continue
+        if (decoded.messageType === MessageType.AUDIO_ONLY_SERVER) {
+          if (decoded.payload.byteLength === 0) continue
+          try {
+            yield {pcm: volcengineOutputPcm(decoded.payload).pcm}
+          } catch {
+            throw new DoubaoTtsFailure('receive')
+          }
+          continue
+        }
+        if (decoded.event === EventType.SESSION_FINISHED
+          || decoded.event === EventType.SESSION_CANCELED
+          || decoded.event === EventType.SESSION_FAILED) {
+          let characters: number | undefined
+          try {
+            const payload = JSON.parse(new TextDecoder().decode(decoded.payload)) as unknown
+            if (typeof payload === 'object' && payload !== null && 'usage' in payload) {
+              const usage = payload.usage
+              if (typeof usage === 'object' && usage !== null && 'text_words' in usage
+                && typeof usage.text_words === 'number' && Number.isFinite(usage.text_words)
+                && usage.text_words >= 0) characters = usage.text_words
+            }
+          } catch {
+            // Usage is optional; malformed metadata must not interrupt audio delivery.
+          }
+          this.#reportUsage(characters)
+          if (decoded.event !== EventType.SESSION_FAILED) return
+        }
+        if (decoded.messageType === MessageType.ERROR
+          || decoded.event === EventType.SESSION_FAILED
+          || decoded.event === EventType.CONNECTION_FAILED) {
+          throw new DoubaoTtsFailure('receive')
+        }
       }
-      if (decoded.event === EventType.SESSION_FINISHED) return
-      if (decoded.messageType === MessageType.ERROR
-        || decoded.event === EventType.SESSION_FAILED
-        || decoded.event === EventType.CONNECTION_FAILED) {
-        throw new DoubaoTtsFailure('receive')
-      }
+    } finally {
+      this.#reportUsage()
     }
   }
 
   close(): Promise<void> {
     if (this.#closePromise !== undefined) return this.#closePromise
     this.#closed = true
+    this.#reportUsage()
     this.#closePromise = this.#performClose()
     return this.#closePromise
   }
@@ -341,6 +380,16 @@ export class DoubaoTtsSession implements TtsSession {
       )) || failed
     }
     if (failed) throw new DoubaoTtsFailure('close')
+  }
+
+  #reportUsage(characters?: number): void {
+    if (!this.#dispatched || this.#usageReported) return
+    this.#usageReported = true
+    reportUsage(this.#onUsage, {
+      id: this.#usageId, service: 'tts', provider: 'volcengine', model: this.#model,
+      status: characters === undefined ? 'missing' : 'complete',
+      ...(characters === undefined ? {} : {characters}),
+    })
   }
 
   #serialized(operation: () => Promise<void>): Promise<void> {

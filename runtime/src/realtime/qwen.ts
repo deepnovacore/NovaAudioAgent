@@ -14,6 +14,7 @@ export {frontendInstructions, FRONTEND_INSTRUCTIONS, CODEX_APPROVAL_FRONTEND_INS
 export type {FrontendModuleSelection} from './frontend-instructions.js'
 
 import {randomUUID} from 'node:crypto'
+import {reportUsage, type UsageReporter, type UsageReport} from './usage.js'
 import { z } from 'zod'
 import { canonicalJson } from '../canonical-json.js'
 import { jsonValueSchema, type JsonValue } from '../events.js'
@@ -130,6 +131,7 @@ export interface QwenAdapterOptions {
   readonly model: string
   readonly voice: string
   readonly connector: QwenConnector
+  readonly onUsage?: UsageReporter
   readonly idFactory?: () => string
   readonly connectTimeout?: number
   readonly itemConfirmationTimeout?: number
@@ -170,6 +172,10 @@ const providerEventEnvelope = z.record(z.string(), jsonValueSchema)
 export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   /** Qwen receives the bounded host text projection, never original camera bytes. */
   readonly mediaCapability = Object.freeze({originalImageInput: false as const})
+  readonly #onUsage: UsageReporter | undefined
+  readonly #pendingResponseUsage: string[] = []
+  readonly #responseUsage = new Map<string, string>()
+  readonly #finishedResponseUsage = new Set<string>()
   readonly #url: string
   readonly #apiKey: string
   readonly #model: string
@@ -202,6 +208,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     if (!options.url || !options.apiKey || !options.model || !options.voice) {
       throw new TypeError('url, apiKey, model, and voice are required')
     }
+    this.#onUsage = options.onUsage
     this.#url = options.url
     this.#apiKey = options.apiKey
     this.#model = options.model
@@ -273,6 +280,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       if (isTimeout(error)) throw new QwenRealtimeError('qwen realtime connection timed out')
       throw new QwenRealtimeError('qwen realtime connection failed')
     }
+    this.#finishedResponseUsage.clear()
     this.#epoch += 1
     this.#workspaceContext = undefined
     this.#workspaceContextUncertain = false
@@ -667,6 +675,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     } finally {
       if (this.#pendingCancel?.epoch === epoch) this.#pendingCancel = undefined
       if (this.#ownsReader(socket, epoch)) {
+        this.#failResponseUsage()
         this.#failPendingItems()
         this.#failPendingDeletes()
         this.#enqueue(null)
@@ -765,8 +774,13 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
           kind: 'user_transcript_failed',
           item_id: eventId(event, 'item_id'),
         }
-      case 'response.created':
-        return {session_epoch: epoch, kind: 'response_started', response_id: responseId(event)}
+      case 'response.created': {
+        const id = responseId(event)
+        if (!this.#responseUsage.has(id) && !this.#finishedResponseUsage.has(id)) {
+          this.#responseUsage.set(id, this.#pendingResponseUsage.shift() ?? randomUUID())
+        }
+        return {session_epoch: epoch, kind: 'response_started', response_id: id}
+      }
       case 'response.audio.delta':
         return {
           session_epoch: epoch,
@@ -826,6 +840,28 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     const rawReason = isJsonObject(details) ? details.reason : undefined
     const reason = typeof rawReason === 'string' && rawReason !== '' ? rawReason : rawStatus
     const id = eventId(response, 'id')
+    if (!this.#finishedResponseUsage.has(id)) {
+      const usageId = this.#responseUsage.get(id) ?? this.#pendingResponseUsage.shift() ?? randomUUID()
+      this.#responseUsage.delete(id)
+      this.#finishedResponseUsage.add(id)
+      if (this.#finishedResponseUsage.size > 256) this.#finishedResponseUsage.delete(this.#finishedResponseUsage.values().next().value!)
+      const usage = rawStatus === 'completed' && isJsonObject(response.usage) ? response.usage : undefined
+      const input = isJsonObject(usage?.input_tokens_details) ? usage.input_tokens_details
+        : isJsonObject(usage?.input_token_details) ? usage.input_token_details : {}
+      const output = isJsonObject(usage?.output_tokens_details) ? usage.output_tokens_details
+        : isJsonObject(usage?.output_token_details) ? usage.output_token_details : {}
+      reportUsage(this.#onUsage, {
+        id: usageId, service: 'realtime', provider: 'qwen', model: this.#model,
+        outputModality: Array.isArray(response.modalities) && response.modalities.includes('text') && !response.modalities.includes('audio') ? 'text' : 'audio',
+        status: usage === undefined ? 'missing' : 'complete',
+        ...(usage === undefined ? {} : {
+          inputTokens: usage.input_tokens, outputTokens: usage.output_tokens,
+          inputTextTokens: input.text_tokens, inputAudioTokens: input.audio_tokens,
+          outputTextTokens: output.text_tokens, outputAudioTokens: output.audio_tokens,
+          cachedTokens: input.cached_tokens,
+        }),
+      } as UsageReport)
+    }
     if (this.#pendingCancel?.epoch === epoch && this.#pendingCancel.responseId === id) {
       this.#pendingCancel = undefined
     }
@@ -952,7 +988,18 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       // behind a slow send land on a replacement session -- injecting one session's
       // host context into another, ahead of its own session.update.
       this.#requireOwner(owner)
-      await owner.send(encodeJson(frame))
+      const usageId = payload.type === 'response.create' ? randomUUID() : undefined
+      if (usageId !== undefined) this.#pendingResponseUsage.push(usageId)
+      try { await owner.send(encodeJson(frame)) } catch (error) {
+        if (usageId !== undefined) {
+          const index = this.#pendingResponseUsage.indexOf(usageId)
+          if (index >= 0) {
+            this.#pendingResponseUsage.splice(index, 1)
+            reportUsage(this.#onUsage, {id: usageId, service: 'realtime', provider: 'qwen', model: this.#model, status: 'missing'})
+          }
+        }
+        throw error
+      }
     })
   }
 
@@ -984,7 +1031,16 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     return run
   }
 
+  #failResponseUsage(): void {
+    for (const id of [...this.#pendingResponseUsage, ...this.#responseUsage.values()]) {
+      reportUsage(this.#onUsage, {id, service: 'realtime', provider: 'qwen', model: this.#model, status: 'missing'})
+    }
+    this.#pendingResponseUsage.length = 0
+    this.#responseUsage.clear()
+  }
+
   async #cleanupDetached(): Promise<Error | undefined> {
+    this.#failResponseUsage()
     const reader = this.#reader
     const socket = this.#socket
     this.#reader = undefined
