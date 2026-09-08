@@ -3,8 +3,8 @@ export const PRICE_DATE = '2026-09-08'
 export function publicUsageReport(value) {
   if (!value || !['qwen', 'ark', 'volcengine'].includes(value.provider)
     || !['realtime', 'llm', 'asr', 'tts'].includes(value.service) || !['complete', 'missing'].includes(value.status)
-    || typeof value.id !== 'string' || !/^[\w.:-]{1,256}$/u.test(value.id)
-    || typeof value.model !== 'string' || !/^[\w./:-]{1,256}$/u.test(value.model)) return null
+    || typeof value.id !== 'string' || !value.id || value.id.length > 256
+    || typeof value.model !== 'string' || !value.model || value.model.length > 256) return null
   const result = {id:value.id, provider:value.provider, service:value.service, model:value.model, status:value.status,
     pricingRegion: ['cn-beijing', 'singapore'].includes(value.pricingRegion) ? value.pricingRegion : 'unknown'}
   if (['audio', 'text'].includes(value.outputModality)) result.outputModality = value.outputModality
@@ -15,7 +15,8 @@ export function publicUsageReport(value) {
   }
   return result
 }
-// Official list prices, checked 2026-09-08. No credits, negotiated discounts or explicit-cache storage charges.
+// Official CNY list prices (including Singapore), checked 2026-09-08; no FX conversion.
+// No credits, negotiated discounts or explicit-cache storage charges.
 export function priceUsage(report) {
   const unknown = {costCny:null, source:null}
   const {provider, service, model, pricingRegion:region} = report
@@ -42,6 +43,7 @@ export function priceUsage(report) {
       source:'https://help.aliyun.com/zh/model-studio/qwen-flash'}
   }
   if (provider === 'qwen' && service === 'realtime' && ['qwen-audio-3.0-realtime-plus', 'qwen-audio-3.0-realtime-flash'].includes(model)) {
+    // These models publish no cache rate and list context caching as unsupported. Never invent a discount.
     if (!known(['inputTextTokens','inputAudioTokens','outputTextTokens','outputAudioTokens']) || (report.cachedTokens ?? 0) > 0) return unknown
     const plus = model.endsWith('plus')
     const rates = region === 'singapore' ? (plus ? [5.995,47.963,47.963,179.861] : [3.372,33.724,33.724,112.413]) : (plus ? [5,40,40,150] : [3,30,30,100])
@@ -55,6 +57,7 @@ export function priceUsage(report) {
 /** Main-process lifetime; backend restarts only change the deduplication namespace. */
 export function createFrontendUsage() {
   const seen = new Set(), rows = new Map()
+  // Lost lifetime usage stays incomplete after a backend restart.
   let currentGeneration = -1, truncated = false
   return {
     add(generation, input) {
@@ -70,8 +73,8 @@ export function createFrontendUsage() {
       if (!rows.has(key) && rows.size >= 1000) { const changed = !truncated; truncated = true; return changed }
       const row = rows.get(key) ?? {provider:report.provider, service:report.service, model:report.model, pricingRegion:report.pricingRegion,
         requests:0, missingReports:0, unpricedReports:0, pricedReports:0, costCny:0, source:null}
-      if (USAGE_FIELDS.some(field => report[field] !== undefined && !Number.isSafeInteger((row[field] ?? 0) + report[field]))) return false
       seen.add(id)
+      if (USAGE_FIELDS.some(field => report[field] !== undefined && !Number.isSafeInteger((row[field] ?? 0) + report[field]))) { const changed = !truncated; truncated = true; return changed }
       row.requests++
       for (const field of USAGE_FIELDS) if (report[field] !== undefined) row[field] = (row[field] ?? 0) + report[field]
       const price = priceUsage(report)

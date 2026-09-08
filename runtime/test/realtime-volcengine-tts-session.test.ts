@@ -152,7 +152,6 @@ test('TTS performs the exact two-stage handshake with copied credentials and pay
     'X-Api-Key': 'tts-api-secret',
     'X-Api-Resource-Id': 'tts-resource-secret',
     'X-Api-Connect-Id': 'connect-id',
-    'X-Control-Require-Usage-Tokens-Return': 'text_words',
   })
   assert.equal(created.connector.calls[0]!.openTimeoutMs, 20_000)
   assert.equal(created.connector.calls[0]!.closeTimeoutMs, 1_000)
@@ -387,4 +386,11 @@ test('TTS aborted consumption reports missing once even when close follows', asy
   await session.close()
   assert.equal(reports.length, 1)
   assert.equal(reports[0]?.status, 'missing')
+})
+
+test('TTS requests provider metering only when a usage reporter is installed', async () => {
+  const created = makeClient(new ScriptedSocket(normalHandshake()), {onUsage: () => { /* Header opt-in only. */ }})
+  const session = await created.value.open()
+  assert.equal(created.connector.calls[0]!.headers['X-Control-Require-Usage-Tokens-Return'], 'text_words')
+  await session.close()
 })

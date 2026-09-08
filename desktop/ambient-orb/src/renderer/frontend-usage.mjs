@@ -1,6 +1,6 @@
 const services = {realtime:'实时语音',llm:'文本模型',asr:'语音识别',tts:'语音合成'}
 const fields = {inputTokens:'输入 tokens',outputTokens:'输出 tokens',inputTextTokens:'输入文本 tokens',inputAudioTokens:'输入音频 tokens',outputTextTokens:'输出文本 tokens',outputAudioTokens:'输出音频 tokens',cachedTokens:'缓存命中 tokens',reasoningTokens:'推理 tokens',characters:'计费字符'}
-const money = value => `¥${value.toFixed(6)}`
+const money = value => value > 0 && value < 0.0001 ? '< ¥0.0001' : `¥${value.toFixed(4)}`
 export function frontendUsageText(view) {
   if (!view?.requests) return '本次运行前台估算费用：暂无用量报告'
   const partial = view.truncated || view.missingReports || view.unpricedReports

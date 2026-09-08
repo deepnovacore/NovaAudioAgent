@@ -852,6 +852,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
         : isJsonObject(usage?.output_token_details) ? usage.output_token_details : {}
       reportUsage(this.#onUsage, {
         id: usageId, service: 'realtime', provider: 'qwen', model: this.#model,
+        // All session.update / response.create requests above select audio + text.
         outputModality: Array.isArray(response.modalities) && response.modalities.includes('text') && !response.modalities.includes('audio') ? 'text' : 'audio',
         status: usage === undefined ? 'missing' : 'complete',
         ...(usage === undefined ? {} : {

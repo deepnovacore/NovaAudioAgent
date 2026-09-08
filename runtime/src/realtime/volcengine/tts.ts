@@ -110,7 +110,6 @@ export function ttsHeaders(input: {
     'X-Api-Key': input.apiKey,
     'X-Api-Resource-Id': input.resourceId,
     'X-Api-Connect-Id': connectId,
-    'X-Control-Require-Usage-Tokens-Return': 'text_words',
   })
 }
 
@@ -169,7 +168,7 @@ export class DoubaoTtsClient implements TtsClient {
           apiKey: this.#options.apiKey,
           resourceId: this.#options.resourceId,
           idFactory: this.#idFactory,
-        })},
+        }), ...(this.#onUsage === undefined ? {} : {'X-Control-Require-Usage-Tokens-Return': 'text_words'})},
         openTimeoutMs: this.#options.connectTimeoutMs,
         closeTimeoutMs: DEFAULT_VOLC_CLOSE_TIMEOUT_MS,
         maxFrameBytes: MAX_VOLCENGINE_WIRE_FRAME_BYTES,

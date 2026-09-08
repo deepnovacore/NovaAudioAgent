@@ -1219,7 +1219,7 @@ test('Qwen realtime reports completed modality usage once and pending disconnect
   const script = scriptedSocket([...handshake,
     {type: 'response.created', response: {id: 'done'}},
     {type: 'response.done', response: {id: 'done', status: 'completed', usage: {input_tokens: 12, output_tokens: 9,
-      input_tokens_details: {text_tokens: 5, audio_tokens: 7}, output_tokens_details: {text_tokens: 3, audio_tokens: 6}}}},
+      input_tokens_details: {text_tokens: 5, audio_tokens: 7, cached_tokens: 4}, output_tokens_details: {text_tokens: 3, audio_tokens: 6}}}},
     {type: 'response.done', response: {id: 'done', status: 'completed'}},
     {type: 'response.created', response: {id: 'cancelled'}},
     {type: 'response.done', response: {id: 'cancelled', status: 'cancelled'}},
@@ -1233,6 +1233,7 @@ test('Qwen realtime reports completed modality usage once and pending disconnect
   await adapter.close()
   assert.deepEqual(reports.map(report => report.status), ['complete', 'missing', 'missing'])
   assert.equal(reports[0]?.inputAudioTokens, 7)
+  assert.equal(reports[0]?.cachedTokens, 4)
   assert.equal(reports[0]?.outputAudioTokens, 6)
   assert.equal(reports[0]?.outputModality, 'audio')
   assert.equal(new Set(reports.map(report => report.id)).size, 3)

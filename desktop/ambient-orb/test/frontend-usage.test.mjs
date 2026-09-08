@@ -58,7 +58,7 @@ test('Volc 2.0 list prices use exact service units and request tiers', () => {
 test('aggregate refuses unsafe counter overflow and preserves custom model identities', () => {
   const usage = createFrontendUsage()
   assert.equal(usage.add(1,{...report,model:'org/custom',inputTokens:Number.MAX_SAFE_INTEGER}),true)
-  assert.equal(usage.add(1,{...report,id:'overflow',model:'org/custom',inputTokens:1}),false)
+  assert.equal(usage.add(1,{...report,id:'overflow',model:'org/custom',inputTokens:1}),true)
   assert.equal(usage.snapshot().rows[0].inputTokens,Number.MAX_SAFE_INTEGER)
 })
 test('caps identity storage visibly and frees child dedupe on restart without accepting stale reports', () => {
@@ -69,4 +69,32 @@ test('caps identity storage visibly and frees child dedupe on restart without ac
   usage.add(2,report)
   assert.equal(usage.add(1,{...report,id:'stale'}),false)
   assert.equal(usage.snapshot().requests,100001)
+  assert.equal(usage.snapshot().truncated,true)
+})
+
+test('retains runtime-valid custom identities and records overflow loss once', () => {
+  const usage = createFrontendUsage()
+  assert.equal(usage.add(1, {...report, id:'request with spaces', model:'custom 模型 (preview)'}), true)
+  assert.equal(usage.snapshot().unpricedReports, 1)
+  usage.add(1, {...report, id:'max', inputTokens:Number.MAX_SAFE_INTEGER})
+  assert.equal(usage.add(1, {...report, id:'overflow', inputTokens:1}), true)
+  assert.equal(usage.add(1, {...report, id:'overflow', inputTokens:0}), false)
+  assert.equal(usage.snapshot().truncated, true)
+})
+test('realtime cache without published rates stays unknown; text-only is billed', async () => {
+  const audio = {...report,service:'realtime',model:'qwen-audio-3.0-realtime-plus',inputTextTokens:100,inputAudioTokens:200,outputTextTokens:300,outputAudioTokens:0}
+  assert.equal(priceUsage({...audio,outputModality:'text'}).costCny,(100*5+200*40+300*40)/1e6)
+  const usage = createFrontendUsage()
+  usage.add(1,{...audio,cachedTokens:20})
+  assert.equal(usage.snapshot().unpricedReports,1)
+  const {frontendUsageText} = await import('../src/renderer/frontend-usage.mjs')
+  assert.match(frontendUsageText(usage.snapshot()),/暂不可估算/)
+  assert.doesNotMatch(frontendUsageText(usage.snapshot()),/¥0/)
+})
+
+test('small known charges never round down to a displayed zero', async () => {
+  const {frontendUsageText} = await import('../src/renderer/frontend-usage.mjs')
+  const usage = createFrontendUsage()
+  usage.add(1,{...report,inputTokens:1,outputTokens:0})
+  assert.match(frontendUsageText(usage.snapshot()),/< ¥0.0001/)
 })

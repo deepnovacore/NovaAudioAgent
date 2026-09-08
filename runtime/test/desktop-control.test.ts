@@ -49,3 +49,16 @@ test('private host operations finish before replying and stop removes status and
   assert.equal(parentPort.listenerCount('message'), 0)
   control.dispose()
 })
+
+test('private usage frames validate meters and preserve metering tails during shutdown', () => {
+  const parentPort = new Parent(), stop = new AbortController()
+  const control = installDesktopControl({parentPort, signal: stop.signal, status: () => undefined})
+  const report = {id: 'usage-1', provider: 'qwen' as const, service: 'llm' as const, model: 'custom 模型', status: 'complete' as const, inputTokens: 1, outputTokens: 2}
+  control.publishUsage(report)
+  assert.deepEqual(parentPort.sent, [{type: 'nova.usage', report}])
+  control.publishUsage({...report, inputTokens: NaN})
+  assert.equal((parentPort.sent[1] as {report: {status: string}}).report.status, 'missing')
+  stop.abort()
+  control.publishUsage(report)
+  assert.equal(parentPort.sent.length, 3)
+})

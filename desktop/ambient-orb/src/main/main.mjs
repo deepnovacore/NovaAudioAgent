@@ -756,7 +756,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
     backendControl?.close()
     backendControl = createBackendControl(spawnedBackend, {onUsage: report => {
       if (backend !== spawnedBackend || launchGeneration !== generation) return
-      if (frontendUsage.add(generation, report)) sendToSettings('nova:settings:changed', settingsView())
+      if (frontendUsage.add(generation, report) && settingsWindow) sendToSettings('nova:settings:changed', settingsView())
     }, onStatus: status => {
       if (backend !== spawnedBackend || launchGeneration !== generation) return
       runtimeCapabilities = {...status, generation, diskGeneration, state: backendStatus.state === 'connected' ? 'running' : status.state}
