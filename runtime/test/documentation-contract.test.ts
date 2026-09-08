@@ -158,7 +158,7 @@ test('every production environment name is classified and private names stay pri
     ...await sourceFiles(resolve(repositoryRoot, 'runtime/src')),
     ...await sourceFiles(resolve(repositoryRoot, 'desktop/ambient-orb/src')),
   ]
-  const environmentName = /\b(?:NOVA_AUDIO_AGENT_[A-Z0-9_]+|DASHSCOPE_API_KEY|ARK_API_KEY|DOUBAO_[A-Z0-9_]+|TAVILY_API_KEY|CODEX_HOME|VIRTUAL_ENV|NOVA_ORB_OPAQUE|HOME)\b/gu
+  const environmentName = /\b(?:NOVA_(?:AUDIO_AGENT|ENTERPRISE|WORKSPACE)_[A-Z0-9_]+|DASHSCOPE_API_KEY|ARK_API_KEY|DOUBAO_[A-Z0-9_]+|TAVILY_API_KEY|CODEX_HOME|VIRTUAL_ENV|NOVA_ORB_OPAQUE|HOME)\b/gu
   for (const source of sources) {
     const text = await readFile(source, 'utf8')
     for (const match of text.matchAll(environmentName)) {

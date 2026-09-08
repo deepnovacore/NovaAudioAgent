@@ -16,7 +16,7 @@ export class McpFailure extends Error {
 export async function boundedMcpFetch(
   url: string | URL | Request,
   init: RequestInit | undefined,
-  options: {readonly signal: AbortSignal; readonly maxBytes: number; readonly failure: (code: string) => Error; readonly stillWanted?: () => boolean},
+  options: {readonly signal: AbortSignal; readonly maxBytes: number; readonly failure: (code: string) => Error; readonly stillWanted?: () => boolean; readonly authorizationStatus?: boolean},
 ): Promise<Response> {
   // No unsolicited notification stream, reconnect, auth discovery or redirect to another origin.
   if (init?.method === 'GET') return new Response(null, {status: 405})
@@ -26,7 +26,7 @@ export async function boundedMcpFetch(
   const response = await fetch(url, {...init, redirect: 'manual', signal})
   if (!response.ok) {
     await response.body?.cancel()
-    throw options.failure(response.status === 401 || response.status === 403 ? 'authentication'
+    throw options.failure(options.authorizationStatus && response.status === 401 ? 'unauthorized' : options.authorizationStatus && response.status === 403 ? 'forbidden' : response.status === 401 || response.status === 403 ? 'authentication'
       : response.status === 429 ? 'rate_limited'
       : response.status >= 300 && response.status < 400 ? 'redirect' : 'upstream')
   }
@@ -58,7 +58,7 @@ export class McpConnection {
   readonly #transport: StdioClientTransport | StreamableHTTPClientTransport
   #closing: Promise<void> | undefined
   #closed = false
-  constructor(config: McpServerConfig, onFailure?: (code: string) => void) {
+  constructor(config: McpServerConfig, onFailure?: (code: string) => void, options?: {readonly trustedLoopback?: boolean}) {
     if (config.transport === 'stdio') {
       // SDK 1.30 always adds its platform allowlist, even with env: {}. Keep that exact safe
       // HOME/PATH (Windows system paths) policy; no ambient credentials, NODE_OPTIONS or proxies.
@@ -67,14 +67,16 @@ export class McpConnection {
       transport.stderr?.on('data', () => undefined) // A server may print secrets. Drain without logging or retaining them.
       this.#transport = transport
     } else {
-      validateMcpEndpoint(config.url!, config.headers)
+      const target = new URL(config.url!)
+      if (!(options?.trustedLoopback && target.protocol === 'http:' && target.hostname === '127.0.0.1'
+        && !target.username && !target.password && !target.hash)) validateMcpEndpoint(config.url!, config.headers)
       this.#transport = new StreamableHTTPClientTransport(new URL(config.url!), {
         requestInit: {headers: config.headers ?? {}},
         reconnectionOptions: {maxRetries: 0, maxReconnectionDelay: 0, initialReconnectionDelay: 0, reconnectionDelayGrowFactor: 1},
         fetch: (url, init) => {
           const scope = this.#scope.getStore()
           if (scope === undefined) return Promise.reject(new McpFailure('request_scope_missing'))
-          return boundedMcpFetch(url, init, {...scope, failure: code => new McpFailure(code)})
+          return boundedMcpFetch(url, init, {...scope, failure: code => new McpFailure(code), ...(options?.trustedLoopback ? {authorizationStatus: true} : {})})
         },
       })
     }
@@ -136,7 +138,7 @@ export class McpConnection {
     }
   }
 
-  async call(name: string, args: Record<string, unknown>, options: RequestScope & {readonly timeoutMs: number}): Promise<CallToolResult> {
+  async call(name: string, args: Record<string, unknown>, options: RequestScope & {readonly timeoutMs: number; readonly returnToolErrors?: boolean}): Promise<CallToolResult> {
     if (this.#closed) throw new McpFailure('transport_closed')
     const signal = AbortSignal.any([options.signal, this.#lifetime.signal, AbortSignal.timeout(Math.ceil(options.timeoutMs))])
     try {
@@ -144,7 +146,7 @@ export class McpConnection {
         signal.throwIfAborted()
         const result = await this.#client.callTool({name, arguments: args}, undefined, {signal, timeout: options.timeoutMs}) as CallToolResult
         if (Buffer.byteLength(JSON.stringify(result)) > options.maxBytes) throw new McpFailure('response_too_large')
-        if (result.isError) throw new McpFailure('tool_failed')
+        if (result.isError && !options.returnToolErrors) throw new McpFailure('tool_failed')
         return result
       })
     } catch (error) {

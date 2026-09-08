@@ -123,8 +123,7 @@ export function buildQwenRealtimeAssembly(
       knowledge: core.capabilities.modules.knowledge.enabled,
     },
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
-    executorApproval: options.codexResource?.approvalController !== null
-      && options.codexResource?.approvalController !== undefined,
+    executorApproval: (options.executorApproval ?? options.codexResource?.approvalController) != null,
   })
   const intake = options.intake ?? defaultIntake(core, gateway, options.settings)
   return composeRealtime(core, provider, {

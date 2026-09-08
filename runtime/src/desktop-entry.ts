@@ -1,27 +1,7 @@
 import {installDesktopControl, desktopBudgetFailure, type DesktopCapabilityState} from './desktop-control.js'
-import {loadCapabilityRegistry} from './capability-registry.js'
-import {prepareExternalMcp} from './executors/mcp.js'
-import {prepareKnowledge} from './knowledge/assembly.js'
-/** The compiled realtime desktop entry Electron launches with `utilityProcess.fork()`. */
-
-import {randomUUID} from 'node:crypto'
-
-import {loadSettings} from './config.js'
-import {
-  buildDesktopRealtimeComposition,
-  runDesktopEntryWithStopSources,
-  type DesktopStopParentSource,
-} from './desktop-service.js'
+import {runDesktopEntryWithStopSources, type DesktopStopParentSource} from './desktop-service.js'
 import {announceReadiness} from './desktop.js'
-import {selectDesktopCameraSource} from './desktop-camera-source.js'
-import {ChromiumFrameSource} from './executors/chromium-frame-source.js'
-import {RealClock} from './clock.js'
-import {
-  buildProductionRealtimeAssembly,
-  type BuildProductionRealtimeAssemblyOptions,
-} from './production-realtime-assembly.js'
-import {createRealtimeTelemetry} from './realtime/telemetry.js'
-import type {ApprovalView as ExecutorApprovalView} from './approval-port.js'
+import {buildProductionComposition} from './production-composition.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource & {postMessage(message: unknown): void}}
 
@@ -55,91 +35,12 @@ const exitCode = await runDesktopEntryWithStopSources({
     control.publish()
   },
   construct: async ownership => {
-    const externalMcp = await prepareExternalMcp(loadCapabilityRegistry(), stop.signal)
-    ownership.own(() => externalMcp.close())
-    const capabilities = externalMcp.capabilities
-    const loadedSettings = loadSettings()
-    // This entry owns the concrete Codex package; core gates injected adapters by their declared role.
-    const settings = capabilities.modules.coding.enabled ? loadedSettings : {
-      ...loadedSettings, executors: loadedSettings.executors.filter(name => name !== 'codex'),
-    }
-    for (const override of capabilities.overrides) onDiagnostic(`[capability-override] ${override}`)
-    const knowledge = await prepareKnowledge(settings, capabilities, stop.signal)
-    if (knowledge !== undefined) {
-      ownership.own(() => knowledge.close())
-      knowledgeHandle = (method, params) => knowledge.service.handle(method, params)
-    }
-    const clock = new RealClock()
-    const telemetry = createRealtimeTelemetry(process.env, {clock})
-    ownership.own(() => telemetry.close())
-    let publishExecutorApproval: (view: ExecutorApprovalView) => void = () => undefined
-    const codexResource = !capabilities.modules.coding.enabled || !settings.executors.includes('codex')
-      ? null
-      : await (async () => {
-        const {createCodexAssemblyResource, createProductionCodexHost, resolveCodexHostConfig, prepareManagedCodexMcp} = await import('./executors/codex/host.js')
-        const sourceResourcesPath = process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH
-        const codexHost = createProductionCodexHost(settings, {
-          ...(sourceResourcesPath === undefined ? {} : {resourcesPath: sourceResourcesPath}),
-          onDiagnostic: code => onDiagnostic(`[runtime-diagnostic] ${code}`),
-        })
-        const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
-        return codexConfig === null
-          ? null
-          : await createCodexAssemblyResource({
-              managedMcp: prepareManagedCodexMcp(capabilities, knowledge?.codexEntries),
-              config: codexConfig,
-              composition: 'realtime',
-              transportFactory: codexHost.transportFactory,
-              clock,
-              idFactory: () => randomUUID().replaceAll('-', ''),
-              onDiagnostic,
-              codexApprovalBroker: {
-                publish: view => { publishExecutorApproval(view) },
-              },
-              ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
-            })
-      })()
-    if (codexResource !== null) ownership.own(() => codexResource.close())
-    const camera = selectDesktopCameraSource(process.env)
-    const composition = buildDesktopRealtimeComposition({
-      token,
-      stop,
-      telemetry,
-      progressBubbles: settings.progress_bubbles,
-      ...(codexResource?.projectView === null || codexResource === null
-        ? {}
-        : {projectView: codexResource.projectView}),
-      ...(codexResource?.approvalController === null || codexResource === null
-        ? {}
-        : {approvalView: codexResource.approvalController.view}),
-      buildRealtime: (callbacks, transport) => {
-        const frameSource = new ChromiumFrameSource({
-          source: camera.source,
-          transport,
-          clock,
-        })
-        const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
-          settings,
-          capabilities,
-          externalMcp,
-          ...(knowledge === undefined ? {} : {knowledge}),
-          telemetry,
-          onDiagnostic,
-          clock,
-          frameSource,
-          ...(codexResource === null ? {} : {codexResource}),
-          ...callbacks,
-        }
-        return buildProductionRealtimeAssembly(realtimeOptions)
-      },
+    const composition = await buildProductionComposition({token, stop, ownership, onDiagnostic,
+      onKnowledge: knowledge => { knowledgeHandle = (method, params) => knowledge.service.handle(method, params) },
     })
     capabilityView = () => ({...composition.realtime.capabilityStatus, state: 'running'})
     control.publish()
-    publishExecutorApproval = view => { composition.desktop.bridge.onExecutorApproval(view) }
-    return {
-      ...composition,
-      closeAuxiliary: () => telemetry.close(),
-    }
+    return composition
   },
 }, {
   processEvents: process,

@@ -224,7 +224,7 @@ export function buildCascadedRealtimeAssembly(
     camera: options.cameraModuleEnabled ?? capabilities.modules.camera.enabled,
     coding: capabilities.modules.coding.enabled,
     knowledge: capabilities.modules.knowledge.enabled,
-  }, options.codexResource?.approvalController != null)
+  }, (options.executorApproval ?? options.codexResource?.approvalController) != null)
 
   const endpointingFactory = registry.endpointing[selection.endpointingProvider]({
     config: selected.endpointing,

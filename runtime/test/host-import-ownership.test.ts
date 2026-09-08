@@ -52,13 +52,16 @@ test('desktop entry reaches coding-disabled composition without importing or con
     process.stdout.write('disabled-composition-reached'); return 0;
   }
   export function buildDesktopRealtimeComposition() { throw new Error('disabled-composition-reached'); }`
-  const config = `export function loadSettings() { return {executors: ['codex']}; }`
+  const configUrl = new URL('../src/config.js', import.meta.url).href
+  const config = `import {loadSettings as load} from ${JSON.stringify(configUrl)};
+    export {requireIntegratedRealtime} from ${JSON.stringify(configUrl)};
+    export function loadSettings() { return {...load({DASHSCOPE_API_KEY: 'fixture'}), executors: ['codex']}; }`
   const registry = `export function loadCapabilityRegistry() { return {modules: {coding: {enabled: false}, knowledge: {enabled: false}}, overrides: [], mcpServers: {}, serverStatuses: []}; }`
   const telemetry = `export function createRealtimeTelemetry() { return {close() {}}; }`
   const replacements = {'./desktop-service.js': desktop, './config.js': config, './capability-registry.js': registry, './realtime/telemetry.js': telemetry}
   const hook = `export async function resolve(specifier, context, next) {
     const replacements = ${JSON.stringify(replacements)};
-    if (context.parentURL?.endsWith('/desktop-entry.js') && replacements[specifier]) {
+    if (['/desktop-entry.js', '/production-composition.js'].some(path => context.parentURL?.endsWith(path)) && replacements[specifier]) {
       return {url: 'data:text/javascript,' + encodeURIComponent(replacements[specifier]), shortCircuit: true};
     }
     const result = await next(specifier, context);
@@ -73,7 +76,7 @@ test('desktop entry reaches coding-disabled composition without importing or con
   assert.equal(result.stdout, 'disabled-composition-reached')
 })
 
-test('actual desktop entry passes prepared external managed MCP into the concrete resource', () => {
+test('actual desktop entry passes prepared external and knowledge MCP into the concrete resource', () => {
   const target = new URL('../src/desktop-entry.js', import.meta.url).href
   const managedModule = new URL('../src/executors/codex/managed-mcp.js', import.meta.url).href
   const registryModule = new URL('../src/capability-registry.js', import.meta.url).href
@@ -88,15 +91,21 @@ test('actual desktop entry passes prepared external managed MCP into the concret
     export function resolveCodexHostConfig() { return {}; }
     export function createCodexAssemblyResource({managedMcp}) {
       if (JSON.stringify(managedMcp.servers.docs.enabled_tools) !== '["look-up.raw"]') throw new Error('missing managed allowlist');
-      if (Object.keys(managedMcp.servers).join() !== 'docs') throw new Error('host server leak');
+      if (Object.keys(managedMcp.servers).sort().join() !== 'docs,nova_knowledge') throw new Error('missing knowledge or host server leak');
+      if (JSON.stringify(managedMcp.servers.nova_knowledge.enabled_tools) !== '["recall"]') throw new Error('missing knowledge allowlist');
       throw new Error('managed-resource-reached');
     }`
   const registry = `import {parseCapabilityRegistry} from ${JSON.stringify(registryModule)};
     export function loadCapabilityRegistry() { return parseCapabilityRegistry({version: 1, mcpServers: {docs: {transport: 'stdio', command: '/usr/bin/false', tools: {'look-up.raw': {enabled: true}}}}}); }`
-  const replacements = {'./desktop-service.js': desktop, './config.js': `export function loadSettings() { return {executors: ['codex']}; }`, './capability-registry.js': registry, './realtime/telemetry.js': `export function createRealtimeTelemetry() { return {close() {}}; }`, './executors/codex/host.js': host}
+  const knowledge = `export async function prepareKnowledge() { return {close() {}, service: {handle() {}},
+      codexEntries: {nova_knowledge: {enabled: true, exposeTo: {frontbrain: false, codex: true},
+        transport: 'streamable-http', url: 'http://127.0.0.1:19888/mcp', headers: {},
+        tools: {recall: {enabled: true, timeoutMs: 8000, maxResultBytes: 32768, maxCallsPerTurn: 2}}}}}; }`
+  const configUrl = new URL('../src/config.js', import.meta.url).href
+  const replacements = {'./knowledge/assembly.js': knowledge, './desktop-service.js': desktop, './config.js': `import {loadSettings as load} from ${JSON.stringify(configUrl)}; export {requireIntegratedRealtime} from ${JSON.stringify(configUrl)}; export function loadSettings() { return {...load({DASHSCOPE_API_KEY: 'fixture'}), executors: ['codex']}; }`, './capability-registry.js': registry, './realtime/telemetry.js': `export function createRealtimeTelemetry() { return {close() {}}; }`, './executors/codex/host.js': host}
   const hook = `export async function resolve(specifier, context, next) {
     const replacements = ${JSON.stringify(replacements)};
-    if (context.parentURL?.endsWith('/desktop-entry.js') && replacements[specifier]) return {url: 'data:text/javascript,' + encodeURIComponent(replacements[specifier]), shortCircuit: true};
+    if (['/desktop-entry.js', '/production-composition.js'].some(path => context.parentURL?.endsWith(path)) && replacements[specifier]) return {url: 'data:text/javascript,' + encodeURIComponent(replacements[specifier]), shortCircuit: true};
     return next(specifier, context);
   }`
   const script = `import {register} from 'node:module'; register('data:text/javascript,' + encodeURIComponent(${JSON.stringify(hook)}), import.meta.url); await import(${JSON.stringify(target)});`

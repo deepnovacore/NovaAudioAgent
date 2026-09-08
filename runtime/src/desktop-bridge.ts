@@ -71,6 +71,7 @@ export interface DesktopCommand {
 /** The service surface the bridge drives. Narrow: six calls and one read. */
 export interface BridgeService {
   readonly executorState: ExecutorState
+  discardInputAudio?(): Promise<void>
   sendAudio(pcm: Uint8Array): Promise<void>
   localSpeechOnset(speechId: string): Promise<void>
   playbackStarted(utteranceId: string, generationEpoch: number): boolean

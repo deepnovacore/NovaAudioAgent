@@ -1,4 +1,5 @@
 import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
+import type {ApprovalController} from './approval-port.js'
 import {capabilityStatus, type CapabilityStatus} from './capability-registry.js'
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly, type AssemblyOptions } from './assembly.js'
@@ -93,6 +94,7 @@ interface AdmittedCommittedWorkspace {
 }
 
 export interface RealtimeAssemblyOptions {
+  readonly executorApproval?: ApprovalController
   readonly intake?: {readonly models: IntakeModels; readonly settings: IntakeSettings}
   readonly onExecutorSuggestion?: (suggestion: Suggestion) => void
   readonly core: Assembly
@@ -961,10 +963,9 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     ...(projectConfirmation === undefined
       ? {}
       : {projectConfirmation}),
-    ...(options.codexResource?.approvalController === null
-      || options.codexResource?.approvalController === undefined
+    ...((options.executorApproval ?? options.codexResource?.approvalController) == null
       ? {}
-      : {executorApproval: options.codexResource.approvalController}),
+      : {executorApproval: (options.executorApproval ?? options.codexResource?.approvalController)!}),
     ...(commitProjectOperation === undefined
       ? {}
       : {commitProjectOperation}),
@@ -1252,6 +1253,7 @@ export function composeRealtime(
     ...(options.projectExpiryStepTimeoutMs === undefined
       ? {}
       : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
+    ...(options.executorApproval === undefined ? {} : {executorApproval: options.executorApproval}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
     ...(options.codingAgentControllerFactory === undefined
       ? {}
