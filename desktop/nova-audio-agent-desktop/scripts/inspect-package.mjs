@@ -23,7 +23,7 @@ import {
 import { parseStrictJson } from './strict-json.mjs'
 
 const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
-const DESKTOP_PACKAGE = '@nova-audio-agent/ambient-orb'
+const DESKTOP_PACKAGE = '@nova-audio-agent/desktop'
 const DESKTOP_MANIFEST_FILE = 'package.json'
 const RUNTIME_MANIFEST_FILE = `node_modules/${RUNTIME_PACKAGE}/package.json`
 const DEPENDENCY_REPORT_FILE = 'build/release/production-dependencies-v1.json'

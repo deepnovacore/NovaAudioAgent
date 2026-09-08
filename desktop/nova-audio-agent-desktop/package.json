@@ -1,5 +1,5 @@
 {
-  "name": "@nova-audio-agent/ambient-orb",
+  "name": "@nova-audio-agent/desktop",
   "version": "0.1.1",
   "description": "Local-first ambient voice agent desktop client",
   "homepage": "https://github.com/deepnovacore/NovaAudioAgent",

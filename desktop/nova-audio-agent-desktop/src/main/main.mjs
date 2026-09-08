@@ -496,7 +496,7 @@ function hideOrb() {
 
 function createTray() {
   const next = new Tray(trayImage())
-  next.setToolTip('Nova Audio Agent Ambient Orb')
+  next.setToolTip('Nova Audio Agent Desktop')
   next.setContextMenu(Menu.buildFromTemplate([
     { label: '显示', click: () => wakeWord?.wake() },
     { type: 'separator' },

@@ -198,8 +198,8 @@ export async function deriveLockedProductionClosure({
     throw new ReleaseDependencyError('lock_invalid')
   }
   const packages = lock.packages
-  const desktop = packages['desktop/ambient-orb']
-  if (!plain(desktop) || desktop.name !== '@nova-audio-agent/ambient-orb') {
+  const desktop = packages['desktop/nova-audio-agent-desktop']
+  if (!plain(desktop) || desktop.name !== '@nova-audio-agent/desktop') {
     throw new ReleaseDependencyError('lock_invalid')
   }
   const desktopDependencies = Object.keys(desktop.dependencies ?? {})
@@ -210,8 +210,8 @@ export async function deriveLockedProductionClosure({
 
   const queue = desktopDependencies.map(name => ({
     name,
-    ...dereference(packages, resolveDependencyKey(packages, 'desktop/ambient-orb', name)),
-    ancestry: ['@nova-audio-agent/ambient-orb'],
+    ...dereference(packages, resolveDependencyKey(packages, 'desktop/nova-audio-agent-desktop', name)),
+    ancestry: ['@nova-audio-agent/desktop'],
   }))
   const selected = new Map()
   const peerRequirements = []

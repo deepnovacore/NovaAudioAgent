@@ -74,7 +74,7 @@ async function candidateInputs(targetId, distRoot) {
     const app = resolve(
       distRoot,
       arch === 'arm64' ? 'mac-arm64' : 'mac',
-      'Nova Audio Agent Ambient Orb.app',
+      'Nova Audio Agent Desktop.app',
     )
     const appStatus = await lstat(app)
     const dmgs = entries.filter(entry => entry.isFile() && entry.name.endsWith('.dmg'))

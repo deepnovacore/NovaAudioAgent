@@ -1,63 +1,63 @@
 {
   "schema_version": 2,
   "files": [
-    "desktop/ambient-orb/src/main/app-icon.mjs",
-    "desktop/ambient-orb/src/main/app-protocol.mjs",
-    "desktop/ambient-orb/src/main/backend-control.mjs",
-    "desktop/ambient-orb/src/main/backend-diagnostics.mjs",
-    "desktop/ambient-orb/src/main/backend-supervisor.mjs",
-    "desktop/ambient-orb/src/main/backend.mjs",
-    "desktop/ambient-orb/src/main/camera-source.mjs",
-    "desktop/ambient-orb/src/main/capabilities-settings.mjs",
-    "desktop/ambient-orb/src/main/codex-discovery.mjs",
-    "desktop/ambient-orb/src/main/debug-board-client.mjs",
-    "desktop/ambient-orb/src/main/desktop-startup.mjs",
-    "desktop/ambient-orb/src/main/drag-controller.mjs",
-    "desktop/ambient-orb/src/main/executor-result.mjs",
-    "desktop/ambient-orb/src/main/knowledge-actions.mjs",
-    "desktop/ambient-orb/src/main/launch-command.mjs",
-    "desktop/ambient-orb/src/main/lifecycle-coordinator.mjs",
-    "desktop/ambient-orb/src/main/main.mjs",
-    "desktop/ambient-orb/src/main/native-audio.mjs",
-    "desktop/ambient-orb/src/main/platform-config.mjs",
-    "desktop/ambient-orb/src/main/project-directories.mjs",
-    "desktop/ambient-orb/src/main/release-smoke-channel.mjs",
-    "desktop/ambient-orb/src/main/security.mjs",
-    "desktop/ambient-orb/src/main/settings-apply.mjs",
-    "desktop/ambient-orb/src/main/settings-store.mjs",
-    "desktop/ambient-orb/src/main/startup-diagnostics.mjs",
-    "desktop/ambient-orb/src/main/wake-word/model-manager.mjs",
-    "desktop/ambient-orb/src/main/wake-word/runtime.mjs",
-    "desktop/ambient-orb/src/main/wake-word/sherpa-detector.mjs",
-    "desktop/ambient-orb/src/main/wake-word/worker.mjs",
-    "desktop/ambient-orb/src/main/window-position.mjs",
-    "desktop/ambient-orb/src/main/workspace-actions.mjs",
-    "desktop/ambient-orb/src/renderer/audio.mjs",
-    "desktop/ambient-orb/src/renderer/backend-reconnect.mjs",
-    "desktop/ambient-orb/src/renderer/board-scroll-state.mjs",
-    "desktop/ambient-orb/src/renderer/bubbles.mjs",
-    "desktop/ambient-orb/src/renderer/camera.mjs",
-    "desktop/ambient-orb/src/renderer/capabilities-editor.mjs",
-    "desktop/ambient-orb/src/renderer/capture-worklet.mjs",
-    "desktop/ambient-orb/src/renderer/confirmation-controls.mjs",
-    "desktop/ambient-orb/src/renderer/confirmation-countdown.mjs",
-    "desktop/ambient-orb/src/renderer/drag-gesture.mjs",
-    "desktop/ambient-orb/src/renderer/index.mjs",
-    "desktop/ambient-orb/src/renderer/knowledge-panel.mjs",
-    "desktop/ambient-orb/src/renderer/memory-board.mjs",
-    "desktop/ambient-orb/src/renderer/microphone-permission.mjs",
-    "desktop/ambient-orb/src/renderer/orb-visual.mjs",
-    "desktop/ambient-orb/src/renderer/palette-hover.mjs",
-    "desktop/ambient-orb/src/renderer/release-camera-contract.mjs",
-    "desktop/ambient-orb/src/renderer/release-camera.mjs",
-    "desktop/ambient-orb/src/renderer/secret-revisions.mjs",
-    "desktop/ambient-orb/src/renderer/settings-controller.mjs",
-    "desktop/ambient-orb/src/renderer/settings.mjs",
-    "desktop/ambient-orb/src/renderer/state.mjs",
-    "desktop/ambient-orb/src/renderer/voice-choice.mjs",
-    "desktop/ambient-orb/src/renderer/wake-audio.mjs",
-    "desktop/ambient-orb/src/renderer/wire-frame-types.mjs",
-    "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/app-icon.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/backend-control.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/backend-diagnostics.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/backend-supervisor.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/backend.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/camera-source.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/codex-discovery.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/debug-board-client.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/desktop-startup.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/drag-controller.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/knowledge-actions.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/launch-command.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/lifecycle-coordinator.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/main.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/native-audio.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/platform-config.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/project-directories.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/release-smoke-channel.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/security.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/settings-apply.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/startup-diagnostics.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/wake-word/runtime.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/wake-word/sherpa-detector.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/wake-word/worker.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/window-position.mjs",
+    "desktop/nova-audio-agent-desktop/src/main/workspace-actions.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/audio.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/backend-reconnect.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/board-scroll-state.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/capabilities-editor.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/capture-worklet.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/confirmation-controls.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/confirmation-countdown.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/drag-gesture.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/index.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/knowledge-panel.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/memory-board.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/microphone-permission.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/palette-hover.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/release-camera-contract.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/release-camera.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/secret-revisions.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/settings-controller.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/settings.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/state.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/voice-choice.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/wake-audio.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/wire-frame-types.mjs",
+    "desktop/nova-audio-agent-desktop/src/renderer/workspace-graph-board.mjs",
     "runtime/src/agent-controller.ts",
     "runtime/src/approval-port.ts",
     "runtime/src/approval.ts",
@@ -230,7 +230,7 @@
   ],
   "occurrences": [
     {
-      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 0,
       "line": 48,
@@ -238,10 +238,10 @@
       "snippet_sha256": "e4bbd87e4e69f04bbd796e31c93c95a1baa31f113ff9facf4e161751f3198d33",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/ambient-orb/test/app-protocol.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 1,
       "line": 53,
@@ -249,10 +249,10 @@
       "snippet_sha256": "dcb61be837b6f667f217abcc36ceb29da1b110c02559ed97e4d7e7ae995a17cf",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/ambient-orb/test/app-protocol.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 2,
       "line": 54,
@@ -260,10 +260,10 @@
       "snippet_sha256": "734a616732cc8f960a61a4289c3c9ba141a5c292c4e0662f2605ffdef22a874f",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/ambient-orb/test/app-protocol.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 55,
@@ -271,10 +271,10 @@
       "snippet_sha256": "67f892fad8d89283ccb62973245a226ead4b83262f76d5e42a530a5c3cbb5565",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/ambient-orb/test/app-protocol.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 4,
       "line": 60,
@@ -282,10 +282,10 @@
       "snippet_sha256": "0236fcedcb97aa639ddb276c7f9afdd3850fae5e7058d0b50057d6a67a7203d3",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/ambient-orb/test/app-protocol.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/backend-control.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/backend-control.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 60,
@@ -293,10 +293,10 @@
       "snippet_sha256": "4a497b11024888caf8552dc25fd5716c718f88e6a8902f1805609543f161af4a",
       "disposition": "intentional_utf16",
       "behavior": "private requests correlate, reject on close, and ignore late status",
-      "test": "desktop/ambient-orb/test/backend-control.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/backend-control.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/backend-diagnostics.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/backend-diagnostics.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 0,
       "line": 26,
@@ -304,10 +304,10 @@
       "snippet_sha256": "4f46122526d89ad40f40a24e6ad2af5f477964ac79bb61e350eb77c9a3eb30ea",
       "disposition": "host_only_unicode",
       "behavior": "collector accepts split stable diagnostics and never returns raw stderr",
-      "test": "desktop/ambient-orb/test/backend-diagnostics.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/backend-diagnostics.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/backend.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/backend.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 304,
@@ -315,10 +315,10 @@
       "snippet_sha256": "684f7177f4436806523b0588bd25dd9d7af62284556302eb4af00b755fd21ed6",
       "disposition": "host_only_unicode",
       "behavior": "passes token only through environment and dials back over loopback",
-      "test": "desktop/ambient-orb/test/backend.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/backend.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/backend.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/backend.mjs",
       "kind": "numeric_template",
       "occurrence_index": 1,
       "line": 392,
@@ -326,10 +326,10 @@
       "snippet_sha256": "d699203e9a71d41825ec7ffe9638890052be8461ce5e6fb8aba945de9d991d19",
       "disposition": "wire_json",
       "behavior": "passes token only through environment and dials back over loopback",
-      "test": "desktop/ambient-orb/test/backend.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/backend.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/backend.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/backend.mjs",
       "kind": "string_trim",
       "occurrence_index": 2,
       "line": 619,
@@ -337,10 +337,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "passes token only through environment and dials back over loopback",
-      "test": "desktop/ambient-orb/test/backend.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/backend.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/capabilities-settings.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 48,
@@ -348,10 +348,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "combined operation validates settings, returns invalid/busy unchanged and distinguishes saved failures",
-      "test": "desktop/ambient-orb/test/capabilities-settings.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/capabilities-settings.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/capabilities-settings.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
       "kind": "locale_unicode",
       "occurrence_index": 1,
       "line": 90,
@@ -359,10 +359,10 @@
       "snippet_sha256": "d3ea0fe04ee87d0e0a02881a46d014a9ead5e302a346f7245b4fc6f9b0fe28b2",
       "disposition": "host_only_unicode",
       "behavior": "literal harmless HTTP headers remain editable without admitting credential headers",
-      "test": "desktop/ambient-orb/test/capabilities-settings.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/capabilities-settings.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/capabilities-settings.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
       "kind": "locale_unicode",
       "occurrence_index": 2,
       "line": 175,
@@ -370,10 +370,10 @@
       "snippet_sha256": "02fc169e48f5b0780c4ad0ad0ffc3cd6c899749f53a02ae88b4edaf2e9ab18f1",
       "disposition": "host_only_unicode",
       "behavior": "HOME and USER references are ordinary data while arbitrary authentication references stay protected",
-      "test": "desktop/ambient-orb/test/capabilities-settings.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/capabilities-settings.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/capabilities-settings.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 175,
@@ -381,10 +381,10 @@
       "snippet_sha256": "ea5e0758245563e28b86791e6c4b7a73053e821253c683b7df36e51a55272ab3",
       "disposition": "host_only_unicode",
       "behavior": "public probe refuses secret-bearing tool names, redacts descriptions and keeps identity",
-      "test": "desktop/ambient-orb/test/capabilities-settings.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/capabilities-settings.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/executor-result.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 84,
@@ -392,10 +392,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "rejects malformed results before a native dialog can render them",
-      "test": "desktop/ambient-orb/test/executor-result.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/executor-result.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/executor-result.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
       "kind": "string_length",
       "occurrence_index": 1,
       "line": 84,
@@ -403,10 +403,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "rejects malformed results before a native dialog can render them",
-      "test": "desktop/ambient-orb/test/executor-result.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/executor-result.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/executor-result.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 2,
       "line": 90,
@@ -414,10 +414,10 @@
       "snippet_sha256": "672ce8291ede462bd8e980c60f99dddfd60fa05d9ced0a39367283d5549ec607",
       "disposition": "host_only_unicode",
       "behavior": "rejects malformed results before a native dialog can render them",
-      "test": "desktop/ambient-orb/test/executor-result.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/executor-result.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/executor-result.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 91,
@@ -425,10 +425,10 @@
       "snippet_sha256": "9808265026804d64c46861fc0692f893449c955569ecb790d8d82fbd1c260103",
       "disposition": "host_only_unicode",
       "behavior": "rejects malformed results before a native dialog can render them",
-      "test": "desktop/ambient-orb/test/executor-result.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/executor-result.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/knowledge-actions.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/knowledge-actions.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 29,
@@ -436,10 +436,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "file ingestion admits native paths only after data disclosure consent",
-      "test": "desktop/ambient-orb/test/knowledge-actions.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/knowledge-actions.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/main.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/main.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 973,
@@ -447,10 +447,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "main owns single-instance lifecycle and denies renderer escape",
-      "test": "desktop/ambient-orb/test/main-security.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/main-security.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/native-audio.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/native-audio.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 262,
@@ -458,10 +458,10 @@
       "snippet_sha256": "4691c2864aa2e27fbefa4838ac86d34ba2bc21b27a71009601904f3bb23eefd4",
       "disposition": "wire_json",
       "behavior": "macOS helper is pinned to Apple VoiceProcessingIO system AEC",
-      "test": "desktop/ambient-orb/test/native-audio.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/native-audio.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/platform-config.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/platform-config.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 2,
@@ -469,10 +469,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "desktop configuration lets the explicit process binary override saved discovery settings",
-      "test": "desktop/ambient-orb/test/platform-config.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/platform-config.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/platform-config.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/platform-config.mjs",
       "kind": "string_trim",
       "occurrence_index": 1,
       "line": 2,
@@ -480,10 +480,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "desktop configuration lets the explicit process binary override saved discovery settings",
-      "test": "desktop/ambient-orb/test/platform-config.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/platform-config.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 165,
@@ -491,10 +491,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/ambient-orb/test/settings-store.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
       "kind": "string_trim",
       "occurrence_index": 1,
       "line": 180,
@@ -502,10 +502,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/ambient-orb/test/settings-store.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
       "kind": "string_length",
       "occurrence_index": 2,
       "line": 227,
@@ -513,10 +513,10 @@
       "snippet_sha256": "5112417b26dcabce32653d1f32793b43b5ab7ff07de91af3d7cdcb5799a503ed",
       "disposition": "byte_length",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/ambient-orb/test/settings-store.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
       "kind": "string_length",
       "occurrence_index": 3,
       "line": 228,
@@ -524,10 +524,10 @@
       "snippet_sha256": "5112417b26dcabce32653d1f32793b43b5ab7ff07de91af3d7cdcb5799a503ed",
       "disposition": "byte_length",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/ambient-orb/test/settings-store.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
       "kind": "numeric_template",
       "occurrence_index": 4,
       "line": 731,
@@ -535,10 +535,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/ambient-orb/test/settings-store.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/wake-word/model-manager.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 40,
@@ -546,10 +546,10 @@
       "snippet_sha256": "98e3af20e9d4f424d573c0c0ddeec706c9b38b5ceab466a16f0abdae101f192c",
       "disposition": "host_only_unicode",
       "behavior": "verified keyword cache works offline and stale keywords cannot be reused",
-      "test": "desktop/ambient-orb/test/wake-word-model.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/wake-word/model-manager.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 1,
       "line": 40,
@@ -557,10 +557,10 @@
       "snippet_sha256": "b6e739e7c08a388d0610dbb80b87a499b868d0e911d460e99b7ccf19c4f60670",
       "disposition": "host_only_unicode",
       "behavior": "verified keyword cache works offline and stale keywords cannot be reused",
-      "test": "desktop/ambient-orb/test/wake-word-model.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/wake-word/model-manager.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
       "kind": "string_trim",
       "occurrence_index": 2,
       "line": 41,
@@ -568,10 +568,10 @@
       "snippet_sha256": "cdc8bda8867b2b85d8b3367a29b17b511f1d94c4405812a6e89ba844812e7793",
       "disposition": "host_only_unicode",
       "behavior": "verified keyword cache works offline and stale keywords cannot be reused",
-      "test": "desktop/ambient-orb/test/wake-word-model.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/wake-word/model-manager.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 41,
@@ -579,10 +579,10 @@
       "snippet_sha256": "b6e739e7c08a388d0610dbb80b87a499b868d0e911d460e99b7ccf19c4f60670",
       "disposition": "host_only_unicode",
       "behavior": "verified keyword cache works offline and stale keywords cannot be reused",
-      "test": "desktop/ambient-orb/test/wake-word-model.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/wake-word/model-manager.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
       "kind": "numeric_template",
       "occurrence_index": 4,
       "line": 94,
@@ -590,10 +590,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "terminated download workers clean only their own partial files",
-      "test": "desktop/ambient-orb/test/wake-word-model.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/wake-word/model-manager.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
       "kind": "numeric_template",
       "occurrence_index": 5,
       "line": 122,
@@ -601,10 +601,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "terminated download workers clean only their own partial files",
-      "test": "desktop/ambient-orb/test/wake-word-model.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/wake-word/model-manager.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
       "kind": "numeric_template",
       "occurrence_index": 6,
       "line": 122,
@@ -612,10 +612,10 @@
       "snippet_sha256": "6c90fd916a9af405d43529bb73613fab7b3b173e6c2712dca9fe0a61fb2b7b0e",
       "disposition": "wire_json",
       "behavior": "terminated download workers clean only their own partial files",
-      "test": "desktop/ambient-orb/test/wake-word-model.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/main/window-position.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/main/window-position.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 486,
@@ -623,10 +623,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "accepts only finite bounded drag deltas",
-      "test": "desktop/ambient-orb/test/window-position.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/window-position.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/bubbles.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 253,
@@ -634,10 +634,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "parses only bounded sanitized executor progress frames",
-      "test": "desktop/ambient-orb/test/progress-bubbles.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/progress-bubbles.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/bubbles.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
       "kind": "string_length",
       "occurrence_index": 1,
       "line": 253,
@@ -645,10 +645,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "parses only bounded sanitized executor progress frames",
-      "test": "desktop/ambient-orb/test/progress-bubbles.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/progress-bubbles.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/bubbles.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 2,
       "line": 259,
@@ -656,10 +656,10 @@
       "snippet_sha256": "672ce8291ede462bd8e980c60f99dddfd60fa05d9ced0a39367283d5549ec607",
       "disposition": "host_only_unicode",
       "behavior": "parses only bounded sanitized executor progress frames",
-      "test": "desktop/ambient-orb/test/progress-bubbles.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/progress-bubbles.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/bubbles.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 260,
@@ -667,10 +667,10 @@
       "snippet_sha256": "9808265026804d64c46861fc0692f893449c955569ecb790d8d82fbd1c260103",
       "disposition": "host_only_unicode",
       "behavior": "parses only bounded sanitized executor progress frames",
-      "test": "desktop/ambient-orb/test/progress-bubbles.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/progress-bubbles.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/camera.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 953,
@@ -678,10 +678,10 @@
       "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
       "disposition": "intentional_utf16",
       "behavior": "camera renderer constants and frame bytes match the independent v1 golden",
-      "test": "desktop/ambient-orb/test/camera.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/camera.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/camera.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
       "kind": "string_length",
       "occurrence_index": 1,
       "line": 955,
@@ -689,10 +689,10 @@
       "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
       "disposition": "intentional_utf16",
       "behavior": "camera renderer constants and frame bytes match the independent v1 golden",
-      "test": "desktop/ambient-orb/test/camera.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/camera.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/camera.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
       "kind": "string_length",
       "occurrence_index": 2,
       "line": 975,
@@ -700,10 +700,10 @@
       "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
       "disposition": "intentional_utf16",
       "behavior": "camera renderer constants and frame bytes match the independent v1 golden",
-      "test": "desktop/ambient-orb/test/camera.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/camera.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/camera.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
       "kind": "string_length",
       "occurrence_index": 3,
       "line": 989,
@@ -711,10 +711,10 @@
       "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
       "disposition": "intentional_utf16",
       "behavior": "camera renderer constants and frame bytes match the independent v1 golden",
-      "test": "desktop/ambient-orb/test/camera.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/camera.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/capabilities-editor.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/capabilities-editor.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 144,
@@ -722,10 +722,10 @@
       "snippet_sha256": "1aca80e8b55c802f7b43740da2990e1b5735bbb323d93eb5ebda8395b04025e2",
       "disposition": "wire_json",
       "behavior": "transportFields",
-      "test": "desktop/ambient-orb/scripts/renderer-capabilities-smoke.mjs"
+      "test": "desktop/nova-audio-agent-desktop/scripts/renderer-capabilities-smoke.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/memory-board.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/memory-board.mjs",
       "kind": "number_format",
       "occurrence_index": 0,
       "line": 43,
@@ -733,10 +733,10 @@
       "snippet_sha256": "bfb2853fc94d7bd1c7069adca219e03176b7325307b1a281cc70fbbc94828a93",
       "disposition": "wire_json",
       "behavior": "board auto-refresh is renderer-owned, guarded, and visibility-aware",
-      "test": "desktop/ambient-orb/test/memory-board.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/memory-board.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 471,
@@ -744,10 +744,10 @@
       "snippet_sha256": "b1f51a511f1da0cd348b8f8598db32e61cb963e5fc69e2b41485bf99590ed75a",
       "disposition": "wire_json",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs",
-      "test": "desktop/ambient-orb/test/orb-visual.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/orb-visual.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
       "kind": "numeric_template",
       "occurrence_index": 1,
       "line": 471,
@@ -755,10 +755,10 @@
       "snippet_sha256": "ba4788b226aa8dc2e6dc74248bb9f618cfa8c959e0c26c147be48f6839a0b088",
       "disposition": "wire_json",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs",
-      "test": "desktop/ambient-orb/test/orb-visual.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/orb-visual.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
       "kind": "numeric_template",
       "occurrence_index": 2,
       "line": 471,
@@ -766,10 +766,10 @@
       "snippet_sha256": "16477688c0e00699c6cfa4497a3612d7e83c532062b64b250fed8908128ed548",
       "disposition": "wire_json",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs",
-      "test": "desktop/ambient-orb/test/orb-visual.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/orb-visual.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
       "kind": "numeric_template",
       "occurrence_index": 3,
       "line": 1256,
@@ -777,10 +777,10 @@
       "snippet_sha256": "191e32938d345aa77f6718643a13976be4945f877323bc38526613632de27c40",
       "disposition": "wire_json",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs",
-      "test": "desktop/ambient-orb/test/orb-visual.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/orb-visual.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/state.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/state.mjs",
       "kind": "number_format",
       "occurrence_index": 0,
       "line": 95,
@@ -788,10 +788,10 @@
       "snippet_sha256": "fd121dc99ad57c470a6586ec4ebc7f5407729966db47e3e97a27f6dd020763ad",
       "disposition": "wire_json",
       "behavior": "projects voice and Codex state into one compact visible line",
-      "test": "desktop/ambient-orb/test/state.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/state.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/workspace-graph-board.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 211,
@@ -799,10 +799,10 @@
       "snippet_sha256": "f6f9c83eccb7769affa383652ad5b819f8e1c29b41b4296b33df5f344cd3fb58",
       "disposition": "wire_json",
       "behavior": "graph renderer uses owned text nodes for active weak degraded stale and omission states",
-      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/workspace-graph-board.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/workspace-graph-board.mjs",
       "kind": "string_trim",
       "occurrence_index": 1,
       "line": 307,
@@ -810,10 +810,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "graph payload validator clones the exact bounded view and rejects hidden or malformed data",
-      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/workspace-graph-board.test.mjs"
     },
     {
-      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "file": "desktop/nova-audio-agent-desktop/src/renderer/workspace-graph-board.mjs",
       "kind": "string_trim",
       "occurrence_index": 2,
       "line": 314,
@@ -821,7 +821,7 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "graph payload validator clones the exact bounded view and rejects hidden or malformed data",
-      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs"
+      "test": "desktop/nova-audio-agent-desktop/test/workspace-graph-board.test.mjs"
     },
     {
       "file": "runtime/src/agent-controller.ts",

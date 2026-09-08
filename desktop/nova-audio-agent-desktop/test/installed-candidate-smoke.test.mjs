@@ -117,10 +117,10 @@ function assertPidGone(pid) {
 test('installed candidate plans use native install or mount boundaries for every closed artifact', () => {
   const root = '/private/smoke'
   const matrix = [
-    ['darwin-arm64:app', 'nova-audio-agent-0.1.1-macos-arm64-app.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/install'],
-    ['darwin-arm64:dmg', 'nova-audio-agent-0.1.1-macos-arm64.dmg', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb'],
-    ['win32-x64:portable', 'nova-audio-agent-0.1.1-windows-x64-portable.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.exe', '/private/smoke/install'],
-    ['win32-x64:nsis', 'nova-audio-agent-0.1.1-windows-x64.exe', '/private/smoke/install/Nova Audio Agent Ambient Orb.exe', '/private/smoke/install'],
+    ['darwin-arm64:app', 'nova-audio-agent-0.1.1-macos-arm64-app.zip', '/private/smoke/install/Nova Audio Agent Desktop.app/Contents/MacOS/Nova Audio Agent Desktop', '/private/smoke/install'],
+    ['darwin-arm64:dmg', 'nova-audio-agent-0.1.1-macos-arm64.dmg', '/private/smoke/mount/Nova Audio Agent Desktop.app/Contents/MacOS/Nova Audio Agent Desktop', '/private/smoke/mount/Nova Audio Agent Desktop.app/Contents/MacOS/Nova Audio Agent Desktop'],
+    ['win32-x64:portable', 'nova-audio-agent-0.1.1-windows-x64-portable.zip', '/private/smoke/install/Nova Audio Agent Desktop.exe', '/private/smoke/install'],
+    ['win32-x64:nsis', 'nova-audio-agent-0.1.1-windows-x64.exe', '/private/smoke/install/Nova Audio Agent Desktop.exe', '/private/smoke/install'],
   ]
   for (const [target, artifactName, executable, residue] of matrix) {
     const plan = candidateInstallPlan({target, artifact: `${root}/${artifactName}`, scratch: root})

@@ -23,7 +23,7 @@ dist/
 # JavaScript and Electron
 node_modules/
 build/
-desktop/ambient-orb/dist/
+desktop/nova-audio-agent-desktop/dist/
 runtime/dist/
 
 # Runtime state and local media
@@ -35,7 +35,7 @@ memory-board-*.json
 resources/raw/
 resources/cut/
 resources/cut-final/
-desktop/ambient-orb/resources/generated/
+desktop/nova-audio-agent-desktop/resources/generated/
 
 # Internal working material (demo video production)
 docs/demos/

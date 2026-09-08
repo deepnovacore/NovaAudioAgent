@@ -7,9 +7,9 @@ import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { parseEnv } from 'node:util'
 
-import { codexCandidates } from '../desktop/ambient-orb/src/main/codex-discovery.mjs'
+import { codexCandidates } from '../desktop/nova-audio-agent-desktop/src/main/codex-discovery.mjs'
 
-const DESKTOP_WORKSPACE = '@nova-audio-agent/ambient-orb'
+const DESKTOP_WORKSPACE = '@nova-audio-agent/desktop'
 const SUPPORTED_PLATFORMS = new Set(['darwin', 'linux', 'win32'])
 
 export function parseClientEnvironment({contents, shellEnv}) {
@@ -50,7 +50,7 @@ export function electronExecutablePath(rootDir, platform) {
   const distribution = pathApi.join(
     rootDir,
     'desktop',
-    'ambient-orb',
+    'nova-audio-agent-desktop',
     'node_modules',
     'electron',
     'dist',
@@ -127,7 +127,7 @@ export function planClientLaunch({
     throw new Error('this launcher does not accept arguments')
   }
   if (!SUPPORTED_PLATFORMS.has(platform)) {
-    throw new Error('the Ambient Orb client requires macOS, Linux, or Windows')
+    throw new Error('the Nova Audio Agent Desktop client requires macOS, Linux, or Windows')
   }
   const pathApi = platform === 'win32' ? win32 : posix
   if (typeof npmCli !== 'string' || !pathApi.isAbsolute(npmCli)) {
@@ -171,7 +171,7 @@ export function planClientLaunch({
       args: [pathApi.join(
         rootDir,
         'desktop',
-        'ambient-orb',
+        'nova-audio-agent-desktop',
         'node_modules',
         'electron',
         'install.js',

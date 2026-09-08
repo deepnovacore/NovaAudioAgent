@@ -49,7 +49,7 @@ const DESKTOP_FILES = [
 ]
 
 const DESKTOP_MANIFEST = Object.freeze({
-  name: '@nova-audio-agent/ambient-orb',
+  name: '@nova-audio-agent/desktop',
   dependencies: { '@nova-audio-agent/runtime': '0.1.1', 'sherpa-onnx': '1.13.4', 'tar-stream': '3.1.7', 'unbzip2-stream': '1.4.3' },
 })
 const RUNTIME_MANIFEST = Object.freeze({
@@ -1213,8 +1213,8 @@ test('release candidate report binds artifact SHA and rejects an external resour
     const lock = {
       lockfileVersion: 3,
       packages: {
-        'desktop/ambient-orb': {
-          name: '@nova-audio-agent/ambient-orb',
+        'desktop/nova-audio-agent-desktop': {
+          name: '@nova-audio-agent/desktop',
           dependencies: DESKTOP_MANIFEST.dependencies,
         },
         ...Object.fromEntries(DESKTOP_DEPENDENCIES.filter(name => name !== '@nova-audio-agent/runtime').map(name => [
@@ -1467,7 +1467,7 @@ test('desktop direct dependencies are exact in artifact manifests and lockfiles'
         desktopManifest: {...DESKTOP_MANIFEST, dependencies},
       }), PackageInspectionError, `missing direct dependency ${missing}`)
       const lock = structuredClone(original)
-      delete lock.packages['desktop/ambient-orb'].dependencies[missing]
+      delete lock.packages['desktop/nova-audio-agent-desktop'].dependencies[missing]
       await writeFile(lockPath, JSON.stringify(lock))
       await assert.rejects(deriveLockedProductionClosure({lockPath, targetId: 'darwin-arm64'}),
         error => error.code === 'desktop_dependency_invalid', `missing locked direct dependency ${missing}`)

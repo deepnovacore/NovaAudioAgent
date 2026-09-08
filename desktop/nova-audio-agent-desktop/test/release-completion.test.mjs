@@ -19,7 +19,7 @@ test('release artifacts are normalized to the same closed filenames the attestat
   t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
   const dist = join(root, 'dist')
   const out = join(root, 'out')
-  await mkdir(join(dist, 'mac-arm64', 'Nova Audio Agent Ambient Orb.app'), {recursive: true})
+  await mkdir(join(dist, 'mac-arm64', 'Nova Audio Agent Desktop.app'), {recursive: true})
   await writeFile(join(dist, 'candidate.dmg'), 'dmg')
   const calls = []
   const records = await collectReleaseArtifacts({
@@ -371,7 +371,7 @@ test('Windows release collection creates a portable zip beside the NSIS installe
   const dist = join(root, 'dist')
   const out = join(root, 'out')
   await mkdir(join(dist, 'win-unpacked'), {recursive: true})
-  await writeFile(join(dist, 'win-unpacked', 'Nova Audio Agent Ambient Orb.exe'), 'portable')
+  await writeFile(join(dist, 'win-unpacked', 'Nova Audio Agent Desktop.exe'), 'portable')
   await writeFile(join(dist, 'installer.exe'), 'installer')
   const calls = []
   const records = await collectReleaseArtifacts({
@@ -432,8 +432,8 @@ function runGit(cwd, ...args) {
 test('mac post-sign verification finds the builder app below its architecture directory', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-release-mac-signatures-')))
   t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
-  const app = join(root, 'mac-arm64', 'Nova Audio Agent Ambient Orb.app')
-  const dmg = join(root, 'Nova Audio Agent Ambient Orb-0.1.0-arm64.dmg')
+  const app = join(root, 'mac-arm64', 'Nova Audio Agent Desktop.app')
+  const dmg = join(root, 'Nova Audio Agent Desktop-0.1.0-arm64.dmg')
   await mkdir(app, {recursive: true})
   await writeFile(dmg, 'dmg')
   const plan = signedCandidateVerificationPlan({platform: 'darwin', distRoot: root})
@@ -443,7 +443,7 @@ test('mac post-sign verification finds the builder app below its architecture di
 test('mac finalization submits and staples the exact built DMG with external credentials', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-release-mac-notary-')))
   t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
-  const dmg = join(root, 'Nova Audio Agent Ambient Orb-0.1.0-arm64.dmg')
+  const dmg = join(root, 'Nova Audio Agent Desktop-0.1.0-arm64.dmg')
   await writeFile(dmg, 'dmg')
   const plan = macContainerNotarizationPlan({
     distRoot: root,

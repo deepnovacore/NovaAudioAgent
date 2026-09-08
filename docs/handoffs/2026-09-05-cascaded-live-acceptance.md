@@ -21,7 +21,7 @@ npm run smoke:cascaded --workspace @nova-audio-agent/runtime -- \
 真实 Electron 后端验收（同样使用真实服务凭据）：
 
 ```sh
-npm run smoke:node-backend --workspace @nova-audio-agent/ambient-orb -- \
+npm run smoke:node-backend --workspace @nova-audio-agent/desktop -- \
   --cascaded --env-file /absolute/path/to/test.env
 ```
 

@@ -311,10 +311,10 @@ DashScope service call or a human voice session.
 | 6 | `knowledge-store.test.ts`: busy Worker, unresolved termination and same-database reopen; `knowledge-service.test.ts`: deferred reindex cannot overwrite reopened store; `realtime-assembly.test.ts`: full prepared Knowledge/core/realtime cleanup settles within the outer budget |
 | 7 | `knowledge-assembly.test.ts`: disabled module and exact read-only tool surface |
 | 8 | `knowledge-service.test.ts`: failed reindex preserves old source and records a safe failure; `knowledge-embeddings.test.ts`: simulated HTTP failures |
-| 9 | Static disabled `local` option in `desktop/ambient-orb/src/renderer/settings.html`; `knowledge-assembly.test.ts`: forced local fails before opening store |
+| 9 | Static disabled `local` option in `desktop/nova-audio-agent-desktop/src/renderer/settings.html`; `knowledge-assembly.test.ts`: forced local fails before opening store |
 | 10 | `knowledge-mcp.test.ts`: actual SDK/loopback authentication and strict ok/stale/gone branches; `knowledge-assembly.test.ts`: loopback projection |
 | 11 | `knowledge-references.test.ts`: exposure, canonical workspace paths, stale/deleted pre-render references |
-| 12 | Static disclosure table in `desktop/ambient-orb/src/renderer/settings.html`; `desktop/ambient-orb/test/knowledge-panel.test.mjs` and `knowledge-actions.test.mjs`: consent precedes ingest |
+| 12 | Static disclosure table in `desktop/nova-audio-agent-desktop/src/renderer/settings.html`; `desktop/nova-audio-agent-desktop/test/knowledge-panel.test.mjs` and `knowledge-actions.test.mjs`: consent precedes ingest |
 | 13 | Static registry/settings/assembly contract: no `knowledge.autoRecall` setting; explicit recall surfaces only |
 | 14 | 2026-09-05 Node 22/24 FTS probe and synthetic real-provider smoke in IMPLEMENTATION; not rerun by unit tests |
 | 15 | `knowledge-store.test.ts`: forced LIKE escaping and FTS reopen/rebuild; `knowledge-service.test.ts` and desktop `knowledge-panel.test.mjs`: fallback status |

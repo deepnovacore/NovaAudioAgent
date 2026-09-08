@@ -531,13 +531,13 @@ That full run passed; the graph-transition case completed in 235 ms.
 ## Reproducible renderer check
 
 With an existing Playwright installation, run
-`node desktop/ambient-orb/scripts/renderer-progress-smoke.mjs`.
+`node desktop/nova-audio-agent-desktop/scripts/renderer-progress-smoke.mjs`.
 `NOVA_PLAYWRIGHT_MODULE` may point to that installation's module; set
 `NOVA_BROWSER_EXECUTABLE` when using a locally installed browser. The check uses
 isolated browser state and local renderer files, with fake runtime/IPC ports.
 It checks 100/125/150% CSS zoom, approval expiry, three-bubble bounds, a below-orb
 stack with the last-result button, and the actual settings window size.
-Screenshots go to ignored `desktop/ambient-orb/build/renderer-smoke/`.
+Screenshots go to ignored `desktop/nova-audio-agent-desktop/build/renderer-smoke/`.
 This verifies rendering and interaction, not OS DPI behavior or live audio.
 
 

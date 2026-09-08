@@ -59,9 +59,9 @@ jobs:
         env:
           NOVA_RELEASE_SMOKE_DIAGNOSTICS: "1"
         run: |
-          cp desktop/ambient-orb/scripts/installed-candidate-smoke.mjs candidate/release-smoke-kit/scripts/
-          cp desktop/ambient-orb/scripts/run-unsigned-installed-smoke.mjs candidate/release-smoke-kit/scripts/
-          cp desktop/ambient-orb/scripts/windows-smoke-home.mjs candidate/release-smoke-kit/scripts/
+          cp desktop/nova-audio-agent-desktop/scripts/installed-candidate-smoke.mjs candidate/release-smoke-kit/scripts/
+          cp desktop/nova-audio-agent-desktop/scripts/run-unsigned-installed-smoke.mjs candidate/release-smoke-kit/scripts/
+          cp desktop/nova-audio-agent-desktop/scripts/windows-smoke-home.mjs candidate/release-smoke-kit/scripts/
           node candidate/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs \
             --target ${{ matrix.target }} \
             --artifact candidate/release-artifacts/${{ matrix.filename }} \
@@ -100,7 +100,7 @@ jobs:
           git fetch origin main
           test "$EXPECTED_COMMIT" = "$(git rev-parse origin/main)"
           test "$(node -p "require('./cli/package.json').version")" = "$RELEASE_VERSION"
-          test "$(node -p "require('./desktop/ambient-orb/package.json').version")" = "$RELEASE_VERSION"
+          test "$(node -p "require('./desktop/nova-audio-agent-desktop/package.json').version")" = "$RELEASE_VERSION"
           gh run view "$MAC_CANDIDATE_RUN_ID" --json conclusion,headSha,jobs,name > mac-candidate-run.json
           gh run view "$WINDOWS_CANDIDATE_RUN_ID" --json conclusion,headSha,jobs,name > windows-candidate-run.json
           test "$(jq -r .name mac-candidate-run.json)" = "Release candidate evidence"
@@ -115,13 +115,13 @@ jobs:
           git merge-base --is-ancestor "$windows_commit" "$EXPECTED_COMMIT"
           git diff --name-only "$mac_commit" "$windows_commit" | while read -r changed_path; do
             case "$changed_path" in
-              .github/workflows/release-candidate.yml|desktop/ambient-orb/scripts/*|desktop/ambient-orb/test/*) ;;
+              .github/workflows/release-candidate.yml|desktop/nova-audio-agent-desktop/scripts/*|desktop/nova-audio-agent-desktop/test/*) ;;
               *) exit 1 ;;
             esac
           done
           git diff --name-only "$windows_commit" "$EXPECTED_COMMIT" | while read -r changed_path; do
             case "$changed_path" in
-              .github/workflows/release-promote.yml|desktop/ambient-orb/scripts/installed-candidate-smoke.mjs|desktop/ambient-orb/test/installed-candidate-smoke.test.mjs|desktop/ambient-orb/test/release-completion.test.mjs) ;;
+              .github/workflows/release-promote.yml|desktop/nova-audio-agent-desktop/scripts/installed-candidate-smoke.mjs|desktop/nova-audio-agent-desktop/test/installed-candidate-smoke.test.mjs|desktop/nova-audio-agent-desktop/test/release-completion.test.mjs) ;;
               *) exit 1 ;;
             esac
           done
@@ -146,9 +146,9 @@ jobs:
             --dir downloaded/candidate-darwin-arm64
           gh run download "$WINDOWS_CANDIDATE_RUN_ID" --name candidate-win32-x64 \
             --dir downloaded/candidate-win32-x64
-          node desktop/ambient-orb/scripts/assemble-release-artifact-root.mjs \
+          node desktop/nova-audio-agent-desktop/scripts/assemble-release-artifact-root.mjs \
             --input downloaded --output release-artifacts
-          node desktop/ambient-orb/scripts/generate-release-manifest.mjs \
+          node desktop/nova-audio-agent-desktop/scripts/generate-release-manifest.mjs \
             --artifact-root release-artifacts \
             --commit "$EXPECTED_COMMIT" \
             --output release-artifacts/release-manifest-v1.json

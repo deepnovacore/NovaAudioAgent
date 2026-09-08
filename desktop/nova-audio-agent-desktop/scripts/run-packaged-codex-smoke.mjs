@@ -75,16 +75,16 @@ export function packagedLayout({distRoot, platform, arch}) {
   let resourcesRoot
   if (platform === 'darwin' && (arch === 'arm64' || arch === 'x64')) {
     const output = resolve(distRoot, arch === 'arm64' ? 'mac-arm64' : 'mac')
-    const app = resolve(output, 'Nova Audio Agent Ambient Orb.app')
-    executable = resolve(app, 'Contents/MacOS/Nova Audio Agent Ambient Orb')
+    const app = resolve(output, 'Nova Audio Agent Desktop.app')
+    executable = resolve(app, 'Contents/MacOS/Nova Audio Agent Desktop')
     resourcesRoot = resolve(app, 'Contents/Resources')
   } else if (platform === 'win32' && arch === 'x64') {
     const output = resolve(distRoot, 'win-unpacked')
-    executable = resolve(output, 'Nova Audio Agent Ambient Orb.exe')
+    executable = resolve(output, 'Nova Audio Agent Desktop.exe')
     resourcesRoot = resolve(output, 'resources')
   } else if (platform === 'linux' && arch === 'x64') {
     const output = resolve(distRoot, 'linux-unpacked')
-    executable = resolve(output, 'nova-ambient-orb')
+    executable = resolve(output, 'nova-audio-agent-desktop')
     resourcesRoot = resolve(output, 'resources')
   } else {
     throw new Error('packaged_codex_smoke_invalid')

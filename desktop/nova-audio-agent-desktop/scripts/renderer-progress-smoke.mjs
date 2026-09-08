@@ -10,7 +10,7 @@ import {DEFAULT_SETTINGS, publicSettings} from '../src/main/settings-store.mjs'
 import {settingsWindowOptions} from '../src/main/security.mjs'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
-const output = resolve(process.env.NOVA_RENDERER_SMOKE_OUTPUT || `${root}/desktop/ambient-orb/build/renderer-smoke`)
+const output = resolve(process.env.NOVA_RENDERER_SMOKE_OUTPUT || `${root}/desktop/nova-audio-agent-desktop/build/renderer-smoke`)
 await mkdir(output, {recursive:true})
 const browser = await chromium.launch({headless:true, ...(process.env.NOVA_BROWSER_EXECUTABLE ? {executablePath:process.env.NOVA_BROWSER_EXECUTABLE} : {})})
 try {
@@ -18,7 +18,7 @@ try {
   await context.route('http://nova.test/**', async route => {
     const path = new URL(route.request().url()).pathname
     if (!/^\/[\w.-]+\.(html|css|mjs)$/.test(path)) return route.abort()
-    const body = await readFile(`${root}/desktop/ambient-orb/src/renderer${path}`)
+    const body = await readFile(`${root}/desktop/nova-audio-agent-desktop/src/renderer${path}`)
     await route.fulfill({body, contentType:path.endsWith('.mjs')?'text/javascript':path.endsWith('.css')?'text/css':'text/html'})
   })
   const page = await context.newPage()
@@ -134,7 +134,7 @@ try {
   await page.locator('.progress-bubble').click()
   inSettings=true
   zoom=1
-  const settingsBounds = settingsWindowOptions(resolve(root, 'desktop/ambient-orb/src/preload/preload.cjs'), 'smoke')
+  const settingsBounds = settingsWindowOptions(resolve(root, 'desktop/nova-audio-agent-desktop/src/preload/preload.cjs'), 'smoke')
   await page.setViewportSize({width:settingsBounds.width,height:settingsBounds.height})
   await page.goto('http://nova.test/settings.html')
   await page.locator('label:has(input[name="codexApprovalMode"][value="yolo"])').click()

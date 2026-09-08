@@ -1,5 +1,5 @@
 appId: ai.deepnovacore.nova-audio-agent.orb
-productName: Nova Audio Agent Ambient Orb
+productName: Nova Audio Agent Desktop
 electronVersion: 43.2.0
 asar: true
 asarUnpack:
@@ -106,9 +106,9 @@ linux:
     - deb
   category: Utility
   icon: build/icons
-  executableName: nova-ambient-orb
+  executableName: nova-audio-agent-desktop
   synopsis: "Nova ambient voice orb"
-  artifactName: "nova-ambient-orb-${version}-${arch}.${ext}"
+  artifactName: "nova-audio-agent-desktop-${version}-${arch}.${ext}"
   extraResources:
     - from: build/native/codex-sandbox-probe
       to: native/codex-sandbox-probe

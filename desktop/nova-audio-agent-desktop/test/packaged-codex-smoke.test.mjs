@@ -14,10 +14,10 @@ import {releaseCandidateWorkspace} from '../scripts/run-release-candidate-codex-
 test('packaged Codex smoke selects one fixed executable/resource layout per release tuple', async () => {
   const root = await realpath(await mkdtemp(resolve(tmpdir(), 'nova-packaged-codex-layout-')))
   const cases = [
-    ['darwin', 'arm64', 'mac-arm64/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', 'mac-arm64/Nova Audio Agent Ambient Orb.app/Contents/Resources'],
-    ['darwin', 'x64', 'mac/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', 'mac/Nova Audio Agent Ambient Orb.app/Contents/Resources'],
-    ['win32', 'x64', 'win-unpacked/Nova Audio Agent Ambient Orb.exe', 'win-unpacked/resources'],
-    ['linux', 'x64', 'linux-unpacked/nova-ambient-orb', 'linux-unpacked/resources'],
+    ['darwin', 'arm64', 'mac-arm64/Nova Audio Agent Desktop.app/Contents/MacOS/Nova Audio Agent Desktop', 'mac-arm64/Nova Audio Agent Desktop.app/Contents/Resources'],
+    ['darwin', 'x64', 'mac/Nova Audio Agent Desktop.app/Contents/MacOS/Nova Audio Agent Desktop', 'mac/Nova Audio Agent Desktop.app/Contents/Resources'],
+    ['win32', 'x64', 'win-unpacked/Nova Audio Agent Desktop.exe', 'win-unpacked/resources'],
+    ['linux', 'x64', 'linux-unpacked/nova-audio-agent-desktop', 'linux-unpacked/resources'],
   ]
   try {
     for (const [platform, arch, executable, resources] of cases) {

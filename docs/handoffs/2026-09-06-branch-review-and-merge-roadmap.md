@@ -36,24 +36,24 @@
 ### 1.2 `feature/chinese-wake-word` 工作树（全部未提交）
 
 ```text
- M desktop/ambient-orb/{THIRD_PARTY_NOTICES.md, package.json, native/macos_voice_io.swift}
- M desktop/ambient-orb/scripts/{build-contract,inspect-package,release-dependency-closure}.mjs
- M desktop/ambient-orb/src/main/{main,native-audio,security,settings-apply,settings-store}.mjs
- M desktop/ambient-orb/src/preload/preload.cjs
- M desktop/ambient-orb/src/renderer/{capture-worklet,index,settings-controller,settings}.mjs, settings.html
- M desktop/ambient-orb/test/{builder-config,main-security,native-audio,security,settings-apply,settings-panel,settings-store}.test.mjs
+ M desktop/nova-audio-agent-desktop/{THIRD_PARTY_NOTICES.md, package.json, native/macos_voice_io.swift}
+ M desktop/nova-audio-agent-desktop/scripts/{build-contract,inspect-package,release-dependency-closure}.mjs
+ M desktop/nova-audio-agent-desktop/src/main/{main,native-audio,security,settings-apply,settings-store}.mjs
+ M desktop/nova-audio-agent-desktop/src/preload/preload.cjs
+ M desktop/nova-audio-agent-desktop/src/renderer/{capture-worklet,index,settings-controller,settings}.mjs, settings.html
+ M desktop/nova-audio-agent-desktop/test/{builder-config,main-security,native-audio,security,settings-apply,settings-panel,settings-store}.test.mjs
  M package-lock.json  runtime/node-parity-audit.json
  M runtime/src/{desktop-bridge,desktop-service}.ts  runtime/test/desktop-bridge.test.ts
-?? desktop/ambient-orb/scripts/wake-word-smoke.mjs
-?? desktop/ambient-orb/src/main/wake-word/{model-manager,runtime,sherpa-detector,worker}.mjs
-?? desktop/ambient-orb/src/renderer/wake-audio.mjs
-?? desktop/ambient-orb/test/{wake-word,wake-word-model}.test.mjs
+?? desktop/nova-audio-agent-desktop/scripts/wake-word-smoke.mjs
+?? desktop/nova-audio-agent-desktop/src/main/wake-word/{model-manager,runtime,sherpa-detector,worker}.mjs
+?? desktop/nova-audio-agent-desktop/src/renderer/wake-audio.mjs
+?? desktop/nova-audio-agent-desktop/test/{wake-word,wake-word-model}.test.mjs
 ?? docs/specs/v0.2.0/10-local-wake-word.md
 ```
 
 与 dev 在 `9763e50` 之后同时改动、合并时会冲突的文件：`main.mjs`（dev +124 / wake +57）、`settings-apply.mjs`、
 `settings-store.mjs`、`settings-controller.mjs`、`settings.html`、`settings.mjs`、`preload.cjs`、`inspect-package.mjs`、
-`desktop/ambient-orb/package.json`、三份 settings/main-security 测试、`package-lock.json`（dev +504 行 knowledge 依赖）、
+`desktop/nova-audio-agent-desktop/package.json`、三份 settings/main-security 测试、`package-lock.json`（dev +504 行 knowledge 依赖）、
 `runtime/node-parity-audit.json`（dev +799 行）、`runtime/src/desktop-service.ts`。
 
 ### 1.3 `feature/voice-focus` 与 dev 的干跑合并
@@ -63,7 +63,7 @@
 | 文件 | 结果 | 说明 |
 |---|---|---|
 | `runtime/src/realtime/qwen.ts` | **冲突** | dev 在原地给 frontend-instructions 块加了 knowledge 两行；voice-focus 把整块搬去 `frontend-instructions.ts` |
-| `desktop/ambient-orb/scripts/utility-runtime-smoke.mjs` | **冲突** | 双方各自把 `await app.whenReady()` 改成 `.then()`；dev 另加 `--capability-status` 模式 |
+| `desktop/nova-audio-agent-desktop/scripts/utility-runtime-smoke.mjs` | **冲突** | 双方各自把 `await app.whenReady()` 改成 `.then()`；dev 另加 `--capability-status` 模式 |
 | `runtime/src/cascaded-realtime-assembly.ts` | 自动合并但**编译失败** ✔ | dev 侧调用 `frontendInstructions({ …, knowledge })`，voice-focus 侧的 `FrontendModuleSelection` 没有 `knowledge` 字段（TS2353） |
 | `runtime/test/knowledge-assembly.test.ts` | 未触碰但**会失败** ✔ | `:15` 断言 `frontendInstructions({knowledge: true})` 含 `mcp__nova_knowledge__recall` |
 | `runtime/node-parity-audit.json` | 自动合并 | 结构正确：219 files / 380 occurrences、无重复键、排序正确；`--check` 的数量校验仍需实跑 |
@@ -240,12 +240,12 @@ windows-latest / ubuntu-latest / macos-latest 上跑过**。本机跳过的 8 �
 | R-B | Important（发布前修） | 两个生产 assembly 是手抄：`qwen-realtime-assembly.ts:110-131` ≈ `cascaded-realtime-assembly.ts:271-292`（差 2 行）；`:155-193` ≈ `:309-345`（约 40 行 `...(options.X === undefined ? {} : {X})` 转发，差 3 行）；`:147-153` 与 `:301-307` 字节相同；`validateCodingResource` 两处相同。两文件在本分支 **13/13 个 commit 同时变更**。`integrated-realtime-assembly.ts:41,51` 的"注册表"是假的（`if (provider !== 'qwen') throw; registry.qwen(...)`），级联侧 ASR/TTS 用 `registry[selection.x]` 是对的，LLM 又是三元。修法：`realtime-assembly.ts` 里一个 `composeRealtime(core, provider, options, providerTuning)`，每管线只传 3 字段 tuning | 上述行号 | ◦ |
 | R-C | Important | provider 合同的三个非字面量泄漏：(1) `realtime-assembly.ts:35` 从 `realtime/qwen.js` import `renderActive*Context`；(2) `qwen.ts:16` 从 `cascaded/llm.js` import `HOST_ACTIVATION_PREFIX`（integrated 依赖 cascaded 的模块）；(3) provider 能力协商发生在 `#startFresh`（`realtime-assembly.ts:327`）而非 build 期，缺少 `capabilities: {...}` 字段。**(1)(2) 由 voice-focus 合并顺带修掉** ✔（见 3.1）；(3) 留 v0.3 | `realtime-assembly.ts:35, 327, 656`；`qwen.ts:16, 55` | ✔/◦ |
 | R-D | **Critical（发布前）** | **executor 边界未被证明，门禁是漏的。** spec 07 自己的验收标准（`07-executor-boundary.md:379` "Fixture executor (boundary proof)"，`:436` 复选框未勾）要求一个不 import Codex 的 fixture executor 跑通完整端口；`runtime/src/executors/` 下**没有** `fixture/`，`runtime/test/` 下**没有** `executor-boundary-fixture.test.ts` ✔。`check-executor-boundary.mjs:14` 的正则 `/['"]codex['"]\|codex__\|Codex[A-Z]/` 报"15 allowlisted"，而核心区大小写不敏感 `codex` 实际 **173 处** ✔，包括：**用户可听见的中文文案** `service-state.ts:68-69` `'Codex 当前正忙，本次操作未执行。'` ✔（spec 07 要求 `display_name` 替换）；**模型可见的 Surrogate prompt** `prompting.ts:98, 148-154` 用 Codex 词汇写注意力策略（golden 固定）；死代码 `FASTBRAIN_LIVE_SYSTEM`（`prompting.ts:42-89`）含已退役的 `codex.run/steer/status`，仅被 `prompting.test.ts` 引用 ✔；`codexResource` 命名遍布三个 assembly；`asProjectAdapter` 用 9 属性 duck-type + cast 恢复合同。此外 `ports.ts:118 executorRoleSchema = z.enum(['coding'])` + `coding-executor.ts:152-155`（>1 claimant 抛错）意味着 **Codex 与第二个 coding executor 只能替换、不能共存**（v0.3 设计项） | 上述 | ✔ |
-| R-E | Important（便宜） | 桌面耦合：`DesktopOutputCallbacks` 9 个回调与 `RealtimeAssemblyOptions` 同名 9 个逐一手转发（一个 `onOutput(frame)` 判别联合即可收敛）；`desktop.ts:49-50` 重复声明 `desktop-wire.ts:27-28` 的 `MAX_DESKTOP_JSON_BYTES / MAX_DESKTOP_PCM_BYTES` ✔；**renderer 手写 wire 帧类型字面量**（`renderer/index.mjs:814, 817, 900, 923`、`confirmation-controls.mjs:93, 153`、`bubbles.mjs:9`，共 6 处；`desktop/ambient-orb/src` 中零处引用 `desktop-wire`）✔——改名一个帧类型两侧测试都绿、orb 静默失效。runtime 的 project store 依赖 Electron `process.resourcesPath` 定位原生 addon，包外打不开（fail-closed，但 `cli.ts` 无 project-store 路径） | 上述 | ✔ |
+| R-E | Important（便宜） | 桌面耦合：`DesktopOutputCallbacks` 9 个回调与 `RealtimeAssemblyOptions` 同名 9 个逐一手转发（一个 `onOutput(frame)` 判别联合即可收敛）；`desktop.ts:49-50` 重复声明 `desktop-wire.ts:27-28` 的 `MAX_DESKTOP_JSON_BYTES / MAX_DESKTOP_PCM_BYTES` ✔；**renderer 手写 wire 帧类型字面量**（`renderer/index.mjs:814, 817, 900, 923`、`confirmation-controls.mjs:93, 153`、`bubbles.mjs:9`，共 6 处；`desktop/nova-audio-agent-desktop/src` 中零处引用 `desktop-wire`）✔——改名一个帧类型两侧测试都绿、orb 静默失效。runtime 的 project store 依赖 Electron `process.resourcesPath` 定位原生 addon，包外打不开（fail-closed，但 `cli.ts` 无 project-store 路径） | 上述 | ✔ |
 | R-F | Important（部分发布前） | 持久化：6 种落盘机制、5 个各自展开 `~/` 的路径解析（`capability-registry.ts:244`、`knowledge/assembly.ts:28`、`workspace-graph/factory.ts:41`、`realtime/telemetry.ts:142`、`executors/codex/host-config.ts:112`）；核心 state root 由 **Codex 所有的** env key `NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT` 命名。`project-store.ts:2520-2599 #saveState` 是模范实现（temp + fsync + `renameAt` + 目录 fsync + 身份复验 + fail-closed 原生锁）；但 `capabilities.json` 无原子写无锁（spec review P2-6 已接受却未实现）；维护 journal 回放不在 `ProjectStore.open()` 里（崩溃后 `state_busy` 直到桌面碰巧跑维护）。Memory 纯内存、不持久，glossary 不变量 3 是进程内顺序保证而非持久化——文档应说明 | 上述 | ◦ |
 | R-G | Important（发布前加一项） | 测试：156 文件 / 80,742 行；`realtime-service.test.ts` **10,365 行**。session reducer 有 26 个 oracle fixture（好）；service 只有 11 个且全是 `compareQueuedHostResponses` 比较器场景——**delivery pass 作为状态机没有任何 fixture**。47 文件用计时器，170 处 `setImmediate` 作为"delivery pass 已静止"的屏障，另有 5 ms / 20 ms 真实 sleep（`:1239, 4922, 4954`）——编码了生产代码当前的 await 点数量。修法：`deliveryState(): DeliverySnapshot` + `(snapshot, event) → snapshot'` fixture 表，可退役大部分 `*ForTest` | 上述 | ◦ |
 | R-H | Minor（建议收窄） | Python 遗产：`python-text.ts` 被 51 个文件引用，保留。parity audit 门禁已成摩擦：190 KB / 378 条，**本分支 20/92 个 commit 触碰该 json（+2607/−956）**，多为 `occurrence_index` 重编号；`numeric_template/numeric_string/number_format` 三类 142 条（38%）全部 disposition 为 `wire_json`（即"没问题"），而 wire 边界已由 `canonical-json.ts` 独立保证。建议：去掉这三类、不再固定 file inventory、以 `snippet_sha256` 而非序号为键；顺带删除 `FASTBRAIN_SYSTEM / FASTBRAIN_LIVE_SYSTEM` 及其 golden | `node-parity-audit.mjs:73-77, 135-137` | ◦ |
 
-### 4.3 桌面端（`desktop/ambient-orb`）
+### 4.3 桌面端（`desktop/nova-audio-agent-desktop`）
 
 | # | 级别 | 发现 | 证据 | 复核 |
 |---|---|---|---|---|
@@ -389,7 +389,7 @@ provider `capabilities` 字段（R-C(3)）；K-6 recall 预算与分块 cosine�
    失败测试，再补 terminal/provider_error 驱动的释放）、I9（给 provider-session 测试加显式屏障）、I5 专门测试、
    删除孤儿诊断 json、修正 parity audit 两条 `line` 字段。该 worktree 上跑 `npm run check` + `test:runtime`。
 2. 主 checkout `git merge --no-ff feature/voice-focus`，按 3.2 的四条处方解决；`node runtime/scripts/node-parity-audit.mjs --check`。
-3. 全量门禁 + 三套测试；`npm run smoke:node-backend --workspace @nova-audio-agent/ambient-orb` 验证 smoke 脚本可加载。
+3. 全量门禁 + 三套测试；`npm run smoke:node-backend --workspace @nova-audio-agent/desktop` 验证 smoke 脚本可加载。
 
 ### Phase 2 — `feature/chinese-wake-word`
 

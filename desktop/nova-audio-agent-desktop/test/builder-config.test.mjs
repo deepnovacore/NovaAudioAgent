@@ -273,9 +273,9 @@ test('mac points at the generated .icns and win at the generated .ico', () => {
 test('linux is described for packaging: category, icon dir, executable name, synopsis', () => {
   assert.equal(config.linux.category, 'Utility')
   assert.equal(config.linux.icon, 'build/icons')
-  assert.equal(config.linux.executableName, 'nova-ambient-orb')
+  assert.equal(config.linux.executableName, 'nova-audio-agent-desktop')
   assert.equal(config.linux.synopsis, 'Nova ambient voice orb')
-  assert.equal(config.linux.artifactName, 'nova-ambient-orb-${version}-${arch}.${ext}')
+  assert.equal(config.linux.artifactName, 'nova-audio-agent-desktop-${version}-${arch}.${ext}')
 })
 
 test('the staged application carries the complete deb maintainer metadata', async () => {
@@ -522,10 +522,10 @@ test('unsigned Windows workflow is manual-only and never creates a release', asy
     'npm run test:runtime:win',
     'npm run test:desktop',
     'npm run build',
-    'npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb',
-    'npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb',
-    'npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}',
-    'npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb',
+    'npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/desktop',
+    'npm run inspect:release-package --workspace @nova-audio-agent/desktop',
+    'npm run collect:release-artifacts --workspace @nova-audio-agent/desktop -- --target-id ${{ matrix.target_id }}',
+    'npm run prepare:release-smoke-kit --workspace @nova-audio-agent/desktop',
   ]) assert.ok(packageRuns.includes(command), command)
   const runtimeTests = packageSteps.find(step => step.run === 'npm run test:runtime:win')
   assert.deepEqual(runtimeTests, {run: 'npm run test:runtime:win'})
@@ -540,9 +540,9 @@ test('unsigned Windows workflow is manual-only and never creates a release', asy
     && step.with?.name === '${{ matrix.artifact_name }}'
   ))
   assert.deepEqual(upload.with.path.split('\n'), [
-    'desktop/ambient-orb/build/release-artifacts/**',
-    'desktop/ambient-orb/build/release-digests/**',
-    'desktop/ambient-orb/build/release-smoke-kit/**',
+    'desktop/nova-audio-agent-desktop/build/release-artifacts/**',
+    'desktop/nova-audio-agent-desktop/build/release-digests/**',
+    'desktop/nova-audio-agent-desktop/build/release-smoke-kit/**',
   ])
   assert.doesNotMatch(upload.with.path, /(?:^|\/)dist(?:\/|$)/u)
 

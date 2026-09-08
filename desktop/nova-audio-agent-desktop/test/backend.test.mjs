@@ -43,7 +43,7 @@ function nodeLaunchSpec(options) {
   return backendLaunchSpec({
     backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
-    nodeResourcesPath: '/repo/desktop/ambient-orb/build',
+    nodeResourcesPath: '/repo/desktop/nova-audio-agent-desktop/build',
     ...options,
   })
 }
@@ -188,7 +188,7 @@ test('launch spec cannot construct the retired Python process', () => {
 
 test('Node launch uses the compiled utility-process entry and no writable stdin', () => {
   const nodeEntry = '/repo/runtime/dist/src/desktop-entry.js'
-  const nodeResourcesPath = '/repo/desktop/ambient-orb/build'
+  const nodeResourcesPath = '/repo/desktop/nova-audio-agent-desktop/build'
   const spec = nodeLaunchSpec({
     backend: 'node',
     nodeEntry,
@@ -231,7 +231,7 @@ test('resolved desktop settings override inherited Codex and model configuration
   const spec = nodeLaunchSpec({
     backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
-    nodeResourcesPath: '/repo/desktop/ambient-orb/build',
+    nodeResourcesPath: '/repo/desktop/nova-audio-agent-desktop/build',
     workspace: '/environment/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -352,7 +352,7 @@ test('resolved desktop configuration removes an invalid inherited Codex binary',
   const spec = nodeLaunchSpec({
     backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
-    nodeResourcesPath: '/repo/desktop/ambient-orb/build',
+    nodeResourcesPath: '/repo/desktop/nova-audio-agent-desktop/build',
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -374,7 +374,7 @@ test('resolved desktop configuration removes an invalid inherited Codex binary',
 })
 
 test('runtime entry resolves inside the workspace for dev and the asar for packages', () => {
-  const developmentPackage = resolve('/repo/desktop/ambient-orb')
+  const developmentPackage = resolve('/repo/desktop/nova-audio-agent-desktop')
   assert.equal(nodeRuntimeEntry({
     isPackaged: false,
     appPath: developmentPackage,

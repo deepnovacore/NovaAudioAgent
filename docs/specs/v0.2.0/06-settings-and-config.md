@@ -7,11 +7,11 @@
 ## Baseline (before v0.2.0)
 
 - Desktop store: `SETTINGS_VERSION = 3`,
-  [`desktop/ambient-orb/src/main/settings-store.mjs`](../../../desktop/ambient-orb/src/main/settings-store.mjs).
+  [`desktop/nova-audio-agent-desktop/src/main/settings-store.mjs`](../../../desktop/nova-audio-agent-desktop/src/main/settings-store.mjs).
 - Apply path: `applySettingsTransaction` writes, publishes, then restarts the
-  backend ([`settings-apply.mjs`](../../../desktop/ambient-orb/src/main/settings-apply.mjs)).
+  backend ([`settings-apply.mjs`](../../../desktop/nova-audio-agent-desktop/src/main/settings-apply.mjs)).
 - Backend env mapping:
-  [`desktop/ambient-orb/src/main/backend.mjs`](../../../desktop/ambient-orb/src/main/backend.mjs).
+  [`desktop/nova-audio-agent-desktop/src/main/backend.mjs`](../../../desktop/nova-audio-agent-desktop/src/main/backend.mjs).
 - Runtime schema: [`runtime/src/config.ts`](../../../runtime/src/config.ts)
   `settingsSchema` +
   [`runtime/src/environment-contract.ts`](../../../runtime/src/environment-contract.ts).
@@ -110,7 +110,7 @@ Doctor / CLI validate both layers.
 ## Coordinated commit
 
 `applySettingsTransaction`
-([`settings-apply.mjs`](../../../desktop/ambient-orb/src/main/settings-apply.mjs))
+([`settings-apply.mjs`](../../../desktop/nova-audio-agent-desktop/src/main/settings-apply.mjs))
 runs one `coordinator.run('settings_save')` for validation, durable recovery
 snapshot, file writes, configuration preparation, and backend activation. `busy`
 changes neither file. Failed activation restores the preceding files; saving is

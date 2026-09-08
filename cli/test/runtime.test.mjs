@@ -86,7 +86,7 @@ test('checksum failure leaves no runnable installation', async () => {
     /checksum mismatch/u,
   )
   const root = join(home, '.nova-audio-agent/cli/releases/0.1.1/win32-x64')
-  await assert.rejects(readFile(join(root, 'Nova Audio Agent Ambient Orb.exe')))
+  await assert.rejects(readFile(join(root, 'Nova Audio Agent Desktop.exe')))
 })
 
 test('a failed replacement preserves an existing cache directory', async () => {
@@ -140,14 +140,14 @@ test('an interrupted download leaves no partial executable', async () => {
     ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture}),
     /connection lost/u,
   )
-  const executable = join(home, '.nova-audio-agent/cli/releases/0.1.1/win32-x64/Nova Audio Agent Ambient Orb.exe')
+  const executable = join(home, '.nova-audio-agent/cli/releases/0.1.1/win32-x64/Nova Audio Agent Desktop.exe')
   await assert.rejects(readFile(executable))
 })
 
 test('doctor exposes only configured secret key names', async () => {
   const home = await mkdtemp(join(tmpdir(), 'novaaudio-cli-'))
   const appData = join(home, 'appdata')
-  const settings = join(appData, 'Nova Audio Agent Ambient Orb/ambient-orb-settings.json')
+  const settings = join(appData, 'Nova Audio Agent Desktop/ambient-orb-settings.json')
   await mkdir(join(settings, '..'), {recursive: true})
   await writeFile(settings, JSON.stringify({secrets: {OPENAI_API_KEY: 'secret-value'}}))
   const report = await inspectDoctor({...TARGET_OPTIONS, home, environment: {APPDATA: appData}})

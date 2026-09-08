@@ -120,7 +120,7 @@ test('client environment loads literal dotenv values while the invoking shell wi
 test('dependency readiness is based on the real Electron executable, not its package manifest', () => {
   assert.equal(
     electronExecutablePath('/repo', 'darwin'),
-    '/repo/desktop/ambient-orb/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',
+    '/repo/desktop/nova-audio-agent-desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',
   )
   assert.equal(
     electronExecutablePath('C:\\repo', 'win32'),
@@ -128,7 +128,7 @@ test('dependency readiness is based on the real Electron executable, not its pac
   )
   assert.equal(
     electronExecutablePath('/repo', 'linux'),
-    '/repo/desktop/ambient-orb/node_modules/electron/dist/electron',
+    '/repo/desktop/nova-audio-agent-desktop/node_modules/electron/dist/electron',
   )
 })
 
@@ -198,7 +198,7 @@ test('client launch plan installs when needed, builds once, and forces the Node 
     {command: '/opt/node', args: ['/opt/npm/bin/npm-cli.js', 'ci']},
     {
       command: '/opt/node',
-      args: ['/repo/desktop/ambient-orb/node_modules/electron/install.js'],
+      args: ['/repo/desktop/nova-audio-agent-desktop/node_modules/electron/install.js'],
     },
     {command: '/opt/node', args: ['/opt/npm/bin/npm-cli.js', 'run', 'build']},
     {
@@ -208,7 +208,7 @@ test('client launch plan installs when needed, builds once, and forces the Node 
         'run',
         'start:built',
         '--workspace',
-        '@nova-audio-agent/ambient-orb',
+        '@nova-audio-agent/desktop',
       ],
     },
   ])
@@ -257,7 +257,7 @@ test('client launch plan is Windows-safe and skips an unnecessary install', () =
         'run',
         'start:built',
         '--workspace',
-        '@nova-audio-agent/ambient-orb',
+        '@nova-audio-agent/desktop',
       ],
     },
   ])
