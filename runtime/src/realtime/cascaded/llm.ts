@@ -33,6 +33,8 @@ export interface CascadedLlmSession {
     readonly tools: readonly CascadedLlmTool[]
     /** Replaceable provider-visible context for this request; never committed to history. */
     readonly workspaceContext?: string | null
+    /** Replaceable response guidance for this request; never committed to history. */
+    readonly responseAdaptation?: string | null
     readonly signal: AbortSignal
   }): AsyncIterable<CascadedLlmEvent>
   /** Discards only an unfinished response continuation, retaining completed history. */

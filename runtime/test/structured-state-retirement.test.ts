@@ -23,13 +23,13 @@ test('context views omit retired structured state and unresolved-question afford
   assert.deepEqual(view.affordances, [])
 })
 
-test('retired update calls use ordinary unknown-tool refusal', () => {
+test('retired update calls use ordinary unknown-tool refusal', async () => {
   const bridge = new RealtimeRuntimeBridge({
     runtime: {} as never,
     tools: compileToolSchema([]),
     idFactory: () => 'id',
   })
-  const result = bridge.acceptToolCall({
+  const result = (await bridge.acceptToolCall({
     kind: 'tool_call_ready',
     session_epoch: 1,
     item_id: 'item-1',
@@ -37,7 +37,7 @@ test('retired update calls use ordinary unknown-tool refusal', () => {
     name: 'update_intent',
     call_id: 'call-1',
     arguments: {uncertainty: 0.1},
-  })
+  }))
   assert.equal(result.accepted, false)
   assert.equal(result.code, 'unknown_tool')
 })

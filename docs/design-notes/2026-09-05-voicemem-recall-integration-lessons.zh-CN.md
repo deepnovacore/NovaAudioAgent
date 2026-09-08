@@ -4,6 +4,18 @@
 
 本文记录本次侧边讨论的结论，供主线程架构设计和实现参考。文中的 Nova 接入方式是建议，不代表已经实现；本文不修改既有架构合同或主线程的功能范围。
 
+## 2026-09-06：后端可替换的接入边界
+
+当前独立 worktree 采用 `runtime/src/memory/personal-memory.ts` 定义 Nova 的个人持久记忆接口，VoiceMem 是首个适配器。`memory__recall` 和 realtime assembly 依赖这个接口，具体后端由 `memory/factory.ts` 构造。
+
+- `open/close` 管理资源；`remember` 成功只代表原始来源已持久保存，可在重启后恢复抽取，不代表记忆已经可检索。墓碑返回 `deleted`，不能复活已删除来源。
+- `recall` 返回文本、后端内稳定 ID 与证据引用；分类、归属、日期和相关性分数均可省略。分数仅在同一后端内有意义，不作为跨后端置信度。可选 `contextHits` 表示用于回复适应的上下文；VoiceMem 的左右脑路由和 SQLite/Worker 协议留在适配器内。
+- 用户身份由宿主构造时固定；仅接收已被 Nova 接纳的最终用户转写。模型不能选择用户、数据库或把个人记忆升级为执行授权。
+- `NOVA_AUDIO_AGENT_MEMORY_BACKEND` 当前支持 `disabled`（默认）和 `voicemem`；`MEMORY_PATH`、`MEMORY_USER_ID` 使用相同前缀。尚未实现 mem0，未知后端立即报错。未来新增适配器及其配置，不改召回和转写接入流程。
+- Blackboard、项目历史与 workspace graph 仍各自负责会话因果状态、工作成果和项目关系。替换个人记忆后端不等于迁移历史数据，也不代表已实现回复开始前的偏好注入。
+
+第二个后端必须通过相同契约验收：宿主身份隔离、重复来源幂等、真实持久写入确认、关闭/取消、错误与空结果区分、证据不伪造、结果长度限制。无法直接保证持久写入确认的远端后端，需要适配器先可靠保存来源或等待远端明确确认。
+
 ## 1. 最重要的结论
 
 建议给现有 `memory__recall` 增加 VoiceMem 查询来源，复用同一个工具入口。VoiceMem 作为个人事实、偏好、情绪与人格记忆的后端，与会话 blackboard、项目工作历史和 workspace graph 共存。

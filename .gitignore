@@ -23,6 +23,7 @@ dist/
 # JavaScript and Electron
 node_modules/
 build/
+/desktop/ambient-orb/build
 desktop/ambient-orb/dist/
 runtime/dist/
 

@@ -39,6 +39,7 @@ export interface ChannelView {
   readonly summary: string | null
   readonly recent: readonly MemoryItem[]
   readonly omitted: number
+  readonly historical_through_seq?: number
 }
 
 export interface ContextView {
@@ -70,6 +71,7 @@ export function compileContextView(
     summary: channel.summary,
     recent: channel.items.slice(-RECENT_LIMIT),
     omitted: Math.max(channel.items.length - RECENT_LIMIT, 0),
+    ...(channel.restoredThroughSequence === 0 ? {} : {historical_through_seq: channel.restoredThroughSequence}),
   }))
   const inFlight = [...(options.inFlight ?? [])]
     .sort(compareDelegates)
@@ -108,6 +110,7 @@ function compileProbes(
     const manifest = manifestsByName.get(channel.name)
     if (manifest === undefined || manifest.probe_policy === 'none') continue
     for (const item of channel.recent) {
+      if (item.seq <= (channel.historical_through_seq ?? 0)) continue
       if (item.outcome !== 'unknown') continue
       for (const operation of manifest.ops) {
         if (!operation.readonly) continue
@@ -162,6 +165,7 @@ function compileUpdates(
   for (const channel of channels) {
     if (channel.name === CONVERSATION_CHANNEL || channel.recent.length === 0) continue
     const item = channel.recent.at(-1)!
+    if (item.seq <= (channel.historical_through_seq ?? 0)) continue
     if (now - item.ts > freshWindow) continue
     output.push({
       source: 'channel_update',

@@ -44,6 +44,28 @@ export const memoryItemSchema = z.object({
 
 export type MemoryItem = z.infer<typeof memoryItemSchema>
 
+/** Recovery contains records only: no executable delegates, events or capabilities. */
+export const memoryChannelSnapshotSchema = z.object({
+  name: z.string().min(1).max(512), highWater: z.number().int().nonnegative(),
+  retentionRevision: z.number().int().nonnegative(),
+  summary: z.object({text: z.string().max(65_536), throughSequence: z.number().int().positive(),
+    expiresAtMs: z.number().int().nonnegative()}).strict().nullable(),
+  items: z.array(z.object({item: memoryItemSchema, recordedAtMs: z.number().int().nonnegative(),
+    ordinal: z.number().int().positive()}).strict()).max(10_000),
+}).strict().superRefine((channel, context) => {
+  let previous = 0
+  for (const {item} of channel.items) {
+    if (item.channel !== channel.name || item.seq <= previous || item.seq > channel.highWater) {
+      context.addIssue({code: 'custom', message: 'invalid recovered record sequence'})
+    }
+    previous = item.seq
+  }
+  if (channel.summary !== null && !channel.items.some(({item}) => item.seq === channel.summary!.throughSequence)) {
+    context.addIssue({code: 'custom', message: 'missing recovered summary source'})
+  }
+})
+export type MemoryChannelSnapshot = z.infer<typeof memoryChannelSnapshotSchema>
+
 export const handoffPolicySchema = z.object({
   channel: z.string().min(1),
   priority: z.number().int(),
@@ -122,22 +144,109 @@ export interface AppendMemoryItem {
 export class Channel {
   readonly name: string
   #items: MemoryItem[] = []
+  #lastSequence = 0
+  #retentionRevision = 0
+  #summaryThroughSequence = 0
+  readonly #restoredThroughSequence: number
+  readonly #restoredRecords = new Map<number, {recordedAtMs: number; ordinal: number}>()
+  readonly #writable: boolean
   summary: string | null = null
   uncompressed = 0
 
-  constructor(name: string) {
+  constructor(name: string, recovery?: MemoryChannelSnapshot, writable = true) {
     if (name === '') throw new TypeError('channel name cannot be empty')
     this.name = name
+    this.#writable = writable
+    const recovered = recovery === undefined ? undefined : memoryChannelSnapshotSchema.parse(recovery)
+    if (recovered !== undefined && recovered.name !== name) throw new TypeError('recovered channel mismatch')
+    this.#restoredThroughSequence = recovered?.highWater ?? 0
+    if (recovered !== undefined) {
+      this.#items = recovered.items.map(record => record.item)
+      this.#lastSequence = recovered.highWater
+      this.#retentionRevision = recovered.retentionRevision
+      this.summary = recovered.summary?.text ?? null
+      this.#summaryThroughSequence = recovered.summary?.throughSequence ?? 0
+      this.uncompressed = this.#items.filter(item => item.seq > this.#summaryThroughSequence).length
+      for (const record of recovered.items) this.#restoredRecords.set(record.item.seq, {
+        recordedAtMs: record.recordedAtMs, ordinal: record.ordinal,
+      })
+    }
+  }
+
+  get restoredThroughSequence(): number { return this.#restoredThroughSequence }
+  get highWater(): number { return this.#lastSequence }
+  get summaryThroughSequence(): number { return this.#summaryThroughSequence }
+
+  restoredRecord(sequence: number): Readonly<{recordedAtMs: number; ordinal: number}> | undefined {
+    return this.#restoredRecords.get(sequence)
   }
 
   get items(): readonly MemoryItem[] {
     return this.#items
   }
 
+  get retentionRevision(): number {
+    return this.#retentionRevision
+  }
+
+  getBySeq(sequence: number): MemoryItem | undefined {
+    return this.#items.find(item => item.seq === sequence)
+  }
+
+  /** Retention never renumbers records or lets a stale compressor restore removed sources. */
+  pruneThrough(sequence: number): void {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) throw new RangeError('invalid retention sequence')
+    const retained = this.#items.filter(item => item.seq > sequence)
+    if (retained.length === this.#items.length) return
+    this.applyRetention(Math.min(sequence, this.#lastSequence), this.#retentionRevision + 1)
+  }
+
+  /** Store receipts carry an absolute revision, including summary-only expiry at sequence zero. */
+  applyRetention(sequence: number, revision: number): void {
+    if (!Number.isSafeInteger(sequence) || sequence < 0 || sequence > this.#lastSequence
+      || !Number.isSafeInteger(revision) || revision < this.#retentionRevision) throw new RangeError('invalid retention receipt')
+    const retained = this.#items.filter(item => item.seq > sequence)
+    if (revision === this.#retentionRevision) {
+      if (retained.length !== this.#items.length) throw new RangeError('conflicting retention receipt')
+      return
+    }
+    this.#items = retained
+    for (const seq of this.#restoredRecords.keys()) if (seq <= sequence) this.#restoredRecords.delete(seq)
+    this.#retentionRevision = revision
+    this.#summaryThroughSequence = 0
+    this.summary = null
+    this.uncompressed = retained.length
+  }
+
+  replaceSummary(summary: string, throughSequence: number, retentionRevision: number): boolean {
+    if (!this.#writable) return false
+    if (retentionRevision !== this.#retentionRevision) return false
+    if (throughSequence < this.#summaryThroughSequence) return false
+    if (!Number.isSafeInteger(throughSequence) || this.getBySeq(throughSequence) === undefined) return false
+    this.summary = summary
+    this.#summaryThroughSequence = throughSequence
+    this.uncompressed = this.#items.filter(item => item.seq > throughSequence).length
+    return true
+  }
+
+  /** Forget the live projection without making a future record reuse this channel's sequence. */
+  clear(retentionRevision = this.#retentionRevision + 1): void {
+    if (!Number.isSafeInteger(retentionRevision) || retentionRevision < this.#retentionRevision) {
+      throw new RangeError('invalid clear retention revision')
+    }
+    this.#items = []
+    this.#restoredRecords.clear()
+    this.#retentionRevision = retentionRevision
+    this.#summaryThroughSequence = 0
+    this.summary = null
+    this.uncompressed = 0
+  }
+
   append(input: AppendMemoryItem): MemoryItem {
+    if (!this.#writable) throw new Error('historical channel is read-only')
     const item = memoryItemSchema.parse({
       channel: this.name,
-      seq: this.#items.length + 1,
+      seq: this.#lastSequence + 1,
       ts: input.ts,
       trust: input.trust,
       priority: input.priority,
@@ -146,6 +255,7 @@ export class Channel {
       refs: [...(input.refs ?? [])],
     })
     this.#items = [...this.#items, item]
+    this.#lastSequence = item.seq
     this.uncompressed += 1
     return item
   }
@@ -155,17 +265,67 @@ export class Memory {
   readonly scope: ConversationScope
   readonly policies = new Map<string, HandoffPolicy>()
   readonly channels = new Map<string, Channel>()
+  #recovered = false
 
   constructor(options: {
     readonly scope?: ConversationScope
     readonly policies?: readonly HandoffPolicy[]
+    readonly recovery?: readonly MemoryChannelSnapshot[]
   } = {}) {
     this.scope = conversationScopeSchema.parse(options.scope ?? {})
     for (const policy of [CONVERSATION_CHANNEL_POLICY, ...(options.policies ?? [])]) {
       const parsed = handoffPolicySchema.parse(policy)
       this.policies.set(parsed.channel, parsed)
     }
-    for (const channel of this.policies.keys()) this.channels.set(channel, new Channel(channel))
+    this.#replaceChannels(options.recovery ?? [])
+    this.#recovered = options.recovery !== undefined
+  }
+
+  /** Startup only; an existing reducer's Memory identity stays stable for its readers. */
+  restore(snapshot: readonly MemoryChannelSnapshot[]): void {
+    if (this.#recovered || [...this.channels.values()].some(channel => channel.highWater !== 0 || channel.summary !== null)) {
+      throw new Error('memory recovery requires an unused instance')
+    }
+    this.#replaceChannels(snapshot)
+    this.#recovered = true
+  }
+
+  /** A live clear retains the configured channels and their sequence watermarks. */
+  clear(retentionRevisions?: ReadonlyMap<string, number>): void {
+    if (retentionRevisions !== undefined) {
+      if (retentionRevisions.size !== this.channels.size) throw new RangeError('clear retention revisions must cover every channel')
+      for (const name of retentionRevisions.keys()) {
+        if (!this.channels.has(name)) throw new RangeError('clear retention revisions contain an unknown channel')
+      }
+    }
+    for (const [name, channel] of this.channels) {
+      channel.clear(retentionRevisions?.get(name))
+    }
+  }
+
+  #replaceChannels(snapshot: readonly MemoryChannelSnapshot[]): void {
+    const recovery = new Map(snapshot.map(channel => [channel.name, channel]))
+    if (recovery.size !== snapshot.length) throw new TypeError('duplicate recovered channel')
+    const channels = new Map<string, Channel>()
+    for (const channel of new Set([...this.policies.keys(), ...recovery.keys()])) {
+      channels.set(channel, new Channel(channel, recovery.get(channel), this.policies.has(channel)))
+    }
+    this.channels.clear()
+    for (const [name, channel] of channels) this.channels.set(name, channel)
+  }
+
+  isHistorical(item: Pick<MemoryItem, 'channel' | 'seq'>): boolean {
+    return item.seq <= (this.channels.get(item.channel)?.restoredThroughSequence ?? 0)
+  }
+
+  /** Process-local timestamps cannot order records from different process lifetimes. */
+  compareRecency(left: MemoryItem, right: MemoryItem): number {
+    const leftRecord = this.channels.get(left.channel)?.restoredRecord(left.seq)
+    const rightRecord = this.channels.get(right.channel)?.restoredRecord(right.seq)
+    if (leftRecord !== undefined && rightRecord !== undefined) return rightRecord.ordinal - leftRecord.ordinal
+    if (leftRecord !== undefined) return 1
+    if (rightRecord !== undefined) return -1
+    return right.ts - left.ts
   }
 
   append(channel: string, input: AppendMemoryItem): MemoryItem {

@@ -65,6 +65,8 @@ export interface RecallHit {
   readonly outcome: Outcome | null
   readonly match: RecallMatch
   readonly evidence: string
+  readonly historical?: true
+  readonly recorded_at_ms?: number
 }
 
 export interface RecallView {
@@ -140,12 +142,12 @@ export function compileMemoryRecall(
   let ranked: Candidate[]
   let match: RecallMatch
   if (lexical.length > 0) {
-    ranked = [...lexical].sort(byLexicalRank)
+    ranked = [...lexical].sort((left, right) => right.score - left.score || byRecencyRank(memory, left, right))
     match = 'lexical'
   } else {
     // Nothing matched, so the newest items are a better answer than none: the model asked about
     // something, and recent context is more likely relevant than silence.
-    ranked = [...candidates].sort(byRecencyRank)
+    ranked = [...candidates].sort((left, right) => byRecencyRank(memory, left, right))
     match = 'recency_fallback'
   }
 
@@ -165,6 +167,10 @@ export function compileMemoryRecall(
       outcome: candidate.item.outcome ?? null,
       match,
       evidence: candidate.evidence,
+      ...(memory.isHistorical(candidate.item) ? {
+        historical: true as const,
+        recorded_at_ms: memory.channels.get(candidate.item.channel)!.restoredRecord(candidate.item.seq)!.recordedAtMs,
+      } : {}),
     })),
     omitted: ranked.length - selected.length,
   }
@@ -217,14 +223,20 @@ function encodeRecallPayload(
   removed: number,
 ): string {
   const encodedHits = hits.map(hit => {
+    if ((hit.historical === true) !== (hit.recorded_at_ms !== undefined)
+      || (hit.recorded_at_ms !== undefined && (!Number.isSafeInteger(hit.recorded_at_ms) || hit.recorded_at_ms < 0))) {
+      throw new RangeError('historical recall requires a valid recorded_at_ms')
+    }
     requireWellFormed(hit.evidence, 'evidence')
     requireWellFormed(hit.channel, 'channel')
     requireWellFormed(hit.ref, 'ref')
     const fields: readonly (readonly [string, string])[] = [
       ['channel', JSON.stringify(hit.channel)],
       ['evidence', JSON.stringify(hit.evidence)],
+      ...(hit.historical === true ? [['historical', 'true']] as const : []),
       ['match', JSON.stringify(hit.match)],
       ['outcome', hit.outcome === null ? 'null' : JSON.stringify(hit.outcome)],
+      ...(hit.recorded_at_ms === undefined ? [] : [['recorded_at_ms', encodeCount(hit.recorded_at_ms)]] as const),
       ['ref', JSON.stringify(hit.ref)],
       ['trust', JSON.stringify(hit.trust)],
       ['ts', encodeTimestamp(hit.ts)],
@@ -303,7 +315,7 @@ function encodeCount(value: number): string {
  * and not, say, an assistant message or an untrusted item -- otherwise a model could aim the cutoff
  * at content it chose and read past a boundary it does not own.
  */
-function conversationCutoff(memory: Memory, beforeRef: MemoryRef): number {
+export function conversationCutoff(memory: Memory, beforeRef: MemoryRef): number {
   const message = 'before_ref must name an existing trusted user conversation item'
   let channel: string
   let seq: number
@@ -314,12 +326,13 @@ function conversationCutoff(memory: Memory, beforeRef: MemoryRef): number {
   }
   const conversation = memory.channels.get(CONVERSATION_CHANNEL)
   if (conversation === undefined) throw new RecallOriginError(message)
-  if (channel !== CONVERSATION_CHANNEL || seq < 1 || seq > conversation.items.length) {
+  if (channel !== CONVERSATION_CHANNEL || seq < 1) {
     throw new RecallOriginError(message)
   }
-  const origin = conversation.items[seq - 1]
+  const origin = conversation.getBySeq(seq)
   if (
     origin === undefined
+    || memory.isHistorical(origin)
     || makeMemoryRef(origin.channel, origin.seq) !== beforeRef
     || origin.trust !== 'trusted_user'
   ) {
@@ -339,7 +352,7 @@ function rawCandidates(
       // The cutoff item itself and everything after it are excluded: recall looks strictly before
       // the turn that asked.
       const eligible = channel.name === CONVERSATION_CHANNEL
-        ? channel.items.slice(0, cutoffSeq - 1)
+        ? channel.items.filter(item => item.seq < cutoffSeq)
         : channel.items
       items.push(...eligible.slice(-RECENT_PER_CHANNEL))
     }
@@ -352,7 +365,7 @@ function rawCandidates(
       if (item.channel !== CONVERSATION_CHANNEL || item.seq < cutoffSeq) items.push(item)
     }
   }
-  items.sort(byNewestRaw)
+  items.sort((left, right) => byNewestRaw(memory, left, right))
   return {items: items.slice(0, ANY_SCAN_LIMIT), truncated: items.length > ANY_SCAN_LIMIT}
 }
 
@@ -386,23 +399,19 @@ function lexicalTokens(text: string): ReadonlySet<string> {
  * Every tie-break has to match the oracle's tuple ordering exactly, including comparing channel
  * names by code point rather than by locale, because the selected set is what a model sees.
  */
-function byNewestRaw(left: MemoryItem, right: MemoryItem): number {
+function byNewestRaw(memory: Memory, left: MemoryItem, right: MemoryItem): number {
   return (
-    right.ts - left.ts
+    memory.compareRecency(left, right)
     || right.priority - left.priority
     || compareCodePoints(left.channel, right.channel)
     || right.seq - left.seq
   )
 }
 
-/** Best score first, then the recency ordering. Note `seq` ascends here, unlike the raw scan. */
-function byLexicalRank(left: Candidate, right: Candidate): number {
-  return right.score - left.score || byRecencyRank(left, right)
-}
-
-function byRecencyRank(left: Candidate, right: Candidate): number {
+/** Note `seq` ascends here, unlike the raw scan. */
+function byRecencyRank(memory: Memory, left: Candidate, right: Candidate): number {
   return (
-    right.item.ts - left.item.ts
+    memory.compareRecency(left.item, right.item)
     || right.item.priority - left.item.priority
     || compareCodePoints(left.item.channel, right.item.channel)
     || left.item.seq - right.item.seq

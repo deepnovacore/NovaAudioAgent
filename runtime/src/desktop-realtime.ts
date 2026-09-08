@@ -26,7 +26,7 @@ export interface DesktopServerTransport {
 }
 
 export interface DesktopRealtimeOptions extends DesktopBridgeOptions {
-  readonly memoryBoard?: (requestId: string, detail?: MemoryBoardDetail) => string
+  readonly memoryBoard?: (requestId: string, detail?: MemoryBoardDetail) => string | Promise<string>
   readonly workspaceGraphBoard?: (requestId: string) => string
   readonly createServer?: (options: DesktopServerOptions) => DesktopServerTransport
   /** Optional lifecycle observation after bridge connection state has been released. */

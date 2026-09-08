@@ -1,3 +1,4 @@
+import {blackboardOptionsFromSettings} from './memory/blackboard-session.js'
 import {installDesktopControl, desktopBudgetFailure, type DesktopCapabilityState} from './desktop-control.js'
 import {loadCapabilityRegistry} from './capability-registry.js'
 import {prepareExternalMcp} from './executors/mcp.js'
@@ -32,8 +33,15 @@ const parentPort = (process as UtilityProcess).parentPort
 
 let capabilityView: (() => DesktopCapabilityState | undefined) = () => undefined
 let knowledgeHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
+let clearConversation: (() => Promise<void>) | undefined
 const control = installDesktopControl({...(parentPort === undefined ? {} : {parentPort}), signal: stop.signal,
-  status: () => capabilityView(), handle: (method, params) => knowledgeHandle?.(method, params) ?? Promise.resolve(undefined)})
+  status: () => capabilityView(), handle: async (method, params) => {
+    if (method !== 'conversation.clear') return knowledgeHandle?.(method, params)
+    if (clearConversation === undefined || params === null || typeof params !== 'object'
+      || Array.isArray(params) || Object.keys(params).length !== 0) return {error: 'unavailable'}
+    try { await clearConversation(); return {cleared: true} }
+    catch { return {error: 'clear_failed'} }
+  }})
 
 const onDiagnostic = (line: string): void => {
   process.stderr.write(`${line}\n`)
@@ -119,6 +127,7 @@ const exitCode = await runDesktopEntryWithStopSources({
           clock,
         })
         const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
+          blackboard: blackboardOptionsFromSettings(settings),
           settings,
           capabilities,
           externalMcp,
@@ -134,6 +143,7 @@ const exitCode = await runDesktopEntryWithStopSources({
       },
     })
     capabilityView = () => ({...composition.realtime.capabilityStatus, state: 'running'})
+    clearConversation = () => composition.realtime.clearConversation()
     control.publish()
     publishExecutorApproval = view => { composition.desktop.bridge.onExecutorApproval(view) }
     return {

@@ -213,6 +213,11 @@ export class EpochLedger {
     this.#seen.add(entry)
     return true
   }
+
+  clear(): void {
+    this.#keys.length = 0
+    this.#seen.clear()
+  }
 }
 
 function key(epoch: number, id: string): string {
@@ -508,6 +513,28 @@ export class RealtimeSessionState {
     this.#userCaptionText = ''
     this.#assistantCaptionResponse = null
     this.#assistantCaptionText = ''
+  }
+
+  /** Forget every conversation-owned projection while keeping the provider epoch monotonic. */
+  resetConversation(): void {
+    this.#transcripts.clear()
+    this.#turns.clear()
+    this.#providerTurns.clear()
+    this.#delegates.clear()
+    this.#spokenEventIds.length = 0
+    this.#interruptedEventIds.length = 0
+    this.#respondedEventIds.clear()
+    this.#injectedEventEpochs.clear()
+    this.#injectedProviderItems.clear()
+    this.#retainedSuggestionInjectionIds.clear()
+    this.#pendingResponses.length = 0
+    this.#suppressedResponseIds.clear()
+    this.#pendingAudio = []
+    this.#pendingAudioBytes = 0
+    this.#premapResponseId = null
+    this.#userInputRevision = 0
+    this.clearCaptions()
+    this.advanceSnapshot()
   }
 
   /**

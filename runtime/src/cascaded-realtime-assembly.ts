@@ -21,6 +21,7 @@ import {
   type Settings,
 } from './config.js'
 import {MonotonicIdFactory, type IdFactory} from './ids.js'
+import {personalMemoryFactory} from './memory/factory.js'
 import {OpenAIModelGateway, type ModelGateway} from './model-gateway.js'
 import {stripLikePython} from './python-text.js'
 import {
@@ -216,6 +217,8 @@ export function buildCascadedRealtimeAssembly(
   const selected = requireSelectedCascadedRealtimeConfig(options.settings)
   const selection = selected.selection
   validateCodingResource(options)
+  const createPersonalMemory = options.createPersonalMemory
+    ?? personalMemoryFactory(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const capabilities = options.capabilities ?? capabilitiesFromSettings(options.settings)
@@ -269,6 +272,8 @@ export function buildCascadedRealtimeAssembly(
     clock,
   )
   const core = buildAssembly({
+    ...(options.blackboard === undefined ? {} : {blackboard: options.blackboard}),
+    ...(options.conversationId === undefined ? {} : {conversationId: options.conversationId}),
     settings: support.settings,
     clock,
     ids,
@@ -316,6 +321,7 @@ export function buildCascadedRealtimeAssembly(
     preemptiveAlertHistoryRecovery: 'none',
     preemptiveAlertHistoryPairs: 4,
     createWorkspaceGraph,
+    ...(createPersonalMemory === undefined ? {} : {createPersonalMemory}),
     ...(options.providerToolView === undefined ? {} : {providerToolView: options.providerToolView}),
     ...(options.onAudioFrame === undefined ? {} : {onAudioFrame: options.onAudioFrame}),
     ...(options.onAudioClear === undefined ? {} : {onAudioClear: options.onAudioClear}),

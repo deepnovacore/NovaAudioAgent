@@ -3,6 +3,7 @@ import type {
   HostResponseIntent,
   JsonObject,
   RealtimeProvider,
+  ResponseAdaptationContext,
   SessionIdentity,
   WorkspaceContextDeliveryRecord,
 } from '../protocol.js'
@@ -123,6 +124,10 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
 
   sendAudio(pcm: Uint8Array, signal: AbortSignal): Promise<void> {
     return this.#requiredAdapter().sendAudio(pcm, signal)
+  }
+
+  replaceResponseAdaptation(context: ResponseAdaptationContext, signal: AbortSignal): Promise<void> {
+    return this.#requiredAdapter().replaceResponseAdaptation(context, signal)
   }
 
   injectHostItem(item: HostContextItem, options: {

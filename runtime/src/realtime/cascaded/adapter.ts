@@ -8,6 +8,7 @@ import {
   hostResponseIntentSchema,
   realtimeIdentifierSchema,
   realtimeProviderEventSchema,
+  responseAdaptationContextSchema,
   workspaceContextInjectionSchema,
   type HostContextItem,
   type HostResponseIntent,
@@ -15,6 +16,7 @@ import {
   type JsonObject,
   type RealtimeProvider,
   type RealtimeProviderEvent,
+  type ResponseAdaptationContext,
   type SessionIdentity,
   type WorkspaceContextDeliveryRecord,
 } from '../protocol.js'
@@ -134,6 +136,7 @@ interface EpochOwner {
     readonly providerItemId: string
     readonly record: WorkspaceContextDeliveryRecord
   } | null
+  responseAdaptation: {readonly revision: number; readonly content: string | null} | null
   consumptionGeneration: number
   pendingToolCallId: string | null
   responseStartBarrier: Promise<void> | null
@@ -329,6 +332,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         consumed: new Map(),
         abandonedCalls: new Map(),
         workspaceContext: null,
+        responseAdaptation: null,
         consumptionGeneration: 0,
         pendingToolCallId: null,
         responseStartBarrier: null,
@@ -405,6 +409,21 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     })
     this.#audioTail = operation.then(() => undefined, () => undefined)
     return operation
+  }
+
+  replaceResponseAdaptation(context: ResponseAdaptationContext, signal: AbortSignal): Promise<void> {
+    try {
+      const owner = this.#requiredOwner()
+      throwIfAborted(combineSignals(owner.controller.signal, signal))
+      context = responseAdaptationContextSchema.parse(context)
+      const prior = owner.responseAdaptation
+      if (prior !== null && context.revision < prior.revision) return Promise.resolve()
+      if (prior !== null && context.revision === prior.revision && context.content === prior.content) return Promise.resolve()
+      owner.responseAdaptation = {revision: context.revision, content: context.content}
+      return Promise.resolve()
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new CascadedRealtimeError('configuration'))
+    }
   }
 
   async injectHostItem(
@@ -852,6 +871,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         inputs: inputs.map(item => structuredClone(item)),
         tools: owner.tools.map(tool => structuredClone(tool)),
         workspaceContext: owner.workspaceContext?.item.content ?? null,
+        responseAdaptation: owner.responseAdaptation?.content ?? null,
         signal,
       })) {
         throwIfAborted(signal)

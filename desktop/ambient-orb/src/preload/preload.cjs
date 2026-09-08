@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     },
   }),
   memoryBoard: Object.freeze({
+    clear: () => ipcRenderer.invoke('nova:memory-board:clear'),
     request: detail => ipcRenderer.invoke(
       'nova:memory-board:request',
       detail === 'full' ? 'full' : undefined,

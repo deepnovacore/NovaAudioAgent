@@ -1580,7 +1580,7 @@ test('composition posts only audible delivery events into the exact runtime and 
     playedMs: number | null,
     utteranceId: string,
   ): PlaybackCompletion => ({
-    session_epoch: 1,
+    session_epoch: composition.realtime.session.sessionEpoch,
     response_id: `response-${utteranceId}`,
     utterance_id: utteranceId,
     generation_epoch: 1,
@@ -1594,6 +1594,8 @@ test('composition posts only audible delivery events into the exact runtime and 
   onDelivery!(completion('被打断', 'interrupted', 140, 'utterance-interrupted'))
   onDelivery!(completion('没有播放', 'suppressed', 0, 'utterance-suppressed'))
   onDelivery!(completion('', 'spoken', 10, 'utterance-empty'))
+  onDelivery!({...completion('旧会话迟到的播放回执', 'spoken', 20, 'utterance-stale'),
+    session_epoch: composition.realtime.session.sessionEpoch + 1})
 
   const applied: EventRecord[] = []
   for (;;) {

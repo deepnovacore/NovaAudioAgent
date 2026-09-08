@@ -317,22 +317,25 @@ test('runtime admission must be an exact bounded data result before delegation',
   }
 })
 
-test('runtime admission is synchronous in the public port contract', async () => {
-  const invalidPort: VisionRuntimeOpPort = {
-    // @ts-expect-error Runtime delegate admission must not be represented as a Promise.
-    dispatch: () => Promise.resolve({accepted: true, delegate_id: 'promise-result'}),
+test('runtime admission waits for durable confirmation before reporting a delegated monitor', async () => {
+  let release!: () => void
+  let entered!: () => void
+  const called = new Promise<void>(resolve => { entered = resolve })
+  const ready = new Promise<void>(resolve => { release = resolve })
+  const promisePort: VisionRuntimeOpPort = {
+    dispatch: async () => { entered(); await ready; return {accepted: true, delegate_id: 'promise-result'} },
   }
-  void invalidPort
-
-  const promisePort = {
-    dispatch: () => Promise.resolve({accepted: true, delegate_id: 'promise-result'}),
-  } as unknown as VisionRuntimeOpPort
   const value = new VisionAgentControllerCore({
     gateway: new ScriptedGateway(assessment()), watchModel: 'vision-model',
     requestIdFactory: () => identity.request_id, runtimePort: promisePort, assessmentTimeoutMs: 50,
   })
-  assert.equal((await value.dispatch(request())).code, 'runtime_rejected')
-  assert.equal(value.state, 'idle')
+  let settled = false
+  const admission = value.dispatch(request()).then(result => { settled = true; return result })
+  await called
+  assert.equal(settled, false)
+  assert.equal(value.state, 'permission-pending')
+  release()
+  assert.equal((await admission).code, 'delegated')
 })
 
 test('a reentrant terminal during synchronous start admission is compensated exactly', async () => {
@@ -416,4 +419,29 @@ test('successful terminal and hit callbacks clean up only for exact identity', a
   value.permissionGranted(identity)
   value.hit(identity)
   assert.equal((await value.dispatch(request({originalUserText: 'free'}))).code, 'delegated')
+})
+
+test('concurrent stops share pending admission and a thrown admission permits retry', async () => {
+  let attempts = 0
+  let release!: (value: {accepted: boolean; delegate_id: string | null}) => void
+  const pending = new Promise<{accepted: boolean; delegate_id: string | null}>(resolve => { release = resolve })
+  const value = new VisionAgentControllerCore({
+    gateway: new ScriptedGateway(assessment()), watchModel: 'vision-model', requestIdFactory: () => identity.request_id,
+    runtimePort: {dispatch(input) {
+      if (input.op !== 'stop') return {accepted: true, delegate_id: 'watch-start'}
+      attempts += 1
+      if (attempts === 1) throw new Error('unavailable')
+      return pending
+    }},
+  })
+  assert.equal((await value.dispatch(request())).code, 'delegated')
+  assert.equal((await value.cancel({stillWanted: () => true})).code, 'runtime_rejected')
+  const first = value.cancel({stillWanted: () => true})
+  const second = value.cancel({stillWanted: () => true})
+  assert.equal(attempts, 2)
+  release({accepted: true, delegate_id: 'watch-stop'})
+  assert.equal((await first).accepted, true)
+  assert.equal((await second).accepted, true)
+  assert.equal((await value.cancel({stillWanted: () => true})).accepted, true)
+  assert.equal(attempts, 2)
 })

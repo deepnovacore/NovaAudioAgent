@@ -37,6 +37,7 @@ class BoardDocument extends EventTarget {
       'channels', 'status', 'refresh', 'export', 'copy-json', 'memory-tab',
       'diagnostics-tab', 'graph-tab', 'memory-panel', 'diagnostics-panel',
       'graph-panel', 'diagnostics', 'workspace-graph', 'graph-state',
+      'clear-conversation',
     ].map(id => [`#${id}`, new BoardElement(id)]))
   }
 
@@ -181,6 +182,56 @@ test('copy JSON uses the sender-validated desktop bridge when web clipboard perm
   assert.deepEqual(requestDetails, [undefined])
   assert.deepEqual(clipboardWrites, ['desktop bridge'])
   assert.equal(document.querySelector('#status').textContent, '已复制 JSON')
+})
+
+test('clearing fences a stale read, is single-flight, and blocks export', async t => {
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  const intervalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'setInterval')
+  const document = new BoardDocument()
+  const requests = [], clears = [], exports = []
+  let resolveRead, resolveClear
+  const stale = {backend_generation: 1, channels: [{name: 'conversation', summary: 'old', item_count: 1, items: [{seq: 1, trust: 'inferred', ts: 1, content: 'old'}]}], diagnostics: {version: 1, records: []}}
+  Object.defineProperties(globalThis, {
+    document: {configurable: true, value: document},
+    window: {configurable: true, value: {novaAudioAgentDesktop: {
+      memoryBoard: {
+        request: () => new Promise(resolve => { requests.push(resolve); if (!resolveRead) resolveRead = resolve }),
+        clear: () => new Promise(resolve => { clears.push(resolve); resolveClear = resolve }),
+        copyJson: async () => ({copied: true}),
+        export: async () => { exports.push(true); return {saved: 'never.json'} },
+      },
+      graphBoard: {request: async () => ({error: 'unavailable'})},
+    }}},
+    navigator: {configurable: true, value: {}},
+    setInterval: {configurable: true, value: () => 1},
+  })
+  t.after(() => {
+    for (const [key, descriptor] of Object.entries({
+      document: documentDescriptor, window: windowDescriptor, navigator: navigatorDescriptor, setInterval: intervalDescriptor,
+    })) {
+      if (descriptor === undefined) delete globalThis[key]
+      else Object.defineProperty(globalThis, key, descriptor)
+    }
+  })
+
+  await import(`../src/renderer/memory-board.mjs?clear-test=${Date.now()}`)
+  await settle()
+  assert.equal(requests.length, 1)
+  document.querySelector('#clear-conversation').click()
+  document.querySelector('#clear-conversation').click()
+  document.querySelector('#export').click()
+  assert.equal(clears.length, 1)
+  assert.equal(exports.length, 0)
+  resolveClear({cleared: true})
+  await settle()
+  assert.equal(document.querySelector('#status').textContent, '近期会话记录已清除')
+  resolveRead(stale)
+  await settle()
+  await settle()
+  assert.equal(document.querySelector('#channels').children.length, 0)
+  assert.equal(exports.length, 0)
 })
 
 test('board presents accessible Memory, Diagnostics and Graph tabs and never exports graph data', async () => {

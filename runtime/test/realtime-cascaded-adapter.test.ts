@@ -714,6 +714,39 @@ test('cascaded adapter replaces workspace context without adding old context to 
   await watching.stop()
 })
 
+test('cascaded response adaptation is an absolute per-turn slot and clears without history', async () => {
+  const llm = new FakeLlm(
+    [{kind: 'response_started', response_id: 'adapt-1'}, {kind: 'response_completed', response_id: 'adapt-1'}],
+    [{kind: 'response_started', response_id: 'adapt-2'}, {kind: 'response_completed', response_id: 'adapt-2'}],
+    [{kind: 'response_started', response_id: 'adapt-3'}, {kind: 'response_completed', response_id: 'adapt-3'}],
+  )
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), llm, tts: new FakeTtsClient(),
+    idFactory: ids('session-adapt', 'provider-adapt-1', 'provider-adapt-2', 'provider-adapt-3'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const watching = observe(adapter)
+  const run = async (id: string): Promise<void> => {
+    const item = hostItem(id, id)
+    await adapter.injectHostItem(item, directOptions())
+    await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false}, new AbortController().signal)
+    await waitFor(id, () => watching.events.some(event =>
+      event.kind === 'response_terminal' && event.response_id === id))
+  }
+  await adapter.replaceResponseAdaptation({revision: 1, content: 'first preference'}, new AbortController().signal)
+  await run('adapt-1')
+  await adapter.replaceResponseAdaptation({revision: 2, content: 'second preference'}, new AbortController().signal)
+  await run('adapt-2')
+  await adapter.replaceResponseAdaptation({revision: 3, content: null}, new AbortController().signal)
+  await run('adapt-3')
+  assert.equal(llm.calls[0]?.responseAdaptation, 'first preference')
+  assert.equal(llm.calls[1]?.responseAdaptation, 'second preference')
+  assert.equal(llm.calls[2]?.responseAdaptation, null)
+  assert.equal(JSON.stringify(llm.calls[2]).includes('first preference'), false)
+  await watching.stop()
+  await adapter.close()
+})
+
 test('adapter supplies semantic user text and matching structured tool results to the LLM',
   async () => {
     const endpointing = new ScriptedEndpointing(

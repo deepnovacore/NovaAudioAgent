@@ -38,6 +38,7 @@ const RUNTIME_MANIFEST = Object.freeze({
     '@livekit/agents': '1.6.4',
     '@livekit/rtc-node': '0.13.33',
     '@modelcontextprotocol/sdk': '1.30.0',
+    'voicemem': '0.0.1',
     jszip: '3.10.1',
     mammoth: '1.12.2',
     'pdfjs-dist': '6.2.108',
@@ -66,9 +67,12 @@ async function writeArtifactRoot(root, {
     ['src/renderer/camera.mjs', 'export const camera = true\n'],
     ['node_modules/@nova-audio-agent/runtime/package.json', JSON.stringify(runtimeManifest)],
     ['node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js', 'export {}\n'],
+    ['node_modules/@nova-audio-agent/runtime/dist/src/voicemem/store-worker.js', 'export {}\n'],
     ['node_modules/@livekit/agents/package.json', '{"name":"@livekit/agents"}\n'],
     ['node_modules/@livekit/rtc-node/package.json', '{"name":"@livekit/rtc-node"}\n'],
     ['node_modules/@modelcontextprotocol/sdk/package.json', '{"name":"@modelcontextprotocol/sdk"}\n'],
+    ['node_modules/voicemem/package.json', '{"name":"voicemem","version":"0.0.1"}\n'],
+    ['node_modules/voicemem/dist/src/index.js', 'export {}\n'],
     ['node_modules/jszip/package.json', '{"name":"jszip"}\n'],
     ['node_modules/mammoth/package.json', '{"name":"mammoth"}\n'],
     ['node_modules/pdfjs-dist/package.json', '{"name":"pdfjs-dist"}\n'],
@@ -145,9 +149,12 @@ function validArtifactFiles() {
     'src/renderer/camera.mjs',
     'node_modules/@nova-audio-agent/runtime/package.json',
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
+    'node_modules/@nova-audio-agent/runtime/dist/src/voicemem/store-worker.js',
     'node_modules/@livekit/agents/package.json',
     'node_modules/@livekit/rtc-node/package.json',
     'node_modules/@modelcontextprotocol/sdk/package.json',
+    'node_modules/voicemem/package.json',
+    'node_modules/voicemem/dist/src/index.js',
     'node_modules/jszip/package.json',
     'node_modules/mammoth/package.json',
     'node_modules/pdfjs-dist/package.json',
@@ -165,9 +172,12 @@ test('artifact file-list entry point catches missing camera/runtime and forbidde
     'node_modules/@nova-audio-agent/runtime/package.json',
     'src/renderer/camera.mjs',
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
+    'node_modules/@nova-audio-agent/runtime/dist/src/voicemem/store-worker.js',
     'node_modules/@livekit/agents/package.json',
     'node_modules/@livekit/rtc-node/package.json',
     'node_modules/@modelcontextprotocol/sdk/package.json',
+    'node_modules/voicemem/package.json',
+    'node_modules/voicemem/dist/src/index.js',
     'node_modules/jszip/package.json',
     'node_modules/mammoth/package.json',
     'node_modules/pdfjs-dist/package.json',
@@ -324,6 +334,7 @@ test('configured graph follows the target-applicable lock closure without treati
   assert.ok(result.selectedPackages.includes('@livekit/local-inference@0.2.7'))
   assert.ok(result.selectedPackages.includes(localInferencePackage))
   assert.ok(result.selectedPackages.includes('@modelcontextprotocol/sdk@1.30.0'))
+  assert.ok(result.selectedPackages.includes('voicemem@0.0.1'))
   assert.ok(result.selectedPackages.includes('express@5.2.1'))
   assert.ok(result.selectedPackages.includes('zod-to-json-schema@3.25.2'))
   assert.ok(result.selectedPackages.includes('fluent-ffmpeg@2.1.3'))
@@ -345,6 +356,12 @@ test('configured graph follows the target-applicable lock closure without treati
     /(?:^|\/)(?:ffmpeg|ffprobe)(?:\.exe)?$/iu.test(value)
     || /(?:^|\/)(?:lib)?(?:avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)(?:[-.]|$).*(?:\.dylib|\.so(?:\.\d+)*|\.dll)$/iu.test(value)
   )))
+  assert.ok(result.includedFiles.includes(
+    'node_modules/voicemem/dist/src/index.js',
+  ))
+  assert.ok(result.includedFiles.includes(
+    'node_modules/@nova-audio-agent/runtime/dist/src/voicemem/store-worker.js',
+  ))
 })
 
 test('artifact-root entry reads bounded manifests from the inspected artifact itself', async () => {
@@ -1198,12 +1215,17 @@ test('release candidate report binds artifact SHA and rejects an external resour
           dependencies: {
             '@livekit/agents': '1.6.4', '@livekit/rtc-node': '0.13.33',
             '@modelcontextprotocol/sdk': '1.30.0',
+            'voicemem': '0.0.1',
             jszip: '3.10.1', mammoth: '1.12.2', 'pdfjs-dist': '6.2.108',
             undici: '7.29.0', ws: '8.21.3', zod: '4.4.3',
           },
         },
         'node_modules/@livekit/agents': {
           version: '1.6.4', dependencies: { '@livekit/local-inference': '0.2.7' },
+        },
+        'node_modules/voicemem': {
+          version: '0.0.1',
+          resolved: 'https://registry.npmjs.org/voicemem/-/voicemem-0.0.1.tgz',
         },
         'node_modules/@livekit/local-inference': {
           version: '0.2.7',

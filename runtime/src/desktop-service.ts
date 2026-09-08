@@ -136,8 +136,10 @@ export function buildDesktopRealtimeComposition(
       requireDesktop().bridge.onAudioTerminal(utteranceId, generationEpoch)
     },
     onDelivery: completion => {
+      const current = requireRealtime()
+      if (current.service.clearingConversation || completion.session_epoch !== current.session.sessionEpoch) return
       const payload = deliveryToEvent(completion)
-      if (payload !== null) requireRealtime().runtime.post({kind: 'assistant_spoken', payload})
+      if (payload !== null) current.runtime.post({kind: 'assistant_spoken', payload})
     },
     onCaption: frame => requireDesktop().bridge.onCaption(frame),
     onExecutorState: state => requireDesktop().bridge.onExecutorState(state),
@@ -149,12 +151,11 @@ export function buildDesktopRealtimeComposition(
     service: realtime.service,
     executor: codingExecutorIdentity(realtime),
     stop: options.stop,
-    memoryBoard: (requestId, detail) => memoryBoardMessage(
-      requestId,
-      realtime.runtime.memory,
-      options.telemetry?.diagnostics?.(),
-      detail === undefined ? {} : {detail},
-    ),
+    memoryBoard: async (requestId, detail) => {
+      await realtime.runtime.flushMemory(true)
+      return memoryBoardMessage(requestId, realtime.runtime.memory, options.telemetry?.diagnostics?.(),
+        detail === undefined ? {} : {detail})
+    },
     workspaceGraphBoard: requestId => workspaceGraphBoardForRealtime(requestId, realtime),
     clock: realtime.runtime.clock,
     ...(options.progressBubbles === undefined ? {} : {progressBubbles: options.progressBubbles}),
@@ -164,7 +165,8 @@ export function buildDesktopRealtimeComposition(
     ...(options.createServer === undefined ? {} : {createServer: options.createServer}),
   })
   holder.desktop = desktop
-  const unsubscribeProgress = realtime.runtime.observe(event => {
+  const unsubscribeProgress = realtime.runtime.observe((event, currentConversation) => {
+    if (currentConversation === false) return
     const projected = projectExecutorEvent(event, realtime.runtime, channel => realtime.service.agentNameForChannel(channel))
     if (projected !== null) desktop.bridge.onExecutorProgress(projected.progress, projected.result)
   })

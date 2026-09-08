@@ -27,10 +27,13 @@ interface BoardItem {
   readonly refs: readonly string[]
   readonly content: string
   readonly truncated?: true
+  readonly historical?: true
+  readonly recorded_at_ms?: number
 }
 
 interface BoardChannel {
   readonly name: string
+  readonly historical_through_seq?: number
   summary: string | null
   readonly uncompressed: number
   readonly item_count: number
@@ -100,6 +103,7 @@ interface BoardProfile {
 function channelView(channel: Channel, profile: BoardProfile): BoardChannel {
   return {
     name: channel.name,
+    ...(channel.restoredThroughSequence === 0 ? {} : {historical_through_seq: channel.restoredThroughSequence}),
     summary: channel.summary === null
       ? null
       : sliceCodePoints(channel.summary, profile.summaryChars),
@@ -107,7 +111,12 @@ function channelView(channel: Channel, profile: BoardProfile): BoardChannel {
     item_count: channel.items.length,
     items: channel.items
       .slice(-profile.itemsPerChannel)
-      .map(item => itemView(item, profile.contentChars)),
+      .map(item => ({...itemView(item, profile.contentChars),
+        ...(item.seq <= channel.restoredThroughSequence ? {
+          historical: true as const,
+          recorded_at_ms: channel.restoredRecord(item.seq)!.recordedAtMs,
+        } : {}),
+      })),
   }
 }
 

@@ -11,6 +11,7 @@ import {createBackendControl} from '../src/main/backend-control.mjs'
 import {createBackendSupervisor} from '../src/main/backend-supervisor.mjs'
 import {classifyBackendFailure, createBackendDiagnosticCollector} from '../src/main/backend-diagnostics.mjs'
 import {readCapabilityDocument} from '../src/main/capabilities-settings.mjs'
+import {requestDebugBoard} from '../src/main/debug-board-client.mjs'
 import {validateBootstrap} from '../src/main/security.mjs'
 import { WebSocket } from 'ws'
 import {generateReleaseSmokeCertificate} from './release-smoke-certificate.mjs'
@@ -24,6 +25,7 @@ import {
 
 const TOKEN = 'abcdef0123456789abcdef0123456789'
 const capabilityMode = process.argv.includes('--capability-status')
+const memoryClearMode = capabilityMode && process.argv.includes('--memory-clear')
 const ownedChildren = new Set()
 let fixtureRoot, deadline
 const trace = message => process.stderr.write(`[utility-capabilities] ${message}\n`)
@@ -66,6 +68,69 @@ function readBootstrap(socket) {
       if (frames.length < 2) reject(new Error('utility runtime closed before bootstrap'))
     })
   })
+}
+
+async function waitUntil(label, predicate, timeoutMs = 5_000) {
+  const deadlineAt = Date.now() + timeoutMs
+  while (!(await predicate())) {
+    if (Date.now() >= deadlineAt) throw new Error(`${label} did not become true`)
+    await new Promise(resolveWait => setTimeout(resolveWait, 10))
+  }
+}
+
+function boardContains(snapshot, text) {
+  return snapshot.channels.some(channel => channel.items.some(item => item.content.includes(text)))
+}
+
+function boardCleared(snapshot, oldText) {
+  return !boardContains(snapshot, oldText)
+    && snapshot.channels.every(channel => channel.items.length === 0 && channel.summary === null)
+}
+
+function sendUserFinal(peer, itemId, text) {
+  peer.send(JSON.stringify({type: 'input_audio_buffer.speech_started', item_id: itemId}))
+  peer.send(JSON.stringify({type: 'input_audio_buffer.speech_stopped', item_id: itemId}))
+  peer.send(JSON.stringify({
+    type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: text,
+  }))
+}
+
+async function exerciseMemoryClear(context, providerPeers) {
+  await waitUntil('initial Qwen connection', () => providerPeers.length >= 1)
+  const control = context.backendControl
+  const connection = context.backendSupervisor.status().connection
+  assert.ok(control)
+  assert.ok(connection)
+  const oldText = 'utility clear old turn'
+  sendUserFinal(providerPeers[0], 'utility-clear-old', oldText)
+  await waitUntil('old turn on memory board', async () => {
+    const snapshot = await requestDebugBoard(connection, {board: 'memory', detail: 'full'})
+    return boardContains(snapshot, oldText)
+  })
+  trace('memory-clear: old turn persisted')
+  const clearResult = await control.request('conversation.clear', {}, {timeoutMs: 15_000})
+  trace(`memory-clear: control result=${JSON.stringify(clearResult)}`)
+  assert.deepEqual(clearResult, {cleared: true})
+  await waitUntil('replacement Qwen connection', () => providerPeers.length >= 2)
+  trace('memory-clear: replacement provider connected')
+  let clearedSnapshot
+  await waitUntil('cleared memory board', async () => {
+    const snapshot = await requestDebugBoard(connection, {board: 'memory', detail: 'full'})
+    if (!boardCleared(snapshot, oldText)) return false
+    clearedSnapshot = snapshot
+    return true
+  })
+  trace(`memory-clear: board cleared channels=${clearedSnapshot.channels.length}`)
+  assert.equal(context.backendSupervisor.status().state, 'connected')
+  const newText = 'utility clear new turn'
+  sendUserFinal(providerPeers.at(-1), 'utility-clear-new', newText)
+  await waitUntil('new turn on memory board', async () => {
+    const snapshot = await requestDebugBoard(connection, {board: 'memory', detail: 'full'})
+    return boardContains(snapshot, newText)
+  })
+  trace('memory-clear: new turn persisted')
+  assert.equal(context.backendSupervisor.status().state, 'connected')
+  return {clearResult, channelsAfterClear: clearedSnapshot.channels.length}
 }
 
 async function run() {
@@ -118,6 +183,7 @@ async function runCapabilityStatus() {
   const supervisorStart = source.indexOf('  backendSupervisor = createBackendSupervisor({')
   const supervisorSource = source.slice(supervisorStart, source.indexOf('  void managedWorkspaceBackendRecovery.start()', supervisorStart))
   let listed = 0, called = 0, providerConnections = 0
+  const providerPeers = []
   const certificate = resolve(root, 'cert.pem'), privateKey = resolve(root, 'key.pem')
   await generateReleaseSmokeCertificate({certificate, privateKey})
   const cert = await readFile(certificate), key = await readFile(privateKey)
@@ -140,6 +206,7 @@ async function runCapabilityStatus() {
   http.on('upgrade', (request, socket, head) => wss.handleUpgrade(request, socket, head, peer => wss.emit('connection', peer)))
   wss.on('connection', peer => {
     providerConnections++
+    providerPeers.push(peer)
     peer.send(JSON.stringify({type: 'session.created', session: {id: 'fixture-session'}}))
     peer.on('message', bytes => {
       if (JSON.parse(bytes.toString()).type === 'session.update') peer.send(JSON.stringify({type: 'session.updated', session: {id: 'fixture-session'}}))
@@ -165,6 +232,7 @@ async function runCapabilityStatus() {
       const environment = {PATH: process.env.PATH, HOME: root, USERPROFILE: root, TMPDIR: '/private/tmp',
         NOVA_AUDIO_AGENT_MODEL_API_KEY: 'dummy-model-key', NOVA_AUDIO_AGENT_MODEL_BASE_URL: `https://127.0.0.1:${port}`,
         DASHSCOPE_API_KEY: 'dummy-dashscope-key', NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: `wss://127.0.0.1:${port}/qwen`,
+        NOVA_AUDIO_AGENT_BLACKBOARD_PATH: resolve(root, 'blackboard.sqlite'), NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID: 'utility-smoke',
         NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED: 'false', NODE_EXTRA_CA_CERTS: certificate}
       const context = vm.createContext({readCapabilityDocument, classifyBackendFailure, createBackendDiagnosticCollector, createBackendControl,
         createReadinessListener: options => createReadinessListener({...options, onTimeout: () => {
@@ -201,6 +269,7 @@ async function runCapabilityStatus() {
         assert.equal(value.toolCount, 2)
         assert.equal(value.toolBudget, budget)
         assert.equal(value.diskGeneration, 9)
+        let memoryClear
         if (budget === 1) {
           await exited
           assert.equal(context.backendSupervisor.status().state, 'configuration_required')
@@ -214,16 +283,18 @@ async function runCapabilityStatus() {
           assert.ok(snapshots.some(snapshot => snapshot.runtime?.state === 'compiled'))
           assert.ok(snapshots.some(snapshot => snapshot.runtime?.state === 'running' && snapshot.backend === 'connected'))
           assert.deepEqual(value.servers.map(item => [item.name, item.status]), [['local', 'ok'], ['disabled', 'disabled'], ['malformed', 'failed']])
+          memoryClear = memoryClearMode ? await exerciseMemoryClear(context, providerPeers) : undefined
           await context.backendSupervisor.stop()
           await exited
         }
         outcomes.push({budget, count: value.toolCount, state: value.state, events,
-          publicStates: [...new Set(snapshots.map(snapshot => snapshot.runtime?.state).filter(Boolean))], readinessTimeouts, servers: value.servers})
+          publicStates: [...new Set(snapshots.map(snapshot => snapshot.runtime?.state).filter(Boolean))], readinessTimeouts, servers: value.servers,
+          ...(memoryClear === undefined ? {} : {memoryClear})})
       } finally {await context.backendSupervisor.stop()}
     }
     assert.equal(listed, 2)
     assert.equal(called, 0)
-    assert.equal(providerConnections, 1)
+    assert.equal(providerConnections, memoryClearMode ? 2 : 1)
     process.stdout.write(JSON.stringify({electron: process.versions.electron, outcomes, listed, toolCalls: called, providerConnections, dummyLoopbackOnly: true}) + '\n')
   } finally {
     for (const client of wss.clients) client.terminate()

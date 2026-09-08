@@ -1051,10 +1051,9 @@ test('a backend that dies after the handshake notifies without disturbing the re
 })
 
 test('the default drain grace outlasts the backend cleanup it is waiting on', async () => {
-  // The Python side spends up to EXIT_GRACE (5s) plus INTERRUPT_GRACE (2s) tearing
-  // its executor down after stdin EOF; a shorter outer grace would SIGKILL it
-  // mid-cleanup and orphan the codex tree it was still reaping.
-  assert.equal(BACKEND_DRAIN_GRACE_MS, 8000)
+  // Two blackboard RPC waits (10s each), Codex exit/interrupt (7s), and other cleanup
+  // must finish before the desktop resorts to force killing its backend.
+  assert.equal(BACKEND_DRAIN_GRACE_MS, 32000)
 
   const child = fakeChild()
   const armed = []

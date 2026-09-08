@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { createContext, runInContext } from 'node:vm'
 
 test('main owns single-instance lifecycle and denies renderer escape', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
@@ -33,6 +34,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:confirmation-placement',
     'nova:executor-result:open',
     'nova:knowledge:action',
+    'nova:memory-board:clear',
     'nova:memory-board:copy-json',
     'nova:memory-board:export',
     'nova:memory-board:request',
@@ -70,6 +72,73 @@ test('Memory Board copy stays in sender-validated main IPC instead of web clipbo
   assert.match(main, /ipcMain\.handle\('nova:memory-board:copy-json', async event => \{\n\s*if \(!boardWindow \|\| event\.sender !== boardWindow\.webContents\)/u)
   assert.match(main, /clipboard\.writeText\(formatted\.body\)/u)
   assert.doesNotMatch(renderer, /navigator\.clipboard/u)
+})
+
+test('Memory Board clear is zero-argument, sender-bound, single-flight, and rechecks its captured owner', async () => {
+  const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const preload = await readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8')
+  const renderer = await readFile(new URL('../src/renderer/memory-board.mjs', import.meta.url), 'utf8')
+  const start = main.indexOf("ipcMain.handle('nova:memory-board:clear'")
+  const handler = main.slice(start, main.indexOf("ipcMain.handle('nova:workspace-graph-board:request'", start))
+
+  assert.notEqual(start, -1)
+  assert.match(handler, /async \(event, \.\.\.args\) =>/)
+  assert.match(handler, /!boardWindow \|\| event\.sender !== boardWindow\.webContents \|\| args\.length !== 0/)
+  assert.match(handler, /if \(clearingConversation\) return clearingConversation/)
+  assert.match(handler, /const owner = backendControl, generation = backendGeneration, window = boardWindow/)
+  assert.match(handler, /await dialog\.showMessageBox\(window,/)
+  assert.match(handler, /owner !== backendControl \|\| generation !== backendGeneration \|\| window !== boardWindow \|\| window\.isDestroyed\(\)/)
+  assert.match(handler, /owner\.request\('conversation\.clear', \{\}, \{timeoutMs: 60000\}\)/)
+  assert.match(handler, /if \(owner !== backendControl \|\| generation !== backendGeneration\) return \{error: 'unavailable'\}/)
+  assert.match(preload, /clear: \(\) => ipcRenderer\.invoke\('nova:memory-board:clear'\)/)
+  assert.match(renderer, /if \(clearInFlight \|\| copyInFlight \|\| exportInFlight\) return/)
+})
+
+async function extractedMemoryBoardClear(dialog, owner) {
+  const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const start = main.indexOf("ipcMain.handle('nova:memory-board:clear'")
+  const source = main.slice(start, main.indexOf("ipcMain.handle('nova:workspace-graph-board:request'", start))
+  let handler
+  const sender = {}
+  const context = createContext({
+    ipcMain: {handle: (_channel, value) => { handler = value }},
+    dialog, backendControl: owner, backendGeneration: 1,
+    backendStatus: {state: 'connected'}, clearingConversation: null,
+    boardWindow: {webContents: sender, isDestroyed: () => false},
+  })
+  runInContext(source, context)
+  return {context, handler, sender}
+}
+
+test('a synchronous clear confirmation failure releases the actual main-handler single-flight cache', async () => {
+  let confirmations = 0, requests = 0
+  const owner = {request: async () => { requests += 1; return {cleared: true} }}
+  const {context, handler, sender} = await extractedMemoryBoardClear({showMessageBox: () => {
+    confirmations += 1
+    if (confirmations === 1) throw new Error('dialog unavailable')
+    return Promise.resolve({response: 1})
+  }}, owner)
+
+  assert.equal((await handler({sender})).error, 'unavailable')
+  assert.equal(context.clearingConversation, null)
+  assert.equal((await handler({sender})).cleared, true)
+  assert.equal(confirmations, 2)
+  assert.equal(requests, 1)
+  assert.equal(context.clearingConversation, null)
+})
+
+test('owner replacement during clear confirmation prevents the actual main handler from mutating', async () => {
+  let resolveConfirmation, requests = 0
+  const owner = {request: async () => { requests += 1; return {cleared: true} }}
+  const {context, handler, sender} = await extractedMemoryBoardClear({showMessageBox: () => new Promise(resolve => { resolveConfirmation = resolve })}, owner)
+
+  const pending = handler({sender})
+  context.backendControl = {request: async () => ({cleared: true})}
+  context.backendGeneration = 2
+  resolveConfirmation({response: 1})
+  assert.equal((await pending).error, 'unavailable')
+  assert.equal(requests, 0)
+  assert.equal(context.clearingConversation, null)
 })
 
 test('microphone permission starts from the ready orb and every IPC edge is sender-bound', async () => {

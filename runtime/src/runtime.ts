@@ -28,6 +28,7 @@ import {
   Memory,
   parseMemoryRef,
   type MemoryItem,
+  type MemoryChannelSnapshot,
 } from './memory.js'
 import {
   compressorOutputSchema,
@@ -96,7 +97,8 @@ interface ModelJob {
   readonly progressTrigger: ProgressTrigger | null
   readonly compression: {
     readonly channel: string
-    readonly snapshotCount: number
+    readonly throughSequence: number
+    readonly retentionRevision: number
     readonly items: readonly MemoryItem[]
   } | null
 }
@@ -172,6 +174,9 @@ export class CoreRuntime {
    */
   #eventClaim: {readonly seq: number; readonly delegate: Delegate} | undefined
   #eventDeadlineTermination: {readonly seq: number; readonly delegateId: string} | undefined
+  readonly #eventEpoch = new WeakMap<EventRecord, number>()
+  readonly #delegateEpoch = new WeakMap<Delegate, number>()
+  #conversationEpoch = 0
   readonly #fencedDelegates = new Set<string>()
   readonly #retainRoutingHistory: boolean
   readonly #freshWindow: number
@@ -201,9 +206,13 @@ export class CoreRuntime {
     readonly retainRoutingHistory?: boolean
     readonly suggestionCooldown?: number
     readonly freshWindow?: number
+    readonly recovery?: readonly MemoryChannelSnapshot[]
+    readonly conversationId?: string
   }) {
     for (const manifest of options.manifests) this.#manifests.set(manifest.name, manifest)
-    this.memory = new Memory({policies: options.manifests.map(manifest => manifest.policy)})
+    this.memory = new Memory({policies: options.manifests.map(manifest => manifest.policy),
+      scope: {conversation_id: options.conversationId ?? 'default'},
+      ...(options.recovery === undefined ? {} : {recovery: options.recovery})})
     this.#ids = options.ids
     this.#wiredSlots = new Set(options.modelSlots ?? [])
     this.#onModelCall = options.onModelCall
@@ -217,7 +226,40 @@ export class CoreRuntime {
   }
 
   post(input: EventInput, at: number): EventRecord {
-    return this.queue.push(input, at)
+    const event = this.queue.push(input, at)
+    this.#eventEpoch.set(event, this.#conversationEpoch)
+    return event
+  }
+
+  get conversationEpoch(): number { return this.#conversationEpoch }
+
+  /** Event epochs are host-only: a queued record never exposes this control metadata on the wire. */
+  isCurrentConversationEvent(event: EventRecord): boolean {
+    return (this.#eventEpoch.get(event) ?? this.#conversationEpoch) === this.#conversationEpoch
+  }
+
+  /** Session persistence owns Memory.clear; Core only retires process-local conversation state. */
+  resetConversationState(): void {
+    this.#conversationEpoch += 1
+    this.queue.removeWhere(event => !this.isCurrentConversationEvent(event)
+      && event.kind !== 'handoff' && event.kind !== 'deadline')
+    this.#jobs.clear()
+    this.#results.clear()
+    this.#preparedSpeech.clear()
+    this.slots.clear()
+    this.#compressBacklog.length = 0
+    this.#compressScheduled.clear()
+    this.#latestProgressSuggestion.clear()
+    this.#latestProgressSummary.clear()
+    this.#latestObservationSuggestion.clear()
+    this.suggestions.clear()
+    this.floor = new Floor()
+    this.appliedEvents.length = 0
+    this.executorEffects.length = 0
+    this.floorDecisions.length = 0
+    this.diagnostics.length = 0
+    this.#eventClaim = undefined
+    this.#eventDeadlineTermination = undefined
   }
 
   startUserSpeech(speechId: string): void {
@@ -284,6 +326,7 @@ export class CoreRuntime {
    * because `onSpeakEnd` checks the utterance id, so no compensating event is needed.
    */
   openFloor(jobId: string, utteranceId: string, priority: number, at: number): boolean {
+    if (!this.#jobs.has(jobId)) return false
     const decision = this.floor.decide(priority)
     this.#preparedSpeech.set(jobId, {decision})
     if (decision === 'defer') return false
@@ -309,7 +352,7 @@ export class CoreRuntime {
   ): EventRecord {
     const delegate = this.#dispatches[dispatchIndex]
     if (delegate === undefined) throw new Error(`unknown dispatch index: ${dispatchIndex}`)
-    return this.post({
+    return this.#postForDelegate(delegate, {
       kind: 'handoff',
       payload: {
         channel: delegate.executor,
@@ -349,7 +392,7 @@ export class CoreRuntime {
   ): EventRecord {
     const delegate = this.#dispatches[dispatchIndex]
     if (delegate === undefined) throw new Error(`unknown dispatch index: ${dispatchIndex}`)
-    return this.post({
+    return this.#postForDelegate(delegate, {
       kind: 'progress',
       payload: {
         channel: delegate.executor,
@@ -374,7 +417,7 @@ export class CoreRuntime {
   ): EventRecord {
     const delegate = this.#dispatches[dispatchIndex]
     if (delegate === undefined) throw new Error(`unknown dispatch index: ${dispatchIndex}`)
-    return this.post({
+    return this.#postForDelegate(delegate, {
       kind: 'observation',
       payload: {
         channel: delegate.executor,
@@ -386,6 +429,13 @@ export class CoreRuntime {
         refs: [...(observation.refs ?? [])],
       },
     }, at)
+  }
+
+  #postForDelegate(delegate: Delegate, input: EventInput, at: number): EventRecord {
+    const event = this.post(input, at)
+    const epoch = this.#delegateEpoch.get(delegate)
+    if (epoch !== undefined) this.#eventEpoch.set(event, epoch)
+    return event
   }
 
   completeModelCall(jobId: string, output: unknown, at: number): EventRecord {
@@ -419,7 +469,41 @@ export class CoreRuntime {
     return completion
   }
 
+  /** Refresh only after durable retention has been applied, before the actual model sees context. */
+  refreshModelCall(call: ModelCall): ModelCall {
+    const job = this.#jobs.get(call.job_id)
+    if (job === undefined || this.#results.has(job.jobId)) throw new Error('model job is no longer pending')
+    if (job.compression !== null) {
+      const channel = this.memory.channels.get(job.compression.channel)!
+      const items = structuredClone(channel.items.filter(item => item.seq <= job.compression!.throughSequence))
+      const compression = {...job.compression, items, throughSequence: items.at(-1)?.seq ?? 0,
+        retentionRevision: channel.retentionRevision}
+      this.#jobs.set(job.jobId, {...job, compression})
+      return {...call, compression_items: items}
+    }
+    const context = compileContextView(this.memory, this.floor.state, job.startedAt, {
+      inFlight: this.#currentConversationDelegates(), manifests: [...this.#manifests.values()],
+      suggestions: this.suggestions.all().filter(suggestion => job.offeredSuggestions.has(suggestion.id)),
+      selectedSuggestion: job.selectedSuggestion, triggerKind: job.reason.kind, freshWindow: this.#freshWindow,
+      graphContext: call.context_view?.graph_context ?? null,
+    })
+    this.#jobs.set(job.jobId, {...job, visibleRefs: this.#visibleMemoryRefs()})
+    return {...call, context_view: context}
+  }
+
   apply(event: EventRecord): WakeReason | null {
+    if (!this.isCurrentConversationEvent(event)) {
+      if (event.kind === 'handoff') {
+        const delegate = this.#applyHandoff(event, false)
+        if (delegate !== undefined) this.#eventClaim = {seq: event.seq, delegate}
+      } else if (event.kind === 'deadline') {
+        const delegate = this.#applyDeadline(event, false)
+        if (delegate !== undefined) {
+          this.#eventDeadlineTermination = {seq: event.seq, delegateId: delegate.delegate_id}
+        }
+      }
+      return null
+    }
     this.appliedEvents.push(event)
     let target: WakeTarget | null = null
     switch (event.kind) {
@@ -678,6 +762,12 @@ export class CoreRuntime {
     ))
   }
 
+  #currentConversationDelegates(): readonly Delegate[] {
+    return this.activeDelegates().filter(delegate => (
+      this.#delegateEpoch.get(delegate) === this.#conversationEpoch
+    ))
+  }
+
   assertQuiescent(): void {
     for (const slot of SLOTS) {
       if (this.slots.inflight[slot] || this.slots.pending[slot] !== null) {
@@ -743,6 +833,7 @@ export class CoreRuntime {
       routing_class: reason.routing_class,
       dispatched_at: dispatchedAt,
     })
+    this.#delegateEpoch.set(delegate, this.#conversationEpoch)
     this.#inFlight.set(delegate.delegate_id, delegate)
     this.#dispatches.push(delegate)
     this.#routableDelegates.set(delegate.delegate_id, delegate)
@@ -756,7 +847,7 @@ export class CoreRuntime {
     return {accepted: true, delegate_id: delegate.delegate_id, problem: null, wake: null}
   }
 
-  #applyHandoff(event: Extract<EventRecord, {kind: 'handoff'}>): Delegate | undefined {
+  #applyHandoff(event: Extract<EventRecord, {kind: 'handoff'}>, record = true): Delegate | undefined {
     const delegate = this.#routableDelegates.get(event.payload.delegate_id)
     const active = delegate === undefined ? undefined : this.#inFlight.get(delegate.delegate_id)
     const previousOutcome = delegate === undefined
@@ -792,6 +883,16 @@ export class CoreRuntime {
       this.#clearObservationCondition(delegate.delegate_id)
       this.#withdrawProgressSuggestion(delegate.delegate_id)
       this.#latestProgressSummary.delete(delegate.delegate_id)
+    }
+    if (!record) {
+      if (
+        claimed !== undefined
+        && !this.#retainRoutingHistory
+        && (definitive || this.#fencedDelegates.has(claimed.delegate_id))
+      ) {
+        this.#reclaimRouting(claimed.delegate_id)
+      }
+      return claimed
     }
     const policy = this.memory.policies.get(event.payload.channel)
     if (policy === undefined) throw new Error(`missing policy for handoff: ${event.payload.channel}`)
@@ -833,31 +934,33 @@ export class CoreRuntime {
     return claimed
   }
 
-  #applyDeadline(event: Extract<EventRecord, {kind: 'deadline'}>): Delegate | undefined {
+  #applyDeadline(event: Extract<EventRecord, {kind: 'deadline'}>, record = true): Delegate | undefined {
     const delegate = this.#inFlight.get(event.payload.delegate_id)
     if (delegate === undefined) return undefined
-    const policy = this.memory.policies.get(delegate.executor)
-    const manifest = this.#manifests.get(delegate.executor)
-    const operation = manifest?.ops.find(candidate => candidate.name === delegate.op)
-    if (policy === undefined || operation === undefined) {
-      throw new Error(`missing bound executor metadata: ${delegate.executor}.${delegate.op}`)
-    }
-    const sensitive = new Set(operation.sensitive_params)
-    const request = Object.fromEntries(Object.entries(delegate.request).map(([key, value]) => [
-      key,
-      sensitive.has(key) ? '[REDACTED]' : value,
-    ]))
     this.#clearObservationCondition(delegate.delegate_id)
     this.#withdrawProgressSuggestion(delegate.delegate_id)
     this.#latestProgressSummary.delete(delegate.delegate_id)
-    this.#appendMemory(delegate.executor, {
-      ts: event.ts,
-      trust: 'trusted_system',
-      priority: policy.priority,
-      content: {error: 'deadline_exceeded', op: delegate.op, request},
-      outcome: 'unknown',
-      refs: [delegate.origin_ref],
-    })
+    if (record) {
+      const policy = this.memory.policies.get(delegate.executor)
+      const manifest = this.#manifests.get(delegate.executor)
+      const operation = manifest?.ops.find(candidate => candidate.name === delegate.op)
+      if (policy === undefined || operation === undefined) {
+        throw new Error(`missing bound executor metadata: ${delegate.executor}.${delegate.op}`)
+      }
+      const sensitive = new Set(operation.sensitive_params)
+      const request = Object.fromEntries(Object.entries(delegate.request).map(([key, value]) => [
+        key,
+        sensitive.has(key) ? '[REDACTED]' : value,
+      ]))
+      this.#appendMemory(delegate.executor, {
+        ts: event.ts,
+        trust: 'trusted_system',
+        priority: policy.priority,
+        content: {error: 'deadline_exceeded', op: delegate.op, request},
+        outcome: 'unknown',
+        refs: [delegate.origin_ref],
+      })
+    }
     this.#inFlight.delete(delegate.delegate_id)
     this.#terminationKind.set(delegate.delegate_id, 'deadline')
     this.#terminationOutcome.set(delegate.delegate_id, 'unknown')
@@ -1049,6 +1152,17 @@ export class CoreRuntime {
 
   #wake(slot: Slot, reason: WakeReason): void {
     if (!this.#wiredSlots.has(slot)) return
+    if (slot === 'compress') {
+      // Compression owns a channel backlog; a second pending SlotSet wake can outlive pruned sources.
+      if (this.slots.inflight.compress) return
+      while (this.#compressBacklog.length > 0) {
+        const channel = this.#compressBacklog[0]!
+        if ((this.memory.channels.get(channel)?.items.length ?? 0) > 0) break
+        this.#compressBacklog.shift()
+        this.#compressScheduled.delete(channel)
+      }
+      if (this.#compressBacklog.length === 0) return
+    }
     if (this.#onModelCall === undefined) throw new Error(`model slot is not connected: ${slot}`)
     this.slots.wake(slot, reason)
   }
@@ -1076,7 +1190,8 @@ export class CoreRuntime {
       if (memoryChannel === undefined) throw new Error(`unknown compression channel: ${channel}`)
       compression = {
         channel,
-        snapshotCount: memoryChannel.items.length,
+        throughSequence: memoryChannel.items.at(-1)?.seq ?? 0,
+        retentionRevision: memoryChannel.retentionRevision,
         items: structuredClone(memoryChannel.items),
       }
     }
@@ -1109,7 +1224,7 @@ export class CoreRuntime {
     const contextView = slot === 'compress'
       ? undefined
       : compileContextView(this.memory, this.floor.state, startedAt, {
-        inFlight: this.activeDelegates(),
+        inFlight: this.#currentConversationDelegates(),
         suggestions: this.suggestions.all().filter(suggestion => offeredSuggestions.has(suggestion.id)),
         manifests: [...this.#manifests.values()],
         selectedSuggestion,
@@ -1254,8 +1369,10 @@ export class CoreRuntime {
       const channel = this.memory.channels.get(event.payload.channel)
       if (channel === undefined || job.compression === null) return
       if (summary !== '') {
-        channel.summary = summary
-        channel.uncompressed = Math.max(0, channel.uncompressed - job.compression.snapshotCount)
+        const applied = channel.replaceSummary(
+          summary, job.compression.throughSequence, job.compression.retentionRevision,
+        )
+        if (!applied) this.diagnostics.push({code: 'stale_compressor_output'})
         const policy = this.memory.policies.get(event.payload.channel)
         if (policy !== undefined && channel.uncompressed >= policy.compress_watermark) {
           this.#compressScheduled.add(event.payload.channel)
@@ -1498,7 +1615,7 @@ export class CoreRuntime {
   #memoryItemExists(reference: string): boolean {
     try {
       const [channel, sequence] = parseMemoryRef(reference)
-      return this.memory.channels.get(channel)?.items[sequence - 1] !== undefined
+      return this.memory.channels.get(channel)?.getBySeq(sequence) !== undefined
     } catch {
       return false
     }
@@ -1511,6 +1628,8 @@ export class CoreRuntime {
       return 'invalid_origin_ref'
     }
     if (!this.#memoryItemExists(reference)) return 'origin_not_found'
+    const [channel, seq] = parseMemoryRef(reference)
+    if (this.memory.isHistorical({channel, seq})) return 'historical_origin'
     if (visibleRefs !== undefined && !visibleRefs.has(reference)) return 'origin_not_visible'
     return null
   }

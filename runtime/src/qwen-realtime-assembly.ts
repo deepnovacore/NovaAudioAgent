@@ -11,6 +11,7 @@ import {
 } from './config.js'
 import { MonotonicIdFactory } from './ids.js'
 import { OpenAIModelGateway } from './model-gateway.js'
+import {personalMemoryFactory} from './memory/factory.js'
 import {
   buildRealtimeAssembly,
   filterDisabledCoding,
@@ -95,6 +96,8 @@ export function buildQwenRealtimeAssembly(
     throw new AssemblyError('realtime coding resource project mode mismatch')
   }
   const qwen = options.qwenConfig ?? requireQwenRealtime(options.settings)
+  const createPersonalMemory = options.createPersonalMemory
+    ?? personalMemoryFactory(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const support = resolveSupportModelConnection(options.settings, {
@@ -108,6 +111,8 @@ export function buildQwenRealtimeAssembly(
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
   const core = buildAssembly({
+    ...(options.blackboard === undefined ? {} : {blackboard: options.blackboard}),
+    ...(options.conversationId === undefined ? {} : {conversationId: options.conversationId}),
     settings: options.settings,
     clock,
     ids,
@@ -162,6 +167,7 @@ export function buildQwenRealtimeAssembly(
     preemptiveAlertHistoryRecovery: options.settings.qwen_guard_history_recovery,
     preemptiveAlertHistoryPairs: options.settings.qwen_guard_history_pairs,
     createWorkspaceGraph,
+    ...(createPersonalMemory === undefined ? {} : {createPersonalMemory}),
     ...(options.providerToolView === undefined
       ? {}
       : {providerToolView: options.providerToolView}),

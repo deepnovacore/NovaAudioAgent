@@ -168,6 +168,12 @@ export class SuggestionPool {
     })
     return cleared
   }
+
+  /** A conversation clear retires all evidence-bound suggestions without reusing their ids. */
+  clear(): void {
+    this.#items = []
+    this.#conditionEvidence.clear()
+  }
 }
 
 function finiteNumber(value: number, field: string): number {

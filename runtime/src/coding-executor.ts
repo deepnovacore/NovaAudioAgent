@@ -106,10 +106,9 @@ export type ProjectRuntimeDispatch = (
   request: DelegateRequest,
   reason: WakeReason,
   hostCapability: object,
-) => {
-  readonly accepted: boolean
-  readonly delegate_id: string | null
-}
+  launchAuthorized: () => boolean,
+) => {readonly accepted: boolean; readonly delegate_id: string | null}
+  | Promise<{readonly accepted: boolean; readonly delegate_id: string | null}>
 
 export interface ProjectCommitResult {
   readonly accepted: boolean

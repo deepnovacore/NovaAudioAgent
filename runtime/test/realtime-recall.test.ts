@@ -158,6 +158,21 @@ function oneTurnMemory(): {readonly memory: Memory; readonly beforeRef: string} 
   return {memory, beforeRef: makeMemoryRef('conversation', 1)}
 }
 
+test('recall resolves retained references and applies its cutoff by sequence after pruning', () => {
+  const memory = new Memory()
+  for (const text of ['deleted', 'deleted', 'project old', 'ask now', 'project future', 'project future']) {
+    memory.append('conversation', {ts: 1, trust: 'trusted_user', priority: 100, content: {text}})
+  }
+  memory.channels.get('conversation')!.pruneThrough(2)
+  for (const scope of ['recent', 'any'] as const) {
+    const view = compileMemoryRecall(memory, {query: 'project', scope, beforeRef: 'conversation:4'})
+    assert.deepEqual(view.hits.map(hit => hit.ref), ['conversation:3'])
+    assert.throws(() => compileMemoryRecall(memory, {
+      query: 'project', scope, beforeRef: 'conversation:2',
+    }), RecallOriginError)
+  }
+})
+
 test('a query outside one to five hundred and twelve characters is refused', () => {
   const {memory, beforeRef} = oneTurnMemory()
   for (const query of ['', '   ', 'x'.repeat(513)]) {

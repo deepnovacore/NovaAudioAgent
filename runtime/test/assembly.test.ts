@@ -368,16 +368,16 @@ test('search and camera dispatch through the real runtime and shared media store
   const stop = new AbortController()
   const serving = assembly.runtime.serve(stop.signal)
 
-  assert.equal(assembly.runtime.dispatchExternal({
+  assert.equal((await assembly.runtime.dispatchExternal({
     executor: 'search', op: 'search', request: {query: 'Nova', k: 1}, origin_ref: originRef,
-  }, reason).accepted, true)
+  }, reason)).accepted, true)
   await waitFor(() => events.some(event => event.kind === 'handoff'
     && event.payload.channel === 'search'))
   assert.deepEqual(searchTransport.queries, [{query: 'Nova', maxResults: 1}])
 
-  assert.equal(assembly.runtime.dispatchExternal({
+  assert.equal((await assembly.runtime.dispatchExternal({
     executor: MCP_CAMERA_EXECUTOR, op: 'snapshot', request: {}, origin_ref: originRef,
-  }, reason).accepted, true)
+  }, reason)).accepted, true)
   await waitFor(() => events.some(event => event.kind === 'handoff'
     && event.payload.channel === MCP_CAMERA_EXECUTOR))
   stop.abort()

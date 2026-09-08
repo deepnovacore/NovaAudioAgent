@@ -22,12 +22,15 @@ import {
 import { parseStrictJson } from './strict-json.mjs'
 
 const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
+const VOICEMEM_PACKAGE = 'voicemem'
 const DESKTOP_PACKAGE = '@nova-audio-agent/ambient-orb'
 const DESKTOP_MANIFEST_FILE = 'package.json'
 const RUNTIME_MANIFEST_FILE = `node_modules/${RUNTIME_PACKAGE}/package.json`
 const DEPENDENCY_REPORT_FILE = 'build/release/production-dependencies-v1.json'
 const REQUIRED_CAMERA_FILE = 'src/renderer/camera.mjs'
 const REQUIRED_RUNTIME_FILE = `node_modules/${RUNTIME_PACKAGE}/dist/src/desktop-entry.js`
+const REQUIRED_VOICEMEM_WORKER_FILE = `node_modules/${RUNTIME_PACKAGE}/dist/src/voicemem/store-worker.js`
+const REQUIRED_VOICEMEM_ENTRY_FILE = `node_modules/${VOICEMEM_PACKAGE}/dist/src/index.js`
 const EXPECTED_RUNTIME_DEPENDENCIES = Object.freeze([
   '@livekit/agents',
   '@livekit/rtc-node',
@@ -36,6 +39,7 @@ const EXPECTED_RUNTIME_DEPENDENCIES = Object.freeze([
   'mammoth',
   'pdfjs-dist',
   'undici',
+  VOICEMEM_PACKAGE,
   'ws',
   'zod',
 ])
@@ -421,6 +425,8 @@ export function inspectPackagedFileList(includedFiles, {
   if (!files.includes(RUNTIME_MANIFEST_FILE)) forbidden.push(RUNTIME_MANIFEST_FILE)
   if (!files.includes(REQUIRED_CAMERA_FILE)) forbidden.push(REQUIRED_CAMERA_FILE)
   if (!files.includes(REQUIRED_RUNTIME_FILE)) forbidden.push(REQUIRED_RUNTIME_FILE)
+  if (!files.includes(REQUIRED_VOICEMEM_WORKER_FILE)) forbidden.push(REQUIRED_VOICEMEM_WORKER_FILE)
+  if (!files.includes(REQUIRED_VOICEMEM_ENTRY_FILE)) forbidden.push(REQUIRED_VOICEMEM_ENTRY_FILE)
   for (const required of REQUIRED_RUNTIME_DEPENDENCY_FILES) {
     if (!files.includes(required)) forbidden.push(required)
   }

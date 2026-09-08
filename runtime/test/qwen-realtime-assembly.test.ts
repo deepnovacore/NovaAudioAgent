@@ -306,6 +306,26 @@ test('Qwen production composition derives cameraModuleEnabled from Settings', ()
   assert.ok(realtime.tools.bindings.has('memory__recall'))
 })
 
+test('Qwen production composition forwards the personal memory owner', async () => {
+  let created = 0
+  let closed = 0
+  const realtime = buildQwenRealtimeAssembly(qwenOptions(
+    settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+    recordingConnector().connector,
+    {createPersonalMemory: () => {
+      created += 1
+      return {
+        open: () => Promise.resolve(),
+        recall: () => Promise.reject(new Error('unused')),
+        close: () => { closed += 1; return Promise.resolve() },
+      }
+    }},
+  ))
+  assert.equal(created, 1)
+  await realtime.stop()
+  assert.equal(closed, 1)
+})
+
 test('Qwen factory owns enabled graph storage while unsafe graph config stays voice-only', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-qwen-graph-')))
   try {

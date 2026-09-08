@@ -56,15 +56,7 @@ export class CodexAgentController implements AgentController {
   inspectIntakeForTest(): Readonly<IntakeSession> | null { return this.#intake?.view ?? null }
   async settleIntakeForTest(): Promise<void> { await this.#intake?.settled() }
 
-  dispatch(request: AgentDispatchRequest): Promise<AgentActionResult> {
-    try {
-      return Promise.resolve(this.#dispatch(request))
-    } catch (error) {
-      return Promise.resolve().then(() => { throw error })
-    }
-  }
-
-  #dispatch(request: AgentDispatchRequest): AgentActionResult {
+  async dispatch(request: AgentDispatchRequest): Promise<AgentActionResult> {
     if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
     const intake = this.#intake
     if (intake === undefined) {
@@ -73,7 +65,7 @@ export class CodexAgentController implements AgentController {
       // The controller owns the last fence before the runtime effect. The port repeats it at the
       // host/runtime boundary so neither a synchronous nor an asynchronous caller can bypass it.
       if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
-      const admission = dispatchPort.dispatch({
+      const admission = await dispatchPort.dispatch({
         channel: this.#channel, op: 'run', request: {work_order: request.instruction},
         origin_ref: request.origin_ref, stillWanted: request.stillWanted,
       })

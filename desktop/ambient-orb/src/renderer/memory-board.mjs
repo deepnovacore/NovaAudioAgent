@@ -14,6 +14,7 @@ const statusLabel = document.querySelector('#status')
 const refreshButton = document.querySelector('#refresh')
 const copyJsonButton = document.querySelector('#copy-json')
 const exportButton = document.querySelector('#export')
+const clearButton = document.querySelector('#clear-conversation')
 const memoryTab = document.querySelector('#memory-tab')
 const diagnosticsTab = document.querySelector('#diagnostics-tab')
 const graphTab = document.querySelector('#graph-tab')
@@ -28,6 +29,7 @@ let latestPayload = null
 let inFlight = false
 let copyInFlight = false
 let exportInFlight = false
+let clearInFlight = false
 let activeTab = 'memory'
 let loadOwnership = 0
 
@@ -148,6 +150,7 @@ function validDiagnostics(payload) {
 
 async function load() {
   if (document.hidden) return
+  if (clearInFlight) return
   if (activeTab === 'graph') return
   if (inFlight) return
   const owner = loadOwnership
@@ -190,7 +193,7 @@ async function load() {
 }
 
 async function copyBoardJson() {
-  if (!latestPayload || copyInFlight) return
+  if (!latestPayload || copyInFlight || clearInFlight) return
   copyInFlight = true
   copyJsonButton.disabled = true
   try {
@@ -205,7 +208,7 @@ async function copyBoardJson() {
 }
 
 async function exportBoard() {
-  if (!latestPayload || exportInFlight) return
+  if (!latestPayload || exportInFlight || clearInFlight) return
   exportInFlight = true
   exportButton.disabled = true
   try {
@@ -217,6 +220,32 @@ async function exportBoard() {
   } finally {
     exportInFlight = false
     exportButton.disabled = activeTab === 'graph'
+  }
+}
+
+async function clearConversation() {
+  if (clearInFlight || copyInFlight || exportInFlight) return
+  clearInFlight = true
+  loadOwnership += 1
+  clearButton.disabled = true
+  copyJsonButton.disabled = true
+  exportButton.disabled = true
+  statusLabel.textContent = '等待清除确认…'
+  try {
+    const result = await window.novaAudioAgentDesktop.memoryBoard.clear()
+    if (result?.cleared) {
+      latestPayload = null
+      channelsRoot.replaceChildren()
+      statusLabel.textContent = '近期会话记录已清除'
+    } else if (result?.canceled) statusLabel.textContent = '已取消清除'
+    else statusLabel.textContent = '无法确认清除结果，请刷新检查'
+  } catch {
+    statusLabel.textContent = '无法确认清除结果，请刷新检查'
+  } finally {
+    clearInFlight = false
+    clearButton.disabled = false
+    copyJsonButton.disabled = activeTab === 'graph' || latestPayload === null
+    exportButton.disabled = activeTab === 'graph' || latestPayload === null
   }
 }
 
@@ -254,6 +283,7 @@ function selectTab(tab) {
   copyJsonButton.hidden = activeTab === 'graph'
   copyJsonButton.disabled = graphActive || copyInFlight || latestPayload === null
   exportButton.hidden = activeTab === 'graph'
+  clearButton.hidden = activeTab !== 'memory'
   exportButton.disabled = graphActive || exportInFlight || latestPayload === null
   if (graphActive) void graphController.activate()
   else {
@@ -283,6 +313,7 @@ refreshButton.addEventListener('click', () => {
 })
 copyJsonButton.addEventListener('click', () => { void copyBoardJson() })
 exportButton.addEventListener('click', () => { void exportBoard() })
+clearButton.addEventListener('click', () => { void clearConversation() })
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     loadOwnership += 1

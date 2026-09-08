@@ -19,6 +19,7 @@ const clarificationDepthSchema = z.enum(['minimal', 'balanced', 'thorough'])
 const planReadbackSchema = z.enum(['summary', 'confirm', 'silent'])
 const progressBubblesSchema = z.enum(['off', 'milestones', 'all'])
 const embeddingProviderSchema = z.enum(['dashscope', 'local'])
+const memoryConnectionSchema = z.enum(['disabled', 'local', 'remote'])
 const searchProviderSchema = z.enum(['mcp', 'tavily'])
 const volcFloatSchema = z.custom<number>(value => typeof value === 'number')
 const loopbackUrlSchema = z.string().url().refine(value => {
@@ -112,6 +113,14 @@ export const settingsSchema = z.object({
   knowledge_path: z.string().default('~/.nova-audio-agent/knowledge.sqlite'),
   embedding_provider: embeddingProviderSchema.default('dashscope'),
   embedding_model: z.string().default('text-embedding-v4'),
+  blackboard_path: z.string().min(1).default('~/.nova-audio-agent/blackboard.sqlite'),
+  blackboard_owner_id: z.string().min(1).max(512).default('local'),
+  memory_connection: memoryConnectionSchema.default('disabled'),
+  memory_provider: z.enum(['voicemem', 'mem0']).nullable().default(null),
+  memory_url: z.string().default(''),
+  memory_token: z.string().nullable().default(null),
+  memory_path: z.string().min(1).default('~/.nova-audio-agent/memory.sqlite'),
+  memory_user_id: z.string().min(1).default('local'),
   workspace_graph_enabled: z.boolean().default(false),
   workspace_graph_path: z.string().min(1).default('~/.nova-audio-agent/workspace-graph.sqlite'),
   mycontext_provider_url: loopbackUrlSchema.nullable().default(null),
@@ -172,6 +181,21 @@ export interface SupportModelConnection {
   readonly source: 'generic' | 'selected_provider'
   readonly baseUrl: string
   readonly apiKey: string
+}
+
+export type PersonalMemoryConfig = {readonly connection: 'remote'; readonly url: string; readonly token: string} | LocalPersonalMemoryConfig
+
+interface LocalPersonalMemoryConfig {
+  readonly connection: 'local'
+  readonly provider: 'voicemem' | 'mem0'
+  readonly extractionModel: string
+  readonly path: string
+  readonly userId: string
+  readonly embedding: {
+    readonly baseUrl: string
+    readonly apiKey: string
+    readonly model: string
+  }
 }
 
 export interface ProactivityParams {
@@ -340,6 +364,14 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
       environment.NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER,
     ),
     embedding_model: optionalString(environment.NOVA_AUDIO_AGENT_EMBEDDING_MODEL),
+    blackboard_path: optionalString(environment.NOVA_AUDIO_AGENT_BLACKBOARD_PATH),
+    blackboard_owner_id: optionalString(environment.NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID),
+    memory_connection: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_CONNECTION),
+    memory_provider: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_PROVIDER),
+    memory_url: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_URL),
+    memory_token: optionalSecret(environment.NOVA_AUDIO_AGENT_MEMORY_TOKEN),
+    memory_path: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_PATH),
+    memory_user_id: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_USER_ID),
     workspace_graph_enabled: optionalBoolean(
       environment.NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED,
     ),
@@ -358,6 +390,10 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
       .map(configurationFieldName)
     throw new ConfigurationError(`invalid configuration: ${fields.join(', ')}`)
   }
+  if (environment.NOVA_AUDIO_AGENT_MEMORY_BACKEND !== undefined) {
+    throw new ConfigurationError('NOVA_AUDIO_AGENT_MEMORY_BACKEND was removed; use NOVA_AUDIO_AGENT_MEMORY_CONNECTION')
+  }
+  resolveMemoryConnection(result.data)
   return result.data
 }
 
@@ -371,6 +407,36 @@ export function resolveProactivity(settings: Settings): ProactivityParams {
 
 export function resolveProactivityPreset(preset: ProactivityPreset): ProactivityParams {
   return proactivityPresets[preset]
+}
+
+export function requirePersonalMemory(settings: Settings): PersonalMemoryConfig | null {
+  const connection = resolveMemoryConnection(settings)
+  if (connection === 'disabled') return null
+  if (connection === 'remote') return Object.freeze({
+    connection: 'remote',
+    url: requiredSetting(settings.memory_url, 'NOVA_AUDIO_AGENT_MEMORY_URL'),
+    token: requiredCredential(settings.memory_token, 'NOVA_AUDIO_AGENT_MEMORY_TOKEN'),
+  })
+  return Object.freeze({
+    connection: 'local',
+    provider: settings.memory_provider ?? 'voicemem',
+    path: requiredSetting(settings.memory_path, 'NOVA_AUDIO_AGENT_MEMORY_PATH'),
+    userId: requiredSetting(settings.memory_user_id, 'NOVA_AUDIO_AGENT_MEMORY_USER_ID'),
+    extractionModel: requiredSetting(settings.fast_model, 'NOVA_AUDIO_AGENT_FAST_MODEL'),
+    embedding: Object.freeze({
+      baseUrl: secureEndpoint(settings.model_base_url, 'https', 'NOVA_AUDIO_AGENT_MODEL_BASE_URL'),
+      apiKey: requiredCredential(settings.model_api_key, 'NOVA_AUDIO_AGENT_MODEL_API_KEY'),
+      model: requiredSetting(settings.embedding_model, 'NOVA_AUDIO_AGENT_EMBEDDING_MODEL'),
+    }),
+  })
+}
+
+function resolveMemoryConnection(settings: Settings): z.infer<typeof memoryConnectionSchema> {
+  const connection = settings.memory_connection
+  if (settings.memory_provider !== null && connection !== 'local') {
+    throw new ConfigurationError('NOVA_AUDIO_AGENT_MEMORY_PROVIDER is only valid for a local memory connection; remote engines are selected by the service')
+  }
+  return connection
 }
 
 export function requireQwenRealtime(settings: Settings): QwenRealtimeConfig {

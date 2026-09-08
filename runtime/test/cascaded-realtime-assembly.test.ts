@@ -412,13 +412,13 @@ async function exerciseCoreModels(
   })
   const stop = new AbortController()
   const serving = realtime.runtime.serve(stop.signal)
-  const admitted = realtime.runtime.dispatchExternal({
+  const admitted = (await realtime.runtime.dispatchExternal({
     executor: 'fast_sim', op: 'run', request: {},
     origin_ref: `${origin.channel}:${origin.seq}`,
   }, {
     kind: 'realtime_tool', priority: 100, routing_class: 'ambient',
     origin: null, selected_suggestion: null,
-  })
+  }))
   assert.equal(admitted.accepted, true)
   await waitFor('surrogate and compressor model requests', () => (
     records.some(record => record.role === 'surrogate')
@@ -667,6 +667,24 @@ test('cascaded production composition derives cameraModuleEnabled from Settings'
   assert.ok(!names.some(name => name === 'cam' || name === 'mcp__nova_camera' || name === 'watch' || name === 'guard'))
   assert.ok(realtime.tools.bindings.has('search__search'))
   assert.ok(realtime.tools.bindings.has('memory__recall'))
+})
+
+test('cascaded production composition forwards the personal memory owner', async () => {
+  let created = 0
+  let closed = 0
+  const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings(), {
+    createPersonalMemory: () => {
+      created += 1
+      return {
+        open: () => Promise.resolve(),
+        recall: () => Promise.reject(new Error('unused')),
+        close: () => { closed += 1; return Promise.resolve() },
+      }
+    },
+  }))
+  assert.equal(created, 1)
+  await realtime.stop()
+  assert.equal(closed, 1)
 })
 
 test('cascaded assembly owns enabled graph storage and exposes replaceable Header delivery',
