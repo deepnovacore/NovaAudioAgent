@@ -17,8 +17,8 @@
 ## 2. 已核对的现状
 
 - `runtime/src/desktop-progress.ts` 已投影有界且经过清理的 `executor.progress` 和结果，进度携带 delegate 身份，但没有完整的 session 打开信息。
-- `desktop/ambient-orb/src/renderer/bubbles.mjs` 的进度呈现会在 6 或 12 秒后消失，不能作为常驻运行状态。现有 roster 提供运行任务 ID 与标题。
-- `desktop/ambient-orb/src/main/executor-result.mjs` 只打开结果对话框及 Memory Board，不是 Codex session 打开能力。
+- `desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs` 的进度呈现会在 6 或 12 秒后消失，不能作为常驻运行状态。现有 roster 提供运行任务 ID 与标题。
+- `desktop/nova-audio-agent-desktop/src/main/executor-result.mjs` 只打开结果对话框及 Memory Board，不是 Codex session 打开能力。
 - `runtime/src/executors/codex/adapter-project.ts` 持有运行槽、任务身份、session 与线程绑定；取消最终通过对应槽的 AbortController 完成。语音取消可以调用模型消歧，鼠标点击已选定任务不需要再消歧。
 - Codex 运行使用由宿主管理的项目 `CODEX_HOME`，不能假定全局 Codex 桌面可见所有线程。
 - `runtime/src/executors/codex/factory.ts` 当前传入 `developerInstructions: null`。传输层已有该参数的接线。
@@ -62,7 +62,7 @@
 - 桌面宿主：沿现有 IPC 和 WebSocket 认证检查处理操作；窗口尺寸与点击区域由主进程校验，renderer 不提交任意原生窗口参数。
 - session 打开目标：由宿主使用 work / session 映射解析可信绑定，不接受 renderer 传任意路径、命令、URL 或 CODEX_HOME。
 
-主要涉及 `runtime/src/desktop*.ts`、`runtime/src/realtime/service.ts`、Codex adapter/factory 及 `desktop/ambient-orb/src/{main,preload,renderer}` 对应模块。只提取本功能需要的状态控制模块，不重构整个 service 或窗口系统。生成的 wire frame 常量由既有 build 流程更新。
+主要涉及 `runtime/src/desktop*.ts`、`runtime/src/realtime/service.ts`、Codex adapter/factory 及 `desktop/nova-audio-agent-desktop/src/{main,preload,renderer}` 对应模块。只提取本功能需要的状态控制模块，不重构整个 service 或窗口系统。生成的 wire frame 常量由既有 build 流程更新。
 
 ## 6. 打开与取消
 
@@ -98,7 +98,7 @@
 
 连续模式将每个通过宿主身份与内容验证的、新的非空 coding 进展摘要送入现有 Host → FrontBrain → Floor 交付链，由前台自然转述；不把工具原始输出或每个 token 直接接成音频。普通心跳与完全相同的摘要不触发新语音。等待用户说完、已过期进度撤销、结束后清理旧进度、最终结果优先等行为保留，因此该模式不应命名为“逐字无损全部朗读”。密集更新超过说话速度时仍需有界积压策略，已过期内容留在任务文本，不能播报几分钟前的旧状态。
 
-显式静默是启用连续模式前必须解决的约束：现有 Surrogate 提示词承担对 trusted_user “不要播报 / 只记录”的部分语义判断，单纯绕过模型并不能自动保留这一能力。实现时须让宿主拥有明确的任务进度播报偏好，并将用户静默要求可靠映射到该偏好；不能用扫描后台消息关键词代替。没有这条接线及回归证据，不宣称连续模式保持了静默语义。
+配置入口仅为 Settings 面板，持久化 smart / continuous 并通过既有认证桌面通道实时应用；模型不拥有修改该配置的工具，不新增语音偏好控制。连续模式保留 Floor 对用户讲话的避让，但不宣称它经过 Surrogate 的语义静默筛选。
 
 预期收益是后台更新更连续，且 coding 进度少一次筛选模型等待和费用；实际延迟变化要记录测量。代价是前台响应和 TTS 次数可能增加，语音总费用不保证减少。优先服务用户正在跟进的 coding 任务；不将摄像头监控心跳或所有内部事件自动朗读。
 
@@ -108,7 +108,7 @@ GPT-Live 对照：2026-09-08 核对 OpenAI 公开 `backend_prompt.md`，其前�
 - https://github.com/openai/codex/blob/main/codex-rs/prompts/templates/realtime/backend_prompt.md
 - https://github.com/openai/codex/blob/main/codex-rs/prompts/templates/realtime/realtime_start.md
 
-该扩展已批准，验证两模式各自只走一条播报路径，连续模式 coding progress 的 surrogate.watch 调用数为零，intake 仍可正常使用原模型；覆盖普通进度可听、用户静默、用户讲话时等待、模式切换时撤回在途旧 verdict、结果不重复及多任务归属。模式切换不能重启正在执行的任务。
+该扩展已批准，验证两模式各自只走一条播报路径，连续模式 coding progress 的 surrogate.watch 调用数为零，intake 仍可正常使用原模型；覆盖普通进度交付、设置切换、用户讲话时等待、模式切换时撤回在途旧 verdict、结果不重复及多任务归属。模式切换不能重启正在执行的任务。
 
 ## 9. 验证与交付
 

@@ -115,7 +115,7 @@ npm run package:mac
 For an actual model recording, provide 16 kHz mono signed little-endian PCM16:
 
 ```sh
-npm run smoke:wake-word --workspace @nova-audio-agent/ambient-orb -- \
+npm run smoke:wake-word --workspace @nova-audio-agent/desktop -- \
   --model-root /absolute/path/models/wake-word \
   --pcm /absolute/path/recording.pcm --expect-hits 1
 ```

@@ -296,8 +296,8 @@ test('Qwen clarification fixture covers adaptive first-turn and merged multi-tur
 })
 
 test('Qwen instructions route every coding request through the three host tools (spec 08)', () => {
-  assert.match(FRONTEND_INSTRUCTIONS, /编程、项目和会话的执行操作只用三个宿主工具：dispatch、cancel、confirm/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /任何编程执行请求（新任务、追加要求、切换项目、新建项目）都调用 dispatch/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /编程、项目和会话相关的请求一律只用三个宿主工具：dispatch、cancel、confirm/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /任何编程请求（新任务、追加要求、切换项目、新建项目）都调用 dispatch/u)
   assert.match(FRONTEND_INSTRUCTIONS, /instruction 原样传用户这一轮的完整要求，不预先拆分、不改写成问句，也不猜测项目名或 Session/u)
   assert.match(FRONTEND_INSTRUCTIONS, /由宿主决定项目、Session 和是否需要追问。工具不返回项目清单，也不要向用户列举项目/u)
   assert.match(FRONTEND_INSTRUCTIONS, /用户明确要求停止或取消正在执行的任务时调用 cancel；instruction 只在用户点名了要停哪个任务时传/u)
@@ -373,7 +373,7 @@ test('Qwen provider emits approval instructions only for an approval-enabled ses
 })
 
 test('Qwen hands coding intake to the host and does not invent additional questions', () => {
-  assert.match(FRONTEND_INSTRUCTIONS, /任何编程执行请求.*都调用 dispatch.*由宿主决定项目、Session 和是否需要追问/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /任何编程请求.*都调用 dispatch.*由宿主决定项目、Session 和是否需要追问/su)
   assert.match(FRONTEND_INSTRUCTIONS, /intake_opened.*intake_in_progress.*尚未派单/su)
   assert.match(FRONTEND_INSTRUCTIONS, /只问给定的那一个问题，不再次 dispatch/u)
   assert.match(FRONTEND_INSTRUCTIONS, /仓库技术栈、入口、测试命令交给执行器探索/u)
@@ -433,10 +433,4 @@ test('the emitted session.update matches the pinned outbound payload', async () 
   }
   assert.equal((instructions as string).includes('guard__start'), false)
   assert.equal((instructions as string).includes('watch__start'), false)
-})
-
-test('coding progress preference instructions preserve explicit silence without dispatch', () => {
-  assert.match(FRONTEND_INSTRUCTIONS, /set_coding_progress.*continuous.*smart/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /不要播报进度或只记录.*enabled=false/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /不停止任务，最终结果仍交付/u)
 })

@@ -477,7 +477,6 @@ export class CoreRuntime {
         const policy = delegate === undefined ? undefined : this.memory.policies.get(delegate.executor)
         if (applied === undefined || delegate === undefined || policy === undefined) break
         const coding = this.#manifests.get(delegate.executor)?.roles.includes('coding') === true
-        if (coding && !this.codingProgressNarration.enabled) break
         if (this.codingProgressNarration.viaSurrogate(coding, policy.progress_via_surrogate)) {
           if (applied.surrogateCandidateCreated) {
             target = {

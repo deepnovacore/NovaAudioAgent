@@ -91,7 +91,6 @@ export class DesktopRealtime {
         const generation = this.#activeGeneration
         if (generation === null) throw new DesktopProtocolError('desktop control is unauthenticated')
         if (control.type === 'coding.progress_narration') { options.service.setCodingProgressNarration?.(control.mode); return }
-        if (control.type === 'coding.progress_enabled') { options.service.setCodingProgressEnabled?.(control.enabled); return }
         if (control.type !== 'executor.task_action') return this.bridge.receiveControl(control)
         const request = taskActionSchema.parse(control)
         let status: TaskActionStatus = 'unavailable'

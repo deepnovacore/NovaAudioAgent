@@ -44,9 +44,9 @@ jobs:
       - run: npm run test:cli
       # npm may restore the Electron package without its platform binary from
       # cache. The pinned install script is idempotent and closes that gap.
-      - run: node desktop/ambient-orb/node_modules/electron/install.js
+      - run: node desktop/nova-audio-agent-desktop/node_modules/electron/install.js
       - run: npm run test:desktop
-      - run: npm run smoke:capability-status --workspace @nova-audio-agent/ambient-orb
+      - run: npm run smoke:capability-status --workspace @nova-audio-agent/desktop
         if: runner.os == 'macOS'
       - run: npm run build
 
@@ -60,10 +60,10 @@ jobs:
         include:
           - os: macos-latest
             script: package:mac:candidate
-            artifact: ambient-orb-mac
+            artifact: nova-audio-agent-desktop-mac
           - os: windows-latest
             script: package:win
-            artifact: ambient-orb-win
+            artifact: nova-audio-agent-desktop-win
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -76,11 +76,11 @@ jobs:
       - run: npm install --global npm@11.6.0
       - run: npm ci
       - run: npm run ${{ matrix.script }}
-      - run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
+      - run: npm run inspect:release-package --workspace @nova-audio-agent/desktop
         env:
           NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: desktop/ambient-orb/dist/**
+          path: desktop/nova-audio-agent-desktop/dist/**
           if-no-files-found: error

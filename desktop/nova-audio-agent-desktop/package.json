@@ -1,0 +1,60 @@
+{
+  "name": "@nova-audio-agent/desktop",
+  "version": "0.1.1",
+  "description": "Local-first ambient voice agent desktop client",
+  "homepage": "https://github.com/deepnovacore/NovaAudioAgent",
+  "author": {
+    "name": "DeepNova Core",
+    "email": "opensource@deepnovacore.ai"
+  },
+  "private": true,
+  "type": "module",
+  "main": "src/main/main.mjs",
+  "scripts": {
+    "test": "npm run build && node --test && node scripts/source-startup-smoke.mjs",
+    "test:camera-file": "npm run build --workspace @nova-audio-agent/runtime && electron scripts/camera-file-integration.mjs",
+    "test:camera-file:mutations": "node scripts/camera-file-integration-mutations.mjs",
+    "smoke:node-backend": "npm run build && electron scripts/utility-runtime-smoke.mjs",
+    "smoke:capability-status": "npm run build && electron scripts/utility-runtime-smoke.mjs --capability-status",
+    "smoke:packaged-codex": "node scripts/run-packaged-codex-smoke.mjs --dist-root dist",
+    "smoke:packaged-codex:ci": "node scripts/run-release-candidate-codex-smoke.mjs --install-root build/release-codex --dist-root dist",
+    "smoke:installed-candidate": "node scripts/installed-candidate-smoke.mjs",
+    "collect:release-artifacts": "node scripts/collect-release-artifacts.mjs",
+    "verify:release-attestations": "node scripts/verify-github-release-attestations.mjs",
+    "generate:pending-release-ledger": "node scripts/generate-pending-release-ledger.mjs",
+    "generate:release-candidate-report": "node scripts/generate-release-candidate-report.mjs",
+    "generate:release-manifest": "node scripts/generate-release-manifest.mjs",
+    "finalize:mac-notarization": "node scripts/finalize-mac-notarization.mjs --dist-root dist",
+    "prepare:release-smoke-kit": "node scripts/prepare-release-smoke-kit.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "build": "node scripts/make-icons.mjs --if-missing && node scripts/build.mjs",
+    "build:native:project": "node scripts/build-project-native.mjs",
+    "build:native:sandbox-probe": "node scripts/build-codex-sandbox-probe.mjs",
+    "build:native:windows-guardian": "node scripts/build-windows-job-guardian.mjs",
+    "start": "npm run build && electron .",
+    "start:built": "electron .",
+    "inspect:package": "node scripts/inspect-built-preview.mjs",
+    "inspect:release-package": "node scripts/inspect-built-preview.mjs --require-target-matrix",
+    "package:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac dir --publish never",
+    "package:mac:candidate": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac dmg --publish never",
+    "package:mac:release": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never",
+    "package:win": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never",
+    "package:linux": "npm run build && electron-builder --config electron-builder.yml --linux AppImage deb --publish never",
+    "smoke:wake-word": "node scripts/wake-word-smoke.mjs"
+  },
+  "dependencies": {
+    "@nova-audio-agent/runtime": "0.1.1",
+    "sherpa-onnx": "1.13.4",
+    "tar-stream": "3.1.7",
+    "unbzip2-stream": "1.4.3"
+  },
+  "devDependencies": {
+    "7zip-bin": "5.2.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.7",
+    "node-api-headers": "1.9.0",
+    "semver": "7.8.5",
+    "ws": "8.21.3"
+  },
+  "productName": "Nova Audio Agent Desktop"
+}

@@ -2,7 +2,7 @@
 
 The current foundation includes the runtime spine, bounded memory views, executor ports, search,
 Codex with named Workspaces and Sessions, integrated and cascaded realtime voice, the opt-in
-workspace memory graph, the Ambient Orb, local Chinese wake-word detection and host-owned
+workspace memory graph, the Nova Audio Agent Desktop, local Chinese wake-word detection and host-owned
 cascaded response scheduling. Vision's M1.5c thin-frontend contract and live/Windows acceptance
 remain pending evidence.
 

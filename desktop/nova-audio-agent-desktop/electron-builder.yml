@@ -1,0 +1,118 @@
+appId: ai.deepnovacore.nova-audio-agent.orb
+productName: Nova Audio Agent Desktop
+electronVersion: 43.2.0
+asar: true
+asarUnpack:
+  - '**/node_modules/sherpa-onnx/**'
+npmRebuild: true
+beforeBuild: scripts/before-build.cjs
+afterPack: scripts/after-pack.cjs
+afterSign: scripts/after-sign.cjs
+
+directories:
+  app: build/release-app
+  output: dist
+
+files:
+  - src/**/*
+  - package.json
+  - THIRD_PARTY_NOTICES.md
+  - LICENSES/**/*
+  - build/release/production-dependencies-v1.json
+  - node_modules
+  - node_modules/**/*
+  - '!node_modules/**/test/**/*'
+  - '!node_modules/**/tests/**/*'
+  - '!node_modules/**/__tests__/**/*'
+  - '!node_modules/**/fixtures/**/*'
+  - '!node_modules/**/coverage/**/*'
+  - '!node_modules/**/*.test.js'
+  - '!node_modules/**/*.test.cjs'
+  - '!node_modules/**/*.test.mjs'
+  - '!node_modules/**/*.map'
+  - '!node_modules/**/*.ts'
+  - '!node_modules/**/*.cts'
+  - '!node_modules/**/*.mts'
+  - '!node_modules/**/*.snap'
+  - '!node_modules/**/*.png'
+  - '!node_modules/@livekit/agents/resources/*.ogg'
+  - '!node_modules/@livekit/av-darwin-arm64/**/*'
+  - '!node_modules/@livekit/av-darwin-x64/**/*'
+  - '!node_modules/@livekit/av-linux-arm64/**/*'
+  - '!node_modules/@livekit/av-linux-x64/**/*'
+  - '!node_modules/@livekit/av-win32-x64/**/*'
+  - '!node_modules/@nova-audio-agent/runtime/**/*'
+  - node_modules/@nova-audio-agent/runtime/package.json
+  - node_modules/@nova-audio-agent/runtime/dist/src/**/*.js
+
+# The tray reads these with nativeImage.createFromPath, so they stay outside
+# the asar and top-level (every platform's tray needs them), while the
+# macOS-only Swift AEC helper below moves under `mac:` so win/linux builds
+# don't fail on a missing file.
+extraResources:
+  - from: resources/tray
+    to: tray
+  - from: build/endpointing/volcengine-v1
+    to: endpointing/volcengine-v1
+    filter:
+      - MANIFEST.json
+      - LICENSE.silero-vad.txt
+      - silence-16k-s16le.pcm
+      - speech-16k-s16le.pcm
+  - from: build/native/project-native/nova_project_native.node
+    to: native/project-native/nova_project_native.node
+
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  notarize: true
+  sign: scripts/sign-mac-with-native-manifest.cjs
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.inherit.plist
+  extendInfo:
+    LSUIElement: true
+    NSMicrophoneUsageDescription: Nova Audio Agent 使用麦克风进行带系统级回声消除的实时语音交互。
+    NSCameraUsageDescription: Nova Audio Agent 使用摄像头按需捕获画面，用于本地视觉观察和安全提醒。
+  icon: build/icon.icns
+  target:
+    - dir
+  extraResources:
+    - from: build/macos_voice_io
+      to: native/macos_voice_io
+    - from: build/native/codex-sandbox-probe
+      to: native/codex-sandbox-probe
+
+win:
+  target:
+    - nsis
+  signExts:
+    - .exe
+    - .node
+    - .dll
+  icon: build/icon.ico
+  extraResources:
+    - from: build/native/codex-sandbox-probe.exe
+      to: native/codex-sandbox-probe.exe
+    - from: build/native/windows-job-guardian.exe
+      to: native/windows-job-guardian.exe
+
+nsis:
+  oneClick: false
+  perMachine: false
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+  icon: build/icons
+  executableName: nova-audio-agent-desktop
+  synopsis: "Nova ambient voice orb"
+  artifactName: "nova-audio-agent-desktop-${version}-${arch}.${ext}"
+  extraResources:
+    - from: build/native/codex-sandbox-probe
+      to: native/codex-sandbox-probe
+
+deb:
+  recommends:
+    - fonts-noto-cjk

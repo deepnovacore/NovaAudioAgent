@@ -53,7 +53,7 @@ jobs:
           test "$EXPECTED_COMMIT" = "$(git rev-parse HEAD)"
           git merge-base --is-ancestor "$EXPECTED_COMMIT" origin/main
           test "$(node -p "require('./cli/package.json').version")" = "$RELEASE_VERSION"
-          test "$(node -p "require('./desktop/ambient-orb/package.json').version")" = "$RELEASE_VERSION"
+          test "$(node -p "require('./desktop/nova-audio-agent-desktop/package.json').version")" = "$RELEASE_VERSION"
           gh run view "$CANDIDATE_RUN_ID" --json headSha,jobs,name > candidate-run.json
           test "$(jq -r .name candidate-run.json)" = "Release candidate evidence"
           test "$(jq -r .headSha candidate-run.json)" = "$EXPECTED_COMMIT"
@@ -82,8 +82,8 @@ jobs:
           set -euo pipefail
           gh run download "$CANDIDATE_RUN_ID" --name candidate-darwin-arm64 --dir downloaded/candidate-darwin-arm64
           gh run download "$CANDIDATE_RUN_ID" --name candidate-win32-x64 --dir downloaded/candidate-win32-x64
-          node desktop/ambient-orb/scripts/assemble-release-artifact-root.mjs --input downloaded --output release-artifacts
-          node desktop/ambient-orb/scripts/generate-release-manifest.mjs \
+          node desktop/nova-audio-agent-desktop/scripts/assemble-release-artifact-root.mjs --input downloaded --output release-artifacts
+          node desktop/nova-audio-agent-desktop/scripts/generate-release-manifest.mjs \
             --artifact-root release-artifacts \
             --commit "$EXPECTED_COMMIT" \
             --output release-artifacts/release-manifest-v1.json

@@ -21,9 +21,9 @@
 
 ### Task 1: Continuous narration and executor expression
 
-**Files:** runtime/src/config.ts, environment-contract.ts, assembly.ts, runtime.ts, realtime/service.ts and frontend-instructions.ts, executors/codex/factory.ts; desktop/ambient-orb/src/main/settings-store.mjs and backend.mjs, renderer/settings.html and settings.mjs; corresponding runtime/test and desktop/ambient-orb/test files. New small narration-policy module allowed.
+**Files:** runtime/src/config.ts, environment-contract.ts, assembly.ts, runtime.ts, realtime/service.ts and frontend-instructions.ts, executors/codex/factory.ts; desktop/nova-audio-agent-desktop/src/main/settings-store.mjs and backend.mjs, renderer/settings.html and settings.mjs; corresponding runtime/test and desktop/nova-audio-agent-desktop/test files. New small narration-policy module allowed.
 
-**Interfaces:** Add codingProgressNarration desktop setting and corresponding runtime coding_progress_narration enum `smart | continuous`, default smart. Keep surrogate_model configured for intake. Parent does not edit these files except integration fixes after handoff. Any new voice tool must be registered through existing host tool schema and produce a typed host preference, never regex-match backend text.
+**Interfaces:** Add codingProgressNarration desktop setting and corresponding runtime coding_progress_narration enum `smart | continuous`, default smart. Keep surrogate_model configured for intake. Parent does not edit these files except integration fixes after handoff. Settings is the sole configuration entry; do not expose a model tool for changing narration preferences.
 
 - [x] Write failing routing tests: continuous new coding summary reaches Host once with zero progress surrogate calls; smart retains old routing; repeated summary stays silent; final is delivered once; monitor behavior unchanged. Add settings round-trip/default tests.
 ```ts
@@ -32,7 +32,7 @@ assert.equal(settings.coding_progress_narration, 'smart')
 // assert exactly one progress host fact and no surrogate.watch progress wake.
 ```
 - [x] Run focused tests and record the expected red before implementation.
-- [x] Implement one effective coding progress policy shared by core and service, so neither duplicates nor drops progress. Keep existing floor/expiry/ownership logic. Preserve explicit user silence with a host-owned progress preference and a tested voice path. Mode switch must not restart tasks. If settings architecture requires restart, provide live authenticated preference control and reuse its state in the settings path or report a precise integration contract to parent.
+- [x] Implement one effective coding progress policy shared by core and service, so neither duplicates nor drops progress. Keep existing floor/expiry/ownership logic. Do not add a voice preference tool. Mode switch must not restart tasks. If settings architecture requires restart, provide live authenticated preference control and reuse its state in the settings path or report a precise integration contract to parent.
 ```ts
 type CodingProgressNarration = 'smart' | 'continuous'
 // effective coding policy: continuous => progress_via_surrogate false;
@@ -43,7 +43,7 @@ type CodingProgressNarration = 'smart' | 'continuous'
 
 ### Task 2: Task banner, snapshot, and actions
 
-**Files:** runtime/src/desktop-tasks.ts (new), desktop-realtime.ts, desktop-bridge.ts, desktop.ts, desktop-wire.ts, coding-executor.ts, executors/codex/adapter-project.ts; desktop/ambient-orb/src/renderer/task-banner.mjs (new), task-banner.css (new), index.html, index.mjs; main/window-position.mjs if geometry needs adjustment. Corresponding tests.
+**Files:** runtime/src/desktop-tasks.ts (new), desktop-realtime.ts, desktop-bridge.ts, desktop.ts, desktop-wire.ts, coding-executor.ts, executors/codex/adapter-project.ts; desktop/nova-audio-agent-desktop/src/renderer/task-banner.mjs (new), task-banner.css (new), index.html, index.mjs; main/window-position.mjs if geometry needs adjustment. Corresponding tests.
 
 **Interfaces:** Wire frame `executor.tasks` with monotonic revision, active_project and bounded tasks; each task has work_id/executor/project/title/phase/summary/ts. Control `executor.task_action` has request_id, work_id, executor and action `open | cancel`; response `executor.task_action_result` echoes request/work and status. Host adapter exposes exact task action methods via an optional structural port, with no renderer-supplied paths.
 
@@ -85,7 +85,7 @@ git diff --check
 - Ruling: Inline parent handles task 2 while a fresh implementer handles independent task 1, per execution skill's subagent recommendation; no shared file ownership or concurrent builds.
 - Preflight: config/ui/speech constraints => Task 1; snapshot/actions/layout/accessibility => Task 2; real validation/review => Task 3. No uncovered spec requirements identified.
 
-- Implemented smart/continuous shared host preference, authenticated voice preference tool, cross-mode deduplication and lifecycle cleanup. Continuous bypasses coding progress Surrogate only; intake and other channels remain intact.
+- Implemented Settings-owned smart/continuous preference, cross-mode deduplication and lifecycle cleanup; removed the initial voice preference tool following the user correction. Continuous bypasses coding progress Surrogate only; intake and other channels remain intact.
 - Implemented bounded authenticated task snapshots, exact task open/cancel, socket-generation checks, Finder workspace opening, readable amber card, selection/hide/restore and terminal timers.
 - Review repairs: old socket queued actions cannot execute under new connection; independent alerts survive combined-area suppression; native capacity is six rows; terminal timers chain; fallback suppression persists through native drag callbacks.
 - Browser smoke passed real renderer with simulated tasks at 1x/1.5x/2x zoom, long-text focus scrolling, above/below layout, small-screen alert priority, exact actions, disconnect and live mode. Minimum measured text contrast over white wallpaper: 10.36:1. Preview artifacts: output/playwright/task-banner/ (not committed).
@@ -94,3 +94,8 @@ git diff --check
 - Final verification: `npm test` exited 0 — Runtime 2393 passed / 5 skipped, Desktop 913 passed / 3 skipped, CLI 21 passed. Windows-only source-startup smoke skipped on macOS. Full log: /tmp/nova-banner-final-tests.log.
 - Final read-only branch review: no remaining actionable findings after fallback-state regression repair. `git diff --check` passed. Branch/worktree retained without merge, push or release.
 - Final `npm run check` exited 0: typecheck, lint, environment/wire contracts, Node parity (231 files / 394 reviewed occurrences), executor boundary and capability drift checks passed. Log: /tmp/nova-banner-final-check.log.
+
+- User correction: narration configuration belongs exclusively to Settings. Removed set_coding_progress and enabled controls from schemas, model instructions and handlers; retained authenticated Settings mode changes.
+- Desktop naming correction: renamed workspace directory, npm package, public product/window/tray identity, build/release scripts, CI and documentation. Preserve the published 0.1.1 CLI executable paths and legacy user-data/settings/OS encryption identity as compatibility ABI. Public app name restored at readiness before windows are created. Electron 43.2.0 captures its crypto app name in PostCreateMainMessageLoop: https://github.com/electron/electron/blob/v43.2.0/shell/browser/electron_browser_main_parts.cc#L478-L520 . No live secret access or migration performed.
+- Correction verification: Runtime 2391 passed / 5 skipped; renamed Desktop 915 passed / 3 skipped; CLI 21 passed. Windows-only source startup smoke skipped on macOS. Browser banner/Settings smoke passed. Root `npm run check` and final diff check passed; audit now covers 232 source files / 394 reviewed occurrences. Read-only final review found no remaining actionable issue; actual legacy Keychain decryption was not exercised.
+- Local rename follow-ups: removed generated Swift/Clang caches containing the old absolute path, then rebuilt successfully; corrected one escaped regex expectation to the renamed npm workspace. No production workarounds added for these test/build-only issues.

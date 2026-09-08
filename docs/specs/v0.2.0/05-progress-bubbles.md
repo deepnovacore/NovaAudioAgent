@@ -8,7 +8,7 @@
 
 - Orb shows `#state-label` (`待命 · Codex 空闲`, etc.) and a confirmation pill
   for project / Codex approval. There is no toast or bubble stack
-  (`desktop/ambient-orb`).
+  (`desktop/nova-audio-agent-desktop`).
 - `#caption` exists for transcripts but is hidden in the compact layout.
 - Codex working progress is often `progress_via_surrogate`; started / final
   become host facts that FrontBrain may paraphrase under Floor.

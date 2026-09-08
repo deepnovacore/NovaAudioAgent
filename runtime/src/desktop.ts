@@ -181,7 +181,6 @@ export const desktopControlSchema = z.union([
   ordinaryDesktopControlSchema,
   taskActionSchema,
   z.object({type: z.literal('coding.progress_narration'), mode: z.enum(['smart', 'continuous'])}).strict(),
-  z.object({type: z.literal('coding.progress_enabled'), enabled: z.boolean()}).strict(),
   connectionDiagnosticSchema,
 ])
 

@@ -2005,7 +2005,7 @@ test('codex status idle and running handoffs each trigger their same-turn contin
 /** Spec 08 host tools on the pipeline fixture: `dispatch` / `cancel` / `confirm` are the only coding tools the model sees. */
 async function dispatchTurn(
   service: RealtimeService,
-  name: 'set_coding_progress' | 'dispatch' | 'cancel' | 'confirm' | `codex__${string}`,
+  name: 'dispatch' | 'cancel' | 'confirm' | `codex__${string}`,
   arguments_: Readonly<Record<string, JsonValue>>,
   responseId = 'origin',
 ): Promise<ToolAcceptance> {
@@ -10602,38 +10602,16 @@ test('continuous coding progress is direct, deduplicated, nonempty and coalesced
   service.projectRuntimeEvent(progressEvent({seq: 4, summary: '回归测试通过', activity: 4}))
   assert.equal(queued().length, 1, 'bounded latest update per task')
   assert.match(queued()[0]!, /回归测试通过/u)
-  service.setCodingProgressEnabled(false)
-  assert.equal(queued().length, 0, 'silence withdraws queued progress')
   service.setCodingProgressNarration('smart')
+  assert.equal(queued().length, 0, 'mode switch withdraws queued progress')
   service.setCodingProgressNarration('continuous')
   service.projectRuntimeEvent(progressEvent({seq: 5, summary: '新的验证结果', activity: 5}))
-  assert.equal(queued().length, 0, 'mode switches preserve silence')
+  assert.equal(queued().length, 1, 'continuous mode resumes with the next new summary')
 })
 
-test('voice coding progress preference requires bound current user and never dispatches work', async () => {
-  const {service, runtimeDispatches} = pipelineService({agent: true})
-  await service.connect()
-  assert.equal(service.providerSchemasForTest.some(schema => JSON.stringify(schema).includes('set_coding_progress')), true)
-  const accepted = await dispatchTurn(service, 'set_coding_progress', {mode: 'continuous', enabled: false})
-  assert.equal(accepted.accepted, true)
-  assert.deepEqual(JSON.parse(accepted.host_item.content), {
-    code: 'coding_progress_preference_updated', mode: 'continuous', enabled: false,
-    scope: 'all_coding_progress', final_delivery: 'unchanged',
-  })
-  assert.equal(runtimeDispatches(), 0)
-  const other = pipelineService({agent: true}).service
-  await other.connect()
-  const invalid = await dispatchTurn(other, 'set_coding_progress', {mode: 'loud'})
-  assert.equal(invalid.accepted, false)
-  await other.close()
-  await service.close()
-})
-
-
-test('coding progress silence leaves final delivery available', () => {
+test('continuous coding progress leaves final delivery available', () => {
   const {service, queuedItems} = projectionService({progressViaSurrogate: true})
   service.setCodingProgressNarration('continuous')
-  service.setCodingProgressEnabled(false)
   service.projectRuntimeEvent({kind: 'handoff', seq: 1, ts: 1, payload: {
     channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1', outcome: 'ok',
     trust: 'trusted_system', content: {summary: '验证通过，任务完成'}, refs: [],
@@ -10650,7 +10628,7 @@ test('coding preference listener is restored after service close and reconnect',
   service.setCodingProgressNarration('continuous')
   service.projectRuntimeEvent(progressEvent({seq: 1, summary: '新的进展', activity: 1}))
   assert.equal(queued().length, 1)
-  service.setCodingProgressEnabled(false)
+  service.setCodingProgressNarration('smart')
   assert.equal(queued().length, 0)
   await service.close()
 })

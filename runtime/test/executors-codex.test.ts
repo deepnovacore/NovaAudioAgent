@@ -191,14 +191,14 @@ test('hidden Codex bindings stay while the model sees only descriptor-driven hos
     name: 'codex', summary: CODEX_AGENT_SUMMARY, ownedChannels: ['codex'],
   }]})
   assert.deepEqual(
-    [...compiled.bindings.keys()].slice(-6),
-    ['codex__run', 'codex__status', 'dispatch', 'cancel', 'confirm', 'set_coding_progress'],
+    [...compiled.bindings.keys()].slice(-5),
+    ['codex__run', 'codex__status', 'dispatch', 'cancel', 'confirm'],
   )
   assert.equal(compiled.bindings.get('codex__run')?.kind, 'delegate')
   assert.equal(compiled.bindings.get('dispatch')?.kind, 'host')
   const names = compiled.schemas.map(schema => (schema.function as {name: string}).name)
   assert.ok(!names.some(name => name.startsWith('codex__')), names.join(','))
-  assert.deepEqual(names.slice(-4), ['dispatch', 'cancel', 'confirm', 'set_coding_progress'])
+  assert.deepEqual(names.slice(-3), ['dispatch', 'cancel', 'confirm'])
   const dispatch = compiled.schemas.find(schema => (schema.function as {name: string}).name === 'dispatch')!.function as {
     description: string
     parameters: {properties: {executor: {enum: string[]}}; required: string[]}

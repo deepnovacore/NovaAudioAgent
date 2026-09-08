@@ -37,7 +37,7 @@ import {
   type AgentController,
   type AgentControllerRegistry,
 } from '../agent-controller.js'
-import {CODING_PROGRESS_TOOL, CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
+import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
 import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { Clock } from '../clock.js'
 import type {ExecutorRole} from '../ports.js'
@@ -2049,13 +2049,12 @@ export class RealtimeService {
 
   /** Live host preference: switching never stops or restarts executor work. */
   setCodingProgressNarration(mode: CodingProgressNarration): void { this.#codingProgressNarration.setMode(mode) }
-  setCodingProgressEnabled(enabled: boolean): void { this.#codingProgressNarration.setEnabled(enabled) }
 
   /** Project a suggestion chosen by Surrogate when no FastBrain owns the final speech turn. */
   onSuggestionSelected(suggestion: Suggestion, reason: WakeReason): void {
     const progress = this.#isSelectedProgress(suggestion)
     const coding = progress && suggestion.evidence_refs[0]?.startsWith(`${this.#coding?.channel}:`) === true
-    if (coding && (!this.#codingProgressNarration.enabled || this.#codingProgressNarration.mode !== 'smart')) return
+    if (coding && this.#codingProgressNarration.mode !== 'smart') return
     const delegate = coding && reason.origin !== null ? this.#runtime.inFlightDelegate(reason.origin) : undefined
     if (coding && delegate?.executor !== this.#coding?.channel) return
     if (coding) {
@@ -2359,7 +2358,7 @@ export class RealtimeService {
       summary = coding ? codingProgressSummary(summary) : prepareForSpeech(summary, {limit: SPEECH_FINAL_LIMIT}).text || null
     }
     const previousSummary = this.#lastProgressSummary.get(payload.delegate_id)
-    // Keep received facts current even when smart mode or silence suppresses delivery.
+    // Keep received facts current even when smart mode suppresses delivery.
     if (coding && payload.phase === 'working' && summary !== null) {
       this.#lastProgressSummary.set(payload.delegate_id, summary)
     }
@@ -2379,7 +2378,6 @@ export class RealtimeService {
     // A monitor's periodic heartbeat is operational state, not a new user-facing event. Speaking it
     // creates a fresh model turn that can accidentally replay an older acknowledgement.
     if (isMonitorPolicy(manifest.policy) && payload.phase === 'working') return
-    if (coding && !this.#codingProgressNarration.enabled) return
     if (payload.phase === 'working') {
       if (this.#codingProgressNarration.viaSurrogate(coding, manifest.policy.progress_via_surrogate === true)) return
       if (coding && this.#codingProgressNarration.mode === 'continuous' && summary === null) return
@@ -3742,28 +3740,6 @@ export class RealtimeService {
    * RealtimeService alone maps those facts to provider-facing result language.
    */
   async #interceptHost(event: ToolCallReady, originRef: string | null): Promise<ToolAcceptance | null> {
-    if (event.name === CODING_PROGRESS_TOOL) {
-      if (this.#coding === null || this.#tools.bindings.get(event.name)?.kind !== 'host') {
-        return this.#refusalAcceptance(event, 'unsupported_tool', '{"code":"unsupported_tool"}')
-      }
-      const {mode, enabled} = event.arguments
-      const keys = Object.keys(event.arguments)
-      if (keys.length === 0 || keys.some(key => key !== 'mode' && key !== 'enabled')
-        || (mode !== undefined && mode !== 'smart' && mode !== 'continuous')
-        || (enabled !== undefined && typeof enabled !== 'boolean')) {
-        return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
-      }
-      if (this.#currentUserTurn(event, originRef) === null) {
-        return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
-      }
-      if (mode !== undefined) this.setCodingProgressNarration(mode)
-      if (enabled !== undefined) this.setCodingProgressEnabled(enabled)
-      const result = this.#refusalAcceptance(event, 'coding_progress_preference_updated', canonicalJson({
-        code: 'coding_progress_preference_updated', mode: this.#codingProgressNarration.mode,
-        enabled: this.#codingProgressNarration.enabled, scope: 'all_coding_progress', final_delivery: 'unchanged',
-      }))
-      return {...result, accepted: true, inline_fulfilled: true}
-    }
     if (event.name === CONFIRM_TOOL) {
       return this.#refusalAcceptance(event, 'unknown_confirmation', UNKNOWN_CONFIRMATION_TOOL_RESULT)
     }

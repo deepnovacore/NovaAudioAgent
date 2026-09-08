@@ -10,11 +10,10 @@ import type {JsonValue} from './events.js'
 import type {AgentDescriptor} from './agent-controller.js'
 import {stripLikePython} from './python-text.js'
 
-export const CODING_PROGRESS_TOOL = 'set_coding_progress'
 export const DISPATCH_TOOL = 'dispatch'
 export const CANCEL_TOOL = 'cancel'
 export const CONFIRM_TOOL = 'confirm'
-export const HOST_TOOL_NAMES: ReadonlySet<string> = new Set([DISPATCH_TOOL, CANCEL_TOOL, CONFIRM_TOOL, CODING_PROGRESS_TOOL])
+export const HOST_TOOL_NAMES: ReadonlySet<string> = new Set([DISPATCH_TOOL, CANCEL_TOOL, CONFIRM_TOOL])
 
 // ponytail: one app-server child per CODEX_HOME, i.e. per workspace; a settings key is the upgrade
 // path once real usage shows the need.
@@ -108,19 +107,4 @@ export function confirmArguments(value: unknown): {readonly id: string; readonly
     return null
   }
   return {id: id.value, accepted: accepted.value}
-}
-
-/** Global coding progress preference, justified by the bound user turn. */
-export const CODING_PROGRESS_TOOL_SPEC: HostToolSpec = {
-  name: CODING_PROGRESS_TOOL,
-  description: '用户要求调整编程进度播报时调用。mode=continuous 连续转述新进展，smart 智能筛选；enabled=false 暂停所有编程任务的进度播报，true 恢复。只记录/不要播报进度时设 false。此偏好覆盖所有编程任务，不停止任务，最终结果仍交付。只有本轮用户明确要求才调用；至少提供一项。',
-  params: {
-    type: 'object',
-    properties: {
-      mode: {type: 'string', enum: ['smart', 'continuous']},
-      enabled: {type: 'boolean'},
-    },
-    additionalProperties: false,
-  },
-  inject_origin_ref: false,
 }

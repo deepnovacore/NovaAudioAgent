@@ -37,7 +37,7 @@ test('host tool specs fold every registered controller into one enum with one de
   assert.ok(!cancel.inject_origin_ref)
   assert.deepEqual(cancel.params.required, ['executor'])
   assert.deepEqual(CONFIRM_TOOL_SPEC.params.required, ['id', 'accepted'])
-  assert.deepEqual([...HOST_TOOL_NAMES].sort(), ['cancel', 'confirm', 'dispatch', 'set_coding_progress'])
+  assert.deepEqual([...HOST_TOOL_NAMES].sort(), ['cancel', 'confirm', 'dispatch'])
   assert.equal(MAX_CONCURRENT_WORK, 3)
 })
 

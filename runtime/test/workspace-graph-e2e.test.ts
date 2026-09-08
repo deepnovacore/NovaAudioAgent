@@ -59,7 +59,7 @@ const WORKSPACE_HINTS_POLICY_OPEN = '<workspace_hints authority="suggestion_only
  * workspace-graph-store (locked timer and last-good publication), workspace-graph-identity
  * (rename/remote continuity and live-instance ambiguity), workspace-graph-provider (fail-closed
  * capability handshake), desktop-service/desktop-bridge (snapshot-only latest board delivery), and
- * Ambient Orb workspace-graph-board (selection/visible refresh with no action controls).
+ * Nova Audio Agent Desktop workspace-graph-board (selection/visible refresh with no action controls).
  */
 
 function sequence(prefix: string): () => string {

@@ -73,7 +73,6 @@ export interface DesktopCommand {
 export interface BridgeService {
   readonly executorState: ExecutorState
   setCodingProgressNarration?(mode: 'smart' | 'continuous'): void
-  setCodingProgressEnabled?(enabled: boolean): void
   sendAudio(pcm: Uint8Array): Promise<void>
   localSpeechOnset(speechId: string): Promise<void>
   playbackStarted(utteranceId: string, generationEpoch: number): boolean
@@ -1007,7 +1006,6 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
   switch (control.type) {
     case 'executor.task_action':
     case 'coding.progress_narration':
-    case 'coding.progress_enabled':
       throw new DesktopProtocolError('desktop host control requires authenticated transport')
     case 'speech.onset':
       return {

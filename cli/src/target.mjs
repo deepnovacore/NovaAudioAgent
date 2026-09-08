@@ -4,6 +4,7 @@ import { join } from 'node:path'
 export const PRODUCT_VERSION = '0.1.1'
 export const RELEASE_REPOSITORY = 'deepnovacore/NovaAudioAgent'
 
+// Published 0.1.1 archives retain their original executable names; new builds use Desktop.
 const DEFINITIONS = Object.freeze({
   'darwin-arm64': Object.freeze({
     artifact: `nova-audio-agent-${PRODUCT_VERSION}-macos-arm64-app.zip`,
@@ -43,6 +44,7 @@ export function desktopSettingsPath({
   home = homedir(),
   environment = process.env,
 } = {}) {
+  // Stable storage identity shared with the renamed desktop (including encrypted settings).
   const product = 'Nova Audio Agent Ambient Orb'
   if (platform === 'darwin') {
     return join(home, 'Library', 'Application Support', product, 'ambient-orb-settings.json')

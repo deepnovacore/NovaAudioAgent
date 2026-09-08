@@ -36,17 +36,17 @@ jobs:
       - run: npm run test:desktop
       - run: npm run build
       - name: Build unsigned native package bytes
-        run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb
+        run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/desktop
       - name: Inspect exact unsigned application and installer bytes
         env:
           NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
-        run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
+        run: npm run inspect:release-package --workspace @nova-audio-agent/desktop
       - name: Normalize closed release artifact names and final digests
-        run: npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}
+        run: npm run collect:release-artifacts --workspace @nova-audio-agent/desktop -- --target-id ${{ matrix.target_id }}
       - name: Prepare checkout-free installed smoke kit
-        run: npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb
+        run: npm run prepare:release-smoke-kit --workspace @nova-audio-agent/desktop
       - name: Add portable unsigned result classifier to checkout-free kit
-        run: node -e "require('node:fs').copyFileSync('desktop/ambient-orb/scripts/run-unsigned-installed-smoke.mjs','desktop/ambient-orb/build/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs')"
+        run: node -e "require('node:fs').copyFileSync('desktop/nova-audio-agent-desktop/scripts/run-unsigned-installed-smoke.mjs','desktop/nova-audio-agent-desktop/build/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs')"
       # This is a same-workflow debugging artifact, not a release candidate.
       # The private repository's current plan does not provide attestations;
       # the downstream job still rehashes the closed bytes before execution.
@@ -54,9 +54,9 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            desktop/ambient-orb/build/release-artifacts/**
-            desktop/ambient-orb/build/release-digests/**
-            desktop/ambient-orb/build/release-smoke-kit/**
+            desktop/nova-audio-agent-desktop/build/release-artifacts/**
+            desktop/nova-audio-agent-desktop/build/release-digests/**
+            desktop/nova-audio-agent-desktop/build/release-smoke-kit/**
           if-no-files-found: error
 
   installed-smoke:
