@@ -47,6 +47,7 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_REALTIME_PROVIDER', 'retired_realtime', false, false, 'never', null, 'Retired vendor-shaped realtime selector.', '已退役的厂商形态实时选择器。'],
   ['NOVA_AUDIO_AGENT_EXECUTOR', 'core', false, true, 'never', null, 'Optional single executor selector; unset selects none.', '可选的单执行器选择器；未设置时不选择执行器。'],
   ['NOVA_AUDIO_AGENT_EXECUTORS', 'core', false, true, 'never', null, 'Optional ordered executor list; unset selects none.', '可选的有序执行器列表；未设置时不选择执行器。'],
+  ['NOVA_AUDIO_AGENT_CODING_PROGRESS_NARRATION', 'core', false, true, 'never', 'smart', 'Coding progress narration.', '编程进度播报模式。'],
   ['NOVA_AUDIO_AGENT_PROACTIVITY_PRESET', 'core', false, true, 'never', 'balanced', 'Proactivity preset.', '主动性预设。'],
   ['NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN', 'core', false, true, 'never', 'preset', 'Suggestion cooldown override in seconds.', '建议冷却秒数覆盖。'],
   ['NOVA_AUDIO_AGENT_FRESH_WINDOW', 'core', false, true, 'never', 'preset', 'Fresh-context window override in seconds.', '新鲜上下文窗口秒数覆盖。'],

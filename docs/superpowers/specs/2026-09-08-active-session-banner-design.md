@@ -6,7 +6,7 @@
 
 分支：`feature/active-session-banner`
 
-状态：用户已批准聊天中的设计方向，并补充“清晰易读”；本文等待书面设计审阅，尚未实现。
+状态：用户已批准设计及连续转述扩展；功能已实现，分支保留，验证记录见实施计划。
 
 ## 1. 目标与范围
 
@@ -88,7 +88,7 @@
 
 当前 progress projection 将计数放在 prose 前，再裁剪。本轮先接入后台指令并观察证据；只有定向回归证明重要结论或失败限定被计数挤掉时，才在既有 composeSummary 中调整顺序。不要新增摘要模型或复杂消息 schema。指令接线测试通过仅说明接线正确，不等同于真实语音体验已改善。
 
-## 8. 连续转述模式评估（新增建议，尚未批准实现）
+## 8. 连续转述模式评估（已批准并实现）
 
 用户追加询问是否应支持全部转述及关闭 Surrogate。建议增加可选“连续转述”，默认仍为“智能播报”。该选项控制 coding 进度是否经过 Surrogate 的价值筛选，与视觉 Banner、气泡显示设置分开。
 
@@ -108,7 +108,7 @@ GPT-Live 对照：2026-09-08 核对 OpenAI 公开 `backend_prompt.md`，其前�
 - https://github.com/openai/codex/blob/main/codex-rs/prompts/templates/realtime/backend_prompt.md
 - https://github.com/openai/codex/blob/main/codex-rs/prompts/templates/realtime/realtime_start.md
 
-若批准该扩展，验证两模式各自只走一条播报路径，连续模式 coding progress 的 surrogate.watch 调用数为零，intake 仍可正常使用原模型；覆盖普通进度可听、用户静默、用户讲话时等待、模式切换时撤回在途旧 verdict、结果不重复及多任务归属。模式切换不能重启正在执行的任务。
+该扩展已批准，验证两模式各自只走一条播报路径，连续模式 coding progress 的 surrogate.watch 调用数为零，intake 仍可正常使用原模型；覆盖普通进度可听、用户静默、用户讲话时等待、模式切换时撤回在途旧 verdict、结果不重复及多任务归属。模式切换不能重启正在执行的任务。
 
 ## 9. 验证与交付
 

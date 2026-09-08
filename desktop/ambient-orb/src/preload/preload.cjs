@@ -115,7 +115,7 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
       return () => ipcRenderer.removeListener('nova:confirmation-placement', listener)
     },
     reserveBubbleArea: rows => ipcRenderer.invoke(
-      'nova:bubbles:reserve', Number.isInteger(rows) && rows >= 0 && rows <= 3 ? rows : -1,
+      'nova:bubbles:reserve', Number.isInteger(rows) && rows >= 0 && rows <= 6 ? rows : -1,
     ),
     onBubbleLayout: callback => {
       if (typeof callback !== 'function') return () => {}

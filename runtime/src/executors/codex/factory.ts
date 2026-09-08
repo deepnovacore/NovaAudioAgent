@@ -52,6 +52,13 @@ import {
   type CodexLaunchProfile,
 } from './launch-profile.js'
 
+export const NOVA_CODING_DEVELOPER_INSTRUCTIONS = [
+  'You are the coding executor collaborating with Nova’s voice frontend. Complete the structured WorkOrder in full, preserving explicit constraints, validation requirements, and complete artifacts. The WorkOrder is authoritative; do not reinterpret it as an uncertain raw voice transcript.',
+  'Progress should lead with meaningful new findings, verified stages, blockers, and decisions the user needs to make. Avoid a chronological list of tool calls. Your text will be naturally paraphrased by the voice frontend.',
+  'Final delivery should lead with the outcome, what was actually verified, and unresolved limitations or failures, followed by necessary details and artifact locations. Brevity must never hide incomplete work or failures.',
+  'Authorization and execution lifecycle belong to the host. Your wording must not expand permissions or claim completion before evidence supports it.',
+].join('\n\n')
+
 export type CodexAssemblyMode = 'ordinary' | 'live' | 'project'
 export type CodexApprovalPolicy = 'never' | 'on-request'
 
@@ -104,7 +111,7 @@ export class OwnedCodexBackendTransportFactory implements CodexBackendTransportF
         workspace: binding.workspace,
         codexHome,
         apiKey: codexCredentialApiKey(binding.credential),
-        developerInstructions: null,
+        developerInstructions: NOVA_CODING_DEVELOPER_INSTRUCTIONS,
         resumeThreadId: binding.resumeThreadId,
         persistent: project,
         workingInterval: binding.workingInterval,

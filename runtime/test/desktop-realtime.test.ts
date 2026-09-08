@@ -177,17 +177,17 @@ test('real loopback covers every declared orb frame, preemption, and duplex traf
   const socket = await connectDesktop(readiness.port)
 
   try {
-    const initial = nextFrames(socket, 4, 'desktop ready and current bridge state')
+    const initial = nextFrames(socket, 5, 'desktop ready and current bridge state')
     await sendClient(socket, JSON.stringify({type: 'hello', token: TOKEN}), 'desktop hello send')
     const initialFrames = await initial
-    assert.deepEqual(initialFrames.map(frame => text(frame)), [
+    assert.deepEqual(initialFrames.slice(0, 4).map(frame => text(frame)), [
       '{"type":"desktop.ready"}',
       '{"type":"playback.clear","utterance_id":"stale","generation_epoch":1}',
       '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}',
       '{"type":"project.state","workspace_display_name":"project-a","session_title":"session-a","roster":[],"pending_confirmation":false,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
     ])
 
-    const downlink = nextFrames(socket, 6, 'desktop bridge downlink families')
+    const downlink = nextFrames(socket, 7, 'desktop bridge downlink families')
     realtime.bridge.onAudioFrame({
       utterance_id: 'u-2', generation_epoch: 2, sequence: 0, pcm: new Uint8Array([2, 3]),
     })
@@ -212,7 +212,7 @@ test('real loopback covers every declared orb frame, preemption, and duplex traf
     assert.equal(text(frames[4]!), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}')
     assert.match(text(frames[5]!), /"workspace_display_name":"project-b"/u)
 
-    const remaining = nextFrames(socket, 8, 'approval, results, activity, clock and camera producers')
+    const remaining = nextFrames(socket, 10, 'approval, results, activity, clock and camera producers')
     realtime.bridge.onExecutorApproval({
       pending_approval: false, pending_approval_busy: false, kind: null,
       local_detail: null, operation_summary: null, expires_at: null, work: null, queued: 0,
@@ -222,6 +222,7 @@ test('real loopback covers every declared orb frame, preemption, and duplex traf
       phase: 'completed', summary: 'done', level: 'milestone',
     }, {delegate_id: 'work-1', executor: 'codex', outcome: 'ok', summary: 'done',
       started_at: 1, ended_at: 2, changed_files: 0})
+    realtime.bridge.onTaskActionResult({type: 'executor.task_action_result', request_id: 'r', work_id: 'work-1', action: 'open', status: 'unavailable'})
     realtime.bridge.onActivity(true)
     realtime.bridge.sendClockPings(1)
     assert.ok(realtime.server instanceof NodeDesktopServer)
@@ -469,7 +470,11 @@ class ControlledServer implements DesktopServerTransport {
   }
   holdNext(): Promise<void> { return new Promise(resolve => { this.#hold = resolve }) }
   releaseHeld(): void { this.#hold?.(); this.#hold = undefined }
-  sendText(raw: string): Promise<void> { return this.#send(raw) }
+  sendText(raw: string): Promise<void> {
+    // These pump fixtures exercise playback queues; task replay has its own integration test.
+    if ((JSON.parse(raw) as {type?: string}).type === 'executor.tasks') return Promise.resolve()
+    return this.#send(raw)
+  }
   sendBinary(raw: Uint8Array): Promise<void> { return this.#send(raw) }
   async #send(raw: string | Uint8Array): Promise<void> {
     this.concurrent += 1
@@ -668,4 +673,90 @@ test('droppable local validation failure is diagnosed without disconnecting a he
     kind: 'desktop.outbound_validation_dropped',
     payload: {policy: 'droppable', frame_kind: 'text'},
   })
+})
+
+test('task actions bind exact host work and reject unauthenticated or stale opens', async () => {
+  const {service} = serviceHarness()
+  const opened: string[] = []
+  const cancelled: string[] = []
+  let resolvePath!: (value: string) => void
+  const desktop = new DesktopRealtime({token: TOKEN, service, executor: CODEX, stop: {abort() { /* unused by host action fixture */ }},
+    taskPort: {cancelTask: id => {cancelled.push(id); return 'cancelling'}, taskDirectory: () => new Promise(resolve => {resolvePath = resolve})},
+    openTaskDirectory: path => {opened.push(path); return Promise.resolve()},
+    createServer: () => ({sendText: () => Promise.resolve(), sendBinary: () => Promise.resolve(), disconnectClient: () => Promise.resolve(), start: () => Promise.resolve({} as never), close: () => Promise.resolve()}),
+  })
+  const request = {type: 'executor.task_action' as const, request_id: 'r', work_id: 'a', executor: 'codex', action: 'cancel' as const}
+  await assert.rejects(async () => desktop.serverOptions.onControl?.(request), /unauthenticated/)
+  await desktop.serverOptions.onClientAuthenticated?.()
+  const progress = {type: 'executor.progress' as const, executor: 'codex', delegate_id: 'a', phase: 'working' as const, summary: '进展', level: 'detail' as const, ts: 1}
+  desktop.bridge.onExecutorProgress(progress)
+  await desktop.serverOptions.onControl?.(request)
+  desktop.bridge.onExecutorProgress({...progress, phase: 'completed', ts: 2})
+  desktop.bridge.onExecutorProgress({...progress, delegate_id: 'b', ts: 3})
+  await desktop.serverOptions.onControl?.(request)
+  assert.deepEqual(cancelled, ['a'])
+  const opening = desktop.serverOptions.onControl?.({...request, action: 'open'})
+  desktop.serverOptions.onClientDisconnect?.()
+  resolvePath('/tmp')
+  await opening
+  assert.deepEqual(opened, [])
+})
+
+test('task actions return bounded unavailable and failed receipts without renderer targets', async () => {
+  const {service} = serviceHarness()
+  const sent: string[] = []
+  const desktop = new DesktopRealtime({token: TOKEN, service, executor: CODEX, stop: new AbortController(),
+    taskPort: {cancelTask: () => 'not_running', taskDirectory: () => Promise.reject(new Error('private path failure'))},
+    createServer: () => ({sendText: raw => {sent.push(raw); return Promise.resolve()}, sendBinary: () => Promise.resolve(), disconnectClient: () => Promise.resolve(), start: () => Promise.resolve({} as never), close: () => Promise.resolve()}),
+  })
+  await desktop.serverOptions.onClientAuthenticated?.()
+  desktop.bridge.onExecutorProgress({type: 'executor.progress', executor: 'codex', delegate_id: 'a', phase: 'working', summary: '进展', level: 'detail', ts: 1})
+  for (const executor of ['foreign', 'codex']) await desktop.serverOptions.onControl?.({type: 'executor.task_action', request_id: executor, work_id: 'a', executor, action: 'open'})
+  await new Promise<void>(resolve => setImmediate(resolve))
+  const results = sent.map(raw => JSON.parse(raw) as {type: string; status: string}).filter(frame => frame.type === 'executor.task_action_result')
+  assert.deepEqual(results.map(frame => frame.status), ['unavailable', 'failed'])
+  assert.ok(sent.every(raw => !raw.includes('private path failure')))
+})
+
+test('queued controls from a disconnected socket cannot execute under a newly authenticated client', async () => {
+  const {service} = serviceHarness()
+  const cancelled: string[] = []
+  let releasePath!: (path: string | null) => void
+  let pathStarted!: () => void
+  const started = new Promise<void>(resolve => {pathStarted = resolve})
+  const realtime = new DesktopRealtime({token: TOKEN, service, executor: CODEX, stop: new AbortController(),
+    taskPort: {
+      taskDirectory: () => {pathStarted(); return new Promise(resolve => {releasePath = resolve})},
+      cancelTask: work => {cancelled.push(work); return 'cancelling'},
+    },
+  })
+  realtime.bridge.onExecutorProgress({type: 'executor.progress', executor: 'codex', delegate_id: 'a', phase: 'working', summary: '进展', level: 'detail', ts: 1})
+  const ready = await realtime.server.start()
+  const old = await connectDesktop(ready.port)
+  let fresh: WebSocket | undefined
+  try {
+    const initial = nextFrames(old, 3, 'old authenticated snapshot')
+    await sendClient(old, JSON.stringify({type: 'hello', token: TOKEN}), 'old hello')
+    await initial
+    const request = {type: 'executor.task_action', request_id: 'old-open', work_id: 'a', executor: 'codex', action: 'open'}
+    await sendClient(old, JSON.stringify(request), 'blocked old open')
+    await started
+    await sendClient(old, JSON.stringify({...request, request_id: 'old-cancel', action: 'cancel'}), 'queued old cancel')
+    await closeDesktop(old)
+    fresh = await connectDesktop(ready.port)
+    const synced = nextFrames(fresh, 3, 'new authenticated snapshot')
+    await sendClient(fresh, JSON.stringify({type: 'hello', token: TOKEN}), 'new hello')
+    await synced
+    releasePath(null)
+    // A fresh control acknowledgement proves both queues have had a chance to run.
+    const reply = nextFrames(fresh, 1, 'fresh unavailable action acknowledgement')
+    await sendClient(fresh, JSON.stringify({...request, request_id: 'new-open', executor: 'other'}), 'fresh control')
+    await reply
+    assert.deepEqual(cancelled, [])
+  } finally {
+    releasePath?.(null)
+    await closeDesktop(old)
+    if (fresh !== undefined) await closeDesktop(fresh)
+    await realtime.server.close()
+  }
 })

@@ -1,3 +1,6 @@
+import type {CodingTaskPort} from './coding-executor.js'
+import {taskActionSchema, type TaskActionStatus} from './desktop-tasks.js'
+import {openTaskDirectory} from './desktop-task-opener.js'
 import {DESKTOP_READY} from './desktop-wire.js'
 import {
   DesktopSocketBridge,
@@ -27,6 +30,8 @@ export interface DesktopServerTransport {
 }
 
 export interface DesktopRealtimeOptions extends DesktopBridgeOptions {
+  readonly taskPort?: CodingTaskPort
+  readonly openTaskDirectory?: (path: string) => Promise<void>
   readonly memoryBoard?: (requestId: string, detail?: MemoryBoardDetail) => string
   readonly workspaceGraphBoard?: (requestId: string) => string
   readonly createServer?: (options: DesktopServerOptions) => DesktopServerTransport
@@ -82,7 +87,26 @@ export class DesktopRealtime {
           ?? workspaceGraphBoardMessage(request.request_id, null, 'disabled')
       },
       onAudio: pcm => this.bridge.receiveAudio(pcm),
-      onControl: control => this.bridge.receiveControl(control),
+      onControl: async control => {
+        const generation = this.#activeGeneration
+        if (generation === null) throw new DesktopProtocolError('desktop control is unauthenticated')
+        if (control.type === 'coding.progress_narration') { options.service.setCodingProgressNarration?.(control.mode); return }
+        if (control.type === 'coding.progress_enabled') { options.service.setCodingProgressEnabled?.(control.enabled); return }
+        if (control.type !== 'executor.task_action') return this.bridge.receiveControl(control)
+        const request = taskActionSchema.parse(control)
+        let status: TaskActionStatus = 'unavailable'
+        try {
+          if (this.bridge.tasks.has(request.work_id, request.executor) && options.taskPort !== undefined) {
+            if (request.action === 'cancel') status = this.bridge.tasks.isRunning(request.work_id) ? options.taskPort.cancelTask(request.work_id) : 'not_running'
+            else {
+              const path = await options.taskPort.taskDirectory(request.work_id)
+              if (this.#activeGeneration !== generation) return
+              if (path !== null) { await (options.openTaskDirectory ?? (target => openTaskDirectory(target, undefined, process.platform, () => this.#activeGeneration === generation)))(path); status = 'opened' }
+            }
+          }
+        } catch { status = 'failed' }
+        if (this.#activeGeneration === generation) this.bridge.onTaskActionResult({type: 'executor.task_action_result', request_id: request.request_id, work_id: request.work_id, action: request.action, status})
+      },
     }
     this.server = (createServer ?? (serverOptions => new NodeDesktopServer(serverOptions)))(
       this.serverOptions,

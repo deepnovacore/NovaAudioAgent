@@ -42,6 +42,12 @@ function parseJsonFrame(frame: string | Uint8Array): JsonFrame {
   return parsed
 }
 
+function nextLegacyFrame(bridge: DesktopSocketBridge): string | Uint8Array | null {
+  let frame = bridge.takeNextFrame()
+  while (typeof frame === 'string' && (JSON.parse(frame) as {type?: string}).type === 'executor.tasks') frame = bridge.takeNextFrame()
+  return frame
+}
+
 function drainJsonFrames(bridge: DesktopSocketBridge): JsonFrame[] {
   const frames: JsonFrame[] = []
   for (let frame; (frame = bridge.takeNextFrame()) !== null;) frames.push(parseJsonFrame(frame))
@@ -61,7 +67,7 @@ test('bubble filtering never hides retained results, which replay on reconnect a
     while (bridge.takeNextFrame() !== null) { /* bootstrap */ }
     const base = {type: 'executor.progress' as const, delegate_id: 'd', executor: 'codex', ts: 1}
     bridge.onExecutorProgress({...base, phase: 'working', summary: '正在测试', level: 'detail'})
-    assert.equal(bridge.takeNextFrame() !== null, mode === 'all')
+    assert.equal(drainJsonFrames(bridge).some(frame => frame.type === 'executor.progress'), mode === 'all')
     const result = {delegate_id: 'd', executor: 'codex', outcome: 'ok' as const, summary: '任务完成', started_at: 0, ended_at: 1, changed_files: 2}
     bridge.onExecutorProgress({...base, phase: 'completed', summary: '任务完成', level: 'milestone'}, result)
     const frames = drainJsonFrames(bridge)
@@ -221,7 +227,7 @@ test('audio for a cleared generation is dropped on the way out, not on the way i
   assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"playback.clear"'))
   const audio = bridge.takeNextFrame()
   assert.ok(audio instanceof Uint8Array, 'audio, not text')
-  assert.equal(bridge.takeNextFrame(), null, 'and nothing stale behind it')
+  assert.equal(nextLegacyFrame(bridge), null, 'and nothing stale behind it')
 })
 
 test('the fence only rises, so a late clear for an older generation cannot un-fence a newer one', () => {
@@ -241,7 +247,7 @@ test('an alert fences even when it carries no generation', () => {
   // The alert comes out on the preempt queue.
   assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"playback.alert"'))
   // And the assistant caption queued before it is now stale.
-  assert.equal(bridge.takeNextFrame(), null)
+  assert.equal(nextLegacyFrame(bridge), null)
 })
 
 test('a user caption is never fenced by a clear about the agent audio', () => {
@@ -254,7 +260,7 @@ test('a user caption is never fenced by a clear about the agent audio', () => {
   assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"playback.clear"'))
   const caption = bridge.takeNextFrame()
   assert.ok(String(caption).includes('"role":"user"'), 'the user caption survives')
-  assert.equal(bridge.takeNextFrame(), null, 'the assistant one does not')
+  assert.equal(nextLegacyFrame(bridge), null, 'the assistant one does not')
 })
 
 test('a terminal for a cleared generation is dropped', () => {
@@ -265,7 +271,7 @@ test('a terminal for a cleared generation is dropped', () => {
   assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"playback.clear"'))
   const survivor = bridge.takeNextFrame()
   assert.ok(String(survivor).includes('"generation_epoch":2'), 'only the newer terminal')
-  assert.equal(bridge.takeNextFrame(), null)
+  assert.equal(nextLegacyFrame(bridge), null)
 })
 
 test('an overflowing audio queue stops the transport, and an overflowing caption does not', () => {
@@ -367,7 +373,7 @@ test('the Codex state queue holds only the latest', () => {
   bridge.onExecutorState('running')
   assert.equal(bridge.pendingCounts.executor, true)
   assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}')
-  assert.equal(bridge.takeNextFrame(), null, 'the intermediate states are not sent')
+  assert.equal(nextLegacyFrame(bridge), null, 'the intermediate states are not sent')
 })
 
 test('nothing is queued for an unauthenticated connection', () => {
@@ -385,7 +391,7 @@ test('a state already sent is not sent again', () => {
   bridge.onExecutorState('running')
   assert.equal(bridge.takeNextFrame(), '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"running"}')
   bridge.onExecutorState('running')
-  assert.equal(bridge.takeNextFrame(), null)
+  assert.equal(nextLegacyFrame(bridge), null)
 })
 
 test('releasing forgets what the previous renderer was told', () => {
@@ -436,7 +442,7 @@ test('releasing drops transient playback and does not queue partial audio while 
     '{"type":"executor.state","executor":"codex","display_name":"Codex","state":"idle"}',
     'the new renderer receives only reconstructable current state',
   )
-  assert.equal(bridge.takeNextFrame(), null, 'no old or partial playback crosses the generation')
+  assert.equal(nextLegacyFrame(bridge), null, 'no old or partial playback crosses the generation')
 
   bridge.onAudioFrame(frame(5, 0))
   assert.ok(bridge.takeNextFrame() instanceof Uint8Array, 'fresh post-auth playback still flows')
@@ -471,7 +477,7 @@ test('the project view is deduplicated by value, not by identity', () => {
     pending_confirmation: false,
     pending_confirmation_busy: false,
   })
-  assert.equal(bridge.takeNextFrame(), null, 'an equal view is not resent')
+  assert.equal(nextLegacyFrame(bridge), null, 'an equal view is not resent')
   bridge.onProjectView({
     workspace_display_name: '研究项目',
     session_title: null,
@@ -504,7 +510,7 @@ test('the project view is deduplicated by value, not by identity', () => {
   bridge.onProjectView({...base, roster: [{name: 'blog', last_used_at: 1, running: [{work_id: 'w1', title: '暗色模式'}]}]})
   assert.ok(String(bridge.takeNextFrame()).includes('"roster":[{"name":"blog"'), 'a roster change is a new frame')
   bridge.onProjectView({...base, roster: [{name: 'blog', last_used_at: 1, running: [{work_id: 'w1', title: '暗色模式'}]}]})
-  assert.equal(bridge.takeNextFrame(), null, 'an identical roster is not')
+  assert.equal(nextLegacyFrame(bridge), null, 'an identical roster is not')
 })
 
 test('microphone PCM reaches the service, and a misaligned frame does not', async () => {
@@ -908,7 +914,7 @@ test('a state that returns to what was already sent clears the queued one', () =
     false,
     'the stale queued state is dropped, not left to be sent',
   )
-  assert.equal(bridge.takeNextFrame(), null)
+  assert.equal(nextLegacyFrame(bridge), null)
 })
 
 test('the project dedup is value-based in both places it is checked', () => {
@@ -930,7 +936,7 @@ test('the project dedup is value-based in both places it is checked', () => {
   // A structurally equal but distinct object queues nothing, whichever check catches it.
   bridge.onProjectView({...view})
   assert.equal(bridge.pendingCounts.project, false)
-  assert.equal(bridge.takeNextFrame(), null)
+  assert.equal(nextLegacyFrame(bridge), null)
 })
 
 
@@ -997,4 +1003,16 @@ test('desktop activity heartbeat is authenticated and carries only a boolean', (
   bridge.onActivity(true)
   const frames = drainJsonFrames(bridge)
   assert.deepEqual(frames.filter(frame => frame.type === 'desktop.activity'), [{type: 'desktop.activity', idle: true}])
+})
+
+test('coding tasks snapshot survives bubble filtering and authenticated replay', () => {
+  const {bridge} = harness({progressBubbles: 'off', executor: {executor: 'coding', display_name: 'Coding'}})
+  bridge.onExecutorProgress({type: 'executor.progress', executor: 'coding', delegate_id: 'a', phase: 'working', summary: '发现原因', level: 'detail', ts: 1})
+  assert.equal(nextLegacyFrame(bridge), null)
+  bridge.markAuthenticated()
+  const snapshot = findJsonFrame(drainJsonFrames(bridge), 'executor.tasks') as unknown as {tasks: {summary: string}[]; revision: number}
+  assert.equal(snapshot.tasks[0]?.summary, '发现原因')
+  bridge.release()
+  bridge.markAuthenticated()
+  assert.deepEqual(findJsonFrame(drainJsonFrames(bridge), 'executor.tasks'), snapshot)
 })

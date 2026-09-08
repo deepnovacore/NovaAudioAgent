@@ -15,7 +15,7 @@ import type {AgentDescriptor} from './agent-controller.js'
 import type { JsonValue } from './events.js'
 import type {ExecutorManifest, ExecutorRole, OpSpec} from './ports.js'
 import {stripLikePython} from './python-text.js'
-import {CONFIRM_TOOL_SPEC, cancelToolSpec, dispatchToolSpec, type HostToolSpec} from './work-tools.js'
+import {CODING_PROGRESS_TOOL_SPEC, CONFIRM_TOOL_SPEC, cancelToolSpec, dispatchToolSpec, type HostToolSpec} from './work-tools.js'
 
 const WIRE_PART = /^[A-Za-z0-9_-]+$/u
 const MAX_WIRE_NAME = 64
@@ -126,7 +126,7 @@ export function compileToolSchema(
     }
   }
   if (agents.length > 0) {
-    for (const spec of [dispatchToolSpec(agents), cancelToolSpec(agents), CONFIRM_TOOL_SPEC]) {
+    for (const spec of [dispatchToolSpec(agents), cancelToolSpec(agents), CONFIRM_TOOL_SPEC, ...(manifests.some(manifest => manifest.roles.includes('coding')) ? [CODING_PROGRESS_TOOL_SPEC] : [])]) {
       if (bindings.has(spec.name)) throw new ToolSchemaError(`工具 wire name 重复：${spec.name}`)
       schemas.push(compileHostTool(spec))
       bindings.set(spec.name, toolBindingSchema.parse({kind: 'host', logical_name: `host.${spec.name}`}))

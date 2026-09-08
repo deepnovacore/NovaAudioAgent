@@ -1562,6 +1562,7 @@ function projectionService(options: {
   const tools = compileToolSchema([manifest], {
     agentDescriptors: agentControllers.map(controller => controller.descriptor),
   })
+  let providerEpoch = 0
   let ids = 0
   const nextId = (): string => `id-${++ids}`
   const service = new RealtimeService({
@@ -1584,9 +1585,9 @@ function projectionService(options: {
     tools,
     session: new RealtimeSession({
       provider: {
-        connect: () => Promise.resolve({epoch: 1}),
+        connect: () => Promise.resolve({epoch: ++providerEpoch}),
         injectHostItem: (item) => Promise.resolve({
-          session_epoch: 1,
+          session_epoch: providerEpoch,
           host_item_id: item.host_item_id,
         }),
         createResponse: () => Promise.resolve(),
@@ -2004,7 +2005,7 @@ test('codex status idle and running handoffs each trigger their same-turn contin
 /** Spec 08 host tools on the pipeline fixture: `dispatch` / `cancel` / `confirm` are the only coding tools the model sees. */
 async function dispatchTurn(
   service: RealtimeService,
-  name: 'dispatch' | 'cancel' | 'confirm' | `codex__${string}`,
+  name: 'set_coding_progress' | 'dispatch' | 'cancel' | 'confirm' | `codex__${string}`,
   arguments_: Readonly<Record<string, JsonValue>>,
   responseId = 'origin',
 ): Promise<ToolAcceptance> {
@@ -10587,4 +10588,88 @@ test('delivery-pass fixture: requested user response reserves the provider befor
   assert.deepEqual(state.queuedEventIds, ['fixture'])
   assert.equal(actions.filter(action => action === 'ensure_response').length, 1)
   assert.equal(actions.includes('inject:fixture'), false)
+})
+
+
+test('continuous coding progress is direct, deduplicated, nonempty and coalesced', () => {
+  const {service, queued} = projectionService({progressViaSurrogate: true})
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: '验证了登录故障', activity: 1}))
+  service.projectRuntimeEvent(progressEvent({seq: 2, summary: '验证了登录故障', activity: 2}))
+  assert.equal(queued().length, 1)
+  service.projectRuntimeEvent(progressEvent({seq: 3, summary: null, activity: 3}))
+  assert.equal(queued().length, 1)
+  service.projectRuntimeEvent(progressEvent({seq: 4, summary: '回归测试通过', activity: 4}))
+  assert.equal(queued().length, 1, 'bounded latest update per task')
+  assert.match(queued()[0]!, /回归测试通过/u)
+  service.setCodingProgressEnabled(false)
+  assert.equal(queued().length, 0, 'silence withdraws queued progress')
+  service.setCodingProgressNarration('smart')
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 5, summary: '新的验证结果', activity: 5}))
+  assert.equal(queued().length, 0, 'mode switches preserve silence')
+})
+
+test('voice coding progress preference requires bound current user and never dispatches work', async () => {
+  const {service, runtimeDispatches} = pipelineService({agent: true})
+  await service.connect()
+  assert.equal(service.providerSchemasForTest.some(schema => JSON.stringify(schema).includes('set_coding_progress')), true)
+  const accepted = await dispatchTurn(service, 'set_coding_progress', {mode: 'continuous', enabled: false})
+  assert.equal(accepted.accepted, true)
+  assert.deepEqual(JSON.parse(accepted.host_item.content), {
+    code: 'coding_progress_preference_updated', mode: 'continuous', enabled: false,
+    scope: 'all_coding_progress', final_delivery: 'unchanged',
+  })
+  assert.equal(runtimeDispatches(), 0)
+  const other = pipelineService({agent: true}).service
+  await other.connect()
+  const invalid = await dispatchTurn(other, 'set_coding_progress', {mode: 'loud'})
+  assert.equal(invalid.accepted, false)
+  await other.close()
+  await service.close()
+})
+
+
+test('coding progress silence leaves final delivery available', () => {
+  const {service, queuedItems} = projectionService({progressViaSurrogate: true})
+  service.setCodingProgressNarration('continuous')
+  service.setCodingProgressEnabled(false)
+  service.projectRuntimeEvent({kind: 'handoff', seq: 1, ts: 1, payload: {
+    channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1', outcome: 'ok',
+    trust: 'trusted_system', content: {summary: '验证通过，任务完成'}, refs: [],
+  }})
+  assert.equal(queuedItems().length, 1)
+  assert.equal(queuedItems()[0]!.intent.item.kind, 'final')
+})
+
+test('coding preference listener is restored after service close and reconnect', async () => {
+  const {service, queued} = projectionService({progressViaSurrogate: true})
+  await service.connect()
+  await service.close()
+  await service.connect()
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: '新的进展', activity: 1}))
+  assert.equal(queued().length, 1)
+  service.setCodingProgressEnabled(false)
+  assert.equal(queued().length, 0)
+  await service.close()
+})
+
+test('received coding summaries deduplicate across smart continuous and repeated mode switches', () => {
+  const {service, queued} = projectionService({progressViaSurrogate: true})
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: '**A**', activity: 1}))
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 2, summary: 'A', activity: 2}))
+  assert.equal(queued().length, 0, 'a smart received fact is not new after switching modes')
+  service.projectRuntimeEvent(progressEvent({seq: 3, summary: 'B', activity: 3}))
+  assert.equal(queued().length, 1)
+  service.setCodingProgressNarration('smart')
+  service.projectRuntimeEvent(progressEvent({seq: 4, summary: 'C', activity: 4}))
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 5, summary: 'B', activity: 5}))
+  assert.equal(queued().length, 1, 'B is new relative to intervening smart C')
+  service.setCodingProgressNarration('smart')
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 6, summary: 'B', activity: 6}))
+  assert.equal(queued().length, 0, 'withdrawn queued facts are received, not claimed delivered or replayed')
 })

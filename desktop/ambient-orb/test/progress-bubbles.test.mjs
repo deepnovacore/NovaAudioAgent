@@ -14,6 +14,13 @@ import {
 const workArea = {x: 0, y: 0, width: 1440, height: 900}
 const normalBounds = {x: 600, y: 300, width: 160, height: 160}
 
+test('reserves enough native area for a banner and three independent alerts', () => {
+  const layout = bubbleWindowLayout({normalBounds, rows: 6, zoomFactor: 1, scaleFactor: 2, workArea})
+  assert.equal(layout.suppressed, false)
+  assert.equal(layout.bubbleHeight, 336)
+  assert.throws(() => bubbleWindowLayout({normalBounds, rows: 7, zoomFactor: 1, scaleFactor: 2, workArea}))
+})
+
 test('reserves bubble bounds above the orb in Electron DIPs without Retina double scaling', () => {
   const oneX = bubbleWindowLayout({
     normalBounds, rows: 3, zoomFactor: 1, scaleFactor: 1, workArea,
@@ -25,7 +32,7 @@ test('reserves bubble bounds above the orb in Electron DIPs without Retina doubl
   assert.equal(oneX.bubblePlacement, 'above')
   assert.deepEqual(retina.bounds, oneX.bounds)
   assert.deepEqual(retina.renderedOrbScreenCenter, {x: 680, y: 380})
-  assert.equal(retina.bounds.width, 320)
+  assert.equal(retina.bounds.width, 360)
   assert.equal(retina.bounds.height, 328)
 })
 
@@ -76,6 +83,9 @@ test('one controller uses confirmation bounds first, reserves bubbles, and resto
     onConfirmationPlacement: () => {},
   })
 
+  const combined = controller.reserveBubbleArea(6)
+  assert.equal(combined.suppressed, false)
+  assert.equal(bounds.height, 496)
   const bubble = controller.reserveBubbleArea(2)
   assert.equal(bubble.suppressed, false)
   assert.equal(bounds.height, 272)

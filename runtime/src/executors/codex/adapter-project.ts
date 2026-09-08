@@ -1,3 +1,4 @@
+import {hostWorkspacePath} from '../../host-paths.js'
 import type {
   CodexAppServerTransport,
   RunInput,
@@ -132,6 +133,14 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   readonly #confirmedBindings = new WeakMap<object, ConfirmedDelegateBinding>()
   readonly #retainedTransportCleanups = new Set<CodexAppServerTransport>()
   readonly #slots = new Map<string, RunSlot>()
+  readonly #taskWorkspaces = new Map<string, string>()
+  readonly taskPort = {
+    cancelTask: (workId: string): 'cancelling' | 'not_running' => this.#cancelWork(workId) ? 'cancelling' : 'not_running',
+    taskDirectory: async (workId: string): Promise<string | null> => {
+      const workspaceId = this.#taskWorkspaces.get(workId)
+      return workspaceId === undefined ? null : hostWorkspacePath(await this.#store.revalidateWorkspace(workspaceId))
+    },
+  }
   #snapshot: ProjectSnapshot | null = null
   #publicView: PublicProjectView = Object.freeze({
     workspace_display_name: null,
@@ -417,6 +426,11 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       cancelled: false,
     }
     this.#slots.set(workspace.workspace_id, slot)
+    if (this.#taskWorkspaces.size >= 64) {
+      const oldest = [...this.#taskWorkspaces.keys()].find(id => !this.running().some(work => work.work_id === id))
+      if (oldest !== undefined) this.#taskWorkspaces.delete(oldest)
+    }
+    this.#taskWorkspaces.set(slot.work.work_id, workspace.workspace_id)
     const task = run(slot, {...context, signal: controller.signal})
     slot.task = task
     try {

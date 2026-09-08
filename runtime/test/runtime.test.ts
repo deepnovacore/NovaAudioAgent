@@ -1852,3 +1852,50 @@ test('an external dispatch distinguishes a malformed reference from a missing it
     assert.equal(rejected.problem, expected)
   }
 })
+
+
+test('continuous coding skips progress Surrogate and a live switch withdraws an in-flight verdict', () => {
+  const manifest = executorManifestSchema.parse({...testManifest({wake: 'none', progressViaSurrogate: true}), roles: ['coding']})
+  const {runtime, calls} = runtimeWithCalls({manifest, delegateIds: ['d-1'], slots: ['surrogate.watch']})
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+  const progress = (summary: string, at: number) => {
+    runtime.post({kind: 'progress', payload: {channel: 'route_sim', delegate_id: 'd-1', op: 'run', phase: 'working', internal_activity: at, elapsed: at, summary}}, at)
+    runtime.apply(runtime.queue.popReady(at)!)
+  }
+  runtime.codingProgressNarration.setMode('continuous')
+  progress('first finding', 1)
+  progress('first finding', 2)
+  assert.equal(calls.length, 0)
+  runtime.codingProgressNarration.setMode('smart')
+  progress('second finding', 3)
+  assert.equal(calls.length, 1)
+  const selected: string[] = []
+  runtime.bindSuggestionSelected(suggestion => selected.push(suggestion.id))
+  runtime.codingProgressNarration.setMode('continuous')
+  runtime.completeModelCall(calls[0]!.job_id, {speak: true, suggestion_id: 's-1', progress_class: 'milestone', reason: 'ready'}, 3)
+  const completion = runtime.queue.popReady(3)
+  if (completion !== undefined) runtime.apply(completion)
+  assert.deepEqual(selected, [], 'withdrawn verdict cannot reappear')
+})
+
+test('coding received summary history crosses modes without repeating a surrogate heartbeat', () => {
+  const manifest = executorManifestSchema.parse({...testManifest({wake: 'none', progressViaSurrogate: true}), roles: ['coding']})
+  const {runtime, calls} = runtimeWithCalls({manifest, delegateIds: ['d-1'], slots: ['surrogate.watch']})
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+  const progress = (summary: string, at: number) => {
+    runtime.post({kind: 'progress', payload: {channel: 'route_sim', delegate_id: 'd-1', op: 'run', phase: 'working', internal_activity: at, elapsed: at, summary}}, at)
+    runtime.apply(runtime.queue.popReady(at)!)
+  }
+  runtime.codingProgressNarration.setMode('continuous')
+  progress('**A**', 1)
+  runtime.codingProgressNarration.setMode('smart')
+  progress('A', 2)
+  assert.equal(calls.length, 0, 'switching does not wake a surrogate for an unchanged fact')
+  runtime.codingProgressNarration.setMode('continuous')
+  progress('B', 3)
+  runtime.codingProgressNarration.setMode('smart')
+  progress('A', 4)
+  assert.equal(calls.length, 1, 'A is new relative to received B')
+})

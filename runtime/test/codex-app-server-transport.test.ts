@@ -1,3 +1,4 @@
+import {NOVA_CODING_DEVELOPER_INSTRUCTIONS} from '../src/executors/codex/factory.js'
 import {prepareManagedCodexMcp, managedMcpEnvironment, type ManagedCodexMcp} from '../src/executors/codex/managed-mcp.js'
 import {parseCapabilityRegistry} from '../src/capability-registry.js'
 /* eslint-disable @typescript-eslint/require-await -- deterministic fakes implement async host contracts */
@@ -3009,4 +3010,31 @@ test('managed credentials never reach preflight probes or bounded final output',
   assert.equal(outcome.code, 'completed')
   assert.equal(JSON.stringify(outcome).includes('dummy-mcp-secret'), false)
   assert.ok(probes.every(config => !Object.hasOwn(config as object, 'managedMcp')))
+})
+
+
+test('Nova voice collaboration instructions reach start and resume without accumulating in steer', async () => {
+  for (const resume of [false, true]) {
+    const owner = new MemoryAppServerOwner([], {delayTurnStart: true, persistent: resume, threadId: 'voice-thread'})
+    const transport = createTransport({spawn: async () => owner}, {
+      developerInstructions: NOVA_CODING_DEVELOPER_INSTRUCTIONS,
+      persistent: resume,
+      ...(resume ? {resumeThreadId: 'voice-thread'} : {}),
+    })
+    const running = transport.run({workOrder: 'Preserve all acceptance checks and deliver the full artifact'}, {}, {expiresAtMs: Date.now() + 5000})
+    await owner.turnStartReceived.promise
+    assert.equal(owner.received.find(message => message.method === (resume ? 'thread/resume' : 'thread/start'))?.params.developerInstructions, NOVA_CODING_DEVELOPER_INSTRUCTIONS)
+    for (const instruction of ['keep original constraints', 'include verification limits']) {
+      assert.deepEqual(await transport.steer({instruction}, {expiresAtMs: Date.now() + 5000}), {code: 'accepted', written: true})
+    }
+    const steers = owner.received.filter(message => message.method === 'turn/steer')
+    assert.equal(steers.length, 2)
+    for (const steer of steers) {
+      assert.equal(Object.hasOwn(steer.params, 'developerInstructions'), false)
+      assert.equal(JSON.stringify(steer.params).includes(NOVA_CODING_DEVELOPER_INSTRUCTIONS), false)
+    }
+    owner.completeDelayedTurn()
+    assert.equal((await running).classification, 'completed')
+    await transport.close()
+  }
 })

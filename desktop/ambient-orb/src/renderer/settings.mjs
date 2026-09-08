@@ -69,6 +69,7 @@ const autoHideSeconds = document.querySelector('#auto-hide-seconds')
 const wakeStatus = document.querySelector('#wake-word-status')
 const wakeRetry = document.querySelector('#wake-word-retry')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
+const codingProgressNarrationInput = document.querySelector('#coding-progress-narration')
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
 const pipelineModeInputs = [...document.querySelectorAll('input[name="pipelineMode"]')]
 const codexApprovalModeInputs = [...document.querySelectorAll('input[name="codexApprovalMode"]')]
@@ -205,6 +206,7 @@ function render(view, _drafts, state) {
   wakeRetry.hidden = view.wakeWord?.status !== 'error'
 
   for (const input of paletteInputs) input.checked = input.value === view.palette
+  codingProgressNarrationInput.value = view.codingProgressNarration
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
   for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
   for (const input of codexApprovalModeInputs) {
@@ -314,6 +316,7 @@ for (const event of ['pointerdown', 'keydown']) {
   document.addEventListener(event, () => window.novaAudioAgentDesktop.wakeWord.activity())
 }
 for (const input of paletteInputs) bindStage(input, 'change', () => ({palette: input.value}))
+bindStage(codingProgressNarrationInput, 'change', () => ({codingProgressNarration: codingProgressNarrationInput.value}))
 for (const input of proactivityInputs) bindStage(input, 'change', () => ({proactivity: input.value}))
 for (const input of pipelineModeInputs) bindStage(input, 'change', () => ({pipelineMode: input.value}))
 for (const input of codexApprovalModeInputs) {

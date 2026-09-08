@@ -1260,7 +1260,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('bubble bounds request rejected')
     }
-    if (!Number.isInteger(rows) || rows < 0 || rows > 3) {
+    if (!Number.isInteger(rows) || rows < 0 || rows > 6) {
       throw new Error('bubble rows rejected')
     }
     return orbWindow.reserveBubbleArea(rows)

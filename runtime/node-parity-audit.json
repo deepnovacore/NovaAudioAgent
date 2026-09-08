@@ -54,6 +54,8 @@
     "desktop/ambient-orb/src/renderer/settings-controller.mjs",
     "desktop/ambient-orb/src/renderer/settings.mjs",
     "desktop/ambient-orb/src/renderer/state.mjs",
+    "desktop/ambient-orb/src/renderer/task-banner-layout.mjs",
+    "desktop/ambient-orb/src/renderer/task-banner.mjs",
     "desktop/ambient-orb/src/renderer/voice-choice.mjs",
     "desktop/ambient-orb/src/renderer/wake-audio.mjs",
     "desktop/ambient-orb/src/renderer/wire-frame-types.mjs",
@@ -71,6 +73,7 @@
     "runtime/src/cli.ts",
     "runtime/src/clock.ts",
     "runtime/src/coding-executor.ts",
+    "runtime/src/coding-progress-narration.ts",
     "runtime/src/config.ts",
     "runtime/src/confirmed-project-capability.ts",
     "runtime/src/context-view.ts",
@@ -83,6 +86,8 @@
     "runtime/src/desktop-progress.ts",
     "runtime/src/desktop-realtime.ts",
     "runtime/src/desktop-service.ts",
+    "runtime/src/desktop-task-opener.ts",
+    "runtime/src/desktop-tasks.ts",
     "runtime/src/desktop-wire.ts",
     "runtime/src/desktop.ts",
     "runtime/src/diagnostics.ts",
@@ -791,6 +796,50 @@
       "test": "desktop/ambient-orb/test/state.test.mjs"
     },
     {
+      "file": "desktop/ambient-orb/src/renderer/task-banner.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "line": 93,
+      "snippet": "++sequence",
+      "snippet_sha256": "ff81c01c173415f18a78023d9c17084ca607f20ea7c37a478f52f3d499130b46",
+      "disposition": "wire_json",
+      "behavior": "cancel carries exact identity and stays cancelling until terminal, not merely the reply",
+      "test": "desktop/ambient-orb/test/task-banner.test.mjs"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/task-banner.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "line": 93,
+      "snippet": "now()",
+      "snippet_sha256": "28a4dae0461e17af56e979c2095abfbe0bfc45fe9ca8abf3144338a518a1bb8f",
+      "disposition": "wire_json",
+      "behavior": "cancel carries exact identity and stays cancelling until terminal, not merely the reply",
+      "test": "desktop/ambient-orb/test/task-banner.test.mjs"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/task-banner.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "line": 141,
+      "snippet": "(value?.bannerOffsetRows ?? 0) * 56",
+      "snippet_sha256": "ff6527ada3d61db9f3200984cb801a898c4669bc4fba7cd5f0b5e35e475da12f",
+      "disposition": "wire_json",
+      "behavior": "a suppressed combined reservation does not discard an alert before fallback",
+      "test": "desktop/ambient-orb/test/task-banner-layout.test.mjs"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/task-banner.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "line": 168,
+      "snippet": "Math.max(0, view.tasks.findIndex(t => t.work_id === task?.work_id)) + 1",
+      "snippet_sha256": "f6341fc13179f4b7a4e8c7ed14545cdcd0daeebbcd7a9710ee75a0760af6bef1",
+      "disposition": "wire_json",
+      "behavior": "cancel carries exact identity and stays cancelling until terminal, not merely the reply",
+      "test": "desktop/ambient-orb/test/task-banner.test.mjs"
+    },
+    {
       "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
@@ -1295,6 +1344,61 @@
       "disposition": "host_only_unicode",
       "behavior": "progress projects only correlated accepted evidence and never private commands or paths",
       "test": "runtime/test/desktop-progress.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-tasks.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 4,
+      "snippet": "s.trim().length",
+      "snippet_sha256": "211c1c2afa08ddac1db53116a2dcf1f926aa69ddf202583df1471e10bdc35b5c",
+      "disposition": "intentional_utf16",
+      "behavior": "task controls reject renderer paths and invalid IDs",
+      "test": "runtime/test/desktop-tasks.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-tasks.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "line": 4,
+      "snippet": "s.trim()",
+      "snippet_sha256": "0fa5affd99d10fc2dd49ca1c917e8888ef75c9804627f7cde189051498802007",
+      "disposition": "host_only_unicode",
+      "behavior": "task controls reject renderer paths and invalid IDs",
+      "test": "runtime/test/desktop-tasks.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-tasks.ts",
+      "kind": "unicode_property_regex",
+      "occurrence_index": 2,
+      "line": 4,
+      "snippet": "/[\\p{C}]/u",
+      "snippet_sha256": "09ba4a102f86988d811fb8b1b49be876c660e2fd57b5aa277e0013bb950fac78",
+      "disposition": "host_only_unicode",
+      "behavior": "task controls reject renderer paths and invalid IDs",
+      "test": "runtime/test/desktop-tasks.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-tasks.ts",
+      "kind": "unicode_property_regex",
+      "occurrence_index": 3,
+      "line": 5,
+      "snippet": "/[\\p{C}]/u",
+      "snippet_sha256": "09ba4a102f86988d811fb8b1b49be876c660e2fd57b5aa277e0013bb950fac78",
+      "disposition": "host_only_unicode",
+      "behavior": "public labels strip controls without splitting astral characters",
+      "test": "runtime/test/desktop-tasks.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-tasks.ts",
+      "kind": "unicode_property_regex",
+      "occurrence_index": 4,
+      "line": 12,
+      "snippet": "/[\\p{C}]/gu",
+      "snippet_sha256": "c5d2568b5c6c9976aeaf233cfa4aa2fc51e30eb92b58bc2eb9df21cd89477af9",
+      "disposition": "host_only_unicode",
+      "behavior": "public labels strip controls without splitting astral characters",
+      "test": "runtime/test/desktop-tasks.test.ts"
     },
     {
       "file": "runtime/src/executors/camera-mcp-result.ts",

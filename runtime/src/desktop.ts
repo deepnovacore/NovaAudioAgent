@@ -1,3 +1,4 @@
+import {taskActionSchema} from './desktop-tasks.js'
 import { timingSafeEqual } from 'node:crypto'
 import { createConnection } from 'node:net'
 import { z } from 'zod'
@@ -178,6 +179,9 @@ const ordinaryDesktopControlSchema = z.discriminatedUnion('type', [
 
 export const desktopControlSchema = z.union([
   ordinaryDesktopControlSchema,
+  taskActionSchema,
+  z.object({type: z.literal('coding.progress_narration'), mode: z.enum(['smart', 'continuous'])}).strict(),
+  z.object({type: z.literal('coding.progress_enabled'), enabled: z.boolean()}).strict(),
   connectionDiagnosticSchema,
 ])
 
@@ -525,6 +529,10 @@ export class NodeDesktopServer {
         // One rejection is terminal. Without this latch a peer could keep
         // guessing tokens on the same socket in the window before close settles.
         if (rejected) return
+        // The callback may have waited behind an asynchronous operation from this peer.
+        // A newer authenticated socket must never inherit the old peer's queued authority.
+        if (this.#active !== socket || this.#connectionGeneration !== generation
+          || socket.readyState !== WebSocket.OPEN) return
         if (!authenticated) {
           if (isBinary) throw new DesktopProtocolError('desktop authentication frame must be text')
           authenticateDesktopFrame(rawText(data), this.#options.token)
@@ -534,6 +542,8 @@ export class NodeDesktopServer {
           for (const frame of this.#options.bootstrapTextFrames ?? []) {
             await this.#enqueueSend(socket, frame)
           }
+          if (this.#active !== socket || this.#connectionGeneration !== generation
+            || socket.readyState !== WebSocket.OPEN) return
           await this.#options.onClientAuthenticated?.()
           return
         }

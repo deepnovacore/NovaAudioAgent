@@ -1,3 +1,4 @@
+import {CodingProgressNarrationState, codingProgressSummary, type CodingProgressNarration} from '../coding-progress-narration.js'
 /**
  * Production orchestration between a realtime FrontBrain and the existing Runtime.
  *
@@ -36,7 +37,7 @@ import {
   type AgentController,
   type AgentControllerRegistry,
 } from '../agent-controller.js'
-import {CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
+import {CODING_PROGRESS_TOOL, CANCEL_TOOL, CONFIRM_TOOL, DISPATCH_TOOL, confirmArguments} from '../work-tools.js'
 import type {ExecutorAdmission} from '../causal-runtime.js'
 import type { Clock } from '../clock.js'
 import type {ExecutorRole} from '../ports.js'
@@ -212,6 +213,7 @@ export interface ExecutorManifestLike {
 }
 
 export interface ServiceRuntime {
+  readonly codingProgressNarration?: CodingProgressNarrationState
   readonly clock: Clock
   readonly executors: ReadonlyMap<string, {
     readonly manifest: ExecutorManifestLike
@@ -357,6 +359,10 @@ export class RealtimeService {
   readonly #provider: ServiceProvider
   readonly #runtime: ServiceRuntime
   readonly #clock: Clock
+  #unsubscribeCodingProgress: (() => void) | null = null
+  readonly #codingProgressNarration: CodingProgressNarrationState
+  readonly #codingProgressQueued = new WeakSet<QueuedHostResponse>()
+  readonly #codingProgressHostEventIds = new Set<string>()
   readonly #tools: CompiledTools
   readonly #providerSchemas: readonly Readonly<Record<string, JsonValue>>[]
   readonly #bridge: RealtimeRuntimeBridge
@@ -527,6 +533,8 @@ export class RealtimeService {
     this.#provider = options.provider
     this.#runtime = options.runtime
     this.#clock = options.runtime.clock
+    this.#codingProgressNarration = options.runtime.codingProgressNarration ?? new CodingProgressNarrationState()
+    this.#subscribeCodingProgress()
     this.#tools = options.tools
     // Deep-copied at construction: the provider is handed these on every connect, including after a
     // reconnect, and a caller that mutated its own array afterwards would change what the model is
@@ -679,7 +687,19 @@ export class RealtimeService {
     return null
   }
 
+  #subscribeCodingProgress(): void {
+    if (this.#unsubscribeCodingProgress !== null) return
+    this.#unsubscribeCodingProgress = this.#codingProgressNarration.observe(() => {
+      for (const eventId of this.#codingProgressHostEventIds) this.#retireProviderHostEvent(eventId)
+      const retained = this.#hostItems.filter(item => !this.#codingProgressQueued.has(item))
+      this.#hostItems.length = 0
+      this.#hostItems.push(...retained.sort(compareQueuedHostResponses))
+      this.#codingProgressHostEventIds.clear()
+    })
+  }
+
   async connect(): Promise<void> {
+    this.#subscribeCodingProgress()
     if (this.#connected) return
     await this.session.connect({tools: structuredClone(this.#providerSchemas)})
     if (Number.isInteger(this.session.sessionEpoch) && this.session.sessionEpoch >= 0) {
@@ -724,6 +744,8 @@ export class RealtimeService {
    * cancelled -- a close that failed still has to leave the service stopped.
    */
   async close(): Promise<void> {
+    this.#unsubscribeCodingProgress?.()
+    this.#unsubscribeCodingProgress = null
     this.#stop.abort()
     this.#invalidateProjectConfirmation('service_closed')
     this.#approvalHost.invalidateExecutorApproval('service_closed')
@@ -957,6 +979,7 @@ export class RealtimeService {
       owner: options.owner ?? null,
       expires_at: options.expiresAt ?? null,
     }
+    if (this.#codingProgressHostEventIds.has(intent.item.event_id)) this.#codingProgressQueued.add(queued)
     heapPush(this.#hostItems, queued)
     if (preemptive) this.#armPreempt(effectivePriority)
     this.#deliveryReady.set()
@@ -1271,6 +1294,7 @@ export class RealtimeService {
   /** Revalidate lifecycle eligibility at the final provider boundary. */
   #queuedHostItemEligible(queued: QueuedHostResponse): boolean {
     const eventId = queued.intent.item.event_id
+    if (this.#codingProgressQueued.has(queued) && !this.#codingProgressHostEventIds.has(eventId)) return false
     if (eventId.startsWith('intake:') && this.#intake?.factEligible(eventId, this.session.sessionEpoch) !== true) return false
     if (eventId.startsWith('approval:') && !this.#approvalHost.factEligible(eventId)) return false
     if (queued.semantic_event_id !== null) {
@@ -2016,8 +2040,28 @@ export class RealtimeService {
     }
   }
 
+  #rememberCodingProgressHostEvent(eventId: string): void {
+    this.#codingProgressHostEventIds.add(eventId)
+    while (this.#codingProgressHostEventIds.size > MAX_PENDING_HOST_EVENTS) {
+      this.#codingProgressHostEventIds.delete(this.#codingProgressHostEventIds.values().next().value!)
+    }
+  }
+
+  /** Live host preference: switching never stops or restarts executor work. */
+  setCodingProgressNarration(mode: CodingProgressNarration): void { this.#codingProgressNarration.setMode(mode) }
+  setCodingProgressEnabled(enabled: boolean): void { this.#codingProgressNarration.setEnabled(enabled) }
+
   /** Project a suggestion chosen by Surrogate when no FastBrain owns the final speech turn. */
   onSuggestionSelected(suggestion: Suggestion, reason: WakeReason): void {
+    const progress = this.#isSelectedProgress(suggestion)
+    const coding = progress && suggestion.evidence_refs[0]?.startsWith(`${this.#coding?.channel}:`) === true
+    if (coding && (!this.#codingProgressNarration.enabled || this.#codingProgressNarration.mode !== 'smart')) return
+    const delegate = coding && reason.origin !== null ? this.#runtime.inFlightDelegate(reason.origin) : undefined
+    if (coding && delegate?.executor !== this.#coding?.channel) return
+    if (coding) {
+      this.#rememberCodingProgressHostEvent(`suggestion:${suggestion.id}`)
+      this.#rememberDelegateHostEvent(reason.origin!, `suggestion:${suggestion.id}`)
+    }
     const hit = suggestion.content.hit === true
     this.queueHostItem(hostFactIntent({
       kind: this.#isSelectedProgress(suggestion) ? 'progress' : 'final',
@@ -2027,6 +2071,7 @@ export class RealtimeService {
     }), {
       priority: hit ? Math.max(reason.priority, HIT_ALERT_MIN_PRIORITY) : reason.priority,
       preemptive: false,
+      ...(coding ? {owner: {delegate_id: reason.origin!, channel: delegate!.executor}, expiresAt: this.#clock.now() + PROGRESS_HOST_ITEM_TTL_S} : {}),
     })
   }
 
@@ -2305,12 +2350,18 @@ export class RealtimeService {
     const delegate = this.#runtime.inFlightDelegate(payload.delegate_id)
     if (delegate?.executor !== payload.channel || delegate.op !== payload.op) return
     const displayName = this.#executorDisplayName(payload.channel)
+    const coding = payload.channel === this.#coding?.channel
     let summary: string | null = payload.summary
     if (!validProgressSummary(summary, payload.phase)) summary = null
     if (summary !== null) {
       // CP2: prepared once at the storage boundary, so the recovery frame the session renders never
       // carries raw markdown either.
-      summary = prepareForSpeech(summary, {limit: SPEECH_FINAL_LIMIT}).text || null
+      summary = coding ? codingProgressSummary(summary) : prepareForSpeech(summary, {limit: SPEECH_FINAL_LIMIT}).text || null
+    }
+    const previousSummary = this.#lastProgressSummary.get(payload.delegate_id)
+    // Keep received facts current even when smart mode or silence suppresses delivery.
+    if (coding && payload.phase === 'working' && summary !== null) {
+      this.#lastProgressSummary.set(payload.delegate_id, summary)
     }
     this.session.registerDelegate(payload.delegate_id, {
       summary: this.#delegateSummary(payload.delegate_id, displayName),
@@ -2328,7 +2379,11 @@ export class RealtimeService {
     // A monitor's periodic heartbeat is operational state, not a new user-facing event. Speaking it
     // creates a fresh model turn that can accidentally replay an older acknowledgement.
     if (isMonitorPolicy(manifest.policy) && payload.phase === 'working') return
-    if (manifest.policy.progress_via_surrogate === true && payload.phase === 'working') return
+    if (coding && !this.#codingProgressNarration.enabled) return
+    if (payload.phase === 'working') {
+      if (this.#codingProgressNarration.viaSurrogate(coding, manifest.policy.progress_via_surrogate === true)) return
+      if (coding && this.#codingProgressNarration.mode === 'continuous' && summary === null) return
+    }
 
     let content: string
     if (payload.phase === 'started') {
@@ -2336,13 +2391,24 @@ export class RealtimeService {
     } else if (summary !== null) {
       // Same-summary skip: state registration already happened, only the host injection is
       // suppressed. A summary-less event keeps the field template and is never deduped this way.
-      if (this.#lastProgressSummary.get(payload.delegate_id) === summary) return
+      if (previousSummary === summary) return
       this.#lastProgressSummary.set(payload.delegate_id, summary)
       content = `${displayName} 正在执行：${summary}`
     } else {
       content = `${displayName} 仍在处理这个任务，目前已推进 ${payload.internal_activity} 个步骤。`
     }
     const eventId = `progress:${payload.delegate_id}:${payload.phase}:${payload.internal_activity}`
+    if (coding) {
+      // Coalesce queued updates per task; the latest fact retains existing owner/floor/expiry fences.
+      if (this.#codingProgressNarration.mode === 'continuous') {
+        this.#retireDelegateHostEvents(payload.delegate_id)
+        const retained = this.#hostItems.filter(item => !this.#codingProgressQueued.has(item)
+          || this.#codingProgressHostEventIds.has(item.intent.item.event_id))
+        this.#hostItems.length = 0
+        this.#hostItems.push(...retained.sort(compareQueuedHostResponses))
+      }
+      this.#rememberCodingProgressHostEvent(eventId)
+    }
     this.#rememberDelegateHostEvent(payload.delegate_id, eventId)
     this.queueHostItem(hostFactIntent({
       kind: 'progress',
@@ -3676,6 +3742,28 @@ export class RealtimeService {
    * RealtimeService alone maps those facts to provider-facing result language.
    */
   async #interceptHost(event: ToolCallReady, originRef: string | null): Promise<ToolAcceptance | null> {
+    if (event.name === CODING_PROGRESS_TOOL) {
+      if (this.#coding === null || this.#tools.bindings.get(event.name)?.kind !== 'host') {
+        return this.#refusalAcceptance(event, 'unsupported_tool', '{"code":"unsupported_tool"}')
+      }
+      const {mode, enabled} = event.arguments
+      const keys = Object.keys(event.arguments)
+      if (keys.length === 0 || keys.some(key => key !== 'mode' && key !== 'enabled')
+        || (mode !== undefined && mode !== 'smart' && mode !== 'continuous')
+        || (enabled !== undefined && typeof enabled !== 'boolean')) {
+        return this.#refusalAcceptance(event, 'invalid_params', '{"code":"invalid_params"}')
+      }
+      if (this.#currentUserTurn(event, originRef) === null) {
+        return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
+      }
+      if (mode !== undefined) this.setCodingProgressNarration(mode)
+      if (enabled !== undefined) this.setCodingProgressEnabled(enabled)
+      const result = this.#refusalAcceptance(event, 'coding_progress_preference_updated', canonicalJson({
+        code: 'coding_progress_preference_updated', mode: this.#codingProgressNarration.mode,
+        enabled: this.#codingProgressNarration.enabled, scope: 'all_coding_progress', final_delivery: 'unchanged',
+      }))
+      return {...result, accepted: true, inline_fulfilled: true}
+    }
     if (event.name === CONFIRM_TOOL) {
       return this.#refusalAcceptance(event, 'unknown_confirmation', UNKNOWN_CONFIRMATION_TOOL_RESULT)
     }
@@ -5435,6 +5523,7 @@ export class RealtimeService {
     for (const [eventId, owner] of [...this.#delegateHostEvents]) {
       if (owner !== delegateId) continue
       this.#delegateHostEvents.delete(eventId)
+      this.#codingProgressHostEventIds.delete(eventId)
       this.#retireProviderHostEvent(eventId)
     }
   }
