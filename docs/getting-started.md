@@ -255,6 +255,14 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_KNOWLEDGE_PATH` | `core` | No | ~/.nova-audio-agent/knowledge.sqlite | Knowledge SQLite database path. |
 | `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER` | `core` | No | dashscope | Knowledge embedding provider. |
 | `NOVA_AUDIO_AGENT_EMBEDDING_MODEL` | `core` | No | text-embedding-v4 | Knowledge embedding model. |
+| `NOVA_AUDIO_AGENT_MEMORY_CONNECTION` | `core` | No | disabled | Memory connection: disabled, local, or remote. |
+| `NOVA_AUDIO_AGENT_MEMORY_PROVIDER` | `core` | No | None | Local engine: voicemem. Remote engines are service-owned. |
+| `NOVA_AUDIO_AGENT_BLACKBOARD_PATH` | `core` | No | ~/.nova-audio-agent/blackboard.sqlite | Conversation recovery database path. |
+| `NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID` | `core` | No | local | Stable conversation recovery owner. |
+| `NOVA_AUDIO_AGENT_MEMORY_URL` | `core` | When selected | None | HTTP memory service origin; HTTPS or numeric loopback HTTP. |
+| `NOVA_AUDIO_AGENT_MEMORY_TOKEN` | `core` | When selected | None | Host-issued identity-bound memory bearer token. |
+| `NOVA_AUDIO_AGENT_MEMORY_PATH` | `core` | No | ~/.nova-audio-agent/memory.sqlite | Personal memory database path. |
+| `NOVA_AUDIO_AGENT_MEMORY_USER_ID` | `core` | No | local | Stable personal memory user identity. |
 | `DASHSCOPE_API_KEY` | `qwen` | When selected | None | Qwen realtime credential. |
 | `NOVA_AUDIO_AGENT_QWEN_REALTIME_URL` | `qwen` | No | DashScope realtime endpoint | Qwen secure realtime endpoint. |
 | `NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL` | `qwen` | No | qwen-audio-3.0-realtime-plus | Qwen realtime model. |
@@ -295,6 +303,10 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_REALTIME_TRACE` | `telemetry` | No | 0 | Enable source-runtime trace records. |
 | `NOVA_ORB_OPAQUE` | `core` | No | 0 | Use an opaque desktop orb window. |
 <!-- END GENERATED ENV CONTRACT -->
+
+For a host-managed shared memory service, set `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=remote`, an explicit origin in `NOVA_AUDIO_AGENT_MEMORY_URL`, and its host-issued `NOVA_AUDIO_AGENT_MEMORY_TOKEN`. Only HTTPS or numeric loopback HTTP is accepted; URL paths, query strings, embedded credentials, and redirects are rejected. The token fixes the identity; `MEMORY_PATH` and `MEMORY_USER_ID` apply only to local VoiceMem. Preferences refresh on open and successful remember, recall, or forget calls. This client does not provision the service or expose identity selection to the model.
+
+Current work status and weekly reports must query the workspace ledger tool for the latest active record versions. Personal recall contains historical evidence, including earlier user utterances, and must not replace the ledger or serve as an authoritative fallback when ledger data is unavailable.
 
 ### Optional capability registry and MCP search
 
@@ -347,3 +359,22 @@ FrontBrain gains only `mcp__nova_knowledge__recall`. To let Codex resolve full c
 Run `npm run smoke:knowledge --workspace @nova-audio-agent/runtime` with model credentials in the
 environment for a synthetic-document smoke. It sends no existing user corpus. macOS real embedding
 and MCP retrieval passed on 2026-09-05; Windows and human-voice acceptance remain separate gates.
+
+
+### Memory providers and connections
+
+Use `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=local` for the local Node Worker and SDK; `NOVA_AUDIO_AGENT_MEMORY_PROVIDER=voicemem` is optional in this mode. Use `remote` for the shared HTTP service, with its URL and identity-bound token. Do not set `MEMORY_PROVIDER` for a remote connection: its engine is selected by the service. An unavailable remote service reports unavailable; it never creates a local company-memory database.
+
+Only `MEMORY_CONNECTION` and the local `MEMORY_PROVIDER` selector are supported. `MEMORY_BACKEND` has been removed and is rejected with a migration error. A provider without an enabled local connection is rejected rather than silently enabling memory.
+
+The runtime consumes `PersonalMemoryResource`, including optional `remember`, `forget`, and cached `responseAdaptation`. Adapter methods must only exist when their guarantees can be met. In particular, `stored` means durable admission, not merely acceptance or completed extraction. Evidence IDs must refer to real sources; provider relevance scores are not comparable across engines. The HTTP connector currently requires the documented v1 preferences, remember, recall and forget service contract. An arbitrary mem0 endpoint is not that contract. The native mem0 adapter remains in the integration source branch pending an isolated packaging contract. A read-only provider can be injected through the existing assembly factory without advertising writes.
+
+Company channels use one remote memory authority. The small preference cache is a disposable projection, not another writable memory store. The existing work-record ledger remains authoritative for corrected weekly-report states; historical recall alone cannot guarantee that a withdrawn claim disappears from every earlier utterance.
+
+SDK upgrades must pass the real Worker contract tests before changing the dependency lock. After unpacking/building an SDK candidate, run:
+
+```sh
+node runtime/scripts/check-memory-sdk.mjs /absolute/path/to/built-sdk
+```
+
+This compiles current runtime sources into a temporary directory against the candidate exports and runs the actual Worker tests with a test-only module resolver. Required loopback tests must execute; permission failures cannot count as a pass. It does not replace installed dependencies. Check package origin, exact version and integrity before adopting an npm release. A local source snapshot passing this check is compatibility evidence, not a published release or a memory-quality benchmark.

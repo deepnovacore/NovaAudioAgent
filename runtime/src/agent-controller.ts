@@ -42,6 +42,7 @@ export interface AgentRuntimeDispatchPort {
     readonly origin_ref: string
     readonly stillWanted: () => boolean
   }): {readonly accepted: boolean; readonly delegate_id: string | null}
+    | Promise<{readonly accepted: boolean; readonly delegate_id: string | null}>
 }
 
 /** Stable controller outcome codes are host facts; the service owns all user-facing wording. */

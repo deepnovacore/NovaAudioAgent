@@ -40,12 +40,14 @@ export function createFixtureExecutor(clock: Clock, idFactory: () => string) {
     publicProjectContext: pending => ({workspace_id: null, view: adapter.publicProjectView(pending)}),
     roster: () => [], running: () => [], cancel: () => Promise.resolve({code: 'not_running'}),
     resolveIntakeTarget: () => Promise.resolve({workspace: 'Fixture Project', action: 'create', workspace_display_name: 'Fixture Project', workspace_id: null, session_id: null, session_title: null}),
-    commitConfirmed(operation: ConfirmedProjectOperation, dispatch: ProjectRuntimeDispatch) {
+    async commitConfirmed(operation: ConfirmedProjectOperation, dispatch: ProjectRuntimeDispatch) {
       if (!confirmation.ownsConfirmed(operation)) return Promise.resolve({accepted: false, code: 'confirmation_invalid'})
-      const admission = dispatch({executor: adapter.manifest.name, op: 'run', request: {work_order: operation.work_order ?? ''}, origin_ref: operation.origin_ref},
-        {kind: 'realtime_tool', priority: 100, routing_class: 'user_awaited', origin: null, selected_suggestion: null}, operation)
+      let launchAuthorized = false
+      const admission = await dispatch({executor: adapter.manifest.name, op: 'run', request: {work_order: operation.work_order ?? ''}, origin_ref: operation.origin_ref},
+        {kind: 'realtime_tool', priority: 100, routing_class: 'user_awaited', origin: null, selected_suggestion: null}, operation, () => launchAuthorized)
       if (!admission.accepted) return Promise.resolve({accepted: false, code: 'runtime_rejected'})
       if (!confirmation.recordRuntimeAdmission(operation) || !confirmation.claimConfirmed(operation)) return Promise.resolve({accepted: false, code: 'confirmation_invalid'})
+      launchAuthorized = true
       bindings.add(operation)
       commits.push(operation)
       return Promise.resolve({accepted: true, code: 'started'})

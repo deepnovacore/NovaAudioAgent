@@ -8,6 +8,7 @@ test('desktop rename preserves encryption identity before ready and displays the
   const paths = {appData: '/profile', userData: '/new-default'}
   const pending = new Promise(resolve => { ready = resolve })
   const app = {
+    isPackaged: true,
     commandLine: {hasSwitch: () => false},
     setName(value) { name = value },
     getPath(key) { return paths[key] },
@@ -31,4 +32,16 @@ test('an explicit isolated user-data directory is preserved', async () => {
     whenReady: () => Promise.resolve(),
   })
   await configured
+})
+
+test('source desktop rename keeps the original package profile used by local launchers', async () => {
+  let name
+  const paths = {appData: '/profile', userData: '/new-default'}
+  const app = {isPackaged: false, commandLine: {hasSwitch: () => false},
+    setName(value) {name = value}, getPath(key) {return paths[key]}, setPath(key, value) {paths[key] = value},
+    whenReady: () => new Promise(() => {}),
+  }
+  void configureDesktopIdentity(app)
+  assert.equal(name, '@nova-audio-agent/ambient-orb')
+  assert.equal(paths.userData, join('/profile', '@nova-audio-agent/ambient-orb'))
 })

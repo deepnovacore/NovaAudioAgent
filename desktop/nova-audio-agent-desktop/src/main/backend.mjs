@@ -83,10 +83,10 @@ export const READINESS_SOCKET_AUTH_TIMEOUT_MS = 3000
  * This has to outlast the teardown it is waiting on, not merely feel generous. The runtime
  * answers the drain request with `assembly.stop()`, which runs the codex app-server shutdown:
  * INTERRUPT_GRACE (2s) for the in-flight turn plus EXIT_GRACE (5s) for the process tree to
- * go. Anything shorter SIGKILLs the backend *during* its own cleanup and orphans exactly the
- * codex tree it was reaping. 5 + 2 + 1s of margin.
+ * go. Blackboard commit and close each have a 10s RPC timeout. Allow those two
+ * waits, the 7s Codex drain, and 5s for the other cleanup phases before force killing.
  */
-export const BACKEND_DRAIN_GRACE_MS = 8000
+export const BACKEND_DRAIN_GRACE_MS = 32000
 export const BACKEND_FORCE_EXIT_CONFIRM_MS = 2000
 
 export function selectedBackend(env = process.env, { isPackaged = false } = {}) {

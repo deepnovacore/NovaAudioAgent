@@ -12,6 +12,7 @@ import {
 } from './config.js'
 import { MonotonicIdFactory } from './ids.js'
 import { OpenAIModelGateway } from './model-gateway.js'
+import {personalMemoryFactory} from './memory/factory.js'
 import {
   composeRealtime,
   validateCodingResource,
@@ -92,6 +93,8 @@ export function buildQwenRealtimeAssembly(
   options = filterDisabledCoding(options)
   validateCodingResource(options)
   const qwen = options.qwenConfig ?? requireQwenRealtime(options.settings)
+  const createPersonalMemory = options.createPersonalMemory
+    ?? personalMemoryFactory(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const support = resolveSupportModelConnection(options.settings, {
@@ -138,5 +141,6 @@ export function buildQwenRealtimeAssembly(
     controlledPreemptiveAlertReconnect: options.settings.qwen_controlled_guard_reconnect,
     preemptiveAlertHistoryRecovery: options.settings.qwen_guard_history_recovery,
     preemptiveAlertHistoryPairs: options.settings.qwen_guard_history_pairs,
+    ...(createPersonalMemory === undefined ? {} : {createPersonalMemory}),
   })
 }

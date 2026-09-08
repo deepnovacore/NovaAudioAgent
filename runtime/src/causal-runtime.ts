@@ -1,8 +1,10 @@
 import type {CodingProgressNarrationState} from './coding-progress-narration.js'
+import {createHash} from 'node:crypto'
 import type { Clock } from './clock.js'
 import type { EventInput, EventRecord, JsonValue } from './events.js'
 import type { IdFactory } from './ids.js'
-import { CONVERSATION_CHANNEL, type Memory } from './memory.js'
+import { CONVERSATION_CHANNEL, type Memory, type MemoryItem } from './memory.js'
+import {BlackboardSession, type BlackboardSessionOptions} from './memory/blackboard-session.js'
 import {bindHostExecutorCapability} from './host-executor-capability.js'
 import type {
   Delegate,
@@ -82,6 +84,8 @@ export interface ExecutorAdapter {
 
 export interface CausalRuntimeOptions {
   readonly codingProgressNarration?: CodingProgressNarrationState
+  readonly blackboard?: BlackboardSessionOptions
+  readonly conversationId?: string
   readonly clock: Clock
   readonly ids: IdFactory
   readonly models?: Readonly<Partial<Record<Slot, ModelPort>>>
@@ -94,6 +98,7 @@ export interface CausalRuntimeOptions {
 
 interface OwnedTask {
   readonly controller: AbortController
+  readonly kind: 'model' | 'executor'
   promise: Promise<void>
 }
 
@@ -102,7 +107,8 @@ interface PendingUserInput {
   readonly reject: (reason: Error) => void
 }
 
-export type RuntimeObserver = (event: EventRecord) => void
+/** Cleared terminal events settle host control only; their content must never be projected again. */
+export type RuntimeObserver = (event: EventRecord, currentConversation?: boolean) => void
 
 const DEFAULT_SHUTDOWN_GRACE = 1
 
@@ -123,12 +129,21 @@ export class CausalRuntime {
   readonly #pendingUserInputs = new Map<number, PendingUserInput>()
   readonly #hostExecutorCapabilities = new Map<string, object>()
   readonly #userTurns = new Map<string, UserTurnAuthority>()
+  readonly #launchChecks = new Map<string, () => boolean>()
   readonly #shutdownGrace: number
   #state: 'new' | 'serving' | 'closed' = 'new'
   #acceptCompletions = true
   #failure: Error | undefined
   #workVersion = 0
   #workWaiter: (() => void) | undefined
+  readonly #blackboard: BlackboardSession | undefined
+  #memoryReady: Promise<void> | undefined
+  #memoryOpened = false
+  #memoryClosed = false
+  #serving: Promise<void> | undefined
+  #maintenance: NodeJS.Timeout | undefined
+  #clearing: Promise<void> | undefined
+  #applying: Promise<void> | undefined
 
   get codingProgressNarration() { return this.core.codingProgressNarration }
 
@@ -148,6 +163,9 @@ export class CausalRuntime {
     const modelSlots = SLOTS.filter(slot => this.#models[slot] !== undefined)
     this.core = new CoreRuntime({
       manifests: [...this.#executors.values()].map(adapter => adapter.manifest),
+      ...(options.conversationId !== undefined ? {conversationId: options.conversationId}
+        : options.blackboard === undefined ? {}
+        : {conversationId: createHash('sha256').update(options.blackboard.ownerId).digest('hex')}),
       ids: options.ids,
       modelSlots,
       ...(options.codingProgressNarration === undefined ? {} : {codingProgressNarration: options.codingProgressNarration}),
@@ -163,17 +181,73 @@ export class CausalRuntime {
         this.#startExecutorDispatch(dispatchIndex, delegate)
       },
     })
+    this.#blackboard = options.blackboard === undefined ? undefined : new BlackboardSession(this.memory, options.blackboard)
+  }
+
+  get hasPersistentMemory(): boolean { return this.#blackboard !== undefined }
+
+  openMemory(): Promise<void> {
+    if (this.#memoryClosed) return Promise.reject(new Error('causal runtime memory is closed'))
+    this.#memoryReady ??= (this.#blackboard?.open() ?? Promise.resolve()).then(() => { if (!this.#memoryClosed) this.#memoryOpened = true })
+    return this.#memoryReady
+  }
+
+  /** Also used by the host intake writer, which does not enter through the reducer. */
+  async flushMemory(maintenance = false): Promise<void> {
+    if (this.#clearing !== undefined) await this.#clearing
+    if (this.#blackboard === undefined) return
+    try { await this.#blackboard.flush(maintenance) }
+    catch (error) {
+      this.#failure ??= runtimeError(error)
+      this.#notifyWork()
+      throw error
+    }
+  }
+
+  /** Host must fence provider input, playback and projections around this transition. */
+  clearConversation(): Promise<void> {
+    if (this.#clearing !== undefined) return this.#clearing
+    if (this.#state === 'closed' || this.#memoryClosed || !this.#memoryOpened) {
+      return Promise.reject(new Error('causal runtime memory is not ready'))
+    }
+    if (this.#failure !== undefined) return Promise.reject(this.#failure)
+    const applying = this.#applying
+    // Set the gate before aborting models: abort listeners can re-enter host callbacks synchronously.
+    this.#clearing = Promise.resolve().then(async () => {
+      try {
+        await applying
+        if (this.#blackboard === undefined) this.memory.clear()
+        else await this.#blackboard.clear()
+      } catch (error) {
+        this.#failure ??= runtimeError(error)
+        throw error
+      } finally { this.#clearing = undefined; this.#notifyWork() }
+    })
+    this.core.resetConversationState()
+    for (const task of this.#tasks) if (task.kind === 'model') task.controller.abort()
+    for (const pending of this.#pendingUserInputs.values()) pending.reject(new Error('conversation cleared before input was acknowledged'))
+    this.#pendingUserInputs.clear()
+    // Existing executor work keeps its lifecycle; unused one-shot authority does not survive clear.
+    this.#hostExecutorCapabilities.clear()
+    this.#userTurns.clear()
+    this.#launchChecks.clear()
+    this.#notifyWork()
+    return this.#clearing
   }
 
   post(input: EventInput, at = this.#clock.now()): EventRecord {
-    if (this.#state === 'closed') throw new Error('causal runtime is closed')
+    if (this.#state === 'closed' || this.#memoryClosed) throw new Error('causal runtime is closed')
+    if (this.#failure !== undefined) throw this.#failure
+    if (this.#clearing !== undefined) throw new Error('conversation is clearing')
     const event = this.core.post(input, at)
     this.#notifyWork()
     return structuredClone(event)
   }
 
   ingestUserInput(input: {readonly text: string; readonly media_refs?: readonly string[]}): Promise<string> {
-    if (this.#state === 'closed') return Promise.reject(new Error('causal runtime is closed'))
+    if (this.#state === 'closed' || this.#memoryClosed) return Promise.reject(new Error('causal runtime is closed'))
+    if (this.#failure !== undefined) return Promise.reject(this.#failure)
+    if (this.#clearing !== undefined) return Promise.reject(new Error('conversation is clearing'))
     const event = this.core.post({
       kind: 'user_input',
       payload: input.media_refs === undefined
@@ -202,34 +276,43 @@ export class CausalRuntime {
     return this.core.memory
   }
 
-  /**
-   * Admit one already-normalized external proposal without awaiting its worker.
-   *
-   * Reaches the reducer directly rather than through an event, which is what lets a caller learn the
-   * delegate id synchronously -- an accepted proposal has to be correlated with the work it started
-   * before the next turn, and an event round trip would not have produced the id yet.
+  /** Admit and durably publish before the adapter starts on the next event-loop turn.
+   * Callers install correlation immediately after awaiting admission, before any further I/O.
    */
-  dispatchExternal(
+  async dispatchExternal(
     request: DelegateRequest,
     reason: WakeReason,
     userTurn?: UserTurnAuthority,
-  ): RuntimeDispatchResult {
-    if (this.#state === 'closed') return {accepted: false, delegate_id: null, problem: 'closed'}
+    stillWanted?: () => boolean,
+  ): Promise<RuntimeDispatchResult> {
+    if (this.#state === 'closed' || this.#memoryClosed) return {accepted: false, delegate_id: null, problem: 'closed'}
+    if (this.#clearing !== undefined) return {accepted: false, delegate_id: null, problem: 'conversation_clearing'}
+    if (this.#blackboard !== undefined && !this.#memoryOpened) return {accepted: false, delegate_id: null, problem: 'memory_not_ready'}
+    if (this.#failure !== undefined) throw this.#failure
+    const epoch = this.core.conversationEpoch
     const admission = this.core.dispatchExternal(request, reason)
     if (admission.accepted) {
       if (admission.delegate_id !== null && userTurn !== undefined) this.#userTurns.set(admission.delegate_id, userTurn)
+      if (admission.delegate_id !== null && stillWanted !== undefined) this.#launchChecks.set(admission.delegate_id, stillWanted)
       this.#notifyWork()
     }
+    await this.flushMemory()
+    if (epoch !== this.core.conversationEpoch) return {accepted: false, delegate_id: null, problem: 'conversation_cleared'}
     return admission
   }
 
   /** Admit and privately carry the exact one-shot confirmed project capability. */
-  dispatchConfirmedExternal(
+  async dispatchConfirmedExternal(
     request: DelegateRequest,
     reason: WakeReason,
     capability: object,
-  ): RuntimeDispatchResult {
-    if (this.#state === 'closed') return {accepted: false, delegate_id: null, problem: 'closed'}
+    launchAuthorized: () => boolean,
+  ): Promise<RuntimeDispatchResult> {
+    if (this.#state === 'closed' || this.#memoryClosed) return {accepted: false, delegate_id: null, problem: 'closed'}
+    if (this.#clearing !== undefined) return {accepted: false, delegate_id: null, problem: 'conversation_clearing'}
+    if (this.#blackboard !== undefined && !this.#memoryOpened) return {accepted: false, delegate_id: null, problem: 'memory_not_ready'}
+    if (this.#failure !== undefined) throw this.#failure
+    const epoch = this.core.conversationEpoch
     const admission = this.core.dispatchConfirmedExternal(
       request,
       reason,
@@ -238,9 +321,12 @@ export class CausalRuntime {
     if (admission.accepted) {
       if (admission.delegate_id !== null) {
         this.#hostExecutorCapabilities.set(admission.delegate_id, capability)
+        this.#launchChecks.set(admission.delegate_id, launchAuthorized)
       }
       this.#notifyWork()
     }
+    await this.flushMemory()
+    if (epoch !== this.core.conversationEpoch) return {accepted: false, delegate_id: null, problem: 'conversation_cleared'}
     return admission
   }
 
@@ -288,13 +374,35 @@ export class CausalRuntime {
     this.core.suggestions.fire(suggestionId, this.#clock.now())
   }
 
-  async serve(signal: AbortSignal): Promise<void> {
+  serve(signal: AbortSignal): Promise<void> {
+    const serving = this.#serve(signal)
+    this.#serving ??= serving
+    return serving
+  }
+
+  /** Called after service stop has aborted serving; persistence has its own bounded RPC drain. */
+  async closeMemory(): Promise<void> {
+    if (this.#blackboard === undefined) return
+    this.#memoryClosed = true
+    this.#memoryOpened = false
+    try { await this.#serving; await this.#memoryReady }
+    finally { await this.#blackboard.close() }
+  }
+
+  async #serve(signal: AbortSignal): Promise<void> {
     if (this.#state !== 'new') throw new Error('causal runtime can only be served once')
     this.#state = 'serving'
     const onAbort = (): void => this.#notifyWork()
     signal.addEventListener('abort', onAbort, {once: true})
     let sinceYield = 0
     try {
+      await this.openMemory()
+      if (this.#blackboard !== undefined) {
+        this.#maintenance = setInterval(() => {
+          void this.flushMemory(true).catch(() => { /* flush wakes the serving failure path */ })
+        }, 60_000)
+        this.#maintenance.unref()
+      }
       while (!signal.aborted) {
         // A microtask yield lets owned task completions re-enter the queue, but it
         // never returns control to the macrotask queue. An event queue that stays
@@ -308,12 +416,12 @@ export class CausalRuntime {
           await Promise.resolve()
         }
         if (this.#failure !== undefined) throw this.#failure
+        if (this.#clearing !== undefined) { await this.#clearing; continue }
         const event = this.core.queue.popReady(this.#clock.now())
         if (event !== undefined) {
           sinceYield += 1
-          this.core.apply(event)
-          this.#finishIngress(event)
-          for (const observer of this.#observers) observer(structuredClone(event))
+          this.#applying = this.#applyEvent(event)
+          try { await this.#applying } finally { this.#applying = undefined }
           continue
         }
         sinceYield = 0
@@ -321,14 +429,17 @@ export class CausalRuntime {
       }
     } finally {
       signal.removeEventListener('abort', onAbort)
+      clearInterval(this.#maintenance)
       this.#state = 'closed'
       this.#acceptCompletions = false
       const stopped = new Error('causal runtime stopped before input was applied')
-      for (const pending of this.#pendingUserInputs.values()) pending.reject(stopped)
+      for (const pending of this.#pendingUserInputs.values()) pending.reject(this.#failure ?? stopped)
       this.#pendingUserInputs.clear()
       await this.#shutdownTasks()
       this.#hostExecutorCapabilities.clear()
       this.#userTurns.clear()
+      this.#launchChecks.clear()
+      await this.#blackboard?.close()
     }
     if (this.#failure !== undefined) throw this.#failure
   }
@@ -337,13 +448,30 @@ export class CausalRuntime {
     return this.#tasks.size
   }
 
-  #finishIngress(event: EventRecord): void {
+  async #applyEvent(event: EventRecord): Promise<void> {
+    this.core.apply(event)
+    const userItem = event.kind === 'user_input'
+      ? this.memory.channels.get(CONVERSATION_CHANNEL)?.items.at(-1) : undefined
+    if (this.#blackboard !== undefined) await this.flushMemory()
+    const current = this.core.isCurrentConversationEvent(event)
+    if (!current) {
+      if (event.kind === 'handoff' || event.kind === 'deadline') {
+        const control = event.kind === 'handoff'
+          ? {...event, payload: {...event.payload, content: {}, refs: []}} : event
+        for (const observer of this.#observers) observer(structuredClone(control), false)
+      }
+      return
+    }
+    this.#finishIngress(event, userItem)
+    for (const observer of this.#observers) observer(structuredClone(event), true)
+  }
+
+  #finishIngress(event: EventRecord, item: MemoryItem | undefined): void {
     if (event.kind !== 'user_input') return
     const pending = this.#pendingUserInputs.get(event.seq)
     if (pending === undefined) return
     this.#pendingUserInputs.delete(event.seq)
-    const item = this.core.memory.channels.get(CONVERSATION_CHANNEL)?.items.at(-1)
-    if (item === undefined) {
+    if (item === undefined || this.memory.channels.get(CONVERSATION_CHANNEL)?.getBySeq(item.seq) === undefined) {
       pending.reject(new Error('applied user input did not create Memory'))
       return
     }
@@ -351,22 +479,44 @@ export class CausalRuntime {
   }
 
   #startModelCall(call: ModelCall): void {
+    const epoch = this.core.conversationEpoch
     const port = this.#models[call.slot]
     if (port === undefined) throw new Error(`model slot is not connected: ${call.slot}`)
     this.#ownTask(
-      signal => port.complete(structuredClone(call), signal),
-      output => this.core.completeModelCall(call.job_id, output, this.#clock.now()),
-      () => this.core.completeModelCall(call.job_id, {port_failure: true}, this.#clock.now()),
+      signal => {
+        const prepared = this.#blackboard === undefined ? call : this.core.refreshModelCall(call)
+        if (prepared.compression_items?.length === 0) return Promise.resolve({channel: prepared.channel, summary: ''})
+        return port.complete(structuredClone(prepared), signal)
+      },
+      output => { if (epoch === this.core.conversationEpoch) this.core.completeModelCall(call.job_id, output, this.#clock.now()) },
+      () => { if (epoch === this.core.conversationEpoch) this.core.completeModelCall(call.job_id, {port_failure: true}, this.#clock.now()) },
     )
   }
 
   #startExecutorDispatch(dispatchIndex: number, delegate: Delegate): void {
+    const epoch = this.core.conversationEpoch
     const adapter = this.#executors.get(delegate.executor)
     if (adapter === undefined) throw new Error(`executor adapter is not connected: ${delegate.executor}`)
+    if (this.#blackboard !== undefined) {
+      this.memory.append(delegate.executor, {
+        ts: this.#clock.now(), trust: 'trusted_system', priority: adapter.manifest.policy.priority,
+        content: {kind: 'task_admitted', delegate_id: delegate.delegate_id, executor: delegate.executor, op: delegate.op},
+        refs: [delegate.origin_ref],
+      })
+    }
     this.#ownTask(
       signal => {
         const userTurn = this.#userTurns.get(delegate.delegate_id)
         this.#userTurns.delete(delegate.delegate_id)
+        const wanted = this.#launchChecks.get(delegate.delegate_id) ?? userTurn?.stillWanted
+        this.#launchChecks.delete(delegate.delegate_id)
+        let live = true
+        try { live = wanted?.() ?? true } catch { live = false }
+        live &&= epoch === this.core.conversationEpoch && this.#clearing === undefined && this.#acceptCompletions
+        if (!live) {
+          this.#hostExecutorCapabilities.delete(delegate.delegate_id)
+          return Promise.resolve({outcome: 'refused', trust: 'trusted_system', content: {error: 'superseded'}, refs: []})
+        }
         const context: ExecutorDispatchContext = {
         ...(userTurn === undefined ? {} : {userTurn}),
         clock: this.#clock,
@@ -395,6 +545,7 @@ export class CausalRuntime {
         },
         refs: [],
       }, this.#clock.now()),
+      true,
     )
   }
 
@@ -412,18 +563,29 @@ export class CausalRuntime {
     run: (signal: AbortSignal) => Promise<unknown>,
     complete: (output: unknown) => void,
     fail: () => void,
+    publishAdmission = false,
   ): void {
     if (!this.#acceptCompletions) return
     const controller = new AbortController()
-    const owned: OwnedTask = {controller, promise: Promise.resolve()}
+    const owned: OwnedTask = {controller, kind: publishAdmission ? 'executor' : 'model', promise: Promise.resolve()}
+    let started = false
     owned.promise = Promise.resolve()
-      .then(async () => run(controller.signal))
+      .then(async () => {
+        if (this.#blackboard !== undefined) {
+          await this.flushMemory()
+        }
+        // This boundary also applies without persistence: admission itself is now asynchronous.
+        if (publishAdmission) await yieldToEventLoop()
+        if (!this.#acceptCompletions || controller.signal.aborted) return undefined
+        started = true
+        return run(controller.signal)
+      })
       .then(
         output => {
-          if (this.#acceptCompletions) complete(output)
+          if (started && this.#acceptCompletions && !controller.signal.aborted) complete(output)
         },
         () => {
-          if (this.#acceptCompletions && !controller.signal.aborted) fail()
+          if (started && this.#acceptCompletions && !controller.signal.aborted) fail()
         },
       )
       .catch(error => {

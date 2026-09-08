@@ -65,8 +65,8 @@ export interface IntakeOptions {
   readonly resolveTarget: (decision: CoordinatorDecision) => Promise<IntakeTarget>
   /** Open the project-confirmation proposal for `session.target`; the confirmed commit is the only side effect. */
   readonly prepare: (session: Readonly<IntakeSession>) => ProjectProposal
-  readonly dispatch: (session: Readonly<IntakeSession>) => IntakeAdmission
-  readonly steer: (session: Readonly<IntakeSession>, project: string | null, instruction: string) => IntakeAdmission
+  readonly dispatch: (session: Readonly<IntakeSession>, stillWanted?: () => boolean) => IntakeAdmission | Promise<IntakeAdmission>
+  readonly steer: (session: Readonly<IntakeSession>, project: string | null, instruction: string, stillWanted?: () => boolean) => IntakeAdmission | Promise<IntakeAdmission>
   /** `stillWanted` is re-checked by the adapter after its model call, before any work is aborted. */
   readonly cancel: (instruction: string, stillWanted: () => boolean) => Promise<CancelResult>
   readonly invalidateProposal: () => void
@@ -342,7 +342,9 @@ export class IntakeController {
         return
       }
       if (kind === 'steer') {
-        const admission = this.#options.steer(current, project, userText)
+        const wanted = () => !this.#userInputPending && this.#current(snapshot.intake_id, snapshot.revision) === current
+        const admission = await this.#options.steer(current, project, userText, wanted)
+        if (!wanted()) return
         this.#options.record(current, 'intake.steer', {accepted: admission.accepted, delegate_id: admission.delegate_id ?? null})
         this.#route(current, admission.accepted
           ? 'code=steered：已把追加要求交给正在执行的任务，等待宿主进度。'
@@ -443,7 +445,9 @@ export class IntakeController {
       }
       if (this.#options.settings.plan_readback === 'summary') this.#options.fact(current, `计划（项目 ${project}）：${limit(order.objective, 240)}。只读回这一句，不再追问；等待宿主派单结果。`)
       current.state = 'committing'
-      this.#settle(this.#options.dispatch(current))
+      const wanted = () => !this.#userInputPending && this.#current(snapshot.intake_id, snapshot.revision) === current
+      const admission = await this.#options.dispatch(current, wanted)
+      if (wanted()) this.#settle(admission)
     } catch {
       const current = this.#current(snapshot.intake_id, snapshot.revision)
       if (current !== null) this.#malformed(current)

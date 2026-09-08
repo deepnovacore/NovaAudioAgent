@@ -164,6 +164,11 @@ export function safeMemoryEvidence(
     return nonemptyPrepared(text)
   }
 
+  if (item.trust === 'trusted_system' && item.outcome === null && content.kind === 'task_admitted'
+    && content.executor === item.channel && typeof content.op === 'string' && typeof content.delegate_id === 'string') {
+    return nonemptyPrepared(`已接收 ${item.channel}.${content.op} 任务（${content.delegate_id}）；此记录不表示任务仍在运行或已完成。`)
+  }
+
   if (coding !== null && item.channel === coding.channel) {
     if (item.outcome !== null) return finalSpeechView(outcome, content, coding.display_name)
     const summary = storedCodingProgressSummary(item)

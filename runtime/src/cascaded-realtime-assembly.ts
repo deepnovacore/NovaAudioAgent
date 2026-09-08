@@ -22,6 +22,7 @@ import {
   type Settings,
 } from './config.js'
 import {MonotonicIdFactory, type IdFactory} from './ids.js'
+import {personalMemoryFactory} from './memory/factory.js'
 import {OpenAIModelGateway, type ModelGateway} from './model-gateway.js'
 import {stripLikePython} from './python-text.js'
 import {
@@ -229,6 +230,8 @@ export function buildCascadedRealtimeAssembly(
   const selected = requireSelectedCascadedRealtimeConfig(options.settings)
   const selection = selected.selection
   validateCodingResource(options)
+  const createPersonalMemory = options.createPersonalMemory
+    ?? personalMemoryFactory(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const capabilities = options.capabilities ?? capabilitiesFromSettings(options.settings)
@@ -312,6 +315,7 @@ export function buildCascadedRealtimeAssembly(
     controlledPreemptiveAlertReconnect: false,
     preemptiveAlertHistoryRecovery: 'none',
     preemptiveAlertHistoryPairs: 4,
+    ...(createPersonalMemory === undefined ? {} : {createPersonalMemory}),
   })
 }
 

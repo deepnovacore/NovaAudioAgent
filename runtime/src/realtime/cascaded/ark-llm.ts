@@ -94,6 +94,7 @@ class Session implements CascadedLlmSession {
     readonly inputs: readonly CascadedLlmInput[]
     readonly tools: readonly CascadedLlmTool[]
     readonly workspaceContext?: string | null
+    readonly responseAdaptation?: string | null
     readonly signal: AbortSignal
   }): AsyncIterable<CascadedLlmEvent> {
     if (this.#closed) throw fail('closed')
@@ -108,6 +109,7 @@ class Session implements CascadedLlmSession {
         tools: input.tools.map(toolSchema),
         previousResponseId: this.#previousResponseId,
         workspaceContext: input.workspaceContext ?? null,
+        responseAdaptation: input.responseAdaptation ?? null,
         signal: input.signal,
       })) {
         if (event.kind === 'response_started') {

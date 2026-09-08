@@ -50,7 +50,7 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-test('compiled tool schemas match the Python oracle byte for byte', () => {
+test('compiled tool schemas preserve the frozen contract with the native personal recall extension', () => {
   const fixture = loadJson<Fixture>('manifests.json')
   const golden = loadJson<Golden>('manifests-expected.json')
   assert.equal(fixture.schema_version, golden.schema_version)
@@ -67,8 +67,19 @@ test('compiled tool schemas match the Python oracle byte for byte', () => {
     const expected = golden.scenarios[scenario.id]
     assert.ok(expected !== undefined, scenario.id)
 
+    // The frozen fixtures remain historical evidence. Only the documented native recall
+    // description/source extension is projected away; all other schema fields still compare.
+    const legacySchemas = structuredClone(compiled.schemas)
+    for (const schema of legacySchemas) {
+      const fn = record(record(schema).function)
+      if (fn.name !== 'memory__recall') continue
+      fn.description = '从当前会话的历史记忆中查找与用户问题相关的证据'
+      const properties = record(record(fn.parameters).properties)
+      delete properties.source
+      record(properties.scope).description = 'recent 优先最近记录；any 在当前会话记忆内扩大查找'
+    }
     assert.equal(
-      canonicalJson(compiled.schemas),
+      canonicalJson(legacySchemas),
       canonicalJson(expected.schemas),
       `${scenario.id} schemas: ${scenario.covers}`,
     )
@@ -92,6 +103,18 @@ test('the golden is not vacuous', () => {
   assert.match(rendered, /origin_ref/u)
   assert.match(rendered, /当前 ContextView 中、这次动作所回答内容的 ref/u)
   assert.match(rendered, /slow_sim__set_light/u)
+})
+
+test('memory recall defaults to session and exposes only the bounded personal source choice', () => {
+  const recall = record(record(compileToolSchema([], {includeMemoryRecall: true}).schemas[0]).function)
+  const parameters = record(recall.parameters)
+  const source = record(record(parameters.properties).source)
+  assert.deepEqual(source.enum, ['session', 'personal'])
+  assert.equal(source.default, 'session')
+  assert.deepEqual(parameters.required, ['query', 'scope'])
+  assert.equal(parameters.additionalProperties, false)
+  assert.equal('user' in record(parameters.properties), false)
+  assert.equal('path' in record(parameters.properties), false)
 })
 
 test('origin_ref is injected into every discriminated object branch', () => {

@@ -160,15 +160,33 @@ function omitForbiddenOptional(parentName, dependencyName) {
   return parentName === '@livekit/av' && dependencyName.startsWith('@livekit/av-')
 }
 
+const FULL_GIT_COMMIT = /^git\+(?:https|ssh):\/\/[^#\s]+#[0-9a-f]{40}$/u
+
+function lockedGitResolved(resolved) {
+  if (typeof resolved !== 'string') return null
+  const looksGit = resolved.startsWith('git+')
+    || resolved.startsWith('git://')
+    || /^(?:github|gitlab|bitbucket):/u.test(resolved)
+  if (!looksGit) return null
+  if (!FULL_GIT_COMMIT.test(resolved)) {
+    throw new ReleaseDependencyError('locked_dependency_invalid')
+  }
+  return resolved
+}
+
 function lockedIdentity(name, installKey, manifest) {
   if (typeof manifest.version !== 'string' || manifest.version === '') {
     throw new ReleaseDependencyError('locked_dependency_invalid')
   }
-  const identity = JSON.stringify({
+  const registryIdentity = {
     integrity: manifest.integrity ?? null,
     name,
     version: manifest.version,
-  })
+  }
+  const gitResolved = lockedGitResolved(manifest.resolved)
+  const identity = JSON.stringify(gitResolved === null
+    ? registryIdentity
+    : {...registryIdentity, resolved: gitResolved})
   return Object.freeze({
     name,
     version: manifest.version,

@@ -34,7 +34,7 @@ export interface DesktopRealtimeOptions extends DesktopBridgeOptions {
   readonly openTaskDirectory?: (path: string) => Promise<void>
   /** Remote transport errors release the connection; desktop retains its fatal policy. */
   readonly transportFailure?: 'abort' | 'disconnect'
-  readonly memoryBoard?: (requestId: string, detail?: MemoryBoardDetail) => string
+  readonly memoryBoard?: (requestId: string, detail?: MemoryBoardDetail) => string | Promise<string>
   readonly workspaceGraphBoard?: (requestId: string) => string
   readonly createServer?: (options: DesktopServerOptions) => DesktopServerTransport
   /** Optional lifecycle observation after bridge connection state has been released. */

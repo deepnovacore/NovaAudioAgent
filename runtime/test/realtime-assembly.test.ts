@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import {mkdtemp, realpath, rm} from 'node:fs/promises'
+import {mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
+import {once} from 'node:events'
+import {setTimeout as delay} from 'node:timers/promises'
+import type {BlackboardSessionOptions} from '../src/memory/blackboard-session.js'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import { setImmediate as yieldImmediate } from 'node:timers/promises'
@@ -72,6 +75,7 @@ import type {
   HostResponseIntent,
   JsonObject,
   RealtimeProvider,
+  ResponseAdaptationContext,
 } from '../src/realtime/protocol.js'
 import { RealtimeProviderSession } from '../src/realtime/provider-session.js'
 import { RealtimeService } from '../src/realtime/service.js'
@@ -79,6 +83,7 @@ import type { ExecutorState } from '../src/realtime/service-state.js'
 import { RealtimeSession } from '../src/realtime/session.js'
 import type { CaptionFrame } from '../src/realtime/session-state.js'
 import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
+import type {PersonalMemoryRememberTurn} from '../src/memory/personal-memory.js'
 import type { CompiledTools } from '../src/tool-schema.js'
 import {
   WorkspaceGraphService,
@@ -353,9 +358,10 @@ class NeverCalledSearch implements SearchTransport {
   }
 }
 
-function realCore(frameSource = new RecordingFrameSource()): Assembly {
+function realCore(frameSource = new RecordingFrameSource(), blackboard?: BlackboardSessionOptions): Assembly {
   return buildAssembly({
     settings: settingsSchema.parse({executors: ['fast_sim']}),
+    ...(blackboard === undefined ? {} : {blackboard}),
     clock: new VirtualClock(0),
     gateway: new NeverCalledGateway(),
     searchTransport: new NeverCalledSearch(),
@@ -512,6 +518,20 @@ class WorkspaceContextProvider extends AbortAwareProvider {
   }
 }
 
+class ResponseAdaptationProvider extends AbortAwareProvider {
+  readonly adaptations: ResponseAdaptationContext[] = []
+  readonly adaptationSteps: (() => Promise<void>)[] = []
+
+  replaceResponseAdaptation(
+    context: ResponseAdaptationContext,
+    signal: AbortSignal,
+  ): Promise<void> {
+    assert.equal(signal.aborted, false)
+    this.adaptations.push(structuredClone(context))
+    return this.adaptationSteps.shift()?.() ?? Promise.resolve()
+  }
+}
+
 test('one provider session supports the realtime session connect and reconnect contract', async () => {
   // Mutation caught: RealtimeSession calling terminal close()+connect() instead of the shared
   // provider-session reconnect path closes the only provider owner and makes the second epoch fail.
@@ -542,6 +562,31 @@ test('one provider session supports the realtime session connect and reconnect c
     assert.equal(provider.closeCalls, 1)
   } finally {
     await providerSession.close().catch(() => undefined)
+  }
+})
+
+test('conversation clear republishes workspace context without the old work order', async () => {
+  const core = realCore()
+  const provider = new WorkspaceContextProvider()
+  const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+  try {
+    await realtime.start()
+    realtime.session.registerDelegate('old-delegate', {
+      summary: 'private old work order', state: 'running', channel: 'codex',
+      progress_summary: 'public old work status',
+    })
+    await realtime.enqueueActiveWorkContextPublication()
+    assert.equal(provider.currentWorkspaceItem?.content.includes('public old work status'), true)
+
+    const clearing = realtime.clearConversation()
+    assert.equal(realtime.clearConversation(), clearing)
+    await clearing
+
+    assert.equal(realtime.session.sessionEpoch, 2)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('public old work status'), false)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('active_executor=false'), true)
+  } finally {
+    await realtime.stop()
   }
 })
 
@@ -590,7 +635,7 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
   const generation = realtime.playback.openResponse({sessionEpoch: 1, responseId: 'identity'})
   assert.equal(generation.generation_id, 'factory-1')
   assert.equal(generation.utterance_id, 'factory-2')
-  const refusal = realtime.bridge.acceptToolCall({
+  const refusal = (await realtime.bridge.acceptToolCall({
     kind: 'tool_call_ready',
     session_epoch: 1,
     call_id: 'call-1',
@@ -598,7 +643,7 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
     name: 'unknown',
     arguments: {},
     response_id: null,
-  })
+  }))
   assert.equal(refusal.host_item.host_item_id, 'factory-3')
   assert.equal(refusal.host_item.event_id, 'factory-4')
   assert.equal(realtime.service.internals.idFactory(), 'factory-5')
@@ -701,10 +746,10 @@ test('production Vision dispatch owns hidden Watch admission and fences stale pr
 
   await realtime.start()
   try {
-    const rawHidden = realtime.bridge.acceptToolCall({
+    const rawHidden = (await realtime.bridge.acceptToolCall({
       kind: 'tool_call_ready', session_epoch: 1, call_id: 'raw-watch', item_id: 'raw-watch-item',
       name: 'watch__start', arguments: {condition: 'the door opens'}, response_id: null,
-    })
+    }))
     assert.equal(rawHidden.accepted, false)
     assert.equal(rawHidden.code, 'hidden_executor')
 
@@ -762,11 +807,11 @@ test('production Vision dispatch owns hidden Watch admission and fences stale pr
       executor: 'watch', op: 'stop', request: {}, origin_ref: currentRef,
       delegate_id: 'watch-stop', deadline: 7, routing_class: 'user_awaited', dispatched_at: 0,
     })
-    const stale = core.runtime.dispatchExternal({
+    const stale = (await core.runtime.dispatchExternal({
       executor: 'watch', op: 'status', request: {}, origin_ref: startOrigin,
     }, {
       kind: 'realtime_tool', priority: 100, routing_class: 'user_awaited', origin: null, selected_suggestion: null,
-    })
+    }))
     assert.equal(stale.accepted, false)
     assert.equal(stale.problem, 'origin_not_visible')
     ids.assertExhausted()
@@ -930,7 +975,7 @@ test('routine cumulative progress is suppressed end to end while a later milesto
         priority: 100,
         content: {text: '请修复进度播报'},
       })
-      const admission = realtime.runtime.dispatchExternal({
+      const admission = (await realtime.runtime.dispatchExternal({
         executor: 'codex',
         op: 'run',
         request: {work_order: '修复进度播报'},
@@ -941,7 +986,7 @@ test('routine cumulative progress is suppressed end to end while a later milesto
         routing_class: 'ambient',
         origin: null,
         selected_suggestion: null,
-      })
+      }))
       assert.equal(admission.accepted, true)
       await waitNamed('progress adapter dispatch', () => adapter.context !== null)
 
@@ -1515,10 +1560,11 @@ test('project adapter wiring carries one confirmed identity through the real rea
         outcome: 'ok', trust: 'trusted_system', content: {op, code: 'completed'}, refs: [],
       })
     },
-    commitConfirmed: (operation, runtimeDispatch) => {
+    commitConfirmed: async (operation, runtimeDispatch) => {
       captured.operation = operation
       captured.origin = operation.origin_ref
-      const admission = runtimeDispatch({
+      let launchAuthorized = false
+      const admission = await runtimeDispatch({
         executor: 'codex',
         op: 'run',
         request: {work_order: operation.work_order ?? ''},
@@ -1529,17 +1575,18 @@ test('project adapter wiring carries one confirmed identity through the real rea
         routing_class: 'user_awaited',
         origin: null,
         selected_suggestion: null,
-      }, operation)
+      }, operation, () => launchAuthorized)
       captured.admission = {accepted: admission.accepted, delegate_id: admission.delegate_id}
       if (!admission.accepted || admission.delegate_id === null) {
         confirmation.rollbackConfirmed(operation)
       } else {
-        confirmation.recordRuntimeAdmission(operation)
+        if (!confirmation.recordRuntimeAdmission(operation)) return {accepted: false, code: 'confirmation_invalid'}
       }
       if (admission.accepted && admission.delegate_id !== null
         && !confirmation.claimConfirmed(operation)) {
         return Promise.resolve({accepted: false, code: 'confirmation_invalid'})
       }
+      launchAuthorized = admission.accepted && admission.delegate_id !== null
       return Promise.resolve({
         accepted: admission.accepted,
         code: admission.accepted ? 'accepted' : 'runtime_rejected',
@@ -3127,6 +3174,493 @@ test('Codex resource starts after provider service and closes after service and 
   assert.equal(actions.filter(item => item === 'codex:close').length, 1)
 })
 
+test('personal memory opens before voice resources and closes inside their ordered owner', async () => {
+  const actions: string[] = []
+  const frame = new RecordingFrameSource(actions)
+  const realtime = buildRealtimeAssembly({
+    core: realCore(frame),
+    provider: new AbortAwareProvider(actions),
+    createPersonalMemory: () => {
+      actions.push('memory:create')
+      return {
+        open: () => { actions.push('memory:open'); return Promise.resolve() },
+        recall: () => Promise.reject(new Error('unused')),
+        close: () => { actions.push('memory:close'); return Promise.resolve() },
+      }
+    },
+    onDiagnostic: () => undefined,
+  })
+
+  assert.deepEqual(actions, ['memory:create'])
+  await realtime.start()
+  assert.ok(actions.indexOf('memory:open') < actions.indexOf('core:start'))
+  assert.ok(actions.indexOf('memory:open') < actions.indexOf('provider:connect'))
+  await realtime.stop()
+  assert.ok(actions.indexOf('provider:close') < actions.indexOf('memory:close'))
+  assert.ok(actions.indexOf('memory:close') < actions.indexOf('core:stop'))
+})
+
+test('personal learning uses host session identity and only the accepted user evidence', async () => {
+  const remembered: {sourceId: string; sessionId: string; sequence: number; text: string; occurredAt: string | null}[] = []
+  for (let run = 0; run < 2; run += 1) {
+    const realtime = buildRealtimeAssembly({
+      core: realCore(), provider: new AbortAwareProvider(),
+      wallClockNow: () => Date.parse('2026-09-06T00:00:00Z') / 1_000,
+      createPersonalMemory: () => ({
+        open: () => Promise.resolve(), close: () => Promise.resolve(),
+        recall: () => Promise.reject(new Error('unused')),
+        remember: turn => {
+          remembered.push({...turn})
+          return Promise.resolve({sourceId: turn.sourceId, state: 'stored' as const})
+        },
+      }),
+      onDiagnostic: () => undefined,
+    })
+    try {
+      await realtime.start()
+      const final = {kind: 'user_transcript_final' as const, session_epoch: 1, item_id: 'same-item', text: 'Please keep replies concise.'}
+      await realtime.service.handleEvent(final)
+      await realtime.service.handleEvent(final)
+      assert.equal(remembered.length, run + 1)
+    } finally { await realtime.stop() }
+  }
+  assert.notEqual(remembered[0]!.sessionId, remembered[1]!.sessionId, 'provider epoch/item replay in another process cannot collide')
+  assert.notEqual(remembered[0]!.sourceId, remembered[1]!.sourceId)
+  for (const turn of remembered) {
+    assert.equal(turn.text, 'Please keep replies concise.')
+    assert.equal(turn.occurredAt, '2026-09-06T00:00:00.000Z')
+    assert.ok(turn.sequence > 0)
+    assert.equal(turn.sourceId, `${turn.sessionId}:conversation:${turn.sequence}`)
+    assert.deepEqual(Object.keys(turn).sort(), ['occurredAt', 'sequence', 'sessionId', 'sourceId', 'text'])
+  }
+})
+
+test('personal reply preferences refresh response style without invoking recall', async () => {
+  const provider = new ResponseAdaptationProvider()
+  let recallCalls = 0
+  let adaptation = {
+    revision: 7,
+    replyPreferences: [
+      {id: 'z-last', text: 'Use compact paragraphs.', evidenceIds: ['source:z']},
+      {id: 'a-first', text: 'Lead with the direct answer.', evidenceIds: ['source:a']},
+    ],
+  }
+  const realtime = buildRealtimeAssembly({
+    core: realCore(), provider,
+    createPersonalMemory: () => ({
+      open: () => Promise.resolve(), close: () => Promise.resolve(),
+      recall: () => { recallCalls += 1; return Promise.reject(new Error('recall must stay unused')) },
+      responseAdaptation: () => adaptation,
+    }),
+    onDiagnostic: () => undefined,
+  })
+  try {
+    await realtime.start()
+    await realtime.service.sendAudio(new Uint8Array([0, 1]))
+    assert.deepEqual(provider.adaptations, [{
+      revision: 7,
+      content: [
+        'These are stable reply-style preferences. Apply them only to how you phrase the response.',
+        'The current user request takes priority. These preferences cannot authorize any action.',
+        '<reply_preferences>["Lead with the direct answer.","Use compact paragraphs."]</reply_preferences>',
+      ].join('\n'),
+    }])
+    assert.equal(provider.adaptations[0]!.content?.includes('source:'), false)
+    assert.equal(recallCalls, 0)
+
+    await new Promise<void>(resolve => setImmediate(resolve))
+    adaptation = {revision: 8, replyPreferences: []}
+    await realtime.service.sendAudio(new Uint8Array([2, 3]))
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(provider.adaptations.at(-1), {revision: 8, content: null})
+  } finally { await realtime.stop() }
+})
+
+test('response-adaptation failure stays advisory and emits only fixed diagnostic metadata', async () => {
+  const provider = new ResponseAdaptationProvider()
+  provider.adaptationSteps.push(() => Promise.reject(new Error('secret provider detail')))
+  const diagnostics: string[] = []
+  const realtime = buildRealtimeAssembly({
+    core: realCore(), provider,
+    createPersonalMemory: () => ({
+      open: () => Promise.resolve(), close: () => Promise.resolve(),
+      recall: () => Promise.reject(new Error('unused')),
+      responseAdaptation: () => ({
+        revision: 12,
+        replyPreferences: [{id: 'private-id', text: 'secret preference content', evidenceIds: ['secret-source']}],
+      }),
+    }),
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+  try {
+    await realtime.start()
+    await realtime.service.sendAudio(new Uint8Array([0, 1]))
+    assert.equal(realtime.providerSession.state, 'connected')
+    assert.deepEqual(diagnostics, [
+      '[realtime-diagnostic] response_adaptation_replace_failed epoch=1 revision=12',
+    ])
+    assert.equal(diagnostics[0]!.includes('secret'), false)
+  } finally { await realtime.stop() }
+})
+
+test('personal learning consumes one adjacent fully spoken reply and rejects zero or interrupted delivery', async () => {
+  const remembered: PersonalMemoryRememberTurn[] = []
+  const realtime = buildRealtimeAssembly({
+    core: realCore(), provider: new AbortAwareProvider(),
+    createPersonalMemory: () => ({
+      open: () => Promise.resolve(), close: () => Promise.resolve(),
+      recall: () => Promise.reject(new Error('unused')),
+      remember: turn => {
+        remembered.push(structuredClone(turn))
+        return Promise.resolve({sourceId: turn.sourceId, state: 'stored' as const})
+      },
+    }),
+    onDiagnostic: () => undefined,
+  })
+  const accept = (itemId: string, text: string) => realtime.service.handleEvent({
+    kind: 'user_transcript_final' as const,
+    session_epoch: realtime.session.sessionEpoch,
+    item_id: itemId,
+    text,
+  })
+  const deliver = async (
+    responseId: string,
+    text: string,
+    outcome: 'spoken' | 'zero' | 'interrupted',
+  ): Promise<void> => {
+    const epoch = realtime.session.sessionEpoch
+    await realtime.service.handleEvent({kind: 'response_started', session_epoch: epoch, response_id: responseId})
+    await realtime.service.handleEvent({
+      kind: 'response_audio_delta', session_epoch: epoch, response_id: responseId, pcm: new Uint8Array([0, 1]),
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_transcript_final', session_epoch: epoch, response_id: responseId, text,
+    })
+    const generation = realtime.session.currentGeneration
+    assert.notEqual(generation, null)
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: epoch, response_id: responseId, status: 'completed', reason: 'done',
+    })
+    assert.equal(realtime.service.playbackStarted(generation!.utterance_id, generation!.generation_epoch), true)
+    if (outcome === 'interrupted') {
+      assert.deepEqual(realtime.playback.fenceCurrent(), generation)
+      assert.equal(realtime.service.playbackCleared(generation!.utterance_id, generation!.generation_epoch, 5), true)
+    } else {
+      assert.equal(realtime.service.playbackDone(
+        generation!.utterance_id,
+        generation!.generation_epoch,
+        outcome === 'spoken' ? 25 : 0,
+      ), true)
+    }
+  }
+
+  try {
+    await realtime.start()
+    await accept('user-1', 'First question')
+    await deliver('response-1', '  Concise answer.  ', 'spoken')
+    await accept('user-2', 'Please keep doing that')
+    assert.equal(remembered[1]?.previousAssistantReply, '  Concise answer.  ')
+
+    await accept('user-3', 'A consecutive turn with no reply')
+    assert.equal(remembered[2]?.previousAssistantReply, undefined)
+  } finally { await realtime.stop() }
+
+  for (const outcome of ['zero', 'interrupted'] as const) {
+    remembered.length = 0
+    const isolated = buildRealtimeAssembly({
+      core: realCore(), provider: new AbortAwareProvider(),
+      createPersonalMemory: () => ({
+        open: () => Promise.resolve(), close: () => Promise.resolve(),
+        recall: () => Promise.reject(new Error('unused')),
+        remember: turn => {
+          remembered.push(structuredClone(turn))
+          return Promise.resolve({sourceId: turn.sourceId, state: 'stored' as const})
+        },
+      }),
+      onDiagnostic: () => undefined,
+    })
+    try {
+      await isolated.start()
+      await isolated.service.handleEvent({
+        kind: 'user_transcript_final', session_epoch: 1, item_id: `user-${outcome}-1`, text: 'Question',
+      })
+      const epoch = isolated.session.sessionEpoch
+      await isolated.service.handleEvent({kind: 'response_started', session_epoch: epoch, response_id: `response-${outcome}`})
+      await isolated.service.handleEvent({
+        kind: 'response_audio_delta', session_epoch: epoch, response_id: `response-${outcome}`, pcm: new Uint8Array([0, 1]),
+      })
+      await isolated.service.handleEvent({
+        kind: 'response_transcript_final', session_epoch: epoch, response_id: `response-${outcome}`, text: 'Not eligible',
+      })
+      const generation = isolated.session.currentGeneration
+      assert.notEqual(generation, null)
+      await isolated.service.handleEvent({
+        kind: 'response_terminal', session_epoch: epoch, response_id: `response-${outcome}`, status: 'completed', reason: 'done',
+      })
+      assert.equal(isolated.service.playbackStarted(generation!.utterance_id, generation!.generation_epoch), true)
+      if (outcome === 'zero') {
+        assert.equal(isolated.service.playbackDone(generation!.utterance_id, generation!.generation_epoch, 0), true)
+      } else {
+        assert.deepEqual(isolated.playback.fenceCurrent(), generation)
+        assert.equal(isolated.service.playbackCleared(generation!.utterance_id, generation!.generation_epoch, 5), true)
+      }
+      await isolated.service.handleEvent({
+        kind: 'user_transcript_final', session_epoch: epoch, item_id: `user-${outcome}-2`, text: 'Next question',
+      })
+      assert.equal(remembered[1]?.previousAssistantReply, undefined)
+    } finally { await isolated.stop() }
+  }
+})
+
+test('reconnect and conversation clear discard the prior-reply candidate', async () => {
+  const remembered: PersonalMemoryRememberTurn[] = []
+  const realtime = buildRealtimeAssembly({
+    core: realCore(), provider: new AbortAwareProvider(),
+    createPersonalMemory: () => ({
+      open: () => Promise.resolve(), close: () => Promise.resolve(),
+      recall: () => Promise.reject(new Error('unused')),
+      remember: turn => {
+        remembered.push(structuredClone(turn))
+        return Promise.resolve({sourceId: turn.sourceId, state: 'stored' as const})
+      },
+    }),
+    onDiagnostic: () => undefined,
+  })
+  const accept = (itemId: string) => realtime.service.handleEvent({
+    kind: 'user_transcript_final' as const,
+    session_epoch: realtime.session.sessionEpoch,
+    item_id: itemId,
+    text: itemId,
+  })
+  const deliver = async (responseId: string, text: string): Promise<void> => {
+    const epoch = realtime.session.sessionEpoch
+    await realtime.service.handleEvent({kind: 'response_started', session_epoch: epoch, response_id: responseId})
+    await realtime.service.handleEvent({
+      kind: 'response_audio_delta', session_epoch: epoch, response_id: responseId, pcm: new Uint8Array([0, 1]),
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_transcript_final', session_epoch: epoch, response_id: responseId, text,
+    })
+    const generation = realtime.session.currentGeneration
+    assert.notEqual(generation, null)
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: epoch, response_id: responseId, status: 'completed', reason: 'done',
+    })
+    assert.equal(realtime.service.playbackStarted(generation!.utterance_id, generation!.generation_epoch), true)
+    assert.equal(realtime.service.playbackDone(generation!.utterance_id, generation!.generation_epoch, 20), true)
+  }
+
+  try {
+    await realtime.start()
+    await accept('before-reconnect')
+    await deliver('reply-before-reconnect', 'Must not cross reconnect')
+    assert.equal(await realtime.service.reconnectForTest(), true)
+    await accept('after-reconnect')
+    assert.equal(remembered.at(-1)?.previousAssistantReply, undefined)
+
+    await deliver('reply-before-clear', 'Must not cross clear')
+    await realtime.clearConversation()
+    await accept('after-clear')
+    assert.equal(remembered.at(-1)?.previousAssistantReply, undefined)
+  } finally { await realtime.stop() }
+})
+
+test('a response completed during transcript persistence cannot replace the synchronously captured prior reply', async () => {
+  const remembered: PersonalMemoryRememberTurn[] = []
+  const realtime = buildRealtimeAssembly({
+    core: realCore(), provider: new AbortAwareProvider(),
+    createPersonalMemory: () => ({
+      open: () => Promise.resolve(), close: () => Promise.resolve(),
+      recall: () => Promise.reject(new Error('unused')),
+      remember: turn => {
+        remembered.push(structuredClone(turn))
+        return Promise.resolve({sourceId: turn.sourceId, state: 'stored' as const})
+      },
+    }),
+    onDiagnostic: () => undefined,
+  })
+  const deliver = async (responseId: string, text: string): Promise<void> => {
+    const epoch = realtime.session.sessionEpoch
+    await realtime.service.handleEvent({kind: 'response_started', session_epoch: epoch, response_id: responseId})
+    await realtime.service.handleEvent({
+      kind: 'response_audio_delta', session_epoch: epoch, response_id: responseId, pcm: new Uint8Array([0, 1]),
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_transcript_final', session_epoch: epoch, response_id: responseId, text,
+    })
+    const generation = realtime.session.currentGeneration
+    assert.notEqual(generation, null)
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: epoch, response_id: responseId, status: 'completed', reason: 'done',
+    })
+    assert.equal(realtime.service.playbackStarted(generation!.utterance_id, generation!.generation_epoch), true)
+    assert.equal(realtime.service.playbackDone(generation!.utterance_id, generation!.generation_epoch, 20), true)
+  }
+
+  try {
+    await realtime.start()
+    await realtime.service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-prior', text: 'First',
+    })
+    await deliver('response-prior', 'Actually prior')
+
+    const originalAccept = realtime.bridge.acceptUserTranscript.bind(realtime.bridge)
+    const ingestEntered = deferred<void>()
+    const releaseIngest = deferred<void>()
+    Object.defineProperty(realtime.bridge, 'acceptUserTranscript', {
+      configurable: true,
+      value: async (text: string): Promise<string> => {
+        if (text === 'Second') {
+          ingestEntered.resolve(undefined)
+          await releaseIngest.promise
+        }
+        return originalAccept(text)
+      },
+    })
+    const second = realtime.service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-current', text: 'Second',
+    })
+    await ingestEntered.promise
+    await deliver('response-current', 'Current response')
+    releaseIngest.resolve(undefined)
+    await second
+    assert.equal(remembered.at(-1)?.previousAssistantReply, 'Actually prior')
+
+    await realtime.service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-next', text: 'Third',
+    })
+    assert.equal(remembered.at(-1)?.previousAssistantReply, 'Current response')
+  } finally { await realtime.stop() }
+})
+
+test('a final arriving after the next speech cannot learn the old turn response as its prior reply', async () => {
+  const remembered: PersonalMemoryRememberTurn[] = []
+  const realtime = buildRealtimeAssembly({
+    core: realCore(), provider: new AbortAwareProvider(),
+    createPersonalMemory: () => ({
+      open: () => Promise.resolve(), close: () => Promise.resolve(),
+      recall: () => Promise.reject(new Error('unused')),
+      remember: turn => {
+        remembered.push(structuredClone(turn))
+        return Promise.resolve({sourceId: turn.sourceId, state: 'stored' as const})
+      },
+    }),
+    onDiagnostic: () => undefined,
+  })
+  try {
+    await realtime.start()
+    await realtime.service.handleEvent({
+      kind: 'user_speech_started', session_epoch: 1, speech_id: 'speech-1', provider_item_id: 'user-1',
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_speech_ended', session_epoch: 1, speech_id: 'speech-1', provider_item_id: 'user-1',
+    })
+    await realtime.service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-1'})
+    await realtime.service.handleEvent({
+      kind: 'response_audio_delta', session_epoch: 1, response_id: 'response-1', pcm: new Uint8Array([0, 1]),
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_transcript_final', session_epoch: 1, response_id: 'response-1', text: 'Answer to user one',
+    })
+    const generation = realtime.session.currentGeneration
+    assert.notEqual(generation, null)
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1, response_id: 'response-1', status: 'completed', reason: 'done',
+    })
+    assert.equal(realtime.service.playbackStarted(generation!.utterance_id, generation!.generation_epoch), true)
+    assert.equal(realtime.service.playbackDone(generation!.utterance_id, generation!.generation_epoch, 20), true)
+
+    await realtime.service.handleEvent({
+      kind: 'user_speech_started', session_epoch: 1, speech_id: 'speech-2', provider_item_id: 'user-2',
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_speech_ended', session_epoch: 1, speech_id: 'speech-2', provider_item_id: 'user-2',
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-1', text: 'Late first transcript',
+    })
+    assert.equal(remembered[0]?.previousAssistantReply, undefined)
+
+    await realtime.service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-2', text: 'Current second transcript',
+    })
+    assert.equal(remembered[1]?.previousAssistantReply, undefined)
+  } finally { await realtime.stop() }
+})
+
+test('personal memory closes without start and is replaced after a failed start', async () => {
+  const actions: string[] = []
+  let created = 0
+  const createPersonalMemory = () => {
+    created += 1
+    const label = created
+    return {
+      open: () => { actions.push(`memory:${label}:open`); return Promise.resolve() },
+      recall: () => Promise.reject(new Error('unused')),
+      close: () => { actions.push(`memory:${label}:close`); return Promise.resolve() },
+    }
+  }
+  const unstarted = buildRealtimeAssembly({
+    core: realCore(new RecordingFrameSource(actions)),
+    provider: new AbortAwareProvider(actions),
+    createPersonalMemory,
+    onDiagnostic: () => undefined,
+  })
+  await unstarted.stop()
+  assert.deepEqual(actions, ['provider:close', 'memory:1:close'])
+
+  actions.length = 0
+  const frame = new RecordingFrameSource(actions)
+  frame.startSteps.push(() => Promise.reject(new Error('synthetic core failure')))
+  const retryable = buildRealtimeAssembly({
+    core: realCore(frame),
+    provider: new AbortAwareProvider(actions),
+    createPersonalMemory,
+    onDiagnostic: () => undefined,
+  })
+  await assert.rejects(
+    retryable.start(),
+    error => error instanceof AssemblyError && error.message === 'camera MCP startup failed',
+  )
+  assert.deepEqual(actions.slice(0, 3), ['memory:2:open', 'core:start', 'memory:2:close'])
+  await retryable.start()
+  assert.ok(actions.indexOf('memory:3:open') < actions.lastIndexOf('core:start'))
+  await retryable.stop()
+})
+
+test('a hung personal memory open is bounded, closed, and retryable', async () => {
+  const actions: string[] = []
+  const diagnostics: string[] = []
+  let created = 0
+  const realtime = buildRealtimeAssembly({
+    core: realCore(new RecordingFrameSource(actions)),
+    provider: new AbortAwareProvider(actions),
+    createPersonalMemory: () => {
+      created += 1
+      const label = created
+      return {
+        open: () => {
+          actions.push(`memory:${label}:open`)
+          return label === 1 ? new Promise<void>(() => undefined) : Promise.resolve()
+        },
+        recall: () => Promise.reject(new Error('unused')),
+        close: () => { actions.push(`memory:${label}:close`); return Promise.resolve() },
+      }
+    },
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+
+  await assert.rejects(
+    realtime.start(),
+    error => error instanceof AssemblyError && error.message === 'personal memory open was abandoned',
+  )
+  assert.deepEqual(actions, ['memory:1:open', 'memory:1:close'])
+  assert.deepEqual(diagnostics, ['[realtime-diagnostic] personal_memory_open_abandoned'])
+  await realtime.start()
+  assert.ok(actions.indexOf('memory:2:open') < actions.indexOf('core:start'))
+  await realtime.stop()
+})
+
 test('Codex resource approval authority is wired into the realtime service', async () => {
   const clock = new VirtualClock()
   const adapter: ExecutorAdapter = {
@@ -3535,4 +4069,83 @@ test('concurrent and repeated stops share cleanup and a completed stop refuses r
       && error.message === 'realtime assembly cannot restart after stop',
   )
   assert.equal(provider.connectCalls, 1)
+})
+
+test('blackboard restores before provider connect with personal memory disabled and drains beyond transport grace', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-assembly-board-'))
+  const blackboard = {path: join(directory, 'board.sqlite'), ownerId: 'local'}
+  let core = realCore(new RecordingFrameSource(), blackboard)
+  let provider = new AbortAwareProvider()
+  let realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+  let blocker: Worker | undefined
+  try {
+    await realtime.start()
+    await core.runtime.ingestUserInput({text: 'project checkpoint before restart'})
+    await realtime.stop()
+    core = realCore(new RecordingFrameSource(), blackboard)
+    provider = new AbortAwareProvider()
+    provider.connectSteps.push(() => {
+      assert.equal(core.runtime.memory.channels.get('conversation')!.items[0]?.content.text, 'project checkpoint before restart')
+      assert.equal(core.runtime.core.activeDelegates().length, 0)
+      return Promise.resolve({epoch: 1, provider_session_id: 'restored-provider'})
+    })
+    realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+    await realtime.start()
+    blocker = new Worker(`
+      const {parentPort,workerData}=require('node:worker_threads');const {DatabaseSync}=require('node:sqlite');
+      const db=new DatabaseSync(workerData);db.exec('BEGIN IMMEDIATE');parentPort.postMessage('locked');
+      parentPort.once('message',()=>{db.exec('COMMIT');db.close();parentPort.close();});
+    `, {eval: true, workerData: blackboard.path})
+    await once(blocker, 'message')
+    core.runtime.memory.append('conversation', {ts: 0, trust: 'trusted_user', priority: 100, content: {text: 'last durable checkpoint'}})
+    const flush = core.runtime.flushMemory()
+    let stopped = false
+    const stopping = realtime.stop().then(() => { stopped = true })
+    await delay(450) // Beyond service task grace (250ms), below SQLite busy timeout (1000ms).
+    assert.equal(stopped, false, 'transport task grace cannot abandon the database drain')
+    blocker.postMessage('release')
+    await flush
+    await stopping
+    core = realCore(new RecordingFrameSource(), blackboard)
+    realtime = buildRealtimeAssembly({core, provider: new AbortAwareProvider(), onDiagnostic: () => undefined})
+    await realtime.start()
+    assert.equal(core.runtime.memory.channels.get('conversation')!.items.at(-1)?.content.text, 'last durable checkpoint')
+  } finally { await blocker?.terminate(); await realtime.stop(); await rm(directory, {recursive: true, force: true}) }
+})
+
+test('corrupt blackboard fails startup before provider and camera acquire resources', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-assembly-board-corrupt-'))
+  const path = join(directory, 'board.sqlite')
+  const frame = new RecordingFrameSource()
+  const provider = new AbortAwareProvider()
+  const realtime = buildRealtimeAssembly({core: realCore(frame, {path, ownerId: 'local'}), provider, onDiagnostic: () => undefined})
+  try {
+    await writeFile(path, 'not a database', {mode: 0o600})
+    await assert.rejects(realtime.start(), /blackboard storage/u)
+    assert.equal(provider.connectCalls, 0)
+    assert.equal(frame.starts, 0)
+  } finally { await realtime.stop().catch(() => undefined); await rm(directory, {recursive: true, force: true}) }
+})
+
+test('failed provider connect keeps recovered blackboard owned until retry or final stop', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-retry-'))
+  const blackboard = {path: join(directory, 'board.sqlite'), ownerId: 'local'}
+  const frame = new RecordingFrameSource()
+  const core = realCore(frame, blackboard)
+  const provider = new AbortAwareProvider()
+  provider.connectSteps.push(() => Promise.reject(new Error('first connect fails')))
+  const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+  try {
+    await assert.rejects(realtime.start(), /provider connect failed/u)
+    assert.equal(frame.starts, 1)
+    assert.equal(frame.stops, 0, 'the assembly owns this core across a retryable connect failure')
+    await realtime.start()
+    assert.equal(provider.connectCalls, 2)
+    assert.equal(frame.starts, 1)
+    assert.equal(await core.runtime.ingestUserInput({text: 'after connect retry'}), 'conversation:1')
+    await realtime.stop()
+    assert.equal(frame.stops, 1)
+    await assert.rejects(core.start(), /persistent assembly cannot restart/u)
+    await assert.rejects(core.runtime.openMemory(), /memory is closed/u)
+  } finally { await realtime.stop(); await rm(directory, {recursive: true, force: true}) }
 })

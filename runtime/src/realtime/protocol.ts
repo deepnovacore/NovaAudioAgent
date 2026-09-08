@@ -403,6 +403,16 @@ export const realtimeProviderEventSchema = z.discriminatedUnion('kind', [
 export type RealtimeProviderEvent = z.infer<typeof realtimeProviderEventSchema>
 export type JsonObject = Readonly<Record<string, JsonValue>>
 
+/** Host-owned, replaceable response guidance. It carries no execution authority. */
+export interface ResponseAdaptationContext {
+  readonly revision: number
+  readonly content: string | null
+}
+export const responseAdaptationContextSchema = z.object({
+  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  content: z.string().max(16_000).nullable(),
+}).strict()
+
 export interface RealtimeProvider {
   /** Automatic providers may start before transcript final; requested providers wait for the host.
    * Omission preserves existing third-party adapters' automatic contract. Production adapters declare it.
@@ -411,6 +421,8 @@ export interface RealtimeProvider {
 
   /** Absent and false both prohibit original-media injection. */
   readonly mediaCapability?: RealtimeProviderMediaCapability
+  /** Optional bounded response-guidance replacement capability. */
+  replaceResponseAdaptation?(context: ResponseAdaptationContext, signal: AbortSignal): Promise<void>
   connect(options: {
     readonly tools: readonly JsonObject[]
     readonly signal: AbortSignal

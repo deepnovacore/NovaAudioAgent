@@ -1371,6 +1371,52 @@ test('compressor completion publishes a trimmed summary through its own job slot
   runtime.assertQuiescent()
 })
 
+test('a late compressor result cannot restore pruned source content', () => {
+  const {runtime, calls} = runtimeWithCalls({
+    manifest: testManifest({wake: 'none', compressWatermark: 1}), slots: ['compress'],
+  })
+  appendUserOrigin(runtime)
+  runtime.post({kind: 'handoff', payload: {
+    channel: 'route_sim', delegate_id: 'external-1', origin_ref: 'conversation:1',
+    outcome: 'ok', trust: 'trusted_system', content: {text: 'expired task result'}, refs: [],
+  }}, 0)
+  runtime.apply(runtime.queue.popReady(0)!)
+  runtime.apply(runtime.queue.popReady(0)!)
+  const channel = runtime.memory.channels.get('route_sim')!
+  channel.pruneThrough(1)
+  runtime.completeModelCall(calls[0]!.job_id, {channel: 'route_sim', summary: 'expired task result'}, 0)
+  runtime.apply(runtime.queue.popReady(0)!)
+  assert.equal(channel.summary, null)
+  assert.deepEqual(channel.items, [])
+  runtime.assertQuiescent()
+})
+
+test('compression skips pruned queued sources even when another channel occupies the slot', () => {
+  for (const busy of [false, true]) {
+    const {runtime, calls} = runtimeWithCalls({
+      manifest: testManifest({wake: 'none', compressWatermark: 1}), slots: ['compress'],
+    })
+    appendUserOrigin(runtime)
+    if (busy) {
+      runtime.post({kind: 'compress', payload: {channel: 'conversation'}}, 0)
+      runtime.apply(runtime.queue.popReady(0)!)
+    }
+    runtime.post({kind: 'handoff', payload: {
+      channel: 'route_sim', delegate_id: 'external-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system', content: {text: 'expired'}, refs: [],
+    }}, 0)
+    runtime.apply(runtime.queue.popReady(0)!)
+    if (busy) runtime.apply(runtime.queue.popReady(0)!)
+    runtime.memory.channels.get('route_sim')!.pruneThrough(1)
+    if (busy) {
+      runtime.completeModelCall(calls[0]!.job_id, {channel: 'conversation', summary: 'origin'}, 0)
+    }
+    runtime.apply(runtime.queue.popReady(0)!)
+    assert.equal(calls.length, busy ? 1 : 0)
+    runtime.assertQuiescent()
+  }
+})
+
 test('a compressor result for the wrong channel is rejected with a bounded diagnostic', () => {
   const {runtime, calls} = runtimeWithCalls({
     manifest: testManifest({wake: 'none', compressWatermark: 1}),
@@ -1898,4 +1944,15 @@ test('coding received summary history crosses modes without repeating a surrogat
   runtime.codingProgressNarration.setMode('smart')
   progress('A', 4)
   assert.equal(calls.length, 1, 'A is new relative to received B')
+})
+
+test('external dispatch resolves retained origin sequences without using array positions', () => {
+  const runtime = externalRuntime()
+  appendTurn(runtime, 1, 'expired')
+  const originRef = appendTurn(runtime, 2, 'retained origin')
+  runtime.memory.channels.get('conversation')!.pruneThrough(1)
+  const admitted = runtime.dispatchExternal(
+    {executor: 'ext_sim', op: 'act', request: {}, origin_ref: originRef}, externalReason,
+  )
+  assert.equal(admitted.accepted, true)
 })

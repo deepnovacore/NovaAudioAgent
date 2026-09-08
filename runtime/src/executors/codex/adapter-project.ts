@@ -515,7 +515,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
         this.#confirmation.rejectConfirmed(operation)
         return commitResult(false, projectErrorCode(error))
       }
-      const admission = runtimeDispatch(
+      let launchAuthorized = false
+      const admission = await runtimeDispatch(
         {
           executor: 'codex',
           op: 'run',
@@ -530,6 +531,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
           selected_suggestion: null,
         },
         operation,
+        () => launchAuthorized,
       )
       if (!admission.accepted || admission.delegate_id === null) {
         this.#confirmation.rollbackConfirmed(operation)
@@ -547,6 +549,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
         originRef: operation.origin_ref,
         workOrder,
       }))
+      launchAuthorized = true
       return commitResult(true, 'accepted', admission.delegate_id)
     } finally {
       this.#projectCommitActive = false

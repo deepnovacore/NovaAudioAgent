@@ -1,3 +1,4 @@
+import {PersonalMemoryError} from '../src/memory/personal-memory.js'
 /**
  * The Node leg of the realtime bridge parity suite.
  *
@@ -19,7 +20,7 @@ import type { JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema, type ExecutorManifest } from '../src/ports.js'
 import type { DelegateRequest } from '../src/ports.js'
-import { RealtimeRuntimeBridge, validParams, type BridgeRuntime } from '../src/realtime/bridge.js'
+import { RealtimeRuntimeBridge, validParams, type BridgeRuntime, type PersonalMemoryRecallPort } from '../src/realtime/bridge.js'
 import type { WakeReason } from '../src/slots.js'
 import { compileToolSchema } from '../src/tool-schema.js'
 
@@ -177,7 +178,7 @@ async function runScenario(scenario: Scenario): Promise<Record<string, unknown>>
           result = await bridge.acceptUserTranscript(step.text!)
           break
         case 'accept_tool_call':
-          result = bridge.acceptToolCall(
+          result = (await bridge.acceptToolCall(
             {
               kind: 'tool_call_ready',
               session_epoch: step.session_epoch ?? 1,
@@ -188,7 +189,7 @@ async function runScenario(scenario: Scenario): Promise<Record<string, unknown>>
               response_id: step.response_id ?? null,
             },
             {originRef: step.origin_ref ?? null},
-          )
+          ))
           break
         case 'advance_clock':
           clock.advanceTo(step.to!)
@@ -226,7 +227,7 @@ test('every bridge scenario matches the Python-exported golden', async () => {
   assert.deepEqual(mismatched, [], 'bridge behavior differs from the oracle')
 })
 
-test('raw hidden controller-owned executor ops are refused after binding resolution', () => {
+test('raw hidden controller-owned executor ops are refused after binding resolution', async () => {
   // Service-side controller dispatch is an internal runtime call; raw provider calls with the same
   // wire name must not bypass that host boundary merely because a binding exists for it.
   const manifest = CODEX_PROJECT_MANIFEST
@@ -243,16 +244,16 @@ test('raw hidden controller-owned executor ops are refused after binding resolut
   assert.equal(tools.schemas.some(schema => String((schema.function as {name: string}).name).startsWith('codex__')), false)
   for (const op of ['run', 'steer', 'status', 'cancel']) assert.equal(tools.bindings.get(`codex__${op}`)?.kind, 'delegate', op)
 
-  const call = (name: string, arguments_: Readonly<Record<string, JsonValue>>) => bridge.acceptToolCall({
+  const call = async (name: string, arguments_: Readonly<Record<string, JsonValue>>) => (await bridge.acceptToolCall({
     kind: 'tool_call_ready', session_epoch: 1, call_id: `${name}-call`, item_id: `${name}-item`, name, arguments: arguments_, response_id: `${name}-response`,
-  }, {originRef: 'conversation:1'})
+  }, {originRef: 'conversation:1'}))
   for (const [name, arguments_] of [
     ['codex__run', {work_order: '开始实现'}],
     ['codex__steer', {instruction: '顺便把字体调大'}],
     ['codex__status', {}],
     ['codex__cancel', {work_id: 'work-1'}],
   ] as const) {
-    const refused = call(name, arguments_)
+    const refused = await call(name, arguments_)
     assert.equal(refused.accepted, false, name)
     assert.equal(refused.code, 'hidden_executor', name)
   }
@@ -417,7 +418,7 @@ test('a canonical tool-output body orders its keys, whatever order they were bui
   assert.equal(JSON.stringify({state: 'refused', code: 'unknown_tool'}), '{"state":"refused","code":"unknown_tool"}')
 })
 
-test('a recall origin is required by the bridge and again by recall itself', () => {
+test('a recall origin is required by the bridge and again by recall itself', async () => {
   // Two guards, one outcome. Removing the bridge's pre-check changes nothing observable: an empty
   // reference makes `compileMemoryRecall` raise `RecallOriginError`, which becomes the same refusal
   // with the same absent telemetry. The pre-check earns its place only by not doing the work -- no
@@ -438,7 +439,7 @@ test('a recall origin is required by the bridge and again by recall itself', () 
     idFactory: () => 'id-1',
     queryDigestKey: DIGEST_KEY,
   })
-  const refused = bridge.acceptToolCall({
+  const refused = (await bridge.acceptToolCall({
     kind: 'tool_call_ready',
     session_epoch: 1,
     call_id: 'call-1',
@@ -446,13 +447,137 @@ test('a recall origin is required by the bridge and again by recall itself', () 
     name: 'memory__recall',
     arguments: {query: 'compile', scope: 'recent'},
     response_id: null,
-  })
+  }))
   assert.equal(refused.code, 'missing_origin_ref')
   assert.equal(refused.telemetry, null, 'a call with no evidence leaves no telemetry')
   assert.equal(refused.inline_fulfilled, false)
 })
 
-test('a clock that moved backwards reports zero elapsed rather than a negative', () => {
+test('personal recall shares schema and trusted-origin gates, then emits bounded source-tagged hits', async () => {
+  const memory = new Memory()
+  const origin = memory.append('conversation', {
+    ts: 1, trust: 'trusted_user', priority: 100, content: {text: 'what do you remember'},
+  })
+  const calls: unknown[] = []
+  const hit = (index: number) => ({
+    memoryId: `memory-${index}`,
+    kind: index % 2 === 0 ? 'fact' as const : 'trait' as const,
+    text: `${index}:${'记'.repeat(798)}`,
+    subject: 'user',
+    attribute: 'preference',
+    emotion: '',
+    occurredAt: null,
+    recordedAt: '2026-09-06T00:00:00.000Z',
+    score: 1-index/100,
+    evidenceIds: [`source-${index}`],
+  })
+  const tools = compileToolSchema([], {includeMemoryRecall: true})
+  let id = 0
+  const bridge = new RealtimeRuntimeBridge({
+    runtime: {
+      clock: new VirtualClock(), memory, executors: new Map(),
+      ingestUserInput: () => Promise.reject(new Error('unused')),
+      dispatchExternal: () => ({accepted: false, delegate_id: null}),
+    },
+    personalMemory: {
+        recall: (query, options) => {
+          calls.push({query, options})
+          return Promise.resolve({
+            source: 'personal' as const, state: 'ok' as const, scope: options?.scope ?? 'recent',
+            hits: Array.from({length: 5}, (_, index) => hit(index)),
+            contextHits: Array.from({length: 5}, (_, index) => hit(index+5)),
+            degraded: false,
+          })
+        },
+      },
+    tools,
+    idFactory: () => `id-${++id}`,
+  })
+  const call = {
+    kind: 'tool_call_ready' as const, session_epoch: 1, call_id: 'personal-1', item_id: 'tool-1',
+    name: 'memory__recall', arguments: {query: 'tea', scope: 'recent', source: 'personal'}, response_id: 'r-1',
+  }
+  const signal = new AbortController().signal
+  const result = await bridge.acceptPersonalMemoryRecall(call, {originRef: `${origin.channel}:${origin.seq}`, signal})
+  assert.equal(result.accepted, true)
+  assert.equal(result.inline_fulfilled, true)
+  assert.ok([...result.host_item.content].length <= 3_000)
+  const content = JSON.parse(result.host_item.content) as {
+    readonly source: string; readonly state: string; readonly omitted: number
+    readonly hits: readonly {readonly source: string; readonly text: string}[]
+    readonly context_hits: readonly {readonly source: string; readonly text: string}[]
+  }
+  assert.equal(content.source, 'personal')
+  assert.equal(content.state, 'ok')
+  assert.ok(content.omitted > 0)
+  assert.ok([...content.hits, ...content.context_hits].every(item => (
+    item.source === 'personal' && [...item.text].length === 800
+  )), 'whole trailing hits are omitted; hit text is never truncated')
+  assert.deepEqual(calls, [{query: 'tea', options: {scope: 'recent', limit: 5, signal}}])
+
+  const malformed = await bridge.acceptPersonalMemoryRecall({...call, call_id: 'bad', arguments: {
+    query: 'tea', scope: 'recent', source: 'private',
+  }}, {originRef: `${origin.channel}:${origin.seq}`})
+  assert.equal(malformed.code, 'invalid_params')
+  assert.equal(calls.length, 1)
+  const synchronous = (await bridge.acceptToolCall({...call, call_id: 'sync'}))
+  assert.equal(synchronous.accepted, false)
+  assert.equal(calls.length, 1, 'the synchronous path never starts a personal read')
+})
+
+test('personal recall distinguishes disabled and backend failures from an empty result', async () => {
+  const memory = new Memory()
+  const trusted = memory.append('conversation', {
+    ts: 1, trust: 'trusted_user', priority: 100, content: {text: 'trusted'},
+  })
+  const untrusted = memory.append('conversation', {
+    ts: 2, trust: 'trusted_system', priority: 100, content: {text: 'system'},
+  })
+  const tools = compileToolSchema([], {includeMemoryRecall: true})
+  const call = {
+    kind: 'tool_call_ready' as const, session_epoch: 1, call_id: 'personal', item_id: 'tool',
+    name: 'memory__recall', arguments: {query: 'tea', scope: 'any', source: 'personal'}, response_id: 'r-1',
+  }
+  const make = (personalMemory?: PersonalMemoryRecallPort) => new RealtimeRuntimeBridge({
+    runtime: {
+      clock: new VirtualClock(), memory, executors: new Map(),
+      ingestUserInput: () => Promise.reject(new Error('unused')),
+      dispatchExternal: () => ({accepted: false, delegate_id: null}),
+    },
+    ...(personalMemory === undefined ? {} : {personalMemory}),
+    tools,
+    idFactory: () => 'id',
+  })
+  const ref = `${trusted.channel}:${trusted.seq}`
+  const state = async (bridge: RealtimeRuntimeBridge): Promise<string> => {
+    const result = await bridge.acceptPersonalMemoryRecall(call, {originRef: ref})
+    return String((JSON.parse(result.host_item.content) as {state?: unknown}).state)
+  }
+  assert.equal(await state(make()), 'disabled')
+  assert.equal(await state(make({recall: () => Promise.reject(new PersonalMemoryError('unavailable'))})), 'unavailable')
+  assert.equal(await state(make({recall: () => Promise.reject(new PersonalMemoryError('error'))})), 'error')
+  assert.equal(await state(make({recall: (_query, options) => Promise.resolve({
+    source: 'personal', state: 'empty', scope: options?.scope ?? 'recent', hits: [], contextHits: [], degraded: false,
+  })})), 'empty')
+  // A different backend needs only its own IDs/text, with no VoiceMem schema or scores.
+  const minimal = await make({recall: () => Promise.resolve({
+    source: 'personal', state: 'ok', scope: 'any',
+    hits: [{memoryId: 'external:42', text: 'Prefers concise replies', evidenceIds: []}],
+    degraded: false,
+  })}).acceptPersonalMemoryRecall(call, {originRef: ref})
+  const output = JSON.parse(minimal.host_item.content) as {state: string; hits: {memory_id: string; score: null; kind: null}[]; context_hits: unknown[]}
+  assert.equal(output.state, 'ok')
+  assert.equal(output.hits[0]!.memory_id, 'external:42')
+  assert.equal(output.hits[0]!.score, null)
+  assert.equal(output.hits[0]!.kind, null)
+  assert.deepEqual(output.context_hits, [])
+  assert.equal('right_brain_hits' in output, false)
+  const refused = await make({recall: () => Promise.reject(new Error('must not run'))})
+    .acceptPersonalMemoryRecall(call, {originRef: `${untrusted.channel}:${untrusted.seq}`})
+  assert.equal(refused.code, 'missing_origin_ref')
+})
+
+test('a clock that moved backwards reports zero elapsed rather than a negative', async () => {
   // Neither virtual clock can go backwards, so no fixture can reach this; a real clock adjusted under
   // the process can. The clamp exists so one such adjustment cannot poison an aggregate computed over
   // these durations, and it is asserted here because the fixtures cannot assert it.
@@ -491,7 +616,7 @@ test('a clock that moved backwards reports zero elapsed rather than a negative',
     idFactory: () => 'id-1',
     queryDigestKey: DIGEST_KEY,
   })
-  const result = bridge.acceptToolCall({
+  const result = (await bridge.acceptToolCall({
     kind: 'tool_call_ready',
     session_epoch: 1,
     call_id: 'call-1',
@@ -499,11 +624,11 @@ test('a clock that moved backwards reports zero elapsed rather than a negative',
     name: 'memory__recall',
     arguments: {query: 'compile', scope: 'recent'},
     response_id: null,
-  }, {originRef: 'conversation:2'})
+  }, {originRef: 'conversation:2'}))
   assert.equal(result.telemetry?.elapsed, 0)
 })
 
-test('a container summary renders as canonical JSON, which is a recorded divergence', () => {
+test('a container summary renders as canonical JSON, which is a recorded divergence', async () => {
   // The oracle renders a non-string summary with `str()`. For a container that is Python repr, whose
   // dict ordering and int-vs-float spelling are the two divergences already recorded for model-facing
   // serialization -- `str(['a'])` is `['a']` and `str({'k': 'v'})` is `{'k': 'v'}`, neither
@@ -555,7 +680,7 @@ test('a container summary renders as canonical JSON, which is a recorded diverge
     tools: compileToolSchema([manifest]),
     idFactory: () => 'id-1',
   })
-  const accepted = bridge.acceptToolCall({
+  const accepted = (await bridge.acceptToolCall({
     kind: 'tool_call_ready',
     session_epoch: 1,
     call_id: 'call-1',
@@ -563,7 +688,7 @@ test('a container summary renders as canonical JSON, which is a recorded diverge
     name: 'loose_sim__act',
     arguments: {work_order: ['a', 'b']},
     response_id: null,
-  }, {originRef: 'conversation:1'})
+  }, {originRef: 'conversation:1'}))
   assert.equal(accepted.code, 'accepted')
   assert.equal(
     accepted.response_intent.task_summary,
@@ -571,7 +696,7 @@ test('a container summary renders as canonical JSON, which is a recorded diverge
     'canonical JSON, not the oracle\'s ["a", "b"] repr',
   )
   // An empty container still falls through, because that is truthiness rather than rendering.
-  const fellThrough = bridge.acceptToolCall({
+  const fellThrough = (await bridge.acceptToolCall({
     kind: 'tool_call_ready',
     session_epoch: 1,
     call_id: 'call-2',
@@ -579,6 +704,28 @@ test('a container summary renders as canonical JSON, which is a recorded diverge
     name: 'loose_sim__act',
     arguments: {work_order: []},
     response_id: null,
-  }, {originRef: 'conversation:1'})
+  }, {originRef: 'conversation:1'}))
   assert.equal(fellThrough.response_intent.task_summary, 'loose_sim__act')
+})
+
+test('ordinary tools refuse a user turn superseded while durable admission is pending', async () => {
+  const manifest = parseManifest({name: 'worker', policy: {channel: 'worker', priority: 50, wake: 'none', typical_latency: 1, compress_watermark: 40},
+    ops: [{name: 'read', description: 'read', params: {type: 'object', properties: {}, additionalProperties: false}, readonly: true, deadline_budget: 30}]})
+  let release!: (value: {accepted: boolean; delegate_id: string}) => void
+  const pending = new Promise<{accepted: boolean; delegate_id: string}>(resolve => { release = resolve })
+  let wanted = true
+  const bridge = new RealtimeRuntimeBridge({runtime: {
+    clock: new VirtualClock(), memory: new Memory({policies: [manifest.policy]}),
+    executors: new Map([['worker', {manifest}]]), ingestUserInput: () => Promise.resolve('conversation:1'),
+    dispatchExternal: () => pending,
+  }, tools: compileToolSchema([manifest]), idFactory: () => 'host-item'})
+  const acceptance = bridge.acceptToolCall({kind: 'tool_call_ready', call_id: 'call', item_id: 'item',
+    name: 'worker__read', arguments: {}, response_id: 'response', session_epoch: 1}, {
+    originRef: 'conversation:1', userTurn: {originRef: 'conversation:1', sessionEpoch: 1,
+      acceptedUserInputRevision: 1, stillWanted: () => wanted},
+  })
+  wanted = false
+  release({accepted: true, delegate_id: 'worker-1'})
+  assert.equal((await acceptance).code, 'superseded')
+  assert.equal((await acceptance).accepted, false)
 })

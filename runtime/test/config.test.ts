@@ -6,6 +6,7 @@ import {
   loadSettings,
   requireCascadedCredentials,
   requireIntegratedRealtime,
+  requirePersonalMemory,
   requireQwenRealtime,
   requireVolcengineRealtime,
   resolveCascadedSelection,
@@ -34,6 +35,9 @@ test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash'
     embeddingModel: settings.embedding_model,
     capabilitiesConfigPath: settings.capabilities_config_path,
     knowledgePath: settings.knowledge_path,
+    memoryConnection: settings.memory_connection,
+    memoryPath: settings.memory_path,
+    memoryUserId: settings.memory_user_id,
   }, {
     codexApprovalMode: 'ask',
     clarificationDepth: 'balanced',
@@ -44,6 +48,9 @@ test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash'
     embeddingModel: 'text-embedding-v4',
     capabilitiesConfigPath: '~/.nova-audio-agent/capabilities.json',
     knowledgePath: '~/.nova-audio-agent/knowledge.sqlite',
+    memoryConnection: 'disabled',
+    memoryPath: '~/.nova-audio-agent/memory.sqlite',
+    memoryUserId: 'local',
   })
 })
 
@@ -56,6 +63,52 @@ test('camera module env mapping is strict and supports disabling the production 
     error => error instanceof ConfigurationError
       && error.code === 'invalid_configuration'
       && error.message === 'invalid configuration: NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED',
+  )
+})
+
+test('personal memory selects VoiceMem explicitly and maps its host-owned settings', () => {
+  const configured = loadSettings({
+    NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'local',
+    NOVA_AUDIO_AGENT_MEMORY_PATH: '/state/personal.sqlite',
+    NOVA_AUDIO_AGENT_MEMORY_USER_ID: 'owner-1',
+  })
+  assert.deepEqual({
+    connection: configured.memory_connection,
+    path: configured.memory_path,
+    userId: configured.memory_user_id,
+  }, {
+    connection: 'local',
+    path: '/state/personal.sqlite',
+    userId: 'owner-1',
+  })
+  assert.throws(
+    () => loadSettings({NOVA_AUDIO_AGENT_MEMORY_PROVIDER: 'unknown'}),
+    error => error instanceof ConfigurationError
+      && error.message === 'invalid configuration: NOVA_AUDIO_AGENT_MEMORY_PROVIDER',
+  )
+  assert.equal(requirePersonalMemory(loadSettings({})), null)
+  assert.deepEqual(requirePersonalMemory(loadSettings({
+    NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://embedding.example/v1/',
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'embedding-key',
+    NOVA_AUDIO_AGENT_EMBEDDING_MODEL: 'embedding-model',
+    NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'local',
+    NOVA_AUDIO_AGENT_MEMORY_PATH: '/state/personal.sqlite',
+    NOVA_AUDIO_AGENT_MEMORY_USER_ID: 'owner-1',
+  })), {
+    connection: 'local',
+    provider: 'voicemem',
+    path: '/state/personal.sqlite',
+    userId: 'owner-1',
+    extractionModel: 'qwen3-vl-plus',
+    embedding: {
+      baseUrl: 'https://embedding.example/v1',
+      apiKey: 'embedding-key',
+      model: 'embedding-model',
+    },
+  })
+  assert.throws(
+    () => requirePersonalMemory(loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'local'})),
+    /NOVA_AUDIO_AGENT_MODEL_API_KEY/u,
   )
 })
 
@@ -782,4 +835,34 @@ test('Volcengine numeric relationships retain the Python resolver errors', () =>
       error => error instanceof ConfigurationError && error.message === expected,
     )
   }
+})
+
+test('memory connection separates local provider selection from remote engine ownership', () => {
+  const remote = {
+    NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'remote',
+    NOVA_AUDIO_AGENT_MEMORY_URL: 'http://127.0.0.1:8787',
+    NOVA_AUDIO_AGENT_MEMORY_TOKEN: 'owner-token',
+  }
+  assert.deepEqual(requirePersonalMemory(loadSettings(remote)), {
+    connection: 'remote', url: remote.NOVA_AUDIO_AGENT_MEMORY_URL, token: 'owner-token',
+  })
+  const local = {NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'local',
+    NOVA_AUDIO_AGENT_MODEL_API_KEY:'test', NOVA_AUDIO_AGENT_MODEL_BASE_URL:'https://example.com/v1'}
+  assert.deepEqual(requirePersonalMemory(loadSettings(local)),
+    requirePersonalMemory(loadSettings({...local, NOVA_AUDIO_AGENT_MEMORY_PROVIDER:'voicemem'})))
+  assert.equal(requirePersonalMemory(loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'disabled'})), null)
+  assert.throws(() => loadSettings({...remote, NOVA_AUDIO_AGENT_MEMORY_PROVIDER:'voicemem'}), ConfigurationError)
+  assert.throws(() => loadSettings({...local, NOVA_AUDIO_AGENT_MEMORY_PROVIDER:'unknown'}), ConfigurationError)
+  assert.throws(() => loadSettings({NOVA_AUDIO_AGENT_MEMORY_PROVIDER:'voicemem'}), ConfigurationError)
+  assert.throws(() => requirePersonalMemory(loadSettings({...remote,NOVA_AUDIO_AGENT_MEMORY_TOKEN:''})), ConfigurationError)
+})
+
+test('removed memory backend configuration fails explicitly instead of silently disabling memory', () => {
+  for (const backend of ['voicemem', 'http', 'disabled']) {
+    assert.throws(() => loadSettings({NOVA_AUDIO_AGENT_MEMORY_BACKEND:backend}), /MEMORY_CONNECTION/u)
+  }
+})
+
+test('deferred native memory provider is rejected explicitly', () => {
+  assert.throws(() => loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'local', NOVA_AUDIO_AGENT_MEMORY_PROVIDER: 'mem0'}), /MEMORY_PROVIDER/u)
 })

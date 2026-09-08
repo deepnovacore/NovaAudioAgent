@@ -63,8 +63,9 @@ for (const failure of ['send', 'overflow', 'preempt-overflow'] as const) test(`r
   h.sent.length = 0
   await h.options.onClientAuthenticated?.()
   await tick()
-  assert.equal(h.sent.length, 1)
+  assert.equal(h.sent.length, 2)
   assert.match(String(h.sent[0]), /"state":"running"/u)
+  assert.match(String(h.sent[1]), /"type":"executor.tasks"/u)
 })
 
 test('a rejected send from an old connection cannot disconnect its replacement', async () => {
@@ -81,7 +82,8 @@ test('a rejected send from an old connection cannot disconnect its replacement',
   await tick()
   assert.equal(h.stop.signal.aborted, false)
   assert.equal(h.counts().disconnected, 0)
-  assert.match(String(h.sent.at(-1)), /"state":"running"/u)
+  assert.match(String(h.sent.at(-2)), /"state":"running"/u)
+  assert.match(String(h.sent.at(-1)), /"type":"executor.tasks"/u)
 })
 
 for (const failure of ['disconnect', 'send'] as const) test(`real realtime playback ${failure} preserves the worker and reconnects to the same work ID`, async t => {
@@ -176,7 +178,7 @@ for (const failure of ['disconnect', 'send'] as const) test(`real realtime playb
     const origin = runtime.memory.append('conversation', {
       ts: 0, trust: 'trusted_user', priority: 100, content: {text: 'Perform the controlled task'},
     })
-    const admission = runtime.dispatchExternal({executor: 'slow_sim', op: 'set_light', request: {room: 'office', brightness: 50},
+    const admission = await runtime.dispatchExternal({executor: 'slow_sim', op: 'set_light', request: {room: 'office', brightness: 50},
       origin_ref: `${origin.channel}:${origin.seq}`}, {
       kind: 'realtime_tool', priority: 100, routing_class: 'ambient', origin: null, selected_suggestion: null,
     })

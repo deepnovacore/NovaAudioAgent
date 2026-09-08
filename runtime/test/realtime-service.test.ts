@@ -29,7 +29,11 @@ import { Memory } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
 import type {Suggestion} from '../src/suggestions.js'
 import type {WakeReason} from '../src/slots.js'
-import { RealtimeRuntimeBridge, type ToolAcceptance } from '../src/realtime/bridge.js'
+import {
+  RealtimeRuntimeBridge,
+  type PersonalMemoryRecallPort,
+  type ToolAcceptance,
+} from '../src/realtime/bridge.js'
 import type { HostContextItem, HostResponseIntent } from '../src/realtime/protocol.js'
 import { ItemDeliveryUncertainError } from '../src/realtime/protocol.js'
 import { RealtimeService, type ServiceProvider } from '../src/realtime/service.js'
@@ -657,6 +661,16 @@ function pipelineService(options: {
   readonly agentExecutor?: Pick<AgentExecutor, 'cancel'>
   readonly agentControllers?: readonly AgentController[]
   readonly beforeAgentRuntimeDispatch?: () => void
+  readonly personalMemory?: PersonalMemoryRecallPort
+  readonly onUserTranscriptAccepted?: (turn: {
+    readonly text: string
+    readonly originRef: string
+    readonly sessionEpoch: number
+    readonly itemId: string
+  }) => void | Promise<void>
+  readonly failTranscriptIngest?: boolean
+  readonly beforeTranscriptIngest?: () => Promise<void>
+  readonly clearConversation?: () => Promise<void>
   /** Fold the ops into the spec 08 host tools; a raw `codex__*` from the provider is then refused. */
   readonly agent?: boolean
 } = {}): {
@@ -823,6 +837,7 @@ function pipelineService(options: {
       terminatedByDeadline: () => true,
       delegateFor: () => pipelineDelegate,
       inFlightDelegate: () => pipelineDelegate,
+      clearConversation: options.clearConversation ?? (() => Promise.resolve()),
       serve: (signal: AbortSignal) => new Promise<void>(resolve => {
         signal.addEventListener('abort', () => resolve(), {once: true})
       }),
@@ -834,7 +849,9 @@ function pipelineService(options: {
         clock,
         memory,
         executors,
-        ingestUserInput: (input: {readonly text: string}) => {
+        ingestUserInput: async (input: {readonly text: string}) => {
+          if (options.failTranscriptIngest === true) return Promise.reject(new Error('synthetic transcript ingest failure'))
+          await options.beforeTranscriptIngest?.()
           ingested += 1
           const item = memory.append('conversation', {
             ts: ingested,
@@ -842,7 +859,7 @@ function pipelineService(options: {
             priority: 100,
             content: {text: input.text},
           })
-          return Promise.resolve(`${item.channel}:${item.seq}`)
+          return `${item.channel}:${item.seq}`
         },
         dispatchExternal: () => ({
           accepted: scripted.accepted,
@@ -851,6 +868,7 @@ function pipelineService(options: {
       },
       tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false, agentDescriptors}),
       idFactory: nextId,
+      ...(options.personalMemory === undefined ? {} : {personalMemory: options.personalMemory}),
     }),
     ...(options.intake === undefined ? {} : {intake: options.intake}),
     ...(manifest.model_visibility === 'hidden' && options.agentControllers === undefined ? {agentControllerFactory: {
@@ -874,6 +892,7 @@ function pipelineService(options: {
     // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
     // one explicitly set to undefined, and the service's contract is the former.
     ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
+    ...(options.onUserTranscriptAccepted === undefined ? {} : {onUserTranscriptAccepted: options.onUserTranscriptAccepted}),
     onDiagnostic: line => diagnostics.push(line),
     telemetry: {
       record: (kind, payload) => telemetry.push({kind, payload}),
@@ -885,6 +904,146 @@ function pipelineService(options: {
     telemetry, runtimeDispatches: () => runtimeDispatches,
   }
 }
+
+test('conversation clear fences synchronously, joins provider ingress, and starts a blank epoch', async () => {
+  let markIngestStarted!: () => void
+  const ingestStarted = new Promise<void>(resolve => { markIngestStarted = resolve })
+  let releaseIngest!: () => void
+  const ingestGate = new Promise<void>(resolve => { releaseIngest = resolve })
+  let releaseClear!: () => void
+  const clearGate = new Promise<void>(resolve => { releaseClear = resolve })
+  let markRuntimeClearStarted!: () => void
+  const runtimeClearStarted = new Promise<void>(resolve => { markRuntimeClearStarted = resolve })
+  let transcriptIngestCompleted = false
+  const {service, session, injectedItems} = pipelineService({
+    beforeTranscriptIngest: async () => {
+      markIngestStarted()
+      await ingestGate
+      transcriptIngestCompleted = true
+    },
+    clearConversation: async () => {
+      markRuntimeClearStarted()
+      assert.equal(
+        transcriptIngestCompleted,
+        true,
+        'durable clear waits for the admitted provider event',
+      )
+      await clearGate
+    },
+  })
+  await service.connect()
+  session.registerDelegate('old-delegate', {
+    summary: 'old private work order', state: 'running', channel: 'codex',
+  })
+  service.queueHostItem(hostFact('old-body'))
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1, speech_id: 'speech-clear', provider_item_id: 'user-clear',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1, speech_id: 'speech-clear', provider_item_id: 'user-clear',
+  })
+  const pendingIngress = service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-clear', text: 'old turn',
+  })
+  await ingestStarted
+  const clearing = service.clearConversation()
+  try {
+    assert.equal(service.clearingConversation, true)
+    assert.equal(service.clearConversation(), clearing, 'concurrent callers share one clear')
+    service.queueHostItem(hostFact('arrived-after-fence'))
+
+    releaseIngest()
+    await runtimeClearStarted
+    releaseClear()
+    await Promise.all([pendingIngress, clearing])
+
+    assert.equal(service.clearingConversation, false)
+    assert.equal(session.sessionEpoch, 2)
+    assert.equal(session.userInputRevision, 0)
+    assert.deepEqual(session.snapshot().active_delegates, [])
+    assert.deepEqual(service.queuedHostItems(), [])
+    assert.equal(injectedItems.some(item => item.kind === 'recovery'), false)
+  } finally {
+    releaseIngest()
+    releaseClear()
+    await Promise.allSettled([pendingIngress, clearing])
+  }
+})
+
+test('a failed conversation clear remains fenced and cannot consume old provider input', async () => {
+  const {service, session, diagnostics} = pipelineService({
+    clearConversation: () => Promise.reject(new Error('synthetic durable clear failure')),
+  })
+  await service.connect()
+  const clearing = service.clearConversation()
+  assert.equal(service.clearingConversation, true)
+  assert.equal(service.clearConversation(), clearing)
+  await assert.rejects(clearing, /synthetic durable clear failure/u)
+  assert.equal(service.stopped, true, 'failed clear enters the existing fatal service lifecycle')
+  await assert.rejects(service.clearConversation(), /not available/u)
+
+  assert.equal(service.clearingConversation, true)
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'stale-user', text: 'must be ignored',
+  })
+  service.queueHostItem(hostFact('must-not-queue'))
+  assert.equal(session.userInputRevision, 0)
+  assert.deepEqual(service.queuedHostItems(), [])
+  assert.equal(diagnostics.some(line => line.includes('conversation_clear_failed')), true)
+})
+
+test('conversation clear drops buffered renderer audio before durable storage finishes', async () => {
+  let releaseClear!: () => void
+  const clearGate = new Promise<void>(resolve => { releaseClear = resolve })
+  let markRuntimeClearStarted!: () => void
+  const runtimeClearStarted = new Promise<void>(resolve => { markRuntimeClearStarted = resolve })
+  const {service, session, actions} = pipelineService({
+    clearConversation: async () => {
+      markRuntimeClearStarted()
+      await clearGate
+    },
+  })
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'old-response'})
+  await service.handleEvent({
+    kind: 'response_audio_delta', session_epoch: 1,
+    response_id: 'old-response', pcm: new Uint8Array([0, 1]),
+  })
+  const generation = session.currentGeneration
+  assert.notEqual(generation, null)
+
+  const clearing = service.clearConversation()
+  try {
+    assert.equal(
+      actions.includes(`clear:${generation!.utterance_id}:${generation!.generation_epoch}`),
+      true,
+      'the synchronous fence clears audio before waiting on storage',
+    )
+    await runtimeClearStarted
+    releaseClear()
+    await clearing
+  } finally {
+    releaseClear()
+    await Promise.allSettled([clearing])
+  }
+})
+
+test('historical executor terminals settle control state without projecting their body', () => {
+  const {service, queued} = projectionService()
+  service.session.registerDelegate('d-1', {
+    summary: 'old private work order', state: 'running', channel: 'codex',
+  })
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1', outcome: 'ok',
+      trust: 'trusted_system', content: {secret: 'old result body'}, refs: [],
+    },
+  }, false)
+
+  assert.equal(service.session.delegateState('d-1'), 'completed')
+  assert.deepEqual(queued(), [])
+})
 
 test('a tool call is admitted against the user turn that justifies it', async () => {
   const {service, actions, session} = pipelineService()
@@ -947,6 +1106,48 @@ test('a tool call is admitted against the user turn that justifies it', async ()
     actions.some(action => action.startsWith('create_response:')),
     'a continuation turn was requested for the finished work',
   )
+})
+
+test('personal-memory admission receives only one successfully ingested user final', async () => {
+  const admitted: {text: string; originRef: string; sessionEpoch: number; itemId: string}[] = []
+  let releaseSlow!: () => void
+  const slow = new Promise<void>(resolve => { releaseSlow = resolve })
+  const {service, diagnostics} = pipelineService({
+    onUserTranscriptAccepted: turn => {
+      admitted.push(turn)
+      if (turn.text === 'slow') return slow
+      if (turn.text === 'reject') return Promise.reject(new Error('personal-memory secret'))
+    },
+  })
+  await service.connect()
+  await service.handleEvent({kind: 'user_transcript_delta', session_epoch: 1, item_id: 'partial', text: 'partial text'})
+  await service.handleEvent({kind: 'response_transcript_final', session_epoch: 1, response_id: 'assistant', text: 'generated reply'})
+  await service.handleEvent({kind: 'user_transcript_failed', session_epoch: 1, item_id: 'failed'})
+  await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'first', text: 'slow'})
+  assert.deepEqual(admitted, [{text: 'slow', originRef: 'conversation:1', sessionEpoch: 1, itemId: 'first', userInputRevision: 2}])
+  await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'first', text: 'slow'})
+  await service.reconnectForTest()
+  await service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'stale', text: 'stale transcript'})
+  assert.equal(admitted.length, 1, 'partial, failed, duplicate, and stale events never enter personal memory')
+  await service.handleEvent({kind: 'user_transcript_final', session_epoch: 2, item_id: 'rejecting', text: 'reject'})
+  assert.equal(admitted.length, 2, 'a slow personal-memory queue does not hold the event loop')
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.deepEqual(diagnostics, ['[realtime-diagnostic] personal_memory_admission_failed'])
+  releaseSlow()
+})
+
+test('personal-memory admission does not run when core transcript ingestion fails', async () => {
+  const admitted: unknown[] = []
+  const {service} = pipelineService({
+    failTranscriptIngest: true,
+    onUserTranscriptAccepted: turn => { admitted.push(turn) },
+  })
+  await service.connect()
+  await assert.rejects(
+    () => service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'rejected', text: 'not durable'}),
+    /synthetic transcript ingest failure/u,
+  )
+  assert.deepEqual(admitted, [])
 })
 
 test('a tool call arriving before its transcript waits, then runs', async () => {
@@ -2789,6 +2990,7 @@ test('silencing monitor heartbeats does not silence ordinary executor progress',
 
 test('a Surrogate-selected working progress becomes one realtime progress fact', () => {
   const {service, queuedItems, memory} = projectionService({progressViaSurrogate: true})
+  memory.append('codex', {ts: 0, trust: 'trusted_system', priority: 50, content: {text: 'expired'}})
   const evidence = memory.append('codex', {
     ts: 1,
     trust: 'trusted_system',
@@ -2822,6 +3024,7 @@ test('a Surrogate-selected working progress becomes one realtime progress fact',
     origin: 'd-1',
     selected_suggestion: 's-1',
   }
+  memory.channels.get('codex')!.pruneThrough(1)
   service.onSuggestionSelected(suggestion, reason)
 
   const queued = queuedItems()
@@ -4050,6 +4253,162 @@ test('an inline-fulfilled call gets no background acknowledgement on reconnect',
     false,
     'no background acknowledgement for work that never went to the background',
   )
+})
+
+test('personal recall resolves through the ordinary tool-output continuation ledger', async () => {
+  const {service, actions, injectedItems} = pipelineService({
+    includeRecall: true,
+    personalMemory: {recall: (_query, options) => Promise.resolve({
+      source: 'personal', state: 'ok', scope: options?.scope ?? 'recent', degraded: false,
+      hits: [{
+        memoryId: 'memory-1', kind: 'fact', text: 'likes tea', subject: 'user',
+        attribute: 'preference', emotion: '', occurredAt: null,
+        recordedAt: '2026-09-06T00:00:00.000Z', score: 0.9, evidenceIds: ['source-1'],
+      }],
+      contextHits: [],
+    })},
+  })
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'personal-r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'what do I like',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'personal-call-1', item_id: 'personal-tool-1',
+    name: 'memory__recall', arguments: {query: 'like', scope: 'any', source: 'personal'},
+    response_id: 'personal-r-1',
+  })
+  const accepted = service.toolCallAcceptances()[0]!.acceptance
+  assert.equal(accepted.inline_fulfilled, true)
+  assert.equal((JSON.parse(accepted.host_item.content) as {source: string}).source, 'personal')
+  assert.equal(injectedItems.some(item => item.call_id === 'personal-call-1'), false)
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'personal-r-1',
+    status: 'completed', reason: '',
+  })
+  assert.equal(injectedItems.filter(item => item.call_id === 'personal-call-1').length, 1)
+  assert.equal(actions.filter(action => action === 'create_response:tool_result').length, 1)
+})
+
+test('personal recall result is superseded when a newer user revision arrives during its await', async () => {
+  let release!: () => void
+  let started!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const invoked = new Promise<void>(resolve => { started = resolve })
+  const {service, injectedItems} = pipelineService({
+    includeRecall: true,
+    personalMemory: {recall: async (_query, options) => {
+      started()
+      await gate
+      return {source: 'personal', state: 'empty', scope: options?.scope ?? 'recent', hits: [], contextHits: [], degraded: false}
+    }},
+  })
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'slow-personal-r'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'what do I like',
+  })
+  const handling = service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'slow-personal-call', item_id: 'slow-personal-tool',
+    name: 'memory__recall', arguments: {query: 'like', scope: 'recent', source: 'personal'},
+    response_id: 'slow-personal-r',
+  })
+  await invoked
+  await handling
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'newer-speech', provider_item_id: 'newer-user-item',
+  })
+  release()
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  const acceptance = service.toolCallAcceptances().find(item => item.call_id === 'slow-personal-call')!.acceptance
+  assert.equal(acceptance.code, 'superseded')
+  assert.equal(acceptance.inline_fulfilled, false)
+  assert.equal(injectedItems.filter(item => item.call_id === 'slow-personal-call').length, 1)
+  assert.match(injectedItems.find(item => item.call_id === 'slow-personal-call')!.content, /"state":"superseded"/u)
+})
+
+test('a pending personal recall admits a duplicate call once and does not block the next event', async () => {
+  let release!: () => void
+  let started!: () => void
+  let calls = 0
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const invoked = new Promise<void>(resolve => { started = resolve })
+  const {service, injectedItems} = pipelineService({
+    includeRecall: true,
+    personalMemory: {recall: async (_query, options) => {
+      calls += 1
+      started()
+      await gate
+      return {source: 'personal', state: 'empty', scope: options?.scope ?? 'recent', hits: [], contextHits: [], degraded: false}
+    }},
+  })
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'personal-pending-r'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'what do I like',
+  })
+  const call = {
+    kind: 'tool_call_ready' as const, session_epoch: 1, call_id: 'personal-pending-call', item_id: 'personal-pending-tool',
+    name: 'memory__recall', arguments: {query: 'like', scope: 'recent' as const, source: 'personal' as const},
+    response_id: 'personal-pending-r',
+  }
+  const handling = service.handleEvent(call)
+  await invoked
+  assert.equal(
+    await Promise.race([
+      handling.then(() => true),
+      new Promise<boolean>(resolve => { setImmediate(() => resolve(false)) }),
+    ]),
+    true,
+    'a pending recall must not stop later provider events',
+  )
+  await service.handleEvent(call)
+  assert.equal(calls, 1, 'the ToolCallState reservation owns the duplicate while recall is pending')
+  release()
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'personal-pending-r', status: 'completed', reason: '',
+  })
+  assert.equal(service.toolCallAcceptances().filter(item => item.call_id === 'personal-pending-call').length, 1)
+  assert.equal(injectedItems.filter(item => item.call_id === 'personal-pending-call').length, 1)
+})
+
+test('a personal recall that settles after reconnect does not inject into the replacement session', async () => {
+  let release!: () => void
+  let started!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const invoked = new Promise<void>(resolve => { started = resolve })
+  const {service, injectedItems} = pipelineService({
+    includeRecall: true,
+    personalMemory: {recall: async (_query, options) => {
+      started()
+      await gate
+      return {source: 'personal', state: 'empty', scope: options?.scope ?? 'recent', hits: [], contextHits: [], degraded: false}
+    }},
+  })
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'personal-reconnect-r'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'what do I like',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'personal-reconnect-call', item_id: 'personal-reconnect-tool',
+    name: 'memory__recall', arguments: {query: 'like', scope: 'recent', source: 'personal'}, response_id: 'personal-reconnect-r',
+  })
+  await invoked
+  await service.reconnectForTest()
+  release()
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(injectedItems.filter(item => item.call_id === 'personal-reconnect-call').length, 0)
 })
 
 test('an acknowledgement bound to an unfinished continuation is reopened by the reconnect', async () => {
@@ -10377,6 +10736,43 @@ test('intake owns final queued-fact eligibility and workspace changes without se
   }
 })
 
+test('Guard history flush occurs after the reconnect lock and gates its new provider', async () => {
+  const {service, actions} = guardService({controlledReconnect: true, recoveryTexts: ['old user', 'old assistant']})
+  let releaseLock!: () => void
+  let enteredLock!: () => void
+  let releaseFlush!: () => void
+  let enteredFlush!: () => void
+  let flushCalls = 0
+  const lockGate = new Promise<void>(resolve => { releaseLock = resolve })
+  const lockEntered = new Promise<void>(resolve => { enteredLock = resolve })
+  const flushGate = new Promise<void>(resolve => { releaseFlush = resolve })
+  const flushEntered = new Promise<void>(resolve => { enteredFlush = resolve })
+  Object.defineProperty(service.internals.runtime, 'flushMemory', {value: () => {
+    flushCalls += 1
+    enteredFlush()
+    return flushGate
+  }})
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({kind: 'response_audio_delta', session_epoch: 1, response_id: 'r-1', pcm: new Uint8Array([0, 1])})
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  const holding = service.internals.reconnectLock.run(async () => { enteredLock(); await lockGate })
+  await lockEntered
+  const handling = service.handleEvent({kind: 'response_cancel_rejected', session_epoch: 1, response_id: 'r-1',
+    cancel_request_id: 'cancel-1', reason: 'no_active_response'})
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(flushCalls, 0, 'a flush before waiting for the lock cannot protect the later snapshot')
+    releaseLock()
+    await flushEntered
+    assert.equal(actions.includes('connect:2'), false)
+    releaseFlush()
+    await handling
+    assert.equal(actions.includes('connect:2'), true)
+    assert.equal(flushCalls, 1)
+  } finally { releaseLock(); releaseFlush(); await holding; await handling; await service.close() }
+})
 
 test('explicit response evidence cannot claim the current user through host or mismatched origins', async () => {
   const {service} = pipelineService()

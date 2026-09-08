@@ -95,4 +95,13 @@ export class SlotSet {
     }
     if (reason !== null) this.wake(slot, reason)
   }
+
+  /** Forget model ownership after its caller has cancelled the underlying work. */
+  clear(): void {
+    for (const slot of SLOTS) {
+      this.inflight[slot] = false
+      this.pending[slot] = null
+      this.activeJobId[slot] = null
+    }
+  }
 }

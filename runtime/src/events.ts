@@ -197,6 +197,17 @@ export class EventQueue {
     return this.#heap.length
   }
 
+  /** Remove obsolete queued work while retaining the queue's monotonic event sequence. */
+  removeWhere(remove: (event: EventRecord) => boolean): void {
+    const retained = this.#heap.filter(entry => !remove(entry.event))
+    if (retained.length === this.#heap.length) return
+    this.#heap.length = 0
+    for (const entry of retained) this.#heap.push(entry)
+    for (let index = Math.floor(this.#heap.length / 2) - 1; index >= 0; index -= 1) {
+      this.#siftDown(index)
+    }
+  }
+
   #siftUp(index: number): void {
     let child = index
     while (child > 0) {

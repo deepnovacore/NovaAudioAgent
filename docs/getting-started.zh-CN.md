@@ -225,6 +225,14 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 | `NOVA_AUDIO_AGENT_KNOWLEDGE_PATH` | `core` | 否 | ~/.nova-audio-agent/knowledge.sqlite | 知识库 SQLite 数据库路径。 |
 | `NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER` | `core` | 否 | dashscope | 知识库 embedding 提供方。 |
 | `NOVA_AUDIO_AGENT_EMBEDDING_MODEL` | `core` | 否 | text-embedding-v4 | 知识库 embedding 模型。 |
+| `NOVA_AUDIO_AGENT_MEMORY_CONNECTION` | `core` | 否 | disabled | 记忆连接：disabled、local 或 remote。 |
+| `NOVA_AUDIO_AGENT_MEMORY_PROVIDER` | `core` | 否 | 无 | 本地引擎：voicemem。远程引擎由服务端选择。 |
+| `NOVA_AUDIO_AGENT_BLACKBOARD_PATH` | `core` | 否 | ~/.nova-audio-agent/blackboard.sqlite | 会话恢复数据库路径。 |
+| `NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID` | `core` | 否 | local | 稳定的会话恢复所有者。 |
+| `NOVA_AUDIO_AGENT_MEMORY_URL` | `core` | 选择该能力时 | 无 | HTTP 记忆服务地址；仅 HTTPS 或数字回环 HTTP。 |
+| `NOVA_AUDIO_AGENT_MEMORY_TOKEN` | `core` | 选择该能力时 | 无 | 宿主提供的身份绑定记忆令牌。 |
+| `NOVA_AUDIO_AGENT_MEMORY_PATH` | `core` | 否 | ~/.nova-audio-agent/memory.sqlite | 个人记忆数据库路径。 |
+| `NOVA_AUDIO_AGENT_MEMORY_USER_ID` | `core` | 否 | local | 稳定的个人记忆用户身份。 |
 | `DASHSCOPE_API_KEY` | `qwen` | 选择该能力时 | 无 | Qwen 实时凭据。 |
 | `NOVA_AUDIO_AGENT_QWEN_REALTIME_URL` | `qwen` | 否 | DashScope realtime endpoint | Qwen 安全实时地址。 |
 | `NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL` | `qwen` | 否 | qwen-audio-3.0-realtime-plus | Qwen 实时模型。 |
@@ -266,6 +274,10 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 | `NOVA_ORB_OPAQUE` | `core` | 否 | 0 | 使用不透明桌面悬浮球窗口。 |
 <!-- END GENERATED ENV CONTRACT -->
 
+接入宿主管理的共享记忆服务时，设置 `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=remote`，并显式提供 `NOVA_AUDIO_AGENT_MEMORY_URL` 与宿主签发的 `NOVA_AUDIO_AGENT_MEMORY_TOKEN`。地址仅支持 HTTPS 或数字回环 HTTP，不接受路径、查询参数、内嵌凭据和重定向。身份由令牌绑定；`MEMORY_PATH` 和 `MEMORY_USER_ID` 仅用于本地 VoiceMem。偏好缓存在打开及成功记住、召回、删除后刷新。此客户端不负责部署服务，也不向模型开放身份选择。
+
+查询当前工作状态及生成周报时，必须使用工作区账本工具读取最新有效记录。个人召回保留历史证据，也可能包含用户此前的原话；它不能替代账本，更不能在账本数据不可用时充当权威回退。
+
 ### 能力注册表与可选 MCP 搜索
 
 运行时读取 `~/.nova-audio-agent/capabilities.json`，可用 `NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG` 指定路径。默认文件不存在时使用内置值：搜索、摄像头、Coding 开启，知识库关闭。显式指定的文件缺失或格式错误会阻止启动，错误信息不包含文件内容或密钥。模块按「环境变量覆盖 > 注册表 > 默认值」生效；生产装配会记录覆盖变量的名称。关闭搜索不需要任何搜索凭据；选择 MCP 不需要 Tavily Key。
@@ -290,3 +302,22 @@ MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何�
 凭据已在环境中时，可运行 `npm run smoke:knowledge --workspace @nova-audio-agent/runtime`，仅发送
 脚本内的合成文档，不读取用户知识库。macOS 真实 embedding→检索→MCP 引用已于 2026-09-05 通过；
 Windows 和真人语音验收仍需独立完成。
+
+
+### 记忆引擎与连接方式
+
+本地模式设置 `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=local`，使用现有 Node Worker 和 SDK；此时 `NOVA_AUDIO_AGENT_MEMORY_PROVIDER=voicemem` 可省略。共享服务设置 `MEMORY_CONNECTION=remote`，并提供地址与身份绑定令牌。远程模式不能设置 `MEMORY_PROVIDER`，引擎由服务端决定。远程不可用时明确返回不可用，不创建另一份本地公司记忆。
+
+仅支持 `MEMORY_CONNECTION` 和本地 `MEMORY_PROVIDER`。旧 `MEMORY_BACKEND` 已移除，填写时会明确报错。单独填写 provider 不会自动启用记忆。
+
+运行时继续依赖 `PersonalMemoryResource`，通过可选的 `remember`、`forget`、缓存式 `responseAdaptation` 表达能力。适配器只有在满足接口保证时才能提供对应方法：`stored` 表示已经可靠保存原始记录，不代表仅接受请求，也不代表已完成抽取。证据 ID 必须有真实来源，不比较不同引擎的相关性分数。当前 HTTP 连接器要求服务满足 v1 的 preferences、remember、recall、forget 契约，不能直接指向任意 mem0 地址。原生 mem0 适配器保留在源集成分支，等待独立打包契约。只读实现可通过现有 assembly factory 注入，不暴露写入能力。
+
+公司渠道共用一份远程记忆，客户端偏好缓存只是可重建的投影。已存在的工作记录仍是周报修订状态的权威来源；历史记忆不能保证另一段旧话语中的同义陈述也被撤回。
+
+升级 SDK 前，对已构建或解包的候选 SDK 执行：
+
+```sh
+node runtime/scripts/check-memory-sdk.mjs /absolute/path/to/built-sdk
+```
+
+该命令针对候选包的类型导出，将当前 runtime 源码编译到临时目录，再通过仅用于测试的模块解析器让真实 Worker 使用候选 SDK，不替换已安装依赖。回环权限不足导致的测试跳过不会被当作验收通过。采用 npm 版本前还要核对来源、确切版本及完整性。源码快照通过兼容检查不等于已发布，也不等于记忆效果评测通过。

@@ -1026,7 +1026,7 @@ test('usage stays current through a stale save reply and renders a compact summa
   await saving
   assert.equal(renders.at(-1).frontendUsage.requests, 2)
   const panel = await mountSettingsPanel(publicView({frontendUsage: usage}))
-  assert.match(panel.node('#frontend-usage').textContent, /¥0.120000/)
+  assert.equal(panel.node('#frontend-usage').textContent, '本次运行前台估算费用：¥0.1200')
   assert.doesNotMatch(panel.node('#frontend-usage').textContent, /官方按量/)
   assert.match(panel.node('#frontend-usage-details').textContent, /官方按量/)
 })

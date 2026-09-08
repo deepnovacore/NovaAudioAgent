@@ -166,6 +166,7 @@ let settingsApplyStatus = 'idle'
 let settingsRecoveryAvailable = false
 let mainWindow = null
 let boardWindow = null
+let clearingConversation = null
 let settingsWindow = null
 let wakeWord = null
 let tray = null
@@ -950,6 +951,30 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     } catch (error) {
       return {error: error?.code === 'timeout' ? 'timeout' : 'unavailable'}
     }
+  })
+  ipcMain.handle('nova:memory-board:clear', async (event, ...args) => {
+    if (!boardWindow || event.sender !== boardWindow.webContents || args.length !== 0) {
+      throw new Error('memory board clear rejected')
+    }
+    if (clearingConversation) return clearingConversation
+    const owner = backendControl, generation = backendGeneration, window = boardWindow
+    if (!owner || backendStatus.state !== 'connected') return {error: 'unavailable'}
+    clearingConversation = (async () => {
+      try {
+        const choice = await dialog.showMessageBox(window, {
+          type: 'question', title: '清除近期会话记录',
+          message: '清除近期对话、摘要和会话中的任务记录？',
+          detail: '后台任务会继续运行，旧任务结果不会重新写入本次会话。长期个人记忆不受影响。',
+          buttons: ['取消', '清除记录'], defaultId: 0, cancelId: 0, noLink: true,
+        })
+        if (choice.response !== 1) return {canceled: true}
+        if (owner !== backendControl || generation !== backendGeneration || window !== boardWindow || window.isDestroyed()) return {error: 'unavailable'}
+        const result = await owner.request('conversation.clear', {}, {timeoutMs: 60000})
+        if (owner !== backendControl || generation !== backendGeneration) return {error: 'unavailable'}
+        return result?.cleared === true ? {cleared: true} : {error: 'clear_failed'}
+      } catch { return {error: 'unavailable'} }
+    })().finally(() => { clearingConversation = null })
+    return clearingConversation
   })
   ipcMain.handle('nova:workspace-graph-board:request', async event => {
     if (!boardWindow || event.sender !== boardWindow.webContents) {

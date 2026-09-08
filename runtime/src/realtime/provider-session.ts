@@ -7,6 +7,7 @@ import {
   itemIdentitySchema,
   realtimeIdentifierSchema,
   realtimeProviderEventSchema,
+  responseAdaptationContextSchema,
   RealtimeProtocolError,
   sessionIdentitySchema,
   workspaceContextInjectionSchema,
@@ -16,6 +17,7 @@ import {
   type JsonObject,
   type RealtimeProvider,
   type RealtimeProviderEvent,
+  type ResponseAdaptationContext,
   type SessionIdentity,
   type WorkspaceContextDeliveryRecord,
 } from './protocol.js'
@@ -43,6 +45,17 @@ interface ConnectionOwner {
   readonly identity: SessionIdentity
 }
 
+export interface RealtimeProviderSessionOptions {
+  /** Synchronous host cache; failures are advisory and never delay audio indefinitely. */
+  readonly responseAdaptation?: () => ResponseAdaptationContext | undefined
+  readonly onDiagnostic?: (diagnostic: {
+    readonly kind: 'response_adaptation'
+    readonly reason: 'read_failed' | 'invalid' | 'replace_failed'
+    readonly epoch: number
+    readonly revision: number | null
+  }) => void
+}
+
 class InternalProtocolError extends RealtimeProtocolError {}
 
 export class RealtimeProviderSession {
@@ -53,12 +66,25 @@ export class RealtimeProviderSession {
   #connectionAbort: AbortController | null = null
   #reading: AbortController | null = null
   #closing: Promise<void> | null = null
+  readonly #responseAdaptation: (() => ResponseAdaptationContext | undefined) | undefined
+  readonly #onDiagnostic: RealtimeProviderSessionOptions['onDiagnostic']
+  #responseAdaptationTail: Promise<void> = Promise.resolve()
+  #audioAdaptationRefresh: Promise<void> | undefined
+  #responseAdaptationReadFailureDiagnosedEpoch: number | null = null
+  #responseAdaptationAttempt: {
+    readonly epoch: number
+    readonly revision: number
+    readonly content: string | null
+    readonly confirmed: boolean
+  } | null = null
   readonly #connectedObservers = new Set<(
     identity: SessionIdentity,
   ) => void | Promise<void>>()
 
-  constructor(provider: RealtimeProvider) {
+  constructor(provider: RealtimeProvider, options: RealtimeProviderSessionOptions = {}) {
     this.#provider = provider
+    this.#responseAdaptation = options.responseAdaptation
+    this.#onDiagnostic = options.onDiagnostic
   }
 
   get userResponseMode(): 'automatic' | 'requested' {
@@ -112,7 +138,14 @@ export class RealtimeProviderSession {
       }
       this.#lastEpoch = identity.epoch
       this.#identity = Object.freeze({...identity})
+      this.#responseAdaptationTail = Promise.resolve()
+      this.#audioAdaptationRefresh = undefined
+      this.#responseAdaptationReadFailureDiagnosedEpoch = null
+      this.#responseAdaptationAttempt = null
       this.#state = 'connected'
+      const owner = this.#requiredConnectionOwner()
+      await this.#refreshResponseAdaptation(owner, signal)
+      this.#assertCurrentConnection(owner)
       for (const observer of [...this.#connectedObservers]) {
         await observer(structuredClone(identity))
       }
@@ -161,10 +194,19 @@ export class RealtimeProviderSession {
     if (pcm.byteLength > MAX_REALTIME_PCM_BYTES) {
       throw new RealtimeProtocolError('input PCM frame is too large')
     }
+    const owned = pcm.slice()
     const owner = this.#requiredConnectionOwner()
     try {
+      if (this.#audioAdaptationRefresh === undefined) {
+        const refresh = this.#refreshResponseAdaptation(owner, signal).catch(() => undefined).finally(() => {
+          if (this.#audioAdaptationRefresh === refresh) this.#audioAdaptationRefresh = undefined
+        })
+        this.#audioAdaptationRefresh = refresh
+      }
+      this.#assertCurrentConnection(owner)
+      signal?.throwIfAborted()
       await this.#provider.sendAudio(
-        pcm.slice(),
+        owned,
         combinedSignal(owner.controller.signal, signal),
       )
       this.#assertCurrentConnection(owner)
@@ -270,6 +312,8 @@ export class RealtimeProviderSession {
     const parsed = hostResponseIntentSchema.parse(intent)
     const owner = this.#requiredConnectionOwner()
     try {
+      await this.#refreshResponseAdaptation(owner, signal)
+      this.#assertCurrentConnection(owner)
       await this.#provider.createResponse(
         structuredClone(parsed),
         combinedSignal(owner.controller.signal, signal),
@@ -286,6 +330,8 @@ export class RealtimeProviderSession {
     }
     const owner = this.#requiredConnectionOwner()
     try {
+      await this.#refreshResponseAdaptation(owner, signal)
+      this.#assertCurrentConnection(owner)
       if (userItemId !== undefined) realtimeIdentifierSchema.parse(userItemId)
       if (requestId !== undefined) realtimeIdentifierSchema.parse(requestId)
       const accepted = await this.#provider.ensureResponse(
@@ -380,7 +426,70 @@ export class RealtimeProviderSession {
   #isClosed(): boolean {
     return this.#state === 'closed'
   }
+
+  async #refreshResponseAdaptation(owner: ConnectionOwner, signal?: AbortSignal): Promise<void> {
+    if (this.#provider.replaceResponseAdaptation === undefined || this.#responseAdaptation === undefined) return
+    const operation = this.#responseAdaptationTail.then(async () => {
+      if (!this.#isCurrentConnection(owner)) return
+      let raw: unknown
+      try {
+        raw = this.#responseAdaptation?.()
+      } catch {
+        if (this.#responseAdaptationReadFailureDiagnosedEpoch !== owner.identity.epoch) {
+          this.#responseAdaptationReadFailureDiagnosedEpoch = owner.identity.epoch
+          this.#reportAdaptationDiagnostic('read_failed', owner.identity.epoch, null)
+        }
+        return
+      }
+      if (raw === undefined) return
+      const parsed = responseAdaptationContextSchema.safeParse(raw)
+      if (!parsed.success) {
+        this.#reportAdaptationDiagnostic('invalid', owner.identity.epoch, null)
+        return
+      }
+      const context = parsed.data
+      const previous = this.#responseAdaptationAttempt
+      if (previous !== null && previous.epoch === owner.identity.epoch
+        && previous.confirmed && previous.content === context.content
+        && context.revision >= previous.revision) {
+        this.#responseAdaptationAttempt = {
+          epoch: owner.identity.epoch, revision: context.revision, content: context.content, confirmed: true,
+        }
+        return
+      }
+      if (previous !== null && previous.epoch === owner.identity.epoch
+        && previous.revision === context.revision && previous.content === context.content) return
+      this.#responseAdaptationAttempt = {
+        epoch: owner.identity.epoch, revision: context.revision, content: context.content, confirmed: false,
+      }
+      try {
+        await this.#provider.replaceResponseAdaptation!(
+          structuredClone(context),
+          combinedSignal(owner.controller.signal, signal),
+        )
+        this.#assertCurrentConnection(owner)
+        this.#responseAdaptationAttempt = {
+          epoch: owner.identity.epoch, revision: context.revision, content: context.content, confirmed: true,
+        }
+      } catch {
+        // This affects wording only. The captured owner is checked again before audio/response send.
+        this.#reportAdaptationDiagnostic('replace_failed', owner.identity.epoch, context.revision)
+      }
+    })
+    this.#responseAdaptationTail = operation.then(() => undefined, () => undefined)
+    await operation
+  }
+
+  #reportAdaptationDiagnostic(
+    reason: 'read_failed' | 'invalid' | 'replace_failed',
+    epoch: number,
+    revision: number | null,
+  ): void {
+    try { this.#onDiagnostic?.({kind: 'response_adaptation', reason, epoch, revision}) }
+    catch { /* diagnostics are never allowed to affect provider delivery */ }
+  }
 }
+
 
 function freezeWorkspaceContextDelivery(
   record: WorkspaceContextDeliveryRecord,

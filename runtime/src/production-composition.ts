@@ -1,3 +1,4 @@
+import {blackboardOptionsFromSettings} from './memory/blackboard-session.js'
 import type {UsageReporter} from './realtime/usage.js'
 import {prepareKnowledge} from './knowledge/assembly.js'
 /** Shared production graph for the Electron child and the headless remote service. */
@@ -100,6 +101,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
         clock,
       })
       const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
+        blackboard: blackboardOptionsFromSettings(settings),
         settings,
         ...(onUsage === undefined ? {} : {onUsage}),
         capabilities,

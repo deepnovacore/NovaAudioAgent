@@ -364,6 +364,26 @@ export class RealtimeSession {
     this.#state.advanceSnapshot()
   }
 
+  /** Immediately stop renderer authority while durable conversation clear is still pending. */
+  beginConversationClear(): PlaybackGeneration | null {
+    return this.#playback.fenceCurrent()
+  }
+
+  /** Start a blank conversation in a fresh provider epoch, without replaying the old snapshot. */
+  async resetConversation(options: {readonly tools: readonly Record<string, unknown>[]}): Promise<void> {
+    this.#playback.fenceCurrent()
+    this.#preemptiveAlertHandoffGeneration = null
+    this.#lastOpenedGeneration = null
+    this.#state.resetConversation()
+    this.#responseItems.clear()
+    this.#resetForNewProviderSession()
+    this.#floor = new Floor()
+    this.#userHoldSince = null
+
+    const identity = await this.#replaceProviderSession(options.tools)
+    this.#state.beginEpoch(identity.epoch)
+  }
+
   /**
    * Replace provider authority while retaining one exact renderer generation.
    *

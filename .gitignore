@@ -23,6 +23,7 @@ dist/
 # JavaScript and Electron
 node_modules/
 build/
+/desktop/nova-audio-agent-desktop/build
 desktop/nova-audio-agent-desktop/dist/
 runtime/dist/
 

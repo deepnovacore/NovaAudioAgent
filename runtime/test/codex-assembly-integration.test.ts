@@ -259,10 +259,10 @@ test('buildAssembly preserves adapter identity and real CausalRuntime dispatches
   const stop = new AbortController()
   const serving = core.runtime.serve(stop.signal)
   try {
-    const admission = core.runtime.dispatchExternal({
+    const admission = (await core.runtime.dispatchExternal({
       executor: 'codex', op: 'run', request: {work_order: 'compile the runtime'},
       origin_ref: appendOrigin(core),
-    }, reason)
+    }, reason))
     assert.equal(admission.accepted, true)
     await waitNamed('Codex handoff', () => events.some(event => event.kind === 'handoff'))
     const handoff = events.find(event => event.kind === 'handoff')
@@ -297,16 +297,16 @@ test('RealtimeService alone publishes selected Codex idle-running-idle with no d
   })
   await realtime.start()
   try {
-    const rejected = core.runtime.dispatchExternal({
+    const rejected = (await core.runtime.dispatchExternal({
       executor: 'codex', op: 'missing', request: {}, origin_ref: appendOrigin(core),
-    }, reason)
+    }, reason))
     assert.equal(rejected.accepted, false)
     assert.deepEqual(states, ['idle'])
 
-    const accepted = core.runtime.dispatchExternal({
+    const accepted = (await core.runtime.dispatchExternal({
       executor: 'codex', op: 'run', request: {work_order: 'compile the runtime'},
       origin_ref: appendOrigin(core),
-    }, reason)
+    }, reason))
     assert.equal(accepted.accepted, true)
     await waitNamed('Codex state settlement', () => states.at(-1) === 'idle' && states.includes('running'))
     assert.deepEqual(states, ['idle', 'running', 'idle'])
@@ -335,20 +335,20 @@ test('RealtimeService suppresses duplicate running state for busy and unselected
   })
   await realtime.start()
   try {
-    assert.equal(core.runtime.dispatchExternal({
+    assert.equal((await core.runtime.dispatchExternal({
       executor: 'codex', op: 'run', request: {work_order: 'compile the runtime'},
       origin_ref: appendOrigin(core),
-    }, reason).accepted, true)
+    }, reason)).accepted, true)
     await entered.promise
     await waitNamed('selected Codex running', () => states.at(-1) === 'running')
 
-    core.runtime.dispatchExternal({
+    await core.runtime.dispatchExternal({
       executor: 'codex', op: 'run', request: {work_order: 'compile the runtime'},
       origin_ref: appendOrigin(core),
     }, reason)
-    const unselected = core.runtime.dispatchExternal({
+    const unselected = (await core.runtime.dispatchExternal({
       executor: 'codex', op: 'not_selected', request: {}, origin_ref: appendOrigin(core),
-    }, reason)
+    }, reason))
     assert.equal(unselected.accepted, false)
     assert.deepEqual(states, ['idle', 'running'])
     assert.equal(transport.calls.filter(call => call === 'run').length, 1)

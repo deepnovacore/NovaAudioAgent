@@ -29,6 +29,7 @@ export interface VisionRuntimeOpPort {
     readonly origin_ref: string
     readonly stillWanted: () => boolean
   }): {readonly accepted: boolean; readonly delegate_id: string | null}
+    | Promise<{readonly accepted: boolean; readonly delegate_id: string | null}>
 }
 
 /** Host-private correlation between a runtime delegate and this controller's monitor identity. */
@@ -91,6 +92,7 @@ interface ActiveVisionReservation {
   readonly fence: () => boolean
   delegate_id: string
   stopAccepted: boolean
+  stopAdmission: Promise<boolean> | null
 }
 
 function deepFreeze<T>(value: T): T {
@@ -271,10 +273,11 @@ export class VisionAgentControllerCore {
     const channel: VisionChannel = decision.assessment.urgency === 'urgent' ? 'guard' : 'watch'
     // Publish the reservation before entering the port: permission callbacks can arrive reentrantly
     // from the synchronous runtime adapter and must see the pending reservation.
-    const reservation = {
+    const reservation: ActiveVisionReservation = {
       identity: {...decision.identity}, channel, origin_ref: request.origin_ref,
       stillWanted: request.stillWanted, fence: decision.recheck, delegate_id: '',
       stopAccepted: false,
+      stopAdmission: null,
     }
     this.#active = reservation
     // The final pre-effect fence is intentionally after reservation: pending permission is already
@@ -285,7 +288,7 @@ export class VisionAgentControllerCore {
     }
     let admission: RuntimeAdmission | null
     try {
-      admission = parseRuntimeAdmission(this.#runtimePort.dispatch({
+      admission = parseRuntimeAdmission(await this.#runtimePort.dispatch({
         channel,
         op: 'start',
         request: {
@@ -392,24 +395,24 @@ export class VisionAgentControllerCore {
     }
   }
 
-  #stop(
+  async #stop(
     request: VisionControllerCancelRequest | VisionControllerDispatchRequest,
     successCode: 'cancelled' | 'requested_stop',
     wanted: () => boolean = request.stillWanted,
-  ): VisionControllerResult {
+  ): Promise<VisionControllerResult> {
     const active = this.#active
     if (this.#machine.state === 'idle' || active === null) return emptyResult('not_running')
     if (!safeWanted(request.stillWanted) || !safeWanted(wanted)) return emptyResult('superseded')
     const cancellation = this.#machine.cancel(active.identity)
     if (cancellation.code === 'already_cancelled') {
-      if (!this.#dispatchStop(active, request.origin_ref)) return emptyResult('runtime_rejected')
+      if (!await this.#dispatchStop(active, request.origin_ref)) return emptyResult('runtime_rejected')
       return Object.freeze({
         code: 'requested_stop' as const, accepted: true as const,
         detail: Object.freeze({channel: active.channel, op: 'stop' as const}),
       })
     }
     if (cancellation.code !== 'cancelled') return emptyResult('not_running')
-    const accepted = this.#dispatchStop(active, request.origin_ref)
+    const accepted = await this.#dispatchStop(active, request.origin_ref)
     if (!accepted) {
       // Keep the fenced terminal reservation: the runtime may have started work even when its stop
       // admission was rejected. Only an exact terminal callback can prove it is safe to reopen.
@@ -431,24 +434,23 @@ export class VisionAgentControllerCore {
   #compensatingStop(active: ActiveVisionReservation): void {
     // This is cleanup for an already-admitted exact identity, so it must not depend on the stale
     // user fence that caused the compensation. The machine is fenced before this effect.
-    this.#dispatchStop(active)
+    void this.#dispatchStop(active)
   }
 
-  /** Issue an exact stop and return whether the synchronous runtime adapter admitted it. */
-  #dispatchStop(active: ActiveVisionReservation, originRef = active.origin_ref): boolean {
-    if (active.stopAccepted) return true
-    try {
-      const result = parseRuntimeAdmission(this.#runtimePort.dispatch({
-        channel: active.channel, op: 'stop', request: {}, origin_ref: originRef,
-        // Cancellation fenced the machine before this callback can be observed by the port.
-        stillWanted: () => true,
-      }))
-      const accepted = result?.accepted === true
-      if (accepted) active.stopAccepted = true
-      return accepted
-    } catch {
-      return false
-    }
+  /** Concurrent cancellation and compensation share the exact same pending stop admission. */
+  #dispatchStop(active: ActiveVisionReservation, originRef = active.origin_ref): Promise<boolean> {
+    if (active.stopAccepted) return Promise.resolve(true)
+    active.stopAdmission ??= (async () => {
+      try {
+        const result = parseRuntimeAdmission(await this.#runtimePort.dispatch({
+          channel: active.channel, op: 'stop', request: {}, origin_ref: originRef,
+          stillWanted: () => true,
+        }))
+        active.stopAccepted = result?.accepted === true
+        return active.stopAccepted
+      } catch { return false }
+    })().finally(() => { active.stopAdmission = null })
+    return active.stopAdmission
   }
 
   #cleanupTerminal(identity: VisionIdentity): void {

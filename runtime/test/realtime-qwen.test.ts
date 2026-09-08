@@ -16,6 +16,7 @@ import {
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 import { ItemDeliveryUncertainError, type RealtimeProviderEvent } from '../src/realtime/protocol.js'
+import { RealtimeProviderSession } from '../src/realtime/provider-session.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -152,6 +153,29 @@ test('connect performs the Qwen handshake and never logs the credential', async 
   assert.doesNotMatch(JSON.stringify(update), /secret-key-value/u)
 })
 
+test('connect-time response adaptation ACK starts the reader without blocking later events', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  const session = new RealtimeProviderSession(adapter, {
+    responseAdaptation: () => ({revision: 1, content: 'Keep replies concise.'}),
+  })
+  const connecting = session.connect()
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.create'))
+  const create = scripted.sent.find(frame => frame.type === 'conversation.item.create')
+  const item = create?.item as Record<string, unknown>
+  scripted.push({type: 'conversation.item.created', item: {id: item.id}})
+  await connecting
+  const events = session.events(new AbortController().signal)
+  const next = events.next()
+  scripted.push({type: 'response.created', response: {id: 'response-after-adaptation'}})
+  assert.deepEqual(await next, {
+    done: false,
+    value: {kind: 'response_started', session_epoch: 1, response_id: 'response-after-adaptation'},
+  })
+  await events.return?.(undefined)
+  await session.close()
+})
+
 test('retiring a host item uses the provider conversation item id', async () => {
   const scripted = scriptedSocket([...handshake])
   const adapter = adapterFor(scripted)
@@ -167,6 +191,110 @@ test('retiring a host item uses the provider conversation item id', async () => 
   assert.equal(deletion?.item_id, 'provider-host-1')
   scripted.push({type: 'conversation.item.deleted', item_id: 'provider-host-1'})
   await retirement
+  await adapter.close()
+})
+
+test('response adaptation replaces only after delete ACK and null clears its owned system item', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  await assert.rejects(adapter.replaceResponseAdaptation({revision: -1, content: null}, new AbortController().signal))
+  await assert.rejects(adapter.replaceResponseAdaptation({revision: 1, content: '😀'.repeat(8_001)}, new AbortController().signal))
+
+  const first = adapter.replaceResponseAdaptation({revision: 1, content: '😀'.repeat(8_000)}, new AbortController().signal)
+  await until(() => scripted.sent.filter(frame => frame.type === 'conversation.item.create').length === 1)
+  const firstId = (scripted.sent.find(frame => frame.type === 'conversation.item.create')!.item as Record<string, unknown>).id
+  scripted.push({type: 'conversation.item.created', item: {id: firstId}})
+  await first
+
+  await adapter.replaceResponseAdaptation({revision: 2, content: '😀'.repeat(8_000)}, new AbortController().signal)
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length, 1)
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.delete').length, 0)
+
+  const second = adapter.replaceResponseAdaptation({revision: 3, content: 'Use short sentences.'}, new AbortController().signal)
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.delete'))
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length, 1)
+  scripted.push({type: 'conversation.item.deleted', item_id: firstId})
+  await until(() => scripted.sent.filter(frame => frame.type === 'conversation.item.create').length === 2)
+  const creates = scripted.sent.filter(frame => frame.type === 'conversation.item.create')
+  const secondId = (creates[1]!.item as Record<string, unknown>).id
+  scripted.push({type: 'conversation.item.created', item: {id: secondId}})
+  await second
+
+  const clear = adapter.replaceResponseAdaptation({revision: 4, content: null}, new AbortController().signal)
+  await until(() => scripted.sent.filter(frame => frame.type === 'conversation.item.delete').length === 2)
+  scripted.push({type: 'conversation.item.deleted', item_id: secondId})
+  await clear
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length, 2)
+  await adapter.replaceResponseAdaptation({revision: 5, content: null}, new AbortController().signal)
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.delete').length, 2)
+  await adapter.close()
+})
+
+test('response adaptation cancellation during a create acknowledgement makes ownership uncertain', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const stop = new AbortController()
+  const replacing = adapter.replaceResponseAdaptation({revision: 1, content: 'brief'}, stop.signal)
+  const rejected = assert.rejects(replacing)
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.create'))
+  stop.abort()
+  await rejected
+  await assert.rejects(adapter.replaceResponseAdaptation(
+    {revision: 2, content: 'new'}, new AbortController().signal,
+  ), /ownership is uncertain/u)
+  await adapter.close()
+})
+
+test('response adaptation cancellation during a delete acknowledgement makes ownership uncertain', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const initial = adapter.replaceResponseAdaptation({revision: 1, content: 'first'}, new AbortController().signal)
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.create'))
+  const firstId = (scripted.sent.find(frame => frame.type === 'conversation.item.create')!.item as Record<string, unknown>).id
+  scripted.push({type: 'conversation.item.created', item: {id: firstId}})
+  await initial
+
+  const stop = new AbortController()
+  const replacing = adapter.replaceResponseAdaptation({revision: 2, content: 'second'}, stop.signal)
+  const rejected = assert.rejects(replacing)
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.delete'))
+  stop.abort()
+  await rejected
+  await assert.rejects(adapter.replaceResponseAdaptation(
+    {revision: 3, content: 'third'}, new AbortController().signal,
+  ), /ownership is uncertain/u)
+  await adapter.close()
+})
+
+test('late adaptation ACK from a closed epoch cannot poison a reconnected Qwen session', async () => {
+  const old = scriptedSocket([...handshake])
+  const fresh = scriptedSocket([...handshake])
+  const sockets = [old, fresh]
+  const adapter = new QwenAudioRealtimeAdapter({
+    url: 'wss://example.invalid/realtime', apiKey: 'test-key',
+    model: 'qwen-audio-3.0-realtime-plus', voice: 'longanqian',
+    connector: () => Promise.resolve(sockets.shift()!.socket), idFactory: ids(), closeTimeout: 0.01,
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const stale = adapter.replaceResponseAdaptation({revision: 1, content: 'old'}, new AbortController().signal)
+  await until(() => old.sent.some(frame => frame.type === 'conversation.item.create'))
+  const oldId = (old.sent.find(frame => frame.type === 'conversation.item.create')!.item as Record<string, unknown>).id
+  const queued = adapter.replaceResponseAdaptation({revision: 2, content: 'queued old'}, new AbortController().signal)
+  const staleRejected = assert.rejects(stale)
+  const queuedRejected = assert.rejects(queued)
+  await adapter.close()
+  await staleRejected
+  await queuedRejected
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  old.push({type: 'conversation.item.created', item: {id: oldId}})
+  const current = adapter.replaceResponseAdaptation({revision: 1, content: 'new'}, new AbortController().signal)
+  await until(() => fresh.sent.some(frame => frame.type === 'conversation.item.create'))
+  const newId = (fresh.sent.find(frame => frame.type === 'conversation.item.create')!.item as Record<string, unknown>).id
+  fresh.push({type: 'conversation.item.created', item: {id: newId}})
+  await current
   await adapter.close()
 })
 

@@ -16,10 +16,12 @@
  */
 
 import { createHmac, randomBytes } from 'node:crypto'
+import {toUSVString} from 'node:util'
 import { canonicalJson } from '../canonical-json.js'
 import type {ExecutorAdmission, UserTurnAuthority} from '../causal-runtime.js'
 import type { JsonValue } from '../events.js'
 import { USER_PRIORITY } from '../memory.js'
+import {PersonalMemoryError, type PersonalMemoryRecallHit, type PersonalMemoryRecallResult, type PersonalMemoryRecallPort} from '../memory/personal-memory.js'
 import type { DelegateRequest } from '../ports.js'
 import type { WakeReason } from '../slots.js'
 import type { CompiledTools } from '../tool-schema.js'
@@ -34,10 +36,13 @@ export type ToolCallReady = z.infer<typeof toolCallReadySchema>
 import {
   RecallOriginError,
   compileMemoryRecall,
+  conversationCutoff,
   encodeMemoryRecall,
   type RecallScope,
   type RecallView,
 } from './recall.js'
+
+export type {PersonalMemoryRecallPort} from '../memory/personal-memory.js'
 
 /** The runtime surface this bridge needs. Narrow on purpose: three calls and three reads. */
 export interface BridgeRuntime {
@@ -45,11 +50,12 @@ export interface BridgeRuntime {
   readonly memory: Parameters<typeof compileMemoryRecall>[0]
   readonly executors: ReadonlyMap<string, ExecutorAdapterLike>
   ingestUserInput(input: {readonly text: string}): Promise<string>
+  flushMemory?(maintenance?: boolean): Promise<void>
   dispatchExternal(
     request: DelegateRequest,
     reason: WakeReason,
     userTurn?: UserTurnAuthority,
-  ): {readonly accepted: boolean; readonly delegate_id: string | null}
+  ): {readonly accepted: boolean; readonly delegate_id: string | null} | Promise<{readonly accepted: boolean; readonly delegate_id: string | null}>
 }
 
 interface OpSpecLike {
@@ -109,6 +115,7 @@ export function requiresSynchronousResult(
 
 export class RealtimeRuntimeBridge {
   readonly #runtime: BridgeRuntime
+  readonly #personalMemory: PersonalMemoryRecallPort | undefined
   readonly #tools: CompiledTools
   readonly #idFactory: () => string
   /**
@@ -124,12 +131,14 @@ export class RealtimeRuntimeBridge {
 
   constructor(options: {
     readonly runtime: BridgeRuntime
+    readonly personalMemory?: PersonalMemoryRecallPort
     readonly tools: CompiledTools
     readonly idFactory: () => string
     /** Test seam only. Production leaves it unset so the key is random. */
     readonly queryDigestKey?: Buffer
   }) {
     this.#runtime = options.runtime
+    this.#personalMemory = options.personalMemory
     this.#tools = options.tools
     this.#idFactory = options.idFactory
     this.#queryDigestKey = options.queryDigestKey ?? randomBytes(32)
@@ -158,10 +167,10 @@ export class RealtimeRuntimeBridge {
    * Query reads memory and returns its answer inline; everything else dispatches an executor and
    * returns an acknowledgement.
    */
-  acceptToolCall(
+  async acceptToolCall(
     call: ToolCallReady,
     options: {readonly originRef?: string | null; readonly userTurn?: UserTurnAuthority} = {},
-  ): ToolAcceptance {
+  ): Promise<ToolAcceptance> {
     const originRef = options.originRef ?? null
     const binding = this.#tools.bindings.get(call.name)
     if (binding === undefined) return this.#refused(call, 'unknown_tool')
@@ -173,7 +182,11 @@ export class RealtimeRuntimeBridge {
       origin: null,
       selected_suggestion: null,
     }
-    if (binding.kind === 'query') return this.#acceptMemoryRecall(call, originRef)
+    if (binding.kind === 'query') {
+      await this.#runtime.flushMemory?.(true)
+      if (!currentUserTurn(options.userTurn)) return this.#refused(call, 'superseded')
+      return this.#acceptMemoryRecall(call, originRef)
+    }
     if (
       binding.executor === undefined || binding.executor === null
       || binding.op === undefined || binding.op === null
@@ -233,7 +246,7 @@ export class RealtimeRuntimeBridge {
         origin_spoken: false,
       }
     }
-    const admission = this.#runtime.dispatchExternal(
+    const admission = await this.#runtime.dispatchExternal(
       {
         executor: binding.executor,
         op: binding.op,
@@ -243,6 +256,7 @@ export class RealtimeRuntimeBridge {
       reason,
       options.userTurn,
     )
+    if (!currentUserTurn(options.userTurn)) return this.#refused(call, 'superseded')
     if (!admission.accepted || admission.delegate_id === null) {
       return this.#refused(call, 'runtime_rejected')
     }
@@ -258,6 +272,47 @@ export class RealtimeRuntimeBridge {
     })
   }
 
+  /** Personal recall runs through the service-owned cancellable read path. */
+  async acceptPersonalMemoryRecall(
+    call: ToolCallReady,
+    options: {readonly originRef?: string | null; readonly signal?: AbortSignal} = {},
+  ): Promise<ToolAcceptance> {
+    const binding = this.#tools.bindings.get(call.name)
+    if (binding === undefined) return this.#refused(call, 'unknown_tool')
+    if (this.#tools.hidden.has(call.name)) return this.#refused(call, 'hidden_executor')
+    if (binding.kind !== 'query') return this.#refused(call, 'unsupported_tool')
+    const request = this.#memoryRecallRequest(call, options.originRef ?? null)
+    if (!request.ok) return request.acceptance
+    if (request.source !== 'personal') return this.#refused(call, 'unsupported_tool')
+
+    const startedAt = this.#runtime.clock.now()
+    const digest = createHmac('sha256', this.#queryDigestKey).update(request.query, 'utf8').digest('hex')
+    const personal = this.#personalMemory
+    if (personal === undefined) {
+      return this.#personalMemoryResult(call, request, {
+        state: 'disabled', hits: [], contextHits: [], degraded: true,
+      }, digest, startedAt)
+    }
+    try {
+      const result = await personal.recall(request.query, {scope: request.scope, limit: 5, ...(options.signal === undefined ? {} : {signal: options.signal})})
+      const view = personalRecallView(result, request.scope)
+      if (view === null) {
+        return this.#personalMemoryResult(call, request, {
+          state: 'error', hits: [], contextHits: [], degraded: true,
+        }, digest, startedAt)
+      }
+      return this.#personalMemoryResult(call, request, view, digest, startedAt)
+    } catch (cause) {
+      const state = personalRecallFailureState(cause)
+      console.log(
+        `[realtime-diagnostic] personal_memory_recall_error type=${diagnosticName(cause)} state=${state}`,
+      )
+      return this.#personalMemoryResult(call, request, {
+        state, hits: [], contextHits: [], degraded: true,
+      }, digest, startedAt)
+    }
+  }
+
   /**
    * Fulfil a recall query inline.
    *
@@ -267,23 +322,10 @@ export class RealtimeRuntimeBridge {
    * from a query that could not be computed.
    */
   #acceptMemoryRecall(call: ToolCallReady, originRef: string | null): ToolAcceptance {
-    const schema = this.#wireParams(call.name)
-    if (schema === null || !validParams(call.arguments, schema)) {
-      return this.#refused(call, 'invalid_params')
-    }
-    // Recall validates its own origin too -- and more strictly, since the reference has to name a
-    // trusted *user* item -- so this pre-check changes no outcome. It is here to avoid hashing the
-    // query and reading the clock for a call that cannot succeed, and to match the oracle's shape.
-    const resolvedOriginRef = originRef ?? this.#latestUserOriginRef
-    if (typeof resolvedOriginRef !== 'string' || resolvedOriginRef === '') {
-      return this.#refused(call, 'missing_origin_ref')
-    }
-    const query = call.arguments.query
-    const scope = call.arguments.scope
-    if (typeof query !== 'string' || typeof scope !== 'string') {
-      return this.#refused(call, 'invalid_params')
-    }
-    if (stripLikePython(query) === '') return this.#refused(call, 'invalid_params')
+    const request = this.#memoryRecallRequest(call, originRef)
+    if (!request.ok) return request.acceptance
+    if (request.source === 'personal') return this.#refused(call, 'async_tool')
+    const {query,scope,originRef: resolvedOriginRef} = request
     const startedAt = this.#runtime.clock.now()
     const digest = createHmac('sha256', this.#queryDigestKey).update(query, 'utf8').digest('hex')
 
@@ -291,7 +333,7 @@ export class RealtimeRuntimeBridge {
     try {
       view = compileMemoryRecall(this.#runtime.memory, {
         query,
-        scope: scope as RecallScope,
+        scope: scope,
         beforeRef: resolvedOriginRef,
         coding: this.#codingChannel(),
       })
@@ -304,7 +346,7 @@ export class RealtimeRuntimeBridge {
       )
       const errorView: RecallView = {
         state: 'error',
-        scope: scope as RecallScope,
+        scope: scope,
         raw_scanned: 0,
         searched_count: 0,
         scan_truncated: false,
@@ -313,7 +355,7 @@ export class RealtimeRuntimeBridge {
       }
       return this.#inlineToolResult(call, encodeMemoryRecall(errorView), 'error', this.#recallTelemetry({
         queryDigest: digest,
-        scope: scope as RecallScope,
+        scope: scope,
         state: 'error',
         rawScanned: 0,
         searchedCount: 0,
@@ -338,7 +380,7 @@ export class RealtimeRuntimeBridge {
     }
     const telemetry = this.#recallTelemetry({
       queryDigest: digest,
-      scope: scope as RecallScope,
+      scope: scope,
       state: emitted.state,
       rawScanned: emitted.raw_scanned,
       searchedCount: emitted.searched_count,
@@ -352,6 +394,67 @@ export class RealtimeRuntimeBridge {
       startedAt,
     })
     return this.#inlineToolResult(call, content, view.state, telemetry)
+  }
+
+  #memoryRecallRequest(
+    call: ToolCallReady,
+    originRef: string | null,
+  ): {readonly ok: true; readonly query: string; readonly scope: RecallScope; readonly source: 'session'|'personal'; readonly originRef: string}
+    | {readonly ok: false; readonly acceptance: ToolAcceptance} {
+    const schema = this.#wireParams(call.name)
+    if (schema === null || !validParams(call.arguments, schema)) {
+      return {ok: false, acceptance: this.#refused(call, 'invalid_params')}
+    }
+    const resolvedOriginRef = originRef ?? this.#latestUserOriginRef
+    if (
+      typeof resolvedOriginRef !== 'string'
+      || resolvedOriginRef === ''
+      || !trustedUserOrigin(this.#runtime.memory, resolvedOriginRef)
+    ) {
+      return {ok: false, acceptance: this.#refused(call, 'missing_origin_ref')}
+    }
+    const query = call.arguments.query
+    const scope = call.arguments.scope
+    const source = call.arguments.source ?? 'session'
+    if (
+      typeof query !== 'string'
+      || query.includes('\0')
+      || toUSVString(query) !== query
+      || stripLikePython(query) === ''
+      || (scope !== 'recent' && scope !== 'any')
+      || (source !== 'session' && source !== 'personal')
+    ) {
+      return {ok: false, acceptance: this.#refused(call, 'invalid_params')}
+    }
+    return {ok: true, query, scope, source, originRef: resolvedOriginRef}
+  }
+
+  #personalMemoryResult(
+    call: ToolCallReady,
+    request: {readonly scope: RecallScope},
+    view: PersonalRecallView,
+    queryDigest: string,
+    startedAt: number,
+  ): ToolAcceptance {
+    const content = encodePersonalRecall(request.scope, view)
+    const emitted = JSON.parse(content) as {
+      readonly state: string
+      readonly hits: readonly unknown[]
+      readonly context_hits: readonly unknown[]
+      readonly omitted: number
+      readonly degraded: boolean
+    }
+    return this.#inlineToolResult(call, content, emitted.state, {
+      query_digest: queryDigest,
+      source: 'personal',
+      scope: request.scope,
+      state: emitted.state,
+      hit_count: emitted.hits.length,
+      context_hit_count: emitted.context_hits.length,
+      omitted: emitted.omitted,
+      degraded: emitted.degraded,
+      elapsed: Math.max(0, this.#runtime.clock.now() - startedAt),
+    })
   }
 
   #inlineToolResult(
@@ -441,6 +544,121 @@ export class RealtimeRuntimeBridge {
     }
     return null
   }
+}
+
+type PersonalRecallState = PersonalMemoryRecallResult['state'] | 'disabled' | 'unavailable' | 'error'
+
+interface PersonalRecallOutputHit {
+  readonly source: 'personal'
+  readonly memory_id: string
+  readonly kind: NonNullable<PersonalMemoryRecallHit['kind']> | null
+  readonly text: string
+  readonly subject: string
+  readonly attributed_to: string | null
+  readonly attribute: string
+  readonly emotion: string
+  readonly occurred_at: string | null
+  readonly recorded_at: string | null
+  readonly score: number | null
+  readonly evidence_ids: readonly string[]
+}
+
+interface PersonalRecallView {
+  readonly state: PersonalRecallState
+  readonly hits: readonly PersonalRecallOutputHit[]
+  readonly contextHits: readonly PersonalRecallOutputHit[]
+  readonly degraded: boolean
+}
+
+const PERSONAL_RECALL_MAX_CHARS = 3_000
+const PERSONAL_RECALL_HIT_LIMIT = 5
+
+function trustedUserOrigin(memory: BridgeRuntime['memory'], reference: string): boolean {
+  try {
+    conversationCutoff(memory, reference)
+    return true
+  } catch (cause) {
+    if (cause instanceof RecallOriginError) return false
+    throw cause
+  }
+}
+
+function personalRecallView(result: PersonalMemoryRecallResult, scope: RecallScope): PersonalRecallView | null {
+  const context = result.contextHits ?? []
+  if (
+    result.source !== 'personal'
+    || result.scope !== scope
+    || (result.state !== 'ok' && result.state !== 'empty')
+    || typeof result.degraded !== 'boolean'
+    || !Array.isArray(result.hits)
+    || !Array.isArray(context)
+    || result.hits.length > PERSONAL_RECALL_HIT_LIMIT
+    || context.length > PERSONAL_RECALL_HIT_LIMIT
+  ) return null
+  const hits = result.hits.map(personalRecallHit).filter(hit => hit !== null)
+  const contextHits = context.map(personalRecallHit).filter(hit => hit !== null)
+  const filtered = hits.length !== result.hits.length || contextHits.length !== context.length
+  if (result.state === 'empty' && (hits.length > 0 || contextHits.length > 0)) return null
+  if (result.state === 'ok' && hits.length === 0 && contextHits.length === 0) return null
+  return {
+    state: result.state,
+    hits,
+    contextHits,
+    degraded: result.degraded || filtered,
+  }
+}
+
+function personalRecallHit(hit: PersonalMemoryRecallHit): PersonalRecallOutputHit | null {
+  const attributedTo = hit.attributedTo ?? null
+  if (
+    !boundedString(hit.memoryId, 256, 1)
+    || (hit.kind !== undefined && !['fact','experience','trait'].includes(hit.kind))
+    || !boundedString(hit.text, 800, 1)
+    || (hit.subject !== undefined && !boundedString(hit.subject, 256, 1))
+    || (attributedTo !== null && !boundedString(attributedTo, 256, 1))
+    || (hit.attribute !== undefined && !boundedString(hit.attribute, 256))
+    || (hit.emotion !== undefined && !boundedString(hit.emotion, 256))
+    || (hit.occurredAt != null && !boundedString(hit.occurredAt, 64, 1))
+    || (hit.recordedAt !== undefined && !boundedString(hit.recordedAt, 64, 1))
+    || (hit.score !== undefined && !Number.isFinite(hit.score))
+    || !Array.isArray(hit.evidenceIds)
+    || hit.evidenceIds.length > 8
+    || !hit.evidenceIds.every(value => boundedString(value, 256, 1))
+  ) return null
+  return {
+    source: 'personal', memory_id: hit.memoryId, kind: hit.kind ?? null, text: hit.text,
+    subject: hit.subject ?? '', attributed_to: attributedTo, attribute: hit.attribute ?? '',
+    emotion: hit.emotion ?? '', occurred_at: hit.occurredAt ?? null, recorded_at: hit.recordedAt ?? null,
+    score: hit.score ?? null, evidence_ids: [...hit.evidenceIds],
+  }
+}
+
+function boundedString(value: unknown, max: number, min = 0): value is string {
+  return typeof value === 'string' && value.length >= min && value.length <= max
+    && !value.includes('\0') && toUSVString(value) === value
+}
+
+function encodePersonalRecall(scope: RecallScope, view: PersonalRecallView): string {
+  const hits = [...view.hits]
+  const contextHits = [...view.contextHits]
+  let omitted = 0
+  for (;;) {
+    const content = canonicalJson({
+      source: 'personal', state: view.state, scope, degraded: view.degraded,
+      hits, context_hits: contextHits, omitted,
+    })
+    if ([...content].length <= PERSONAL_RECALL_MAX_CHARS) return content
+    if (hits.length === 0 && contextHits.length === 0) {
+      throw new RangeError('personal recall envelope exceeds its character budget')
+    }
+    if (contextHits.length >= hits.length && contextHits.length > 0) contextHits.pop()
+    else hits.pop()
+    omitted += 1
+  }
+}
+
+function personalRecallFailureState(cause: unknown): 'unavailable' | 'error' {
+  return cause instanceof PersonalMemoryError ? cause.state : 'error'
 }
 
 function acceptance(input: {
@@ -574,4 +792,8 @@ function validValue(value: JsonValue, schema: JsonValue | undefined): boolean {
   if (kind === 'array') return Array.isArray(value)
   if (kind === 'object') return isJsonObject(value)
   return false
+}
+
+function currentUserTurn(turn: UserTurnAuthority | undefined): boolean {
+  try { return turn?.stillWanted() ?? true } catch { return false }
 }

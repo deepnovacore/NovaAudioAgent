@@ -25,13 +25,18 @@ class FakeProvider implements RealtimeProvider {
   identities: unknown[] = [{epoch: 1, provider_session_id: 'session-1'}]
   emitted: unknown[] = []
   sentAudio: Uint8Array[] = []
+  responseAdaptations: {readonly revision: number; readonly content: string | null}[] = []
+  responseAdaptationCalls = 0
   injected: HostContextItem[] = []
   responses: HostResponseIntent[] = []
+  ensured = 0
   cancelled: string[] = []
   retired: string[] = []
   tools: readonly (readonly JsonObject[])[] = []
   closeCount = 0
   failure: Error | null = null
+  adaptationFailure: Error | null = null
+  adaptationGate: Promise<void> | null = null
   eventGate: Promise<void> | null = null
   ignoreEventAbort = false
   itemIdentityPromise: Promise<unknown> | null = null
@@ -56,6 +61,14 @@ class FakeProvider implements RealtimeProvider {
     if (this.failure !== null) return Promise.reject(this.failure)
     this.sentAudio.push(pcm)
     return Promise.resolve()
+  }
+
+  replaceResponseAdaptation(context: {readonly revision: number; readonly content: string | null}, signal: AbortSignal): Promise<void> {
+    assert.equal(signal.aborted, false)
+    this.responseAdaptationCalls += 1
+    if (this.adaptationFailure !== null) return Promise.reject(this.adaptationFailure)
+    this.responseAdaptations.push(structuredClone(context))
+    return this.adaptationGate ?? Promise.resolve()
   }
 
   injectHostItem(
@@ -86,6 +99,12 @@ class FakeProvider implements RealtimeProvider {
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void> {
     assert.equal(signal.aborted, false)
     this.responses.push(intent)
+    return Promise.resolve()
+  }
+
+  ensureResponse(signal: AbortSignal): Promise<void> {
+    assert.equal(signal.aborted, false)
+    this.ensured += 1
     return Promise.resolve()
   }
 
@@ -148,6 +167,122 @@ test('provider session requires increasing epochs and resets through one reconne
   await session.close()
   assert.equal(provider.closeCount, 2)
   assert.equal(session.state, 'closed')
+})
+
+test('provider session applies adaptation without blocking PCM ingress', async () => {
+  const provider = new FakeProvider()
+  let context: {readonly revision: number; readonly content: string | null} | undefined = {
+    revision: 1, content: 'Keep replies concise.',
+  }
+  const session = new RealtimeProviderSession(provider, {responseAdaptation: () => context})
+  await session.connect()
+  await session.sendAudio(new Uint8Array([0, 0]))
+  await session.sendAudio(new Uint8Array([1, 0]))
+  assert.deepEqual(provider.responseAdaptations, [{revision: 1, content: 'Keep replies concise.'}])
+  assert.equal(provider.sentAudio.length, 2)
+  context = {revision: 2, content: 'Keep replies concise.'}
+  await session.sendAudio(new Uint8Array([2, 0]))
+  assert.deepEqual(provider.responseAdaptations, [{revision: 1, content: 'Keep replies concise.'}])
+  context = {revision: 3, content: null}
+  await session.sendAudio(new Uint8Array([3, 0]))
+  await session.ensureResponse()
+  assert.deepEqual(provider.responseAdaptations.at(-1), {revision: 3, content: null})
+  await session.close()
+})
+
+test('response adaptation failures are diagnostic-only across audio, host response, and ensure paths', async () => {
+  const provider = new FakeProvider()
+  provider.adaptationFailure = new Error('replace failed')
+  let context = {revision: 1, content: 'Keep replies concise.' as string | null}
+  const diagnostics: string[] = []
+  const session = new RealtimeProviderSession(provider, {
+    responseAdaptation: () => context,
+    onDiagnostic: diagnostic => { diagnostics.push(diagnostic.reason) },
+  })
+  await session.connect()
+  await session.sendAudio(new Uint8Array([0, 0]))
+  context = {revision: 2, content: 'Use short sentences.'}
+  await session.createResponse({kind: 'host_fact', item: hostItem, task_summary: null, origin_spoken: false})
+  context = {revision: 3, content: null}
+  await session.ensureResponse()
+  assert.equal(provider.sentAudio.length, 1)
+  assert.equal(provider.responses.length, 1)
+  assert.equal(provider.ensured, 1)
+  assert.deepEqual(diagnostics, ['replace_failed', 'replace_failed', 'replace_failed'])
+  await session.close()
+})
+
+test('a failed adaptation attempt is deduplicated until the cache publishes a newer revision', async () => {
+  const provider = new FakeProvider()
+  provider.adaptationFailure = new Error('replace failed')
+  let context = {revision: 1, content: 'Keep replies concise.' as string | null}
+  const diagnostics: string[] = []
+  const session = new RealtimeProviderSession(provider, {
+    responseAdaptation: () => context,
+    onDiagnostic: diagnostic => { diagnostics.push(diagnostic.reason) },
+  })
+  await session.connect()
+  await session.sendAudio(new Uint8Array([0, 0]))
+  context = {revision: 2, content: 'Keep replies concise.'}
+  await session.sendAudio(new Uint8Array([1, 0]))
+  await session.ensureResponse()
+  assert.equal(provider.responseAdaptationCalls, 2)
+  assert.deepEqual(diagnostics, ['replace_failed', 'replace_failed'])
+  await session.close()
+})
+
+test('a response adaptation cache read failure is diagnostic-only and later reads can recover', async () => {
+  const provider = new FakeProvider()
+  let reads = 0
+  const diagnostics: string[] = []
+  const session = new RealtimeProviderSession(provider, {
+    responseAdaptation: () => {
+      reads += 1
+      if (reads < 3) throw new Error('closed cache')
+      return {revision: 1, content: 'Use concise replies.'}
+    },
+    onDiagnostic: diagnostic => { diagnostics.push(diagnostic.reason) },
+  })
+  await session.connect()
+  await session.sendAudio(new Uint8Array([0, 0]))
+  await session.sendAudio(new Uint8Array([1, 0]))
+  await session.ensureResponse()
+  await session.ensureResponse()
+  assert.equal(provider.sentAudio.length, 2)
+  assert.deepEqual(provider.responseAdaptations, [{revision: 1, content: 'Use concise replies.'}])
+  assert.deepEqual(diagnostics, ['read_failed'])
+  await session.close()
+})
+
+test('PCM ingress proceeds while a response adaptation network call is blocked', async () => {
+  const provider = new FakeProvider()
+  const context: {value: {readonly revision: number; readonly content: string | null} | undefined} = {value: undefined}
+  const gate = deferred<void>()
+  provider.adaptationGate = gate.promise
+  const session = new RealtimeProviderSession(provider, {responseAdaptation: () => context.value})
+  await session.connect()
+  context.value = {revision: 1, content: 'brief'}
+  const adapting = session.ensureResponse()
+  const pcm = new Uint8Array([1, 0])
+  const sending = session.sendAudio(pcm)
+  pcm[0] = 9
+  await sending
+  assert.equal(provider.sentAudio.length, 1)
+  gate.resolve(undefined)
+  await adapting
+  assert.deepEqual(provider.sentAudio[0], new Uint8Array([1, 0]))
+  await session.close()
+})
+
+test('already-aborted audio is never sent', async () => {
+  const provider = new FakeProvider()
+  const session = new RealtimeProviderSession(provider)
+  await session.connect()
+  const stop = new AbortController()
+  stop.abort()
+  await assert.rejects(session.sendAudio(new Uint8Array([1, 0]), stop.signal))
+  assert.equal(provider.sentAudio.length, 0)
+  await session.close()
 })
 
 test('provider session rejects a reused epoch without exposing provider output', async () => {

@@ -67,7 +67,7 @@ async function serviceHarness(t: TestContext, provider: RealtimeProvider) {
   await options.onClientAuthenticated?.()
   const runtime = composition.realtime.runtime
   const origin = runtime.memory.append('conversation', {ts: 0, trust: 'trusted_user', priority: 100, content: {text: 'run authorized worker'}})
-  const admitted = runtime.dispatchExternal({executor: 'slow_sim', op: 'set_light', request: {room: 'office', brightness: 50}, origin_ref: `${origin.channel}:${origin.seq}`},
+  const admitted = await runtime.dispatchExternal({executor: 'slow_sim', op: 'set_light', request: {room: 'office', brightness: 50}, origin_ref: `${origin.channel}:${origin.seq}`},
     {kind: 'realtime_tool', priority: 100, routing_class: 'ambient', origin: null, selected_suggestion: null})
   assert.equal(admitted.accepted, true)
   await until(() => workerSignal !== undefined)

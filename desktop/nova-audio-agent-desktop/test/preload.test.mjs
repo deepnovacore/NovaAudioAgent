@@ -160,10 +160,10 @@ test('preload reports confirmation mode as a strict boolean and sanitizes placem
   assert.deepEqual(placements, ['above', 'below'])
 })
 
-test('preload exposes read-only board requests', async () => {
+test('preload exposes board reads and explicit memory clear', async () => {
   const { exposed, invokes, sends } = await loadPreload()
 
-  assert.deepEqual(Object.keys(exposed.memoryBoard).sort(), ['copyJson', 'export', 'request'])
+  assert.deepEqual(Object.keys(exposed.memoryBoard).sort(), ['clear', 'copyJson', 'export', 'request'])
   assert.deepEqual(Object.keys(exposed.graphBoard).sort(), ['request'])
   assert.ok(Object.isFrozen(exposed.memoryBoard))
   assert.ok(Object.isFrozen(exposed.graphBoard))
@@ -171,12 +171,14 @@ test('preload exposes read-only board requests', async () => {
   await exposed.memoryBoard.request('full')
   await exposed.memoryBoard.copyJson()
   await exposed.memoryBoard.export()
+  await exposed.memoryBoard.clear()
   await exposed.graphBoard.request()
   assert.deepEqual(invokes, [
     {channel: 'nova:memory-board:request', payload: undefined},
     {channel: 'nova:memory-board:request', payload: 'full'},
     {channel: 'nova:memory-board:copy-json', payload: undefined},
     {channel: 'nova:memory-board:export', payload: undefined},
+    {channel: 'nova:memory-board:clear', payload: undefined},
     {channel: 'nova:workspace-graph-board:request', payload: undefined},
   ])
   assert.equal(exposed.graphBoard.export, undefined)

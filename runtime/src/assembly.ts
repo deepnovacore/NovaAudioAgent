@@ -1,4 +1,5 @@
 import {CodingProgressNarrationState} from './coding-progress-narration.js'
+import type {BlackboardSessionOptions} from './memory/blackboard-session.js'
 import {capabilityStatus, type CapabilityRegistry, type CapabilityStatus} from './capability-registry.js'
 import {McpSearchTransport} from './executors/search-mcp.js'
 import type {PreparedExternalMcp} from './executors/mcp.js'
@@ -65,6 +66,8 @@ export class AssemblyError extends Error {
 }
 
 export interface AssemblyOptions {
+  readonly blackboard?: BlackboardSessionOptions
+  readonly conversationId?: string
   readonly settings: Settings
   readonly capabilities?: CapabilityRegistry
   /** Discovery is async and owned by the production entry before synchronous compilation. */
@@ -331,6 +334,8 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
 
   const runtime = new CausalRuntime({
     codingProgressNarration: new CodingProgressNarrationState(settings.coding_progress_narration),
+    ...(options.blackboard === undefined ? {} : {blackboard: options.blackboard}),
+    ...(options.conversationId === undefined ? {} : {conversationId: options.conversationId}),
     clock,
     ids,
     models,
@@ -341,14 +346,14 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const visionController = visionLifecycle === undefined ? undefined : (() => {
     const vision = new VisionAgentControllerCore({
       gateway, watchModel, requestIdFactory: () => ids.next('vision'), lifecycleSink: visionLifecycle,
-      runtimePort: {dispatch: request => {
+      runtimePort: {dispatch: async request => {
         if (!request.stillWanted()) return {accepted: false, delegate_id: null}
-        const admission = runtime.dispatchExternal({
+        const admission = await runtime.dispatchExternal({
           executor: request.channel, op: request.op, request: request.request, origin_ref: request.origin_ref,
         }, {
           kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited',
           origin: null, selected_suggestion: null,
-        })
+        }, undefined, request.stillWanted)
         return {accepted: admission.accepted, delegate_id: admission.delegate_id}
       }},
     })
@@ -357,6 +362,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   })()
 
   let started = false
+  let memoryStopped = false
   let lifecycle = Promise.resolve()
   const serializeLifecycle = (operation: () => Promise<void>): Promise<void> => {
     const pending = lifecycle.catch(() => undefined).then(operation)
@@ -376,7 +382,9 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     ...(options.knowledge === undefined ? {} : {knowledge: options.knowledge}),
     start(): Promise<void> {
       return serializeLifecycle(async () => {
+        if (memoryStopped) throw new AssemblyError('persistent assembly cannot restart after stop')
         if (started) return
+        if (options.blackboard !== undefined) await runtime.openMemory()
         if (!cameraModuleEnabled) {
           started = true
           return
@@ -397,8 +405,10 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     },
     stop(): Promise<void> {
       return serializeLifecycle(async () => {
+        memoryStopped = options.blackboard !== undefined
         const failures: unknown[] = []
         for (const close of [
+          () => runtime.closeMemory(),
           () => options.knowledge?.close(),
           () => options.externalMcp?.close(),
           () => searchTransport?.close?.(),

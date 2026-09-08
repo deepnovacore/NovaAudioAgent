@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import {mkdtemp} from 'node:fs/promises'
+import {mkdir, mkdtemp} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
-import {resolve} from 'node:path'
+import {join, resolve} from 'node:path'
 import {spawnSync} from 'node:child_process'
 import test from 'node:test'
 
@@ -14,6 +14,7 @@ test('project native addon builds for and passes behavior under the packaged Ele
   timeout: 60_000,
 }, async () => {
   const outputRoot = await mkdtemp(resolve(tmpdir(), 'nova-project-native-'))
+  await mkdir(join(outputRoot, 'build'))
   const addonPath = await buildProjectNativeAddon({
     packageRoot,
     outputRoot,
@@ -27,7 +28,7 @@ test('project native addon builds for and passes behavior under the packaged Ele
     resolve(import.meta.dirname, 'fixtures/project-native-addon-behavior.cjs'),
     addonPath,
   ], {
-    cwd: packageRoot,
+    cwd: outputRoot,
     encoding: 'utf8',
     env: {...process.env, ELECTRON_RUN_AS_NODE: '1'},
     timeout: 30_000,

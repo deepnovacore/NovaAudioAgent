@@ -344,7 +344,7 @@ test('real external dispatch carries one opaque confirmation identity outside ev
     })
     const committed = await value.adapter.commitConfirmed(
       operation,
-      (request, reason, capability) => runtime.dispatchConfirmedExternal(request, reason, capability),
+      (request, reason, capability, launchAuthorized) => runtime.dispatchConfirmedExternal(request, reason, capability, launchAuthorized),
     )
     assert.equal(committed.accepted, true)
     const delegate = runtime.core.activeDelegates()[0]
@@ -1063,4 +1063,24 @@ test('intake target resolution is canonical and side-effect free for work, creat
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})
   }
+})
+
+test('confirmed launch stays unauthorized when confirmation expires during admission', async () => {
+  const value = await fixture()
+  try {
+    const operation = confirmed(value, {action: 'create', workspace_display_name: 'beta', workspace_id: null,
+      session_title: 'Initial', session_id: null, work_order: 'build it'})
+    let launchAuthorized: (() => boolean) | undefined
+    const committed = await value.adapter.commitConfirmed(operation, async (_request, _reason, _capability, guard) => {
+      launchAuthorized = guard
+      assert.equal(guard(), false)
+      await Promise.resolve()
+      assert.equal(value.confirmation.rejectConfirmed(operation), true)
+      return {accepted: true, delegate_id: 'late-admission'}
+    })
+    assert.equal(committed.code, 'confirmation_invalid')
+    assert.equal(launchAuthorized?.(), false)
+    assert.deepEqual(readdirSync(join(value.root, 'managed')), [])
+    assert.equal(value.factory.transports.length, 0)
+  } finally { await value.adapter.close(); await rm(value.root, {recursive: true, force: true}) }
 })

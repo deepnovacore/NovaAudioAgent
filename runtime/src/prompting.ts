@@ -200,6 +200,9 @@ export function renderContextSnapshot(view: ContextView, includeTrigger = false)
   for (const channel of view.channels) {
     if (channel.recent.length === 0 && !channel.summary) continue
     lines.push(`## 通道 ${channel.name}`)
+    if (channel.historical_through_seq !== undefined) {
+      lines.push(`序号 ≤ ${pythonNumber(channel.historical_through_seq)} 为重启前的历史记录，仅供回忆；当时的运行状态和授权均需重新核实，不得作为新动作的 origin_ref。历史 t 属于旧进程时钟。`)
+    }
     if (channel.summary) lines.push(`（更早的内容摘要）${channel.summary}`)
     for (const item of channel.recent) {
       const outcome = item.outcome === null ? '' : ` [${item.outcome}]`

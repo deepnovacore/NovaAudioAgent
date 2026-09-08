@@ -5,7 +5,7 @@ import {capabilityStatus, type CapabilityStatus} from './capability-registry.js'
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly, type AssemblyOptions } from './assembly.js'
 import {attachKnowledgeReferences} from './knowledge/references.js'
-import { canonicalJson } from './canonical-json.js'
+import { canonicalJson, compareCodePoints } from './canonical-json.js'
 import type {PublicProjectContext} from './project-store.js'
 import type { JsonValue } from './events.js'
 import {
@@ -28,7 +28,7 @@ import type {
   ProjectConfirmationController,
   ProjectConfirmationView,
 } from './project-confirmation.js'
-import type { RealtimeProvider } from './realtime/protocol.js'
+import type { RealtimeProvider, ResponseAdaptationContext } from './realtime/protocol.js'
 import { RealtimeProviderSession } from './realtime/provider-session.js'
 import { RealtimeService } from './realtime/service.js'
 import type { ExecutorState, PreemptiveAlertHistoryRecovery } from './realtime/service-state.js'
@@ -46,7 +46,7 @@ import type {PublishedGraphSnapshot} from './workspace-graph/store.js'
 import type {GraphContext} from './workspace-graph/context.js'
 import type {Suggestion} from './suggestions.js'
 import type {WakeReason} from './slots.js'
-import {USER_PRIORITY} from './memory.js'
+import {USER_PRIORITY, parseMemoryRef} from './memory.js'
 import type {CoordinatorDecision} from './coding-executor.js'
 
 /** Intake-issued delegate requests carry the user's own priority (the voice model awaited them). */
@@ -54,6 +54,7 @@ const USER_AWAITED_TOOL = {kind: 'realtime_tool', priority: USER_PRIORITY, routi
 import {intakeModels, type IntakeModels} from './executors/coding/intake-model.js'
 import type {IntakeOptions, IntakeSettings, IntakeSession} from './executors/coding/intake.js'
 import type {ModelGateway} from './model-gateway.js'
+import type {PersonalMemoryResource} from './memory/personal-memory.js'
 
 export type {CodingAgentControllerFactory} from './coding-executor.js'
 import type {CodingAgentControllerFactory} from './coding-executor.js'
@@ -92,6 +93,103 @@ const WORKSPACE_SWITCH_RETRY_MS = 10
 interface AdmittedCommittedWorkspace {
   readonly event: CommittedWorkspaceEvent
   readonly scopeGeneration: number
+}
+
+interface PriorAssistantReplyCandidate {
+  readonly sessionEpoch: number
+  readonly userInputRevision: number
+  readonly text: string
+}
+
+const MAX_CAPTURED_PRIOR_REPLIES = 16
+
+/**
+ * Captures the already-audible adjacent reply before transcript persistence can yield. Delivery
+ * after that point belongs to a later user boundary and must not be retroactively attached.
+ */
+class PersonalMemoryTurnTracker {
+  #candidate: PriorAssistantReplyCandidate | null = null
+  readonly #captured = new Map<string, string | undefined>()
+
+  reset(): void {
+    this.#candidate = null
+    this.#captured.clear()
+  }
+
+  onDelivery(
+    completion: PlaybackCompletion,
+    responseUserInputRevision: number | undefined,
+    currentUserInputRevision: number,
+  ): void {
+    this.#candidate = null
+    if (
+      completion.disposition !== 'spoken'
+      || completion.text.trim() === ''
+      || responseUserInputRevision === undefined
+      || responseUserInputRevision !== currentUserInputRevision
+      || !(completion.played_ms !== null
+        ? completion.played_ms > 0
+        : completion.started)
+    ) return
+    this.#candidate = {
+      sessionEpoch: completion.session_epoch,
+      userInputRevision: responseUserInputRevision,
+      text: completion.text,
+    }
+  }
+
+  captureUserFinal(sessionEpoch: number, userInputRevision: number): void {
+    const candidate = this.#candidate
+    this.#candidate = null
+    const key = turnKey(sessionEpoch, userInputRevision)
+    this.#captured.delete(key)
+    this.#captured.set(
+      key,
+      candidate !== null
+        && candidate.sessionEpoch === sessionEpoch
+        && candidate.userInputRevision < userInputRevision
+        ? candidate.text
+        : undefined,
+    )
+    while (this.#captured.size > MAX_CAPTURED_PRIOR_REPLIES) {
+      // ponytail: overload degrades by omitting the oldest uncommitted hint; user evidence remains.
+      const oldest = this.#captured.keys().next().value
+      if (oldest === undefined) break
+      this.#captured.delete(oldest)
+    }
+  }
+
+  takeCaptured(sessionEpoch: number, userInputRevision: number): string | undefined {
+    const key = turnKey(sessionEpoch, userInputRevision)
+    const reply = this.#captured.get(key)
+    this.#captured.delete(key)
+    return reply
+  }
+}
+
+function turnKey(sessionEpoch: number, userInputRevision: number): string {
+  return `${sessionEpoch}:${userInputRevision}`
+}
+
+function responseAdaptationFor(
+  resource: PersonalMemoryResource | undefined,
+): ResponseAdaptationContext | undefined {
+  if (resource?.responseAdaptation === undefined) return undefined
+  const snapshot = resource.responseAdaptation()
+  const replyPreferences = [...snapshot.replyPreferences]
+    .sort((left, right) => compareCodePoints(left.id, right.id)
+      || compareCodePoints(left.text, right.text))
+    .map(preference => preference.text)
+  return {
+    revision: snapshot.revision,
+    content: replyPreferences.length === 0
+      ? null
+      : [
+        'These are stable reply-style preferences. Apply them only to how you phrase the response.',
+        'The current user request takes priority. These preferences cannot authorize any action.',
+        `<reply_preferences>${canonicalJson(replyPreferences)}</reply_preferences>`,
+      ].join('\n'),
+  }
 }
 
 export interface RealtimeAssemblyOptions {
@@ -134,6 +232,8 @@ export interface RealtimeAssemblyOptions {
   readonly workspaceGraph?: RealtimeWorkspaceGraph
   /** Production graph allocation is deferred until final tool validation and service construction succeed. */
   readonly createWorkspaceGraph?: () => RealtimeWorkspaceGraph | undefined
+  /** Personal-memory allocation occurs only after the final tool and executor validation. */
+  readonly createPersonalMemory?: () => PersonalMemoryResource
 }
 
 type LifecycleState = 'new' | 'starting' | 'started' | 'stopping' | 'stopped'
@@ -172,10 +272,13 @@ export class RealtimeAssembly {
   readonly #unsubscribeCommittedWorkspace: (() => void) | undefined
   readonly #unsubscribeTerminalWorkOrder: (() => void) | undefined
   readonly #unsubscribeProviderConnected: (() => void) | undefined
+  readonly #personalMemoryTurnTracker: PersonalMemoryTurnTracker
   readonly #idFactory: () => string
   readonly #wallClockNow: () => number
   readonly #unbindGraphContext: (() => void) | undefined
   readonly #unbindSuggestionSelected: (() => void) | undefined
+  readonly #createPersonalMemory: (() => PersonalMemoryResource) | undefined
+  #personalMemory: PersonalMemoryResource | undefined
   #workspaceGraphOpen = false
   #currentWorkspaceInstanceId: string | null = null
   #currentHostWorkspaceId: string | null = null
@@ -198,6 +301,7 @@ export class RealtimeAssembly {
   #state: LifecycleState = 'new'
   #startOperation: Promise<void> | null = null
   #stopOperation: Promise<void> | null = null
+  #clearConversationOperation: Promise<void> | null = null
 
   constructor(input: {
     readonly toolCount?: number
@@ -216,6 +320,9 @@ export class RealtimeAssembly {
     readonly idFactory: () => string
     readonly wallClockNow: () => number
     readonly unbindSuggestionSelected?: () => void
+    readonly personalMemory?: PersonalMemoryResource
+    readonly createPersonalMemory?: () => PersonalMemoryResource
+    readonly personalMemoryTurnTracker: PersonalMemoryTurnTracker
   }) {
     this.core = input.core
     this.capabilityStatus = capabilityStatus(input.core.capabilities, input.toolCount ?? input.core.tools.schemas.length)
@@ -234,6 +341,9 @@ export class RealtimeAssembly {
     this.#idFactory = input.idFactory
     this.#wallClockNow = input.wallClockNow
     this.#unbindSuggestionSelected = input.unbindSuggestionSelected
+    this.#personalMemory = input.personalMemory
+    this.#createPersonalMemory = input.createPersonalMemory
+    this.#personalMemoryTurnTracker = input.personalMemoryTurnTracker
     this.#unbindGraphContext = input.workspaceGraph === undefined
       ? undefined
       : input.core.runtime.bindGraphContextProvider(({latest_user_text: utterance}) => {
@@ -269,17 +379,17 @@ export class RealtimeAssembly {
       : input.projectAdapter.observeTerminalWorkOrder(event => {
         this.#enqueueGraphLifecycle(() => this.#onTerminalWorkOrder(event))
       })
-    this.#unsubscribeProviderConnected = input.projectAdapter === undefined
-      ? undefined
-      : input.providerSession.observeConnected(async () => {
-        // Initial delivery is owned by #startFresh's bounded publication step.
-        // Lifecycle observation owns only fresh reconnect epochs.
-        if (!this.#providerConnectionObserved) {
-          this.#providerConnectionObserved = true
-          return
-        }
-        await this.#enqueueProjectContextPublication()
-      })
+    this.#unsubscribeProviderConnected = input.providerSession.observeConnected(async () => {
+      input.personalMemoryTurnTracker.reset()
+      if (input.projectAdapter === undefined) return
+      // Initial delivery is owned by #startFresh's bounded publication step.
+      // Lifecycle observation owns only fresh reconnect epochs.
+      if (!this.#providerConnectionObserved) {
+        this.#providerConnectionObserved = true
+        return
+      }
+      await this.#enqueueProjectContextPublication()
+    })
   }
 
   start(): Promise<void> {
@@ -322,6 +432,37 @@ export class RealtimeAssembly {
     return operation
   }
 
+  /** Replace the audible conversation and its durable blackboard while preserving external work. */
+  clearConversation(): Promise<void> {
+    if (this.#clearConversationOperation !== null) return this.#clearConversationOperation
+    if (this.#state !== 'started') {
+      return Promise.reject(new AssemblyError('realtime assembly must be started before conversation clear'))
+    }
+    this.#personalMemoryTurnTracker.reset()
+    let resolveOperation!: () => void
+    let rejectOperation!: (error: unknown) => void
+    const operation = new Promise<void>((resolve, reject) => {
+      resolveOperation = resolve
+      rejectOperation = reject
+    })
+    this.#clearConversationOperation = operation
+    try {
+      void this.service.clearConversation().then(async () => {
+        // Provider connection observation already publishes this under the new epoch. This explicit
+        // pass makes the public clear contract hold for assemblies without that optional observer and
+        // deduplicates when the observer delivered it successfully.
+        await this.#enqueueProjectContextPublication()
+      }).then(resolveOperation, rejectOperation)
+    } catch (error) {
+      rejectOperation(error)
+    }
+    void operation.then(
+      () => { if (this.#clearConversationOperation === operation) this.#clearConversationOperation = null },
+      () => { if (this.#clearConversationOperation === operation) this.#clearConversationOperation = null },
+    )
+    return operation
+  }
+
   /** Refresh provider workspace context when in-flight delegate progress changes. */
   enqueueActiveWorkContextPublication(): Promise<void> {
     return this.#enqueueProjectContextPublication()
@@ -330,8 +471,18 @@ export class RealtimeAssembly {
   async #startFresh(): Promise<void> {
     if (this.#projectAdapter !== undefined
       && typeof this.provider.injectWorkspaceContext !== 'function') {
+      await this.#closePersonalMemory()
       if (this.#state === 'starting') this.#state = 'new'
       throw new AssemblyError('selected realtime provider cannot deliver active project context')
+    }
+    try {
+      await this.#openPersonalMemory()
+    } catch (error) {
+      if (this.#state === 'starting') this.#state = 'new'
+      throw error
+    }
+    if (this.#state !== 'starting') {
+      throw new AssemblyError('realtime assembly start was abandoned by stop')
     }
     if (this.workspaceGraph !== undefined) {
       const openOperation = Promise.resolve().then(async () => { await this.workspaceGraph!.open() })
@@ -367,7 +518,10 @@ export class RealtimeAssembly {
       }
       await this.core.start()
     } catch (error) {
-      if (this.#state === 'starting') this.#state = 'new'
+      if (this.#state === 'starting') {
+        await this.#closePersonalMemory()
+        if (this.#state === 'starting') this.#state = 'new'
+      }
       throw error
     }
     if (this.#state !== 'starting') {
@@ -377,10 +531,14 @@ export class RealtimeAssembly {
       await this.service.start()
     } catch (error) {
       if (this.#state === 'starting') {
-        await this.#cleanupWithinGrace(
-          () => this.core.stop(),
-          'assembly_core_stop_abandoned',
-        )
+        // A failed connect has not started serve. Keep the restored session for this instance's retry.
+        if (!this.core.runtime.hasPersistentMemory) {
+          await this.#cleanupWithinGrace(
+            () => this.core.stop(),
+            'assembly_core_stop_abandoned',
+          )
+        }
+        await this.#closePersonalMemory()
         if (this.#state === 'starting') this.#state = 'new'
       }
       throw error
@@ -423,6 +581,16 @@ export class RealtimeAssembly {
     )
     if (service.kind !== 'resolved') cleanupComplete = false
     if (service.kind === 'rejected') firstFailure = {error: service.error}
+
+    // Transport/task grace must not abandon an admitted SQLite transaction.
+    try { await this.core.runtime.closeMemory() }
+    catch (error) { cleanupComplete = false; firstFailure ??= {error} }
+
+    const personalMemory = await this.#closePersonalMemory()
+    if (personalMemory.kind !== 'resolved') cleanupComplete = false
+    if (firstFailure === null && personalMemory.kind === 'rejected') {
+      firstFailure = {error: personalMemory.error}
+    }
 
     const core = await this.#cleanupWithinGrace(
       () => this.core.stop(),
@@ -746,6 +914,34 @@ export class RealtimeAssembly {
     return this.#settleWithinGrace(work, abandonedDiagnostic)
   }
 
+  async #closePersonalMemory(): Promise<CleanupResult> {
+    const personalMemory = this.#personalMemory
+    if (personalMemory === undefined) return {kind: 'resolved'}
+    this.#personalMemory = undefined
+    return this.#cleanupWithinGrace(
+      () => personalMemory.close(),
+      'personal_memory_close_abandoned',
+    )
+  }
+
+  async #openPersonalMemory(): Promise<void> {
+    try {
+      if (this.#personalMemory === undefined && this.#createPersonalMemory !== undefined) {
+        this.#personalMemory = this.#createPersonalMemory()
+      }
+      if (this.#personalMemory === undefined) return
+      const opened = await this.#cleanupWithinGrace(
+        () => this.#personalMemory!.open(),
+        'personal_memory_open_abandoned',
+      )
+      if (opened.kind === 'rejected') throw opened.error
+      if (opened.kind === 'abandoned') throw new AssemblyError('personal memory open was abandoned')
+    } catch (error) {
+      await this.#closePersonalMemory()
+      throw error
+    }
+  }
+
   async #settleWithinGrace(
     work: Promise<void>,
     abandonedDiagnostic: string,
@@ -819,14 +1015,25 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     ? options.commitProjectOperation
     : ((operation: ConfirmedProjectOperation) => projectAdapter.commitConfirmed(
         operation,
-        (request, reason, capability) => core.runtime.dispatchConfirmedExternal(
+        (request, reason, capability, launchAuthorized) => core.runtime.dispatchConfirmedExternal(
           request,
           reason,
           capability,
+          launchAuthorized,
         ),
       ))
   const provider = options.provider
-  const providerSession = new RealtimeProviderSession(provider)
+  const onDiagnostic = options.onDiagnostic ?? (line => { console.log(line) })
+  const personalMemoryHolder: {current: PersonalMemoryResource | undefined} = {current: undefined}
+  const personalMemoryTurnTracker = new PersonalMemoryTurnTracker()
+  const providerSession = new RealtimeProviderSession(provider, {
+    responseAdaptation: () => responseAdaptationFor(personalMemoryHolder.current),
+    onDiagnostic: diagnostic => {
+      onDiagnostic(
+        `[realtime-diagnostic] response_adaptation_${diagnostic.reason} epoch=${diagnostic.epoch} revision=${diagnostic.revision ?? 'none'}`,
+      )
+    },
+  })
   const providerTools = options.providerToolView?.(core.tools) ?? core.tools
   const providerSchemas = validateProviderToolView(core.tools, providerTools)
   const count = providerSchemas.length
@@ -834,27 +1041,34 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   if (count > budget) throw new FrontbrainToolBudgetError(count, budget)
   const idFactory = options.idFactory ?? (() => `nova_${randomUUID().replaceAll('-', '')}`)
   const wallClockNow = options.wallClockNow ?? (() => Date.now() / 1_000)
-  const onDiagnostic = options.onDiagnostic ?? (line => { console.log(line) })
   const playback = new PlaybackRegistry({
     idFactory,
     onFrame: options.onAudioFrame ?? noop,
     onClear: options.onAudioClear ?? noop,
     ...(options.onAudioAlert === undefined ? {} : {onAlert: options.onAudioAlert}),
   })
+  const sessionHolder: {current: RealtimeSession | null} = {current: null}
   const session = new RealtimeSession({
     provider: providerSession,
     playback,
     idFactory,
     clock: core.runtime.clock,
     ...(options.onSpoken === undefined ? {} : {onSpoken: options.onSpoken}),
-    ...(options.onDelivery === undefined ? {} : {onDelivery: options.onDelivery}),
+    onDelivery: completion => {
+      const currentSession = sessionHolder.current
+      const currentIdentity = providerSession.identity
+      if (currentSession !== null && currentIdentity?.epoch === completion.session_epoch) {
+        personalMemoryTurnTracker.onDelivery(
+          completion,
+          currentSession.providerTurnUserInputRevision(completion.response_id),
+          currentSession.userInputRevision,
+        )
+      }
+      options.onDelivery?.(completion)
+    },
     onDiagnostic,
   })
-  const bridge = new RealtimeRuntimeBridge({
-    runtime: core.runtime,
-    tools: core.tools,
-    idFactory,
-  })
+  sessionHolder.current = session
   const assemblyHolder: {current: RealtimeAssembly | null} = {current: null}
   if (options.intake !== undefined && projectAdapter === undefined) {
     throw new AssemblyError('no executor with role coding')
@@ -865,6 +1079,20 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   if (codingManifest === null && options.codingAgentControllerFactory !== undefined) {
     throw new AssemblyError('coding agent controller factory requires a coding executor')
   }
+  const personalMemorySessionId = randomUUID()
+  const bridge = new RealtimeRuntimeBridge({
+    runtime: core.runtime,
+    ...(options.createPersonalMemory === undefined ? {} : {personalMemory: {
+      recall: (...input) => {
+        const current = personalMemoryHolder.current
+        return current === undefined
+          ? Promise.reject(new Error('personal memory is unavailable'))
+          : current.recall(...input)
+      },
+    }}),
+    tools: core.tools,
+    idFactory,
+  })
   // Qwen/Cascaded resolve their default intake before entering this assembly. Preserve that
   // exact resolver for the composed controller; a direct no-intake test seam remains safely
   // unable to guess an ambiguous running-work target.
@@ -885,7 +1113,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       if (!request.stillWanted()) return {accepted: false, delegate_id: null}
       return core.runtime.dispatchExternal({
         executor: request.channel, op: request.op, request: request.request, origin_ref: request.origin_ref,
-      }, USER_AWAITED_TOOL)
+      }, USER_AWAITED_TOOL, undefined, request.stillWanted)
     },
   }
   const agentControllerFactory = codingManifest === null ? undefined : {
@@ -900,6 +1128,26 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   }
   const agentControllers = core.visionController === undefined ? [] : [core.visionController]
   const service = new RealtimeService({
+    ...(options.createPersonalMemory === undefined ? {} : {onUserTranscriptAccepted: (turn: {
+      readonly text: string; readonly originRef: string; readonly sessionEpoch: number
+      readonly userInputRevision: number
+    }) => {
+      const previousAssistantReply = personalMemoryTurnTracker.takeCaptured(
+        turn.sessionEpoch,
+        turn.userInputRevision,
+      )
+      const resource = personalMemoryHolder.current
+      if (resource?.remember === undefined) return
+      const [, sequence] = parseMemoryRef(turn.originRef)
+      return resource.remember({
+        sourceId: `${personalMemorySessionId}:${turn.originRef}`,
+        sessionId: personalMemorySessionId,
+        sequence,
+        text: turn.text,
+        occurredAt: new Date(wallClockNow() * 1_000).toISOString(),
+        ...(previousAssistantReply === undefined ? {} : {previousAssistantReply}),
+      }).then(() => undefined)
+    }}),
     provider: providerSession,
     runtime: core.runtime,
     tools: core.tools,
@@ -922,21 +1170,22 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
         stillWanted,
       }),
       // Spec 08: the coordinator's decision rides with the work order; the adapter re-resolves at run time.
-      dispatch: (intake: IntakeSession) => core.runtime.dispatchExternal({
+      dispatch: (intake: IntakeSession, stillWanted?: () => boolean) => core.runtime.dispatchExternal({
         executor: projectAdapter.manifest.name, op: 'run', origin_ref: intake.origin_ref,
         request: {
           work_order: intake.work_order!, project: intake.target?.workspace_display_name ?? null,
           session: intake.decision?.session ?? 'latest', ...(intake.title === null ? {} : {title: intake.title}),
         },
-      }, USER_AWAITED_TOOL),
-      steer: (intake: IntakeSession, project: string | null, instruction: string) => core.runtime.dispatchExternal({
+      }, USER_AWAITED_TOOL, undefined, stillWanted),
+      steer: (intake: IntakeSession, project: string | null, instruction: string, stillWanted?: () => boolean) => core.runtime.dispatchExternal({
         executor: projectAdapter.manifest.name, op: 'steer', origin_ref: intake.origin_ref, request: {instruction, project},
-      }, USER_AWAITED_TOOL),
+      }, USER_AWAITED_TOOL, undefined, stillWanted),
       record: (intake: IntakeSession, kind: string, data: Readonly<Record<string, JsonValue>>) => {
         core.runtime.memory.append(projectAdapter.manifest.name, {
           ts: core.runtime.clock.now(), trust: 'trusted_system', priority: USER_PRIORITY - 1,
           content: {kind, intake_id: intake.intake_id, revision: intake.revision, ...data}, refs: [intake.origin_ref],
         })
+        void core.runtime.flushMemory().catch(() => { /* runtime owns the fatal storage diagnostic */ })
       },
     }}),
     idFactory,
@@ -949,7 +1198,12 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
         onDiagnostic('[realtime-diagnostic] active_executor_context_delivery_failed')
       })
     },
-    ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
+    ...((options.createPersonalMemory === undefined && options.onCaption === undefined) ? {} : {onCaption: (frame: CaptionFrame) => {
+      if (frame.role === 'user' && frame.final && frame.text.trim() !== '') {
+        personalMemoryTurnTracker.captureUserFinal(session.sessionEpoch, session.userInputRevision)
+      }
+      options.onCaption?.(frame)
+    }}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...(options.controlledPreemptiveAlertReconnect === undefined && options.controlledGuardReconnect === undefined
       ? {}
@@ -987,6 +1241,8 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     },
   )
   const workspaceGraph = options.workspaceGraph ?? options.createWorkspaceGraph?.()
+  const personalMemory = options.createPersonalMemory?.()
+  personalMemoryHolder.current = personalMemory
   return assignAssembly(new RealtimeAssembly({
     toolCount: count,
     core,
@@ -1000,6 +1256,15 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     idFactory,
     wallClockNow,
     unbindSuggestionSelected,
+    ...(personalMemory === undefined ? {} : {personalMemory}),
+    ...(options.createPersonalMemory === undefined ? {} : {
+      createPersonalMemory: () => {
+        const created = options.createPersonalMemory!()
+        personalMemoryHolder.current = created
+        return created
+      },
+    }),
+    personalMemoryTurnTracker,
     ...(projectAdapter === undefined ? {} : {projectAdapter}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
@@ -1232,6 +1497,7 @@ export function composeRealtime(
     idFactory: options.idFactory,
     ...providerTuning,
     createWorkspaceGraph,
+    ...(options.createPersonalMemory === undefined ? {} : {createPersonalMemory: options.createPersonalMemory}),
     ...(options.providerToolView === undefined
       ? {}
       : {providerToolView: options.providerToolView}),
