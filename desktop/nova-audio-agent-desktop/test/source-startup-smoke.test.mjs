@@ -39,3 +39,9 @@ test('source startup smoke removes ambient product controls without mutating the
   assert.equal(parentEnvironment.NOVA_AUDIO_AGENT_BACKEND, 'python')
   assert.equal(parentEnvironment.ELECTRON_RUN_AS_NODE, '1')
 })
+
+test('source smoke reports only bounded lifecycle markers on an exit timeout', () => {
+  assert.throws(() => assertSourceStartupSmokeResult({timedOut: true}, '[desktop-smoke] source_window_ready\n',
+    '[desktop-smoke] quit_requested\n[desktop-smoke] maintenance_closing private-path\n'),
+  /shutdown_stage=maintenance_closing$/u)
+})

@@ -14,7 +14,11 @@ export function assertSourceStartupSmokeResult(result, stdout, stderr) {
   const diagnostic = stderr.match(/\[desktop-diagnostic\] [a-z_]+(?: code=[a-z_]+)?/u)?.[0] ?? 'unavailable'
   const loadError = stderr.match(/\b(?:ERR_[A-Z_]+|MODULE_NOT_FOUND|SyntaxError|ReferenceError|TypeError)\b/u)?.[0] ?? 'unavailable'
   const failure = result.timedOut ? 'source_startup_smoke_timeout' : 'source_startup_smoke_failed'
-  throw new Error(`${failure} window_ready=${ready} diagnostic=${diagnostic} load_error=${loadError}`)
+  const stages = [...stderr.matchAll(/\[desktop-smoke\] (window_ready|quit_requested|before_quit|maintenance_closing|maintenance_closed|maintenance_deadline|app_exit_requested|will_quit|quit)\b(?: elapsed_ms=([0-9]+))?/gu)]
+  const last = stages.at(-1)
+  const timing = Number.isFinite(result.readyAfterMs) ? ` ready_after_ms=${Math.round(result.readyAfterMs)}` : ''
+  const shutdown = last === undefined ? '' : ` shutdown_stage=${last[1]}${last[2] === undefined ? '' : ` stage_elapsed_ms=${last[2]}`}`
+  throw new Error(`${failure} window_ready=${ready} diagnostic=${diagnostic} load_error=${loadError}${timing}${shutdown}`)
 }
 
 export function sourceStartupSmokeEnvironment(parentEnvironment, {home}) {
@@ -47,6 +51,8 @@ export async function runSourceStartupSmoke({
   const electron = resolve(packageRoot, 'node_modules/electron/dist/electron.exe')
   let child = null
   try {
+    const startedAt = performance.now()
+    let readyAfterMs
     child = spawn(electron, [
       packageRoot,
       SOURCE_STARTUP_SMOKE_ARGUMENT,
@@ -60,7 +66,10 @@ export async function runSourceStartupSmoke({
     let stdout = ''
     let stderr = ''
     const append = (current, chunk) => (current + chunk.toString('utf8')).slice(-MAX_OUTPUT)
-    child.stdout.on('data', chunk => { stdout = append(stdout, chunk) })
+    child.stdout.on('data', chunk => {
+      stdout = append(stdout, chunk)
+      if (readyAfterMs === undefined && stdout.includes(READY_LINE)) readyAfterMs = performance.now() - startedAt
+    })
     child.stderr.on('data', chunk => { stderr = append(stderr, chunk) })
     const result = await new Promise(resolveResult => {
       const timer = setTimeout(() => resolveResult({timedOut: true}), timeoutMs)
@@ -77,7 +86,7 @@ export async function runSourceStartupSmoke({
       child.kill('SIGKILL')
       await new Promise(resolveExit => child.once('exit', resolveExit))
     }
-    assertSourceStartupSmokeResult(result, stdout, stderr)
+    assertSourceStartupSmokeResult({...result, readyAfterMs}, stdout, stderr)
     return Object.freeze({status: 'passed'})
   } finally {
     if (child?.exitCode === null && child.signalCode === null) child.kill('SIGKILL')

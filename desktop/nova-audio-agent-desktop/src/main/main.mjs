@@ -29,7 +29,7 @@ import {
 import { randomBytes } from 'node:crypto'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path, { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -1311,7 +1311,11 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   })
   if (sourceStartupSmoke) {
     await Promise.all([rendererLoaded, windowShown])
-    process.stdout.write('[desktop-smoke] source_window_ready\n', () => app.quit())
+    sourceSmokeStage('window_ready')
+    process.stdout.write('[desktop-smoke] source_window_ready\n', () => {
+      sourceSmokeStage('quit_requested')
+      app.quit()
+    })
     return
   }
   void rendererLoaded.then(() => {
@@ -1489,7 +1493,15 @@ if (packagedSourceRollbackUnavailable) {
   })
 }
 
+function sourceSmokeStage(stage) {
+  if (sourceStartupSmoke) writeSync(2, `[desktop-smoke] ${stage} elapsed_ms=${Math.round(process.uptime() * 1000)}\n`)
+}
+
+app.on('will-quit', () => sourceSmokeStage('will_quit'))
+app.on('quit', () => sourceSmokeStage('quit'))
+
 app.on('before-quit', event => {
+  sourceSmokeStage('before_quit')
   app.isQuitting = true
   releaseSmokeChannel?.close()
   globalShortcut.unregisterAll()
@@ -1506,9 +1518,14 @@ app.on('before-quit', event => {
     : backend ? shutdownBackendBestEffort(backend) : Promise.resolve()
   const maintenance = managedWorkspaceMaintenance
   managedWorkspaceMaintenance = null
-  const maintenanceDrain = Promise.race([Promise.resolve().then(() => maintenance?.close()), wait(3000)])
+  const maintenanceDrain = Promise.race([Promise.resolve().then(async () => {
+    sourceSmokeStage('maintenance_closing')
+    await maintenance?.close()
+    sourceSmokeStage('maintenance_closed')
+  }), wait(3000).then(() => sourceSmokeStage('maintenance_deadline'))])
   const drain = Promise.all([backendDrain, maintenanceDrain])
-  quitDrain = drain.then(() => app.exit(0), () => app.exit(0))
+  const exit = () => { sourceSmokeStage('app_exit_requested'); app.exit(0) }
+  quitDrain = drain.then(exit, exit)
 })
 
 app.on('window-all-closed', event => event.preventDefault?.())
