@@ -39,7 +39,7 @@
 
 ## Settings v4 keys
 
-New persisted fields (desktop `ambient-orb-settings.json`):
+New persisted fields (desktop settings file; the legacy filename is retained for upgrade compatibility):
 
 | Key | Type | Default | Feature |
 |---|---|---|---|
@@ -48,6 +48,7 @@ New persisted fields (desktop `ambient-orb-settings.json`):
 | `planReadback` | `summary` \| `confirm` \| `silent` | `summary` | 02 |
 | `plannerModel` | string | `""` (means follow `fast_model`) | 02 |
 | `progressBubbles` | `off` \| `milestones` \| `all` | `milestones` | [05](05-progress-bubbles.md) |
+| `codingProgressNarration` | `smart` \| `continuous` | `smart` | 连续转述增加语音输出与模型用量 |
 | `embeddingProvider` | `dashscope` \| `local` | `dashscope` | [04](04-knowledge-base.md) |
 | `embeddingModel` | string | provider default | 04 |
 | `capabilitiesConfigPath` | string | `""` → default `~/.nova-audio-agent/capabilities.json` | [03](03-capability-registry-and-mcp.md) |
@@ -212,7 +213,7 @@ Suggested tabs / sections (Chinese UI labels):
 | 意图理解 | `clarificationDepth`, `planReadback`, `plannerModel` |
 | 能力 | module toggles, search provider, MCP editor / probe |
 | 知识库 | enable (link to module), paths, embedding provider, ingest UI entry |
-| 通知 | `progressBubbles` |
+| 通知 | `progressBubbles`、`codingProgressNarration` |
 | 语音唤醒 | `wakeWordEnabled`, `autoHideSeconds`, local model status / retry; desktop-only save without backend restart |
 | (existing) | appearance, proactivity, pipeline, Codex binary/workspace, API keys |
 

@@ -372,3 +372,31 @@ test('resolveIntakeTarget refuses busy and full deterministically while a confir
     await rm(value.root, {recursive: true, force: true})
   }
 })
+
+test('desktop task port cancels the exact slot and retains terminal workspace with revalidation', async () => {
+  const value = await fixture()
+  await withProjects(value, ['beta'])
+  const gates = gateProjects(value, ['alpha', 'beta'])
+  try {
+    const a = run(value, 'alpha', {project: 'alpha', delegateId: 'a'})
+    await gates.get('alpha')!.started
+    assert.equal(value.adapter.taskPort.cancelTask('a'), 'cancelling')
+    assert.equal((await a).outcome, 'cancelled')
+    const path = await value.adapter.taskPort.taskDirectory('a')
+    assert.equal(path, (await value.store.resolveWorkspace('alpha')).canonical_path)
+    const b = run(value, 'beta', {project: 'beta', delegateId: 'b'})
+    void b.catch(() => { /* cleanup owns rejected work */ })
+    await gates.get('beta')!.started
+    assert.equal(value.adapter.taskPort.cancelTask('a'), 'not_running')
+    assert.deepEqual(value.adapter.running().map(work => work.work_id), ['b'])
+    assert.equal(await value.adapter.taskPort.taskDirectory('a'), path)
+    await rm(path, {recursive: true})
+    await assert.rejects(value.adapter.taskPort.taskDirectory('a'))
+    gates.get('beta')!.release()
+    await b
+  } finally {
+    for (const gate of gates.values()) gate.release()
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})

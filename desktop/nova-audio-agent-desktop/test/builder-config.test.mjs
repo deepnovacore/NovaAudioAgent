@@ -478,12 +478,12 @@ test('ordinary CI uploads package artifacts only for version tags', async () => 
     {
       os: 'macos-latest',
       script: 'package:mac:candidate',
-      artifact: 'ambient-orb-mac',
+      artifact: 'nova-audio-agent-desktop-mac',
     },
     {
       os: 'windows-latest',
       script: 'package:win',
-      artifact: 'ambient-orb-win',
+      artifact: 'nova-audio-agent-desktop-win',
     },
   ])
   assert.ok(packageJob.steps.some(step => step.uses === 'actions/upload-artifact@v4'))

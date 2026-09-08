@@ -138,7 +138,7 @@ test('returns null for a missing position file', async () => {
 
 test('round-trips a saved position and rejects corrupt data', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-orb-position-'))
-  const file = join(directory, 'ambient-orb-window-position.json')
+  const file = join(directory, 'nova-audio-agent-desktop-window-position.json')
   try {
     await saveWindowPosition(file, { x: 321, y: 45 })
     assert.deepEqual(await loadWindowPosition(file), { x: 321, y: 45 })
@@ -151,7 +151,7 @@ test('round-trips a saved position and rejects corrupt data', async () => {
 
 test('rejects non-integer coordinates when saving or loading', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-orb-position-'))
-  const file = join(directory, 'ambient-orb-window-position.json')
+  const file = join(directory, 'nova-audio-agent-desktop-window-position.json')
   try {
     await assert.rejects(saveWindowPosition(file, { x: 1.5, y: 45 }), TypeError)
     await writeFile(file, JSON.stringify({ x: 321, y: 45.5 }), 'utf8')

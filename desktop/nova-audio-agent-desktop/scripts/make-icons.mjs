@@ -1,4 +1,4 @@
-// Cross-platform icon packager for the ambient orb.
+// Cross-platform icon packager for Nova Audio Agent Desktop.
 //
 // The approved raster mark is committed as a size-specific PNG ladder under
 // resources/icon-source. Keeping the resampling step outside the build makes
@@ -98,7 +98,7 @@ export async function makeIcons({
 } = {}) {
   const paths = outputPaths(outputDir, { icns })
   if (ifMissing && await allPresent(paths)) {
-    log('ambient-orb icons are already generated')
+    log('nova-audio-agent-desktop icons are already generated')
     return { skipped: true, written: [] }
   }
 
@@ -131,10 +131,10 @@ export async function makeIcons({
       outDir,
     })
     if (result?.ok) written.push(paths.icns)
-    else log(`ambient-orb icons: skipping icns (${result?.reason || 'conversion failed'})`)
+    else log(`nova-audio-agent-desktop icons: skipping icns (${result?.reason || 'conversion failed'})`)
   }
 
-  log(`ambient-orb icons: wrote ${written.length} files`)
+  log(`nova-audio-agent-desktop icons: wrote ${written.length} files`)
   return { skipped: false, written }
 }
 

@@ -110,7 +110,7 @@ test('release candidate explicitly builds unsigned bytes and keeps trust-bound s
   assert.match(workflow, /collect:release-artifacts/u)
   assert.doesNotMatch(workflow, /attest-build-provenance|id-token:|attestations:/u)
   assert.match(workflow, /generate:pending-release-ledger/u)
-  assert.match(workflow, /node desktop\/ambient-orb\/node_modules\/electron\/install\.js/u)
+  assert.match(workflow, /node desktop\/nova-audio-agent-desktop\/node_modules\/electron\/install\.js/u)
   assert.match(
     workflow,
     /npm run test:runtime\n\s+if: .*runner\.os != 'Windows'/u,
@@ -137,7 +137,7 @@ test('release candidate explicitly builds unsigned bytes and keeps trust-bound s
   for (const name of packageScripts) assert.equal(typeof scripts[name], 'string')
   assert.match(
     workflow,
-    /npm run \$\{\{ matrix\.package_script \}\} --workspace @nova-audio-agent\/ambient-orb/u,
+    /npm run \$\{\{ matrix\.package_script \}\} --workspace @nova-audio-agent\/desktop/u,
   )
 })
 
@@ -197,7 +197,7 @@ test('promotion is manual, candidate-bound, main-bound, and publishes npm only a
   assert.doesNotMatch(macSmokeJob, /target: darwin-arm64:dmg/u)
   assert.match(
     workflow,
-    /cp desktop\/ambient-orb\/scripts\/installed-candidate-smoke\.mjs candidate\/release-smoke-kit\/scripts\//u,
+    /cp desktop\/nova-audio-agent-desktop\/scripts\/installed-candidate-smoke\.mjs candidate\/release-smoke-kit\/scripts\//u,
   )
   assert.match(workflow, /node candidate\/release-smoke-kit\/scripts\/run-unsigned-installed-smoke\.mjs/u)
   assert.match(workflow, /npm whoami/u)

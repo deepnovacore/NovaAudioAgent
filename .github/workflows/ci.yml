@@ -60,10 +60,10 @@ jobs:
         include:
           - os: macos-latest
             script: package:mac:candidate
-            artifact: ambient-orb-mac
+            artifact: nova-audio-agent-desktop-mac
           - os: windows-latest
             script: package:win
-            artifact: ambient-orb-win
+            artifact: nova-audio-agent-desktop-win
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:

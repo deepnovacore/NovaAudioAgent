@@ -15,6 +15,7 @@ import {
   normalizeSettings,
   publicSettings,
   orbSettings,
+  backendSettings,
   readSecret,
   saveSettings,
   secretsPresent,
@@ -75,6 +76,7 @@ test('the default settings are the documented schema', () => {
     version: 4,
     palette: 'ember',
     proactivity: 'balanced',
+    codingProgressNarration: 'smart',
     codexHeartbeatSeconds: 30,
     codexBinaryMode: 'auto',
     codexBinaryPath: '',
@@ -246,6 +248,7 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     version: 4,
     palette: 'graphite',
     proactivity: 'balanced',
+    codingProgressNarration: 'smart',
     codexHeartbeatSeconds: 45,
     codexBinaryMode: 'auto',
     codexBinaryPath: '',
@@ -332,6 +335,7 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'codexHeartbeatSeconds',
     'codexManagedRoot',
     'codexWorkspace',
+    'codingProgressNarration',
     'embeddingModel',
     'embeddingProvider',
     'integratedModel',
@@ -702,6 +706,7 @@ test('publicSettings never carries the secrets object', () => {
     'codexHeartbeatSeconds',
     'codexManagedRoot',
     'codexWorkspace',
+    'codingProgressNarration',
     'embeddingModel',
     'embeddingProvider',
     'integratedModel',
@@ -728,7 +733,7 @@ test('orb settings expose only renderer-owned appearance and activation fields',
     startListeningOnLaunch: true,
     codexBinaryPath: 'C:\\private\\codex.exe',
     modelBaseUrl: 'https://private.example/v1',
-  }), {palette: 'graphite', startListeningOnLaunch: true, wakeWordEnabled: false, autoHideSeconds: 60})
+  }), {codingProgressNarration: 'smart', palette: 'graphite', startListeningOnLaunch: true, wakeWordEnabled: false, autoHideSeconds: 60})
 })
 
 test('secretsPresent reports booleans for every key and leaks no ciphertext', () => {
@@ -1123,7 +1128,7 @@ test('applySettingsUpdate tolerates a missing or non-object patch', () => {
 
 test('loadSettings answers defaults for a missing or corrupt file', async () => {
   await withTempDirectory(async directory => {
-    const file = join(directory, 'ambient-orb-settings.json')
+    const file = join(directory, 'nova-audio-agent-desktop-settings.json')
     assert.deepEqual(await loadSettings(file), DEFAULT_SETTINGS)
     await writeFile(file, '{broken', 'utf8')
     assert.deepEqual(await loadSettings(file), DEFAULT_SETTINGS)
@@ -1134,7 +1139,7 @@ test('loadSettings answers defaults for a missing or corrupt file', async () => 
 
 test('saveSettings round-trips through loadSettings and leaves no temporary behind', async () => {
   await withTempDirectory(async directory => {
-    const file = join(directory, 'ambient-orb-settings.json')
+    const file = join(directory, 'nova-audio-agent-desktop-settings.json')
     const settings = applySettingsUpdate(DEFAULT_SETTINGS, {
       palette: 'graphite',
       proactivity: 'conservative',
@@ -1151,13 +1156,13 @@ test('saveSettings round-trips through loadSettings and leaves no temporary behi
     // schema, so it must not survive the round trip either.
     const { rejectedSecrets: _rejectedSecrets, ...persisted } = settings
     assert.deepEqual(await loadSettings(file), persisted)
-    assert.deepEqual(await readdir(directory), ['ambient-orb-settings.json'])
+    assert.deepEqual(await readdir(directory), ['nova-audio-agent-desktop-settings.json'])
   })
 })
 
 test('saveSettings uses POSIX owner mode and never spells a secret in plaintext', async () => {
   await withTempDirectory(async directory => {
-    const file = join(directory, 'ambient-orb-settings.json')
+    const file = join(directory, 'nova-audio-agent-desktop-settings.json')
     const settings = applySettingsUpdate(DEFAULT_SETTINGS, {
       secrets: { codexApiKey: 'sk-never-on-disk' },
     }, fakeCodec())
@@ -1173,7 +1178,7 @@ test('saveSettings uses POSIX owner mode and never spells a secret in plaintext'
 
 test('saveSettings normalizes before writing so junk can never reach disk', async () => {
   await withTempDirectory(async directory => {
-    const file = join(directory, 'ambient-orb-settings.json')
+    const file = join(directory, 'nova-audio-agent-desktop-settings.json')
 
     await saveSettings(file, { palette: 'neon', codexHeartbeatSeconds: 5, stray: 'x' })
 
@@ -1184,7 +1189,7 @@ test('saveSettings normalizes before writing so junk can never reach disk', asyn
 
 test('the next save rewrites a plaintext entry on disk as ciphertext', async () => {
   await withTempDirectory(async directory => {
-    const file = join(directory, 'ambient-orb-settings.json')
+    const file = join(directory, 'nova-audio-agent-desktop-settings.json')
     await saveSettings(file, { secrets: { modelApiKey: plaintextEntry('sk-stale') } })
 
     // An unrelated field changes; the stale entry rides along with that write,
@@ -1211,7 +1216,7 @@ test('the next save rewrites a plaintext entry on disk as ciphertext', async () 
 
 test('a rejected secret leaves the file byte-for-byte as it was for that key', async () => {
   await withTempDirectory(async directory => {
-    const file = join(directory, 'ambient-orb-settings.json')
+    const file = join(directory, 'nova-audio-agent-desktop-settings.json')
     const codec = fakeCodec()
     await saveSettings(file, applySettingsUpdate(DEFAULT_SETTINGS, {
       secrets: { codexApiKey: 'sk-good' },
@@ -1290,4 +1295,17 @@ test('the settings writer neither commits nor stalls when one save fails', async
 
   assert.equal(after.palette, 'graphite', 'the queue survives a rejected write')
   assert.equal(current.palette, 'graphite')
+})
+
+test('coding progress narration round trips and defaults to smart', () => {
+  assert.equal(normalizeSettings({}).codingProgressNarration, 'smart')
+  const settings = normalizeSettings({codingProgressNarration: 'continuous'})
+  assert.equal(publicSettings(settings).codingProgressNarration, 'continuous')
+  assert.equal(normalizeSettings({codingProgressNarration: 'invalid'}).codingProgressNarration, 'smart')
+})
+
+
+test('coding narration mode changes persist without requesting a backend restart', () => {
+  assert.deepEqual(backendSettings({codingProgressNarration: 'smart'}), backendSettings({codingProgressNarration: 'continuous'}))
+  assert.equal(orbSettings({codingProgressNarration: 'continuous'}).codingProgressNarration, 'continuous')
 })

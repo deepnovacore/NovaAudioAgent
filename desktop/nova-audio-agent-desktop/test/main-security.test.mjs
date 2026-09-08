@@ -626,7 +626,7 @@ test('warns instead of silently failing when the global shortcut cannot register
   const registration = source.slice(source.indexOf('globalShortcut.register('))
   assert.match(
     registration.slice(0, 400),
-    /console\.warn\('\[ambient-orb\] global shortcut unavailable on this session'\)/,
+    /console\.warn\('\[nova-audio-agent-desktop\] global shortcut unavailable on this session'\)/,
   )
 })
 

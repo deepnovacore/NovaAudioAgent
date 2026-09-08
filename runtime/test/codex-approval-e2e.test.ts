@@ -345,7 +345,7 @@ async function finishResponse(service: RealtimeService, responseId: string): Pro
 }
 
 test('Windows file approval crosses fake app-server, Codex function authority, and terminal completion', async t => {
-  const e2e = await startApprovalE2e(t, 'file-approval')
+  const e2e = await startApprovalE2e(t, 'file-approval-held-terminal')
   await waitUntil(() => e2e.controller.pending, 'voice controller pending')
   const approvalId = e2e.controller.view.pending_approval_id!
   const prompt = e2e.service.queuedHostItems().find(item => (
@@ -382,6 +382,8 @@ test('Windows file approval crosses fake app-server, Codex function authority, a
     'voice authority writes exactly one JSON-RPC response',
   )
   await finishResponse(e2e.service, 'response-voice-accept')
+  // Keep stdin alive until the FIFO response-count probe has completed.
+  e2e.factory.owner!.release('approval_turn_completion')
   const result = await within(e2e.running, 'voice terminal completion')
   assert.equal(result.classification, 'completed')
   assert.equal(result.completion?.final_text, 'fixture result')

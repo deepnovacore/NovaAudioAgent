@@ -5,7 +5,7 @@ export const NATURAL_ORB_WINDOW_SIZE = Object.freeze({width: 160, height: 160})
 const CONFIRMATION_LAYOUT_CSS_HEIGHT = 160
 const CONFIRMATION_ORB_CENTER_BELOW_CSS = 53
 const CONFIRMATION_ORB_CENTER_ABOVE_CSS = 107
-const BUBBLE_WIDTH_CSS = 320
+const BUBBLE_WIDTH_CSS = 360
 const BUBBLE_ROW_HEIGHT_CSS = 56
 
 function normalizedPosition(value) {
@@ -87,7 +87,7 @@ export function confirmationWindowLayout({normalBounds, zoomFactor, workArea}) {
 }
 
 /**
- * Reserve the native surface a renderer needs for up to three progress bubbles.
+ * Reserve the native surface a renderer needs for a task card and up to three progress bubbles.
  * BrowserWindow bounds are Electron DIPs, so display scale is deliberately not
  * multiplied here: Chromium's CSS-to-backing-pixel conversion already owns it.
  */
@@ -102,7 +102,7 @@ export function bubbleWindowLayout({
   if (!validRectangle(normalBounds) || !validRectangle(workArea)) {
     throw new TypeError('bubble window geometry is invalid')
   }
-  if (!Number.isInteger(rows) || rows < 1 || rows > 3) {
+  if (!Number.isInteger(rows) || rows < 1 || rows > 6) {
     throw new RangeError('bubble rows are invalid')
   }
   if (!Number.isFinite(zoomFactor) || zoomFactor <= 0 || zoomFactor > 5
@@ -180,6 +180,10 @@ export function bubbleWindowLayout({
 
 function bubbleOnlyLayout({normalBounds, zoomFactor, bubbleHeight, bubbleWidth, x, workArea}) {
   const naturalHeight = Math.max(NATURAL_ORB_WINDOW_SIZE.height, Math.ceil(160 * zoomFactor))
+  if (naturalHeight + bubbleHeight > workArea.height || bubbleWidth > workArea.width) {
+    return {suppressed: true, bubblePlacement: 'above', position: normalBounds,
+      height: normalBounds.height, orbOffsetX: normalBounds.width / 2, orbOffsetY: normalBounds.height / 2}
+  }
   const orbOffset = Math.round(naturalHeight / 2)
   const above = {
     bubblePlacement: 'above',
@@ -368,7 +372,7 @@ export function createOrbWindowController({
   }
 
   function reserveBubbleArea(nextRows) {
-    if (!Number.isInteger(nextRows) || nextRows < 0 || nextRows > 3) {
+    if (!Number.isInteger(nextRows) || nextRows < 0 || nextRows > 6) {
       throw new RangeError('bubble rows are invalid')
     }
     if (nextRows > 0) ensureNormalBounds()

@@ -1,3 +1,4 @@
+import type {CodingTaskPort} from './coding-executor.js'
 /** Production ownership for one realtime graph and one authenticated desktop transport. */
 
 import {
@@ -148,6 +149,11 @@ export function buildDesktopRealtimeComposition(
     token: options.token,
     service: realtime.service,
     executor: codingExecutorIdentity(realtime),
+    ...(() => {
+      const adapter = [...realtime.runtime.executors.values()].find(adapter => adapter.manifest.roles.includes('coding'))
+      const port = (adapter as {taskPort?: CodingTaskPort} | undefined)?.taskPort
+      return port === undefined ? {} : {taskPort: port}
+    })(),
     stop: options.stop,
     memoryBoard: (requestId, detail) => memoryBoardMessage(
       requestId,

@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   version: SETTINGS_VERSION,
   palette: 'ember',
   proactivity: 'balanced',
+  codingProgressNarration: 'smart',
   codexHeartbeatSeconds: 30,
   codexBinaryMode: 'auto',
   codexBinaryPath: '',
@@ -258,6 +259,12 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
       DEFAULT_SETTINGS.palette,
       validPalette,
     ),
+    codingProgressNarration: pick(
+      ownEnumerableDataValue(source, 'codingProgressNarration'),
+      ownEnumerableDataValue(fallback, 'codingProgressNarration'),
+      DEFAULT_SETTINGS.codingProgressNarration,
+      value => value === 'smart' || value === 'continuous' ? value : null,
+    ),
     proactivity: pick(
       ownEnumerableDataValue(source, 'proactivity'),
       ownEnumerableDataValue(fallback, 'proactivity'),
@@ -432,7 +439,7 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
 }
 
 export function backendSettings(settings) {
-  const {wakeWordEnabled, autoHideSeconds, ...backend} = normalizeSettings(settings)
+  const {wakeWordEnabled, autoHideSeconds, codingProgressNarration, ...backend} = normalizeSettings(settings)
   return backend
 }
 
@@ -444,6 +451,7 @@ export function publicSettings(settings) {
     version: normalized.version,
     palette: normalized.palette,
     proactivity: normalized.proactivity,
+    codingProgressNarration: normalized.codingProgressNarration,
     codexHeartbeatSeconds: normalized.codexHeartbeatSeconds,
     codexBinaryMode: normalized.codexBinaryMode,
     codexBinaryPath: normalized.codexBinaryPath,
@@ -478,6 +486,7 @@ export function publicSettings(settings) {
 export function orbSettings(settings) {
   const normalized = normalizeSettings(settings)
   return Object.freeze({
+    codingProgressNarration: normalized.codingProgressNarration,
     palette: normalized.palette,
     startListeningOnLaunch: normalized.startListeningOnLaunch,
     wakeWordEnabled: normalized.wakeWordEnabled,
@@ -621,6 +630,7 @@ export function applySettingsUpdate(current, patch, codec) {
   const next = normalizeSettings({
     palette: ownEnumerableDataValue(source, 'palette'),
     proactivity: ownEnumerableDataValue(source, 'proactivity'),
+    codingProgressNarration: ownEnumerableDataValue(source, 'codingProgressNarration'),
     codexHeartbeatSeconds: ownEnumerableDataValue(source, 'codexHeartbeatSeconds'),
     codexBinaryMode: ownEnumerableDataValue(source, 'codexBinaryMode'),
     codexBinaryPath: ownEnumerableDataValue(source, 'codexBinaryPath'),

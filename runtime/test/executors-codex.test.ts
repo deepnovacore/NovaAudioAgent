@@ -199,7 +199,7 @@ test('hidden Codex bindings stay while the model sees only descriptor-driven hos
   const names = compiled.schemas.map(schema => (schema.function as {name: string}).name)
   assert.ok(!names.some(name => name.startsWith('codex__')), names.join(','))
   assert.deepEqual(names.slice(-3), ['dispatch', 'cancel', 'confirm'])
-  const dispatch = compiled.schemas.at(-3)!.function as {
+  const dispatch = compiled.schemas.find(schema => (schema.function as {name: string}).name === 'dispatch')!.function as {
     description: string
     parameters: {properties: {executor: {enum: string[]}}; required: string[]}
   }

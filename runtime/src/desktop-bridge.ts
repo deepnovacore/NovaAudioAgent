@@ -1,3 +1,4 @@
+import {DesktopTasks, executorTasksSchema, taskActionResultSchema} from './desktop-tasks.js'
 import {EXECUTOR_RESULT, EXECUTOR_RESULTS_RESET, DESKTOP_ACTIVITY, CLOCK_PING, CAPTION, PLAYBACK_TERMINAL} from './desktop-wire.js'
 /**
  * One-client transport adapter around an already-built `RealtimeService`.
@@ -71,6 +72,7 @@ export interface DesktopCommand {
 /** The service surface the bridge drives. Narrow: six calls and one read. */
 export interface BridgeService {
   readonly executorState: ExecutorState
+  setCodingProgressNarration?(mode: 'smart' | 'continuous'): void
   sendAudio(pcm: Uint8Array): Promise<void>
   localSpeechOnset(speechId: string): Promise<void>
   playbackStarted(utteranceId: string, generationEpoch: number): boolean
@@ -136,6 +138,8 @@ export class DesktopSocketBridge {
   // ponytail: 64 session entries; refuse new tracking when every slot is live.
   readonly #results = new Map<string, {result: ExecutorResult; project?: string; title?: string}>()
   #resultReplay: string[] = []
+  readonly tasks: DesktopTasks
+  #tasksOutbound: string | null = null
 
   /**
    * The highest generation the renderer has been told to clear.
@@ -184,6 +188,8 @@ export class DesktopSocketBridge {
     this.#approvalView = options.approvalView ?? null
     this.#progressMode = options.progressBubbles ?? 'milestones'
     this.#executor = options.executor ?? null
+    this.tasks = new DesktopTasks(this.#executor?.executor ?? null)
+    if (this.#projectView !== null) this.tasks.project(this.#projectView)
     this.#uplinkFlushedAt = options.clock?.now() ?? 0
   }
 
@@ -286,6 +292,8 @@ export class DesktopSocketBridge {
     projectStateMessage(view)
     if (sameProjectView(view, this.#projectView)) return
     this.#projectView = view
+    this.tasks.project(view)
+    this.#syncTasks()
     for (const entry of view.roster ?? []) for (const work of entry.running) {
       const retained = this.#results.get(work.work_id)
       if (retained?.result === null) {
@@ -319,6 +327,10 @@ export class DesktopSocketBridge {
 
   onExecutorProgress(input: ExecutorProgress, result?: ExecutorResult): void {
     const frame = executorProgressSchema.parse(input)
+    const revision = this.tasks.snapshot().revision
+    this.tasks.progress(frame)
+    if (this.#projectView !== null) this.tasks.project(this.#projectView)
+    if (this.tasks.snapshot().revision !== revision) this.#syncTasks()
     if (result !== undefined) {
       const parsed = executorResultSchema.parse({type: EXECUTOR_RESULT, work_id: frame.delegate_id, result})
       const previous = this.#results.get(frame.delegate_id)
@@ -382,6 +394,7 @@ export class DesktopSocketBridge {
     this.#approvalOutbound = null
     this.#progressSummaries.clear()
     this.#resultReplay = []
+    this.#tasksOutbound = null
   }
 
   /** Mark the connection authenticated, which is what unblocks the single-slot queues. */
@@ -394,7 +407,17 @@ export class DesktopSocketBridge {
     this.#syncExecutorStateDelivery()
     this.#syncProjectDelivery()
     this.#syncApprovalDelivery()
+    this.#syncTasks()
     if (this.#results.size > 0) this.#replayResults()
+  }
+
+  #syncTasks(): void {
+    this.#tasksOutbound = JSON.stringify(executorTasksSchema.parse(this.tasks.snapshot()))
+    if (this.#authenticated) this.#onOutboundAvailable?.()
+  }
+
+  onTaskActionResult(result: unknown): void {
+    if (this.#authenticated) this.#enqueue(JSON.stringify(taskActionResultSchema.parse(result)))
   }
 
   #replayResults(): void {
@@ -586,6 +609,11 @@ export class DesktopSocketBridge {
           return {frame: executorApprovalMessage(view, this.#clock?.now() ?? 0, this.#executor), policy: 'latest'}
         }
       }
+    }
+    if (this.#authenticated && this.#tasksOutbound !== null) {
+      const frame = this.#tasksOutbound
+      this.#tasksOutbound = null
+      return {frame, policy: 'latest'}
     }
     if (this.#authenticated && this.#resultReplay.length > 0) {
       return {frame: this.#resultReplay.shift()!, policy: 'latest'}
@@ -976,6 +1004,9 @@ export function parseClientMessage(
 
 function commandFromControl(control: DesktopControl): DesktopCommand {
   switch (control.type) {
+    case 'executor.task_action':
+    case 'coding.progress_narration':
+      throw new DesktopProtocolError('desktop host control requires authenticated transport')
     case 'speech.onset':
       return {
         kind: 'speech_onset',

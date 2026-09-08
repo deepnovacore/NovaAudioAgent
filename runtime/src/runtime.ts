@@ -1,3 +1,4 @@
+import {CodingProgressNarrationState, codingProgressSummary} from './coding-progress-narration.js'
 import {createHash} from 'node:crypto'
 import { canonicalJson, compareCodePoints } from './canonical-json.js'
 import type { Diagnostic, ExecutorEffect, FloorDecisionRecord } from './effects.js'
@@ -192,7 +193,10 @@ export class CoreRuntime {
   #utteranceSequence = 0
   floor = new Floor()
 
+  readonly codingProgressNarration: CodingProgressNarrationState
+
   constructor(options: {
+    readonly codingProgressNarration?: CodingProgressNarrationState
     readonly manifests: readonly ExecutorManifest[]
     readonly ids: IdFactory
     readonly modelSlots?: readonly Slot[]
@@ -202,6 +206,14 @@ export class CoreRuntime {
     readonly suggestionCooldown?: number
     readonly freshWindow?: number
   }) {
+    this.codingProgressNarration = options.codingProgressNarration ?? new CodingProgressNarrationState()
+    this.codingProgressNarration.observe(() => {
+      for (const delegate of this.#inFlight.values()) {
+        if (this.#manifests.get(delegate.executor)?.roles.includes('coding')) {
+          this.#withdrawProgressSuggestion(delegate.delegate_id)
+        }
+      }
+    })
     for (const manifest of options.manifests) this.#manifests.set(manifest.name, manifest)
     this.memory = new Memory({policies: options.manifests.map(manifest => manifest.policy)})
     this.#ids = options.ids
@@ -464,7 +476,8 @@ export class CoreRuntime {
         const delegate = applied?.delegate
         const policy = delegate === undefined ? undefined : this.memory.policies.get(delegate.executor)
         if (applied === undefined || delegate === undefined || policy === undefined) break
-        if (policy.progress_via_surrogate) {
+        const coding = this.#manifests.get(delegate.executor)?.roles.includes('coding') === true
+        if (this.codingProgressNarration.viaSurrogate(coding, policy.progress_via_surrogate)) {
           if (applied.surrogateCandidateCreated) {
             target = {
               slot: 'surrogate.watch',
@@ -477,7 +490,10 @@ export class CoreRuntime {
             }
           }
         } else {
-          target = this.#resultTarget(delegate, event.kind)
+          const direct = this.#resultTarget(delegate, event.kind)
+          target = coding && this.codingProgressNarration.mode === 'continuous'
+            ? (direct === null ? null : {...direct, slot: 'fast'})
+            : direct
         }
         break
       }
@@ -893,14 +909,21 @@ export class CoreRuntime {
     // summary, so the oracle-generated expectations still agree; the first one that does will
     // diverge here rather than in the fixture.
     let surrogateCandidateCreated = false
+    const coding = this.#manifests.get(delegate.executor)?.roles.includes('coding') === true
+    const summary = coding ? codingProgressSummary(event.payload.summary) : event.payload.summary
     const previousSummary = this.#latestProgressSummary.get(delegate.delegate_id)
+    // Received history is route-independent. A mode switch withdraws delivery, not receipt:
+    // an unchanged heartbeat remains old even when its prior queued fact was never spoken.
+    if (coding && event.payload.phase === 'working' && summary !== null) {
+      this.#latestProgressSummary.set(delegate.delegate_id, summary)
+    }
     if (
-      policy.progress_via_surrogate
+      this.codingProgressNarration.viaSurrogate(coding, policy.progress_via_surrogate)
       && event.payload.phase === 'working'
-      && event.payload.summary !== null
-      && previousSummary !== event.payload.summary
+      && summary !== null
+      && previousSummary !== summary
     ) {
-      this.#latestProgressSummary.set(delegate.delegate_id, event.payload.summary)
+      this.#latestProgressSummary.set(delegate.delegate_id, summary)
       this.#withdrawProgressSuggestion(delegate.delegate_id)
       const suggestion = this.suggestions.add({
         origin: 'executor',

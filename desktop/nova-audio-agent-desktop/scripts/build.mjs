@@ -129,4 +129,4 @@ if (process.platform === 'darwin') {
   assert.equal(native.status, 0, native.stderr)
 }
 
-process.stdout.write('ambient-orb build validation passed\n')
+process.stdout.write('nova-audio-agent-desktop build validation passed\n')

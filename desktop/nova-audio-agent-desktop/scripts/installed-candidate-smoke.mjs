@@ -123,7 +123,7 @@ export function candidateInstallPlan({target, artifact, scratch}) {
     uninstall = [{
       op: 'spawn',
       command: '/usr/bin/sudo',
-      args: ['/usr/bin/dpkg', '--purge', 'nova-audio-agent-ambient-orb'],
+      args: ['/usr/bin/dpkg', '--purge', 'nova-audio-agent-nova-audio-agent-desktop'],
     }]
     residue = executable
   } else {

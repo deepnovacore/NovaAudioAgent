@@ -1,3 +1,4 @@
+import type {CodingProgressNarrationState} from './coding-progress-narration.js'
 import type { Clock } from './clock.js'
 import type { EventInput, EventRecord, JsonValue } from './events.js'
 import type { IdFactory } from './ids.js'
@@ -80,6 +81,7 @@ export interface ExecutorAdapter {
 }
 
 export interface CausalRuntimeOptions {
+  readonly codingProgressNarration?: CodingProgressNarrationState
   readonly clock: Clock
   readonly ids: IdFactory
   readonly models?: Readonly<Partial<Record<Slot, ModelPort>>>
@@ -128,6 +130,8 @@ export class CausalRuntime {
   #workVersion = 0
   #workWaiter: (() => void) | undefined
 
+  get codingProgressNarration() { return this.core.codingProgressNarration }
+
   constructor(options: CausalRuntimeOptions) {
     this.#clock = options.clock
     this.#models = {...options.models}
@@ -146,6 +150,7 @@ export class CausalRuntime {
       manifests: [...this.#executors.values()].map(adapter => adapter.manifest),
       ids: options.ids,
       modelSlots,
+      ...(options.codingProgressNarration === undefined ? {} : {codingProgressNarration: options.codingProgressNarration}),
       ...(options.retainRoutingHistory === undefined
         ? {}
         : {retainRoutingHistory: options.retainRoutingHistory}),

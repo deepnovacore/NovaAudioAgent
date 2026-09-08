@@ -1,0 +1,50 @@
+/* Uniform backing keeps desktop wallpaper and the Orb glow out of the text. */
+.task-banner {
+  position: absolute;
+  z-index: 3;
+  top: calc(6px + var(--task-banner-offset, 0px));
+  left: 6px;
+  width: calc(100% - 12px);
+  max-height: 156px;
+  padding: 8px 13px;
+  border: 1px solid #746047;
+  border-radius: 18px;
+  color: #fff3e0;
+  background: rgba(28, 27, 28, .98);
+  box-shadow: 0 3px 6px #0003, inset 0 1px #ffdfac18;
+  font: 14px/1.45 Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  pointer-events: auto;
+  text-align: left;
+}
+.task-banner[hidden], .task-banner [hidden] { display: none !important; }
+.task-banner[data-placement='below'] { top: auto; bottom: calc(6px + var(--task-banner-offset, 0px)); }
+.task-banner-heading, .task-banner-footer, .task-banner-actions { display: flex; align-items: center; gap: 7px; }
+.task-banner-heading { height: 24px; }
+.task-banner-star { color: #ffc77e; font-size: 18px; }
+.task-banner-project { color: #dfcbb2; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.task-banner h2 { font-size: 15px; font-weight: 650; line-height: 22px; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-banner-summary { color: #e3ded6; margin: 0; line-height: 21px; height: 42px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.task-banner-summary:focus { display: block; overflow: auto; }
+.task-banner h2:focus { overflow: auto; text-overflow: clip; }
+.task-banner-footer { height: 34px; margin-top: 2px; }
+.task-banner [data-task-status] { color: #e3ccae; font-size: 12px; min-width: 0; flex: 1; }
+.task-banner-dot { width: 5px; height: 5px; border-radius: 50%; background: #ffc77e; flex-shrink: 0; }
+.task-banner[data-phase='working'] .task-banner-dot { animation: task-pulse 2.4s ease-in-out infinite; }
+.task-banner[data-phase='failed'] .task-banner-dot, .task-banner[data-phase='unknown'] .task-banner-dot { background: #ffb3a6; }
+.task-banner button { display: grid; place-items: center; width: 32px; height: 32px; padding: 5px; flex-shrink: 0; border: 1px solid #6d5b46; border-radius: 10px; background: #39332d; color: #ffdaaa; cursor: pointer; }
+.task-banner button:hover:enabled { background: #514333; border-color: #bd9160; }
+.task-banner button:disabled { color: #b6afa6; background: #302d2b; cursor: default; }
+.task-banner .task-banner-hide { margin-right: -5px; border: 0; background: transparent; color: #ddcdb9; font-size: 22px; }
+.task-banner svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.task-banner [data-task-stop] svg rect { fill: currentColor; stroke: none; }
+.task-banner select { width: 74px; height: 32px; border: 1px solid #6d5b46; border-radius: 8px; background: #302d2b; color: #f6e7d0; font: 12px/1.2 inherit; }
+.task-banner :focus-visible { outline: 2px solid #ffd59c; outline-offset: 1px; border-radius: 4px; }
+.task-banner-error { margin: 0; color: #ffc3b8; font-size: 12px; line-height: 17px; }
+.task-banner:has(.task-banner-error:not([hidden])) .task-banner-summary { height: 21px; -webkit-line-clamp: 1; }
+@keyframes task-pulse { 50% { box-shadow: 0 0 5px #ffbd69aa; } }
+@media (prefers-reduced-motion: reduce) { .task-banner .task-banner-dot { animation: none; } }
+@media (prefers-contrast: more) { .task-banner { background: #171717; border-color: #ffdaaa; } }
+
+.task-banner-switch { position: relative; display: flex; align-items: center; gap: 6px; justify-content: center; height: 32px; min-width: 58px; border: 1px solid #6d5b46; border-radius: 9px; color: #f6e7d0; font-size: 12px; background: #302d2b; }
+.task-banner-switch select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.task-banner-switch:focus-within { outline: 2px solid #ffd59c; }

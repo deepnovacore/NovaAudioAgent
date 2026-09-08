@@ -14,6 +14,13 @@ import {
 const workArea = {x: 0, y: 0, width: 1440, height: 900}
 const normalBounds = {x: 600, y: 300, width: 160, height: 160}
 
+test('reserves enough native area for a banner and three independent alerts', () => {
+  const layout = bubbleWindowLayout({normalBounds, rows: 6, zoomFactor: 1, scaleFactor: 2, workArea})
+  assert.equal(layout.suppressed, false)
+  assert.equal(layout.bubbleHeight, 336)
+  assert.throws(() => bubbleWindowLayout({normalBounds, rows: 7, zoomFactor: 1, scaleFactor: 2, workArea}))
+})
+
 test('reserves bubble bounds above the orb in Electron DIPs without Retina double scaling', () => {
   const oneX = bubbleWindowLayout({
     normalBounds, rows: 3, zoomFactor: 1, scaleFactor: 1, workArea,
@@ -25,7 +32,7 @@ test('reserves bubble bounds above the orb in Electron DIPs without Retina doubl
   assert.equal(oneX.bubblePlacement, 'above')
   assert.deepEqual(retina.bounds, oneX.bounds)
   assert.deepEqual(retina.renderedOrbScreenCenter, {x: 680, y: 380})
-  assert.equal(retina.bounds.width, 320)
+  assert.equal(retina.bounds.width, 360)
   assert.equal(retina.bounds.height, 328)
 })
 
@@ -76,6 +83,9 @@ test('one controller uses confirmation bounds first, reserves bubbles, and resto
     onConfirmationPlacement: () => {},
   })
 
+  const combined = controller.reserveBubbleArea(6)
+  assert.equal(combined.suppressed, false)
+  assert.equal(bounds.height, 496)
   const bubble = controller.reserveBubbleArea(2)
   assert.equal(bubble.suppressed, false)
   assert.equal(bounds.height, 272)
@@ -291,4 +301,21 @@ test('result wire requires a keyed reset and refuses cross-work identity, malfor
   assert.equal(parseLastResultFrame({type: 'executor.result', result: null}), undefined)
   assert.equal(parseLastResultFrame({...frame, result: {...result, project: {html: 'x'}}}), undefined)
   assert.equal(parseLastResultFrame({...frame, extra: 'x'.repeat(16 * 1024)}), undefined)
+})
+
+test('renderer routes coding progress by wire identity and preserves coding alerts', async () => {
+  const {readFile} = await import('node:fs/promises')
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+  const body = source.split('} else if (message.type === EXECUTOR_PROGRESS) {')[1].split('} else if (message.type === EXECUTOR_RESULTS_RESET) {')[0]
+  const route = new Function('message', 'axes', 'parseProgressFrame', 'taskBanner', 'progressBubbles', body)
+  const shown = []
+  const axes = {executorId: 'coding-host', executorName: 'Friendly coding name'}
+  const frame = {type: 'executor.progress', executor: 'coding-host', delegate_id: 'a', phase: 'working', summary: '进展', level: 'detail', ts: 1}
+  const send = message => route(message, axes, parseProgressFrame, {state: () => ({tasks: []})}, {push: value => shown.push(value)})
+  send(frame)
+  assert.equal(shown.length, 0)
+  send({...frame, phase: 'alert', level: 'milestone'})
+  assert.equal(shown.length, 1)
+  send({...frame, executor: 'monitor'})
+  assert.equal(shown.length, 2)
 })

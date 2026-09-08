@@ -264,7 +264,7 @@ Post-fix evidence:
   approval E2E: 353/353 pass.
 - Runtime lint: pass.
 - Browser/native audio, onset, playback generation, and renderer FIFO: 54/54 pass.
-- Ambient Orb production build validation: pass; the first launch hit one backend-readiness timeout,
+- Nova Audio Agent Desktop production build validation: pass; the first launch hit one backend-readiness timeout,
   while a clean second launch remained connected and showed `待命 · Codex 空闲`.
 - The final-only test was mutation-checked: removing the new ledger registration produces
   `approval_not_authorized`; restoring it passes.
@@ -368,7 +368,7 @@ decision function. The semantic-acknowledgement floor gate in point 5 remains a 
 5. Queue a Codex terminal fact immediately after voice settlement; it must become deliverable without
    waiting for the stale user response.
 6. Run the full realtime service/session/floor/bridge and approval E2E suites, renderer browser/native
-   audio suites, Ambient Orb production build, runtime lint, and `git diff --check`.
+   audio suites, Nova Audio Agent Desktop production build, runtime lint, and `git diff --check`.
 
 Current local evidence for this third correction:
 
@@ -393,7 +393,7 @@ Current local evidence for this third correction:
 - Full desktop: 786 total; 763 pass, 19 skips, and 4 failures when run as the restricted
   `CodexSandboxOffline` account. All four are Windows owner/ACL/process-tree fixtures; their native
   probe reports `Access denied`. Rerunning those exact files as the signed-in host user is 28/28
-  green. Ambient Orb production build validation and the host-user source-startup smoke both pass.
+  green. Nova Audio Agent Desktop production build validation and the host-user source-startup smoke both pass.
 
 Historical note for the earlier direct-ASR implementation: after its two reviews, that earlier client
 build was restarted as the signed-in host user from this worktree. This does **not** establish that the

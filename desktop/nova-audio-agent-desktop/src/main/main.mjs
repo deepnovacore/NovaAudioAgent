@@ -1,3 +1,4 @@
+import {configureDesktopIdentity} from './desktop-identity.mjs'
 import {createBackendControl} from './backend-control.mjs'
 import {createKnowledgeActions} from './knowledge-actions.mjs'
 import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, capabilityDocumentRevision, invalidCommit} from './capabilities-settings.mjs'
@@ -120,6 +121,7 @@ import {
 } from './security.mjs'
 import { validReleaseCameraResult } from '../renderer/release-camera-contract.mjs'
 
+configureDesktopIdentity(app)
 registerAppScheme(protocol)
 
 // Windows groups taskbar/notification identity by AppUserModelID; a no-op
@@ -483,7 +485,7 @@ function trayImage() {
     const image = nativeImage.createFromPath(file)
     if (!image.isEmpty()) return image
   }
-  console.warn(`[ambient-orb] tray icon unreadable, falling back to a blank pixel: ${file}`)
+  console.warn(`[nova-audio-agent-desktop] tray icon unreadable, falling back to a blank pixel: ${file}`)
   return nativeImage.createFromDataURL(
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL6WQAAAABJRU5ErkJggg==',
   )
@@ -1260,7 +1262,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('bubble bounds request rejected')
     }
-    if (!Number.isInteger(rows) || rows < 0 || rows > 3) {
+    if (!Number.isInteger(rows) || rows < 0 || rows > 6) {
       throw new Error('bubble rows rejected')
     }
     return orbWindow.reserveBubbleArea(rows)
@@ -1318,7 +1320,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       sendToOrb('nova:backend-ready', backendStatus.connection)
     } else if (backendStatus.state !== 'starting') sendToOrb('nova:backend-exit')
   }).catch(() => {
-    console.error('Ambient Orb renderer failed to load')
+    console.error('Nova Audio Agent Desktop renderer failed to load')
     app.quit()
   })
   tray = createTray()
@@ -1328,7 +1330,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   // Wayland/XWayland sessions may silently refuse global shortcuts; surface
   // that instead of leaving the user to wonder why the hotkey never fires.
   if (!shortcutRegistered) {
-    console.warn('[ambient-orb] global shortcut unavailable on this session')
+    console.warn('[nova-audio-agent-desktop] global shortcut unavailable on this session')
   }
   backendSupervisor = createBackendSupervisor({
     start: onExit => launchBackend(backendKind, smokeChannel, onExit),

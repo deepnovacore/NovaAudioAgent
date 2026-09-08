@@ -124,7 +124,7 @@ test('dependency readiness is based on the real Electron executable, not its pac
   )
   assert.equal(
     electronExecutablePath('C:\\repo', 'win32'),
-    'C:\\repo\\desktop\\ambient-orb\\node_modules\\electron\\dist\\electron.exe',
+    'C:\\repo\\desktop\\nova-audio-agent-desktop\\node_modules\\electron\\dist\\electron.exe',
   )
   assert.equal(
     electronExecutablePath('/repo', 'linux'),

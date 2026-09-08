@@ -1,3 +1,4 @@
+import {CodingProgressNarrationState} from './coding-progress-narration.js'
 import {capabilityStatus, type CapabilityRegistry, type CapabilityStatus} from './capability-registry.js'
 import {McpSearchTransport} from './executors/search-mcp.js'
 import type {PreparedExternalMcp} from './executors/mcp.js'
@@ -329,6 +330,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   }
 
   const runtime = new CausalRuntime({
+    codingProgressNarration: new CodingProgressNarrationState(settings.coding_progress_narration),
     clock,
     ids,
     models,

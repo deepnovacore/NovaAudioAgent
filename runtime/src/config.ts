@@ -96,6 +96,7 @@ export const settingsSchema = z.object({
   codex_prewarm: z.boolean().default(true),
   codex_managed_root: z.string().default('~/.nova-audio-agent/workspaces'),
   codex_project_state_root: z.string().default('~/.nova-audio-agent'),
+  coding_progress_narration: z.enum(['smart', 'continuous']).default('smart'),
   proactivity_preset: proactivityPresetSchema.default('balanced'),
   codex_working_interval: z.number().finite().min(5).max(600).default(30),
   suggestion_cooldown: z.number().finite().nonnegative().nullable().default(null),
@@ -318,6 +319,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     executor,
     executors,
     ...executorOwnedSettings(environment, executors),
+    coding_progress_narration: optionalString(environment.NOVA_AUDIO_AGENT_CODING_PROGRESS_NARRATION),
     proactivity_preset: optionalString(environment.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET),
     suggestion_cooldown: optionalPydanticFloat(
       environment.NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN,

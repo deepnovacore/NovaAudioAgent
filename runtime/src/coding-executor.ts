@@ -117,8 +117,15 @@ export interface ProjectCommitResult {
   readonly delegate_id?: string
 }
 
+/** Optional exact host action surface, independent of voice cancellation resolution. */
+export interface CodingTaskPort {
+  cancelTask(workId: string): 'cancelling' | 'not_running'
+  taskDirectory(workId: string): Promise<string | null>
+}
+
 /** A coding executor that also owns project (workspace + session) bookkeeping. */
 export interface ProjectExecutorAdapter extends ExecutorAdapter, AgentExecutor {
+  readonly taskPort?: CodingTaskPort
   readonly confirmationController: ProjectConfirmationController
   initialize(): Promise<void>
   activeCommittedWorkspace(): Promise<WorkspaceRecord | null>

@@ -239,6 +239,7 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER` | `core` | No | volcengine | Cascaded TTS provider. |
 | `NOVA_AUDIO_AGENT_EXECUTOR` | `core` | No | None | Optional single executor selector; unset selects none. |
 | `NOVA_AUDIO_AGENT_EXECUTORS` | `core` | No | None | Optional ordered executor list; unset selects none. |
+| `NOVA_AUDIO_AGENT_CODING_PROGRESS_NARRATION` | `core` | No | smart | Coding progress narration. |
 | `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | No | balanced | Proactivity preset. |
 | `NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN` | `core` | No | preset | Suggestion cooldown override in seconds. |
 | `NOVA_AUDIO_AGENT_FRESH_WINDOW` | `core` | No | preset | Fresh-context window override in seconds. |

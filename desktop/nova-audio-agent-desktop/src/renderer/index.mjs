@@ -1,5 +1,5 @@
 import { WakeAudioRouter, canAutoSleep } from './wake-audio.mjs'
-import {DESKTOP_ACTIVITY, CLOCK_PING, PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT} from './wire-frame-types.mjs'
+import {DESKTOP_ACTIVITY, CLOCK_PING, PLAYBACK_CLEAR, PLAYBACK_ALERT, PLAYBACK_TERMINAL, EXECUTOR_STATE, PROJECT_STATE, EXECUTOR_APPROVAL, CAPTION, EXECUTOR_PROGRESS, EXECUTOR_RESULTS_RESET, EXECUTOR_RESULT, EXECUTOR_TASKS, EXECUTOR_TASK_ACTION_RESULT} from './wire-frame-types.mjs'
 import {
   activateCaptureMode,
   AlertTone,
@@ -41,6 +41,8 @@ import {
 } from './confirmation-controls.mjs'
 import { deriveOrbState } from './state.mjs'
 import { BackendReconnectController } from './backend-reconnect.mjs'
+import {mountTaskBanner} from './task-banner.mjs'
+import {createTaskAreaReservation} from './task-banner-layout.mjs'
 import {mountProgressBubbles, parseProgressFrame, parseLastResultFrame, parseProjectRoster} from './bubbles.mjs'
 
 const PROJECT_CONFIRMATION_TTL_SECONDS = 360
@@ -66,8 +68,15 @@ const captionLabel = document.querySelector('#caption')
 const lastResultButton = document.querySelector('#last-result')
 const retainedResults = new Map()
 let projectRoster = []
+let taskBanner = null
+let savedNarrationMode = 'smart'
+let pendingNarrationMode = null
 function updateResultButton() {
-  lastResultButton.hidden = retainedResults.size === 0 && projectRoster.length === 0
+  const tasks = taskBanner?.state()
+  lastResultButton.hidden = retainedResults.size === 0 && projectRoster.length === 0 && !tasks?.tasks.length
+  lastResultButton.textContent = tasks?.tasks.length && !tasks.visible
+    ? `查看任务 · ${tasks.runningCount} 个运行中` : '查看任务结果'
+  lastResultButton.setAttribute('aria-label', lastResultButton.textContent)
 }
 const applyBubbleLayout = layout => {
   const active = layout?.rows > 0 && !layout.suppressed
@@ -77,18 +86,24 @@ const applyBubbleLayout = layout => {
     shell.style.setProperty('--bubble-orb-y', `${layout.orbOffsetCssY}px`)
   }
 }
-const progressBubbles = mountProgressBubbles({
-  container: document.querySelector('#bubble-stack'),
-  reserveBubbleArea: async rows => {
-    const layout = await window.novaAudioAgentDesktop.windowLayout.reserveBubbleArea(rows)
-    applyBubbleLayout({...layout, rows: layout?.rows ?? rows})
-    return layout
+const taskArea = createTaskAreaReservation({
+  reserve: rows => window.novaAudioAgentDesktop.windowLayout.reserveBubbleArea(rows),
+  onLayout: layout => {
+    applyBubbleLayout(layout)
+    taskBanner?.applyLayout(layout)
+    progressBubbles.applyLayout(layout)
   },
 })
-const stopBubbleLayout = window.novaAudioAgentDesktop.windowLayout.onBubbleLayout(layout => {
-  applyBubbleLayout(layout)
-  progressBubbles.applyLayout(layout)
+const progressBubbles = mountProgressBubbles({
+  container: document.querySelector('#bubble-stack'),
+  reserveBubbleArea: rows => taskArea.reserveProgress(rows),
 })
+taskBanner = mountTaskBanner({
+  container: document.querySelector('#task-banner'), send,
+  reserveArea: active => taskArea.reserveBanner(active),
+  onChange: updateResultButton,
+})
+const stopBubbleLayout = window.novaAudioAgentDesktop.windowLayout.onBubbleLayout(layout => taskArea.onNativeLayout(layout))
 const stopConfirmationPlacement = window.novaAudioAgentDesktop.windowLayout
   .onConfirmationPlacement(placement => {
     shell.dataset.confirmationPlacement = placement
@@ -169,6 +184,7 @@ const axes = {
   codex: 'idle',
   /** Display name of the coding executor, from the last executor.state frame; '' until one arrives. */
   executorName: '',
+  executorId: '',
   workspace: '',
   session: '',
   pendingConfirmation: false,
@@ -852,6 +868,7 @@ async function handleControl(message) {
   } else if (message.type === EXECUTOR_STATE) {
     axes.codex = message.state === 'running' ? 'working' : 'idle'
     if (typeof message.display_name === 'string') axes.executorName = message.display_name
+    if (typeof message.executor === 'string') axes.executorId = message.executor
   } else if (message.type === PROJECT_STATE) {
     const keys = Object.keys(message).sort().join(',')
     const workspace = message.workspace_display_name
@@ -939,6 +956,7 @@ async function handleControl(message) {
     const approval = parseCodexApprovalMessage(message)
     if (approval !== null) {
       axes.executorName = approval.display_name
+      axes.executorId = approval.executor
       latestCodexApproval = approval.pending_approval
         ? {
             kind: 'codex',
@@ -958,9 +976,14 @@ async function handleControl(message) {
       confirmationPresentation.sync('codex', approval.pending_approval)
       applyConfirmationPresentation()
     }
+  } else if (message.type === EXECUTOR_TASKS) {
+    taskBanner.receive(message)
+  } else if (message.type === EXECUTOR_TASK_ACTION_RESULT) {
+    taskBanner.receiveActionResult(message)
   } else if (message.type === EXECUTOR_PROGRESS) {
     const frame = parseProgressFrame(message)
-    if (frame !== null) void progressBubbles.push(frame)
+    if (frame !== null && (message.phase === 'alert' || (message.executor !== axes.executorId
+      && !taskBanner.state().tasks.some(task => task.work_id === frame.delegateId)))) void progressBubbles.push(frame)
   } else if (message.type === EXECUTOR_RESULTS_RESET) {
     if (Object.keys(message).length === 1) {
       retainedResults.clear()
@@ -1034,12 +1057,14 @@ function resetRendererConnection(processReplaced, {closeSocket = true} = {}) {
   axes.error = ''
   confirmationDecision.deliveryLost()
   codexApprovalDecision.deliveryLost()
+  taskBanner.disconnect()
   void progressBubbles.clear()
   if (processReplaced) {
     retainedResults.clear()
     projectRoster = []
     updateResultButton()
     axes.executorName = ''
+    axes.executorId = ''
     axes.codex = 'idle'
     axes.pendingConfirmation = false
     axes.pendingConfirmationKind = null
@@ -1072,6 +1097,7 @@ function openBackendSocket(connection) {
   if (activeConnection !== null || (socket && socket.readyState < WebSocket.CLOSING)) {
     resetRendererConnection(false)
   }
+  taskBanner.connect()
   const nextSocket = new WebSocket(connection.endpoint)
   const nextConnection = socketRouter.connect(nextSocket)
   activeConnection = nextConnection
@@ -1080,6 +1106,7 @@ function openBackendSocket(connection) {
   nextSocket.onopen = () => {
     if (!nextConnection.isCurrent()) return
     nextConnection.delivery.sendText(JSON.stringify({ type: 'hello', token: connection.token }))
+    if (pendingNarrationMode && send({type: 'coding.progress_narration', mode: pendingNarrationMode})) pendingNarrationMode = null
     axes.connected = true
     axes.error = ''
     backendRecovery.socketOpened()
@@ -1136,7 +1163,9 @@ async function boot() {
     axes.cameraSource = bootstrap.cameraSource
     axes.camera = bootstrap.cameraSource === 'file' ? 'file' : 'off'
     axes.audioMode = bootstrap.audioMode
+    savedNarrationMode = bootstrap.settings?.codingProgressNarration ?? 'smart'
     axes.platform = bootstrap.platform
+    taskBanner.setPlatform(bootstrap.platform)
     axes.backendState = typeof bootstrap.backendStatus === 'string'
       ? bootstrap.backendStatus
       : 'stopped'
@@ -1161,9 +1190,16 @@ async function boot() {
     window.novaAudioAgentDesktop.microphone.onRetry(() => {
       void retryMicrophonePermission()
     })
-    // Palette updates are the only live renderer setting. Runtime settings
-    // trigger a supervised backend restart in main.
-    window.novaAudioAgentDesktop.settings?.onChanged?.(next => paletteHover.reset(next.palette))
+    // A narration preference is live host state; do not restart running work.
+    window.novaAudioAgentDesktop.settings?.onChanged?.(next => {
+      paletteHover.reset(next.palette)
+      const mode = next.codingProgressNarration
+      if (['smart', 'continuous'].includes(mode) && mode !== savedNarrationMode) {
+        savedNarrationMode = mode
+        pendingNarrationMode = mode
+        if (send({type: 'coding.progress_narration', mode})) pendingNarrationMode = null
+      }
+    })
     window.novaAudioAgentDesktop.nativeAudio.onEvent(event => {
       if (event.type === 'audio') {
         if (!nativeReady || microphoneGated() || event.wakeEpoch !== wakeAudio.epoch) return
@@ -1271,9 +1307,11 @@ confirmationAllowSession.addEventListener('click', () => {
   if (axes.pendingConfirmationKind === 'codex' && codexApprovalDecision.decide(true, 'session')) render()
 })
 lastResultButton.addEventListener('click', () => {
+  if (!taskBanner.state().visible && taskBanner.restore()) return
   void window.novaAudioAgentDesktop.executorResult.open({results: [...retainedResults.values()], roster: projectRoster})
 })
 window.addEventListener('beforeunload', () => {
+  taskBanner.dispose()
   stopConfirmationPlacement()
   stopBubbleLayout()
   void progressBubbles.clear()

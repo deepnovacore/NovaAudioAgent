@@ -1651,7 +1651,10 @@ test('captured composition callbacks preserve clear alert Codex project clock an
   assert.equal(composition.realtime.runtime.clock, clock)
   assert.equal(composition.desktop.bridge.claim(), true)
   composition.desktop.bridge.markAuthenticated()
-  // fast_sim carries no coding role, so there is no executor.state frame to deliver.
+  // No coding role: publish an empty task snapshot to clear any prior renderer state.
+  assert.deepEqual(JSON.parse(String(composition.desktop.bridge.takeNextDelivery()?.frame)), {
+    type: 'executor.tasks', revision: 0, active_project: null, tasks: [],
+  })
   assert.equal(composition.desktop.bridge.takeNextDelivery(), null)
 
   callbacks!.onAudioClear('utterance-clear', 2)
@@ -1678,6 +1681,7 @@ test('captured composition callbacks preserve clear alert Codex project clock an
     '{"type":"playback.alert","utterance_id":"utterance-alert","generation_epoch":3}',
     '{"type":"clock.ping","ping_id":"ping-0"}',
       '{"type":"project.state","workspace_display_name":"项目甲","session_title":"会话乙","roster":[],"pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
+    '{"type":"executor.tasks","revision":1,"active_project":"项目甲","tasks":[]}',
   ])
   assert.deepEqual(telemetryRecords.map(record => record.kind), [
     'playback.clear_sent',

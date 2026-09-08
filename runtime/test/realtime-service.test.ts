@@ -1562,6 +1562,7 @@ function projectionService(options: {
   const tools = compileToolSchema([manifest], {
     agentDescriptors: agentControllers.map(controller => controller.descriptor),
   })
+  let providerEpoch = 0
   let ids = 0
   const nextId = (): string => `id-${++ids}`
   const service = new RealtimeService({
@@ -1584,9 +1585,9 @@ function projectionService(options: {
     tools,
     session: new RealtimeSession({
       provider: {
-        connect: () => Promise.resolve({epoch: 1}),
+        connect: () => Promise.resolve({epoch: ++providerEpoch}),
         injectHostItem: (item) => Promise.resolve({
-          session_epoch: 1,
+          session_epoch: providerEpoch,
           host_item_id: item.host_item_id,
         }),
         createResponse: () => Promise.resolve(),
@@ -10587,4 +10588,66 @@ test('delivery-pass fixture: requested user response reserves the provider befor
   assert.deepEqual(state.queuedEventIds, ['fixture'])
   assert.equal(actions.filter(action => action === 'ensure_response').length, 1)
   assert.equal(actions.includes('inject:fixture'), false)
+})
+
+
+test('continuous coding progress is direct, deduplicated, nonempty and coalesced', () => {
+  const {service, queued} = projectionService({progressViaSurrogate: true})
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: '验证了登录故障', activity: 1}))
+  service.projectRuntimeEvent(progressEvent({seq: 2, summary: '验证了登录故障', activity: 2}))
+  assert.equal(queued().length, 1)
+  service.projectRuntimeEvent(progressEvent({seq: 3, summary: null, activity: 3}))
+  assert.equal(queued().length, 1)
+  service.projectRuntimeEvent(progressEvent({seq: 4, summary: '回归测试通过', activity: 4}))
+  assert.equal(queued().length, 1, 'bounded latest update per task')
+  assert.match(queued()[0]!, /回归测试通过/u)
+  service.setCodingProgressNarration('smart')
+  assert.equal(queued().length, 0, 'mode switch withdraws queued progress')
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 5, summary: '新的验证结果', activity: 5}))
+  assert.equal(queued().length, 1, 'continuous mode resumes with the next new summary')
+})
+
+test('continuous coding progress leaves final delivery available', () => {
+  const {service, queuedItems} = projectionService({progressViaSurrogate: true})
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent({kind: 'handoff', seq: 1, ts: 1, payload: {
+    channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1', outcome: 'ok',
+    trust: 'trusted_system', content: {summary: '验证通过，任务完成'}, refs: [],
+  }})
+  assert.equal(queuedItems().length, 1)
+  assert.equal(queuedItems()[0]!.intent.item.kind, 'final')
+})
+
+test('coding preference listener is restored after service close and reconnect', async () => {
+  const {service, queued} = projectionService({progressViaSurrogate: true})
+  await service.connect()
+  await service.close()
+  await service.connect()
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: '新的进展', activity: 1}))
+  assert.equal(queued().length, 1)
+  service.setCodingProgressNarration('smart')
+  assert.equal(queued().length, 0)
+  await service.close()
+})
+
+test('received coding summaries deduplicate across smart continuous and repeated mode switches', () => {
+  const {service, queued} = projectionService({progressViaSurrogate: true})
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: '**A**', activity: 1}))
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 2, summary: 'A', activity: 2}))
+  assert.equal(queued().length, 0, 'a smart received fact is not new after switching modes')
+  service.projectRuntimeEvent(progressEvent({seq: 3, summary: 'B', activity: 3}))
+  assert.equal(queued().length, 1)
+  service.setCodingProgressNarration('smart')
+  service.projectRuntimeEvent(progressEvent({seq: 4, summary: 'C', activity: 4}))
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 5, summary: 'B', activity: 5}))
+  assert.equal(queued().length, 1, 'B is new relative to intervening smart C')
+  service.setCodingProgressNarration('smart')
+  service.setCodingProgressNarration('continuous')
+  service.projectRuntimeEvent(progressEvent({seq: 6, summary: 'B', activity: 6}))
+  assert.equal(queued().length, 0, 'withdrawn queued facts are received, not claimed delivered or replayed')
 })
