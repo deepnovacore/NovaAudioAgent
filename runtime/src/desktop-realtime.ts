@@ -32,6 +32,8 @@ export interface DesktopServerTransport {
 export interface DesktopRealtimeOptions extends DesktopBridgeOptions {
   readonly taskPort?: CodingTaskPort
   readonly openTaskDirectory?: (path: string) => Promise<void>
+  /** Remote transport errors release the connection; desktop retains its fatal policy. */
+  readonly transportFailure?: 'abort' | 'disconnect'
   readonly memoryBoard?: (requestId: string, detail?: MemoryBoardDetail) => string
   readonly workspaceGraphBoard?: (requestId: string) => string
   readonly createServer?: (options: DesktopServerOptions) => DesktopServerTransport
@@ -49,8 +51,10 @@ export class DesktopRealtime {
   readonly serverOptions: DesktopServerOptions
 
   readonly #stop: {abort(): void}
+  readonly #transportFailure: 'abort' | 'disconnect'
   readonly #onConnectionReleased: (() => void) | undefined
   readonly #telemetry: RealtimeTelemetry | undefined
+  readonly #discardInputAudio: (() => Promise<void>) | undefined
   #generation = 0
   #activeGeneration: number | null = null
   #drainRequested = false
@@ -59,23 +63,32 @@ export class DesktopRealtime {
   constructor(options: DesktopRealtimeOptions) {
     const {
       createServer,
+      transportFailure,
       onConnectionReleased,
       memoryBoard,
       workspaceGraphBoard,
       ...bridgeOptions
     } = options
+    this.#discardInputAudio = transportFailure === 'disconnect'
+      ? options.service.discardInputAudio?.bind(options.service) : undefined
     this.#stop = options.stop
+    this.#transportFailure = transportFailure ?? 'abort'
     this.#onConnectionReleased = onConnectionReleased
     this.#telemetry = options.telemetry
     this.bridge = new DesktopSocketBridge({
       ...bridgeOptions,
+      ...(transportFailure === 'disconnect' ? {stop: {abort: () => {
+        const generation = this.#activeGeneration
+        if (generation === null) this.bridge.release()
+        else void this.#disconnect(generation)
+      }}} : {}),
       onOutboundAvailable: () => this.#requestDrain(),
     })
     this.serverOptions = {
       token: options.token,
       bootstrapTextFrames: [READY_FRAME],
       onClientAuthenticated: () => this.#authenticated(),
-      onClientDisconnect: () => this.#disconnected(),
+      onClientDisconnect: media => this.#disconnected(media?.hadProviderAttachment ?? true),
       onDebugBoardRequest: request => {
         if (request.board === 'memory') {
           if (memoryBoard === undefined) {
@@ -124,15 +137,18 @@ export class DesktopRealtime {
     this.#requestDrain()
   }
 
-  #disconnected(): void {
+  #disconnected(hadProviderAttachment: boolean): void {
     const generation = this.#activeGeneration
-    if (generation !== null) this.#release(generation)
+    if (generation !== null) this.#release(generation, hadProviderAttachment)
   }
 
-  #release(generation: number): void {
+  #release(generation: number, hadProviderAttachment = true): void {
     if (this.#activeGeneration !== generation) return
     this.#activeGeneration = null
     this.#generation += 1
+    if (hadProviderAttachment) void this.#discardInputAudio?.().catch(() => {
+      this.#telemetry?.record('remote.input_reset_failed', {})
+    })
     this.bridge.release()
     this.#onConnectionReleased?.()
   }
@@ -156,16 +172,16 @@ export class DesktopRealtime {
           try {
             await this.#send(delivery)
           } catch (error) {
-            if (delivery.policy === 'required') this.#stop.abort()
-            else if (error instanceof DesktopOutboundValidationError) {
+            if (this.#activeGeneration !== generation) break
+            if (delivery.policy === 'required' && this.#transportFailure === 'abort') this.#stop.abort()
+            else if (delivery.policy !== 'required' && error instanceof DesktopOutboundValidationError) {
               this.#telemetry?.record('desktop.outbound_validation_dropped', {
                 policy: delivery.policy,
                 frame_kind: typeof delivery.frame === 'string' ? 'text' : 'binary',
               })
               continue
             } else {
-              await this.server.disconnectClient()
-              this.#release(generation)
+              await this.#disconnect(generation)
             }
             break
           }
@@ -175,6 +191,19 @@ export class DesktopRealtime {
     } finally {
       this.#draining = false
       if (this.#activeGeneration !== null && this.#drainRequested) void this.#drain()
+    }
+  }
+
+  async #disconnect(generation: number): Promise<void> {
+    if (this.#activeGeneration !== generation) return
+    try {
+      const disconnect = this.server.disconnectClient()
+      if (this.#transportFailure === 'disconnect') this.#release(generation)
+      await disconnect
+      this.#release(generation)
+    } catch {
+      this.#release(generation)
+      this.#telemetry?.record('desktop.transport_disconnect_failed', {})
     }
   }
 

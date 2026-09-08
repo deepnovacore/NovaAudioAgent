@@ -28,6 +28,9 @@
   ],
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.json",
+    "server": "node dist/src/server-entry.js",
+    "server:pair": "node scripts/pair-device.mjs",
+    "server:token-init": "node dist/src/server-entry.js token-init",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "demo": "npm run build && node dist/src/cli.js demo",
     "fixtures:check": "npm run build && node dist/src/cli.js fixture check",

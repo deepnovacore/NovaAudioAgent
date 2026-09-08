@@ -55,6 +55,7 @@ export interface DesktopOutputCallbacks {
 }
 
 export interface BuildDesktopRealtimeCompositionOptions {
+  readonly approvalExecutor?: ExecutorIdentity
   readonly progressBubbles?: ProgressMode
   readonly token: string
   readonly stop: AbortController
@@ -66,6 +67,7 @@ export interface BuildDesktopRealtimeCompositionOptions {
   readonly projectView?: ProjectConfirmationView
   readonly approvalView?: ExecutorApprovalView
   readonly createServer?: DesktopRealtimeOptions['createServer']
+  readonly transportFailure?: DesktopRealtimeOptions['transportFailure']
 }
 
 export interface DesktopRealtimeComposition {
@@ -147,8 +149,9 @@ export function buildDesktopRealtimeComposition(
   holder.realtime = realtime
   const desktop = new DesktopRealtime({
     token: options.token,
+    ...(options.transportFailure === undefined ? {} : {transportFailure: options.transportFailure}),
     service: realtime.service,
-    executor: codingExecutorIdentity(realtime),
+    executor: codingExecutorIdentity(realtime) ?? options.approvalExecutor ?? null,
     ...(() => {
       const adapter = [...realtime.runtime.executors.values()].find(adapter => adapter.manifest.roles.includes('coding'))
       const port = (adapter as {taskPort?: CodingTaskPort} | undefined)?.taskPort
@@ -244,6 +247,8 @@ function isCameraPermissionTransport(
 }
 
 export interface RealtimeDesktopServiceOptions {
+  /** Phone-owned media must attach through the listener before the provider can start. */
+  readonly listenBeforeRealtime?: boolean
   readonly realtime: DesktopRealtimeOwner
   readonly desktop: DesktopRealtimeTransportOwner
   readonly readyEndpoint: string
@@ -292,6 +297,7 @@ export class RealtimeDesktopService {
   ) => Promise<void>
   readonly #closeAuxiliary: () => void | Promise<void>
   readonly #cleanupGraceMs: number
+  readonly #listenBeforeRealtime: boolean
   readonly #onDiagnostic: (line: string) => void
   #runOperation: Promise<void> | null = null
   #cleanupOperation: Promise<CleanupOutcome> | null = null
@@ -301,6 +307,7 @@ export class RealtimeDesktopService {
     if (!Number.isFinite(grace) || grace <= 0) {
       throw new TypeError('desktop cleanup grace must be positive and finite')
     }
+    this.#listenBeforeRealtime = options.listenBeforeRealtime ?? false
     this.#realtime = options.realtime
     this.#desktop = options.desktop
     this.#readyEndpoint = options.readyEndpoint
@@ -328,6 +335,11 @@ export class RealtimeDesktopService {
     let primaryFailure: {readonly error: unknown} | null = null
     try {
       const external = this.#externalStopMonitor()
+      if (this.#listenBeforeRealtime && !this.#stop.signal.aborted) {
+        const listening = await this.#runPhase(this.#listen(), external, 'desktop_server_start_abandoned', isReadinessCancellation)
+        if (listening.kind === 'rejected') throw listening.error
+        if (listening.kind === 'terminal') return await this.#finish(listening.cause)
+      }
       if (!this.#stop.signal.aborted) {
         const start = await this.#runPhase(
           this.#realtime.start(),
@@ -345,22 +357,20 @@ export class RealtimeDesktopService {
         const early = terminal.current()
         if (early !== undefined) return await this.#finish(early)
 
-        const listener = await this.#runPhase(
-          this.#desktop.server.start(),
-          terminal,
-          'desktop_server_start_abandoned',
-        )
-        if (listener.kind === 'rejected') primaryFailure = {error: listener.error}
-        if (listener.kind === 'terminal') return await this.#finish(listener.cause)
-        if (listener.kind === 'resolved') {
-          const announcement = await this.#runPhase(
-            this.#announce(this.#readyEndpoint, listener.value, this.#stop.signal),
-            terminal,
-            'desktop_readiness_announcement_abandoned',
-            isReadinessCancellation,
+        if (!this.#listenBeforeRealtime) {
+          const listener = await this.#runPhase(
+            this.#desktop.server.start(), terminal, 'desktop_server_start_abandoned',
           )
-          if (announcement.kind === 'rejected') primaryFailure = {error: announcement.error}
-          if (announcement.kind === 'terminal') return await this.#finish(announcement.cause)
+          if (listener.kind === 'rejected') primaryFailure = {error: listener.error}
+          if (listener.kind === 'terminal') return await this.#finish(listener.cause)
+          if (listener.kind === 'resolved') {
+            const announcement = await this.#runPhase(
+              this.#announce(this.#readyEndpoint, listener.value, this.#stop.signal),
+              terminal, 'desktop_readiness_announcement_abandoned', isReadinessCancellation,
+            )
+            if (announcement.kind === 'rejected') primaryFailure = {error: announcement.error}
+            if (announcement.kind === 'terminal') return await this.#finish(announcement.cause)
+          }
         }
         if (primaryFailure === null) return await this.#finish(await terminal.promise)
       }
@@ -371,6 +381,11 @@ export class RealtimeDesktopService {
     const cleanup = await this.#ensureCleanup()
     if (primaryFailure !== null) throw primaryFailure.error
     if (cleanup.firstFailure !== null) throw cleanup.firstFailure.error
+  }
+
+  async #listen(): Promise<void> {
+    const readiness = await this.#desktop.server.start()
+    if (!this.#stop.signal.aborted) await this.#announce(this.#readyEndpoint, readiness, this.#stop.signal)
   }
 
   #externalStopMonitor(): TerminalMonitor {
@@ -535,8 +550,9 @@ export interface DesktopConstructionOwnership {
 }
 
 export interface DesktopEntryOptions {
+  readonly listenBeforeRealtime?: boolean
   readonly token: string
-  readonly readyEndpoint: string
+  readonly readyEndpoint?: string
   readonly stop: AbortController
   readonly construct: (
     ownership: DesktopConstructionOwnership,
@@ -560,12 +576,13 @@ export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 |
       options.onDiagnostic,
     )
     validateDesktopToken(options.token)
-    parseReadyEndpoint(options.readyEndpoint)
+    if (options.readyEndpoint !== undefined) parseReadyEndpoint(options.readyEndpoint)
     const constructed = await options.construct(ownership)
     const owner = new RealtimeDesktopService({
+      ...(options.listenBeforeRealtime === undefined ? {} : {listenBeforeRealtime: options.listenBeforeRealtime}),
       realtime: constructed.realtime,
       desktop: constructed.desktop,
-      readyEndpoint: options.readyEndpoint,
+      readyEndpoint: options.readyEndpoint ?? '',
       stop: options.stop,
       announce: options.announce,
       ...(constructed.closeAuxiliary === undefined

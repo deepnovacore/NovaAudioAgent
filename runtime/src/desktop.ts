@@ -240,7 +240,7 @@ export interface DesktopServerOptions {
   readonly token: string
   readonly onControl?: (control: DesktopControl) => void | Promise<void>
   readonly onAudio?: (pcm: Uint8Array) => void | Promise<void>
-  readonly onClientDisconnect?: () => void
+  readonly onClientDisconnect?: (media?: {readonly hadProviderAttachment: boolean}) => void
   readonly onClientAuthenticated?: () => void | Promise<void>
   readonly onDebugBoardRequest?: (
     request: DesktopDebugBoardRequest,

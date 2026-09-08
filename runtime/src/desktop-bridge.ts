@@ -73,6 +73,7 @@ export interface DesktopCommand {
 export interface BridgeService {
   readonly executorState: ExecutorState
   setCodingProgressNarration?(mode: 'smart' | 'continuous'): void
+  discardInputAudio?(): Promise<void>
   sendAudio(pcm: Uint8Array): Promise<void>
   localSpeechOnset(speechId: string): Promise<void>
   playbackStarted(utteranceId: string, generationEpoch: number): boolean

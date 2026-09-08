@@ -58,7 +58,7 @@
   },
   {
     "path": "runtime/src/cascaded-realtime-assembly.ts",
-    "pattern": "}, options.codexResource?.approvalController != null)",
+    "pattern": "}, (options.executorApproval ?? options.codexResource?.approvalController) != null)",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
   },
   {
@@ -283,12 +283,7 @@
   },
   {
     "path": "runtime/src/integrated-realtime-assembly.ts",
-    "pattern": "executorApproval: options.codexResource?.approvalController !== null",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
-  },
-  {
-    "path": "runtime/src/integrated-realtime-assembly.ts",
-    "pattern": "&& options.codexResource?.approvalController !== undefined,",
+    "pattern": "executorApproval: (options.executorApproval ?? options.codexResource?.approvalController) != null,",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
   },
   {
@@ -543,12 +538,7 @@
   },
   {
     "path": "runtime/src/qwen-realtime-assembly.ts",
-    "pattern": "executorApproval: options.codexResource?.approvalController !== null",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
-  },
-  {
-    "path": "runtime/src/qwen-realtime-assembly.ts",
-    "pattern": "&& options.codexResource?.approvalController !== undefined,",
+    "pattern": "executorApproval: (options.executorApproval ?? options.codexResource?.approvalController) != null,",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
   },
   {
@@ -633,17 +623,12 @@
   },
   {
     "path": "runtime/src/realtime-assembly.ts",
-    "pattern": "...(options.codexResource?.approvalController === null",
+    "pattern": "...((options.executorApproval ?? options.codexResource?.approvalController) == null",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
   },
   {
     "path": "runtime/src/realtime-assembly.ts",
-    "pattern": "|| options.codexResource?.approvalController === undefined",
-    "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
-  },
-  {
-    "path": "runtime/src/realtime-assembly.ts",
-    "pattern": ": {executorApproval: options.codexResource.approvalController}),",
+    "pattern": ": {executorApproval: (options.executorApproval ?? options.codexResource?.approvalController)!}),",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
   },
   {

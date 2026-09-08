@@ -10,6 +10,7 @@ import type {TransportOutcome} from '../src/executors/codex/app-server-transport
 import {ProjectResolutionError, type RunningWork} from '../src/coding-executor.js'
 import type {ExecutorHandoff} from '../src/causal-runtime.js'
 import {MAX_CONCURRENT_WORK} from '../src/work-tools.js'
+import {projectStateMessage} from '../src/desktop-wire.js'
 import {
   COMPLETE,
   context,
@@ -51,6 +52,26 @@ async function withProjects(value: Fixture, names: readonly string[]): Promise<v
 }
 
 const noResolver = {resolveCancelTarget: (): Promise<string | null> => Promise.reject(new Error('must not be asked'))}
+
+test('public project roster respects the wire limit without deleting stored workspaces', async () => {
+  const value = await fixture()
+  await withProjects(value, Array.from({length: 11}, (_unused, index) => `project-${String(index).padStart(2, '0')}`))
+  try {
+    await value.adapter.initialize()
+    const agentRoster = value.adapter.roster()
+    const view = value.adapter.publicProjectView(false)
+    const stored = await value.store.snapshot()
+
+    assert.equal(stored.workspaces.length, 12)
+    assert.equal(agentRoster.length, 10)
+    assert.deepEqual(view.roster.map(entry => entry.name), agentRoster.map(entry => entry.name))
+    assert.equal(view.roster.length, 10)
+    assert.doesNotThrow(() => projectStateMessage(view))
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
 
 test('different projects run in parallel; a busy project refuses; the cap refuses with the running list', async () => {
   const value = await fixture()

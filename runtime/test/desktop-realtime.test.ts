@@ -21,6 +21,24 @@ const TOKEN = '1'.repeat(32)
 const CODEX = {executor: 'codex', display_name: 'Codex'} as const
 const SETTLE_MS = 1_000
 
+test('AOQ control-only reconnect releases the UI without queuing another provider replacement', async () => {
+  const {service} = serviceHarness()
+  let resets = 0
+  const realtime = new DesktopRealtime({token: TOKEN, executor: CODEX, stop: new AbortController(),
+    transportFailure: 'disconnect', service: {...service, discardInputAudio: () => { resets++; return Promise.resolve() }},
+    createServer: () => ({start: () => Promise.resolve({token: TOKEN, host: '127.0.0.1', port: 1}), close: () => Promise.resolve(),
+      disconnectClient: () => Promise.resolve(), sendText: () => Promise.resolve(), sendBinary: () => Promise.resolve()}),
+  })
+  await realtime.serverOptions.onClientAuthenticated?.()
+  realtime.serverOptions.onClientDisconnect?.({hadProviderAttachment: true})
+  await realtime.serverOptions.onClientAuthenticated?.()
+  realtime.serverOptions.onClientDisconnect?.({hadProviderAttachment: false})
+  assert.equal(resets, 1)
+  await realtime.serverOptions.onClientAuthenticated?.() // Both UI claims were released.
+  realtime.serverOptions.onClientDisconnect?.() // Native PCM retains its default reset behavior.
+  assert.equal(resets, 2)
+})
+
 interface ServiceHarness {
   readonly service: BridgeService
   readonly calls: string[]

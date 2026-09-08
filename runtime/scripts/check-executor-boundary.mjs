@@ -15,6 +15,7 @@ const PATTERN = /codex/giu
 const COMPOSITION_ROOTS = new Set([
   'runtime/src/cli.ts',
   'runtime/src/desktop-entry.ts',
+  'runtime/src/production-composition.ts',
   'runtime/src/production-realtime-assembly.ts',
 ])
 

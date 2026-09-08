@@ -1,3 +1,4 @@
+import {join, delimiter} from 'node:path'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {DesktopTasks, taskActionSchema, executorTasksSchema} from '../src/desktop-tasks.js'
@@ -66,4 +67,65 @@ test('control-only project labels cannot invalidate outbound task snapshots', ()
   tasks.project({workspace_display_name: '\u0000', roster: []} as never)
   assert.equal(executorTasksSchema.safeParse(tasks.snapshot()).success, true)
   assert.equal(tasks.snapshot().active_project, null)
+})
+
+
+test('native opener drops an obsolete request after filesystem validation', async () => {
+  const {openTaskDirectory} = await import('../src/desktop-task-opener.js')
+  const {realpath} = await import('node:fs/promises')
+  const path = await realpath('/tmp')
+  let wanted = true
+  let launched = false
+  const opening = openTaskDirectory(path, () => { launched = true; return Promise.resolve() }, 'darwin', () => wanted)
+  wanted = false
+  await opening
+  assert.equal(launched, false)
+})
+
+test('empty roster names and titles retain valid task fallbacks', () => {
+  const tasks = new DesktopTasks('coding')
+  tasks.project({workspace_display_name: '', roster: [{name: '', running: [{work_id: 'a', title: '\u0000'}]}]} as never)
+  tasks.progress({type: 'executor.progress', executor: 'coding', delegate_id: 'a', phase: 'working', summary: '继续工作', level: 'detail', ts: 1})
+  const snapshot = executorTasksSchema.parse(tasks.snapshot())
+  assert.equal(snapshot.active_project, null)
+  assert.equal(snapshot.tasks[0]?.project, 'coding')
+  assert.equal(snapshot.tasks[0]?.title, '任务')
+})
+
+test('a long-running native opener does not retain its caller process', {skip: process.platform === 'win32' ? 'POSIX executable fixture' : false}, async () => {
+  const {spawnSync} = await import('node:child_process')
+  const {mkdtemp, realpath, writeFile, readFile, rm} = await import('node:fs/promises')
+  const {tmpdir} = await import('node:os')
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'nova-opener-')))
+  const pidFile = join(directory, 'pid')
+  let pid: number | undefined
+  try {
+    await writeFile(join(directory, 'xdg-open'), `#!${process.execPath}
+require('node:fs').writeFileSync(process.env.NOVA_OPENER_TEST_PID, String(process.pid));
+setInterval(() => {}, 1000);
+`, {mode: 0o700})
+    const module = new URL('../src/desktop-task-opener.js', import.meta.url).href
+    const script = `import {openTaskDirectory} from ${JSON.stringify(module)}; await openTaskDirectory(${JSON.stringify(directory)}, undefined, 'linux');`
+    const caller = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      env: {...process.env, PATH: `${directory}${delimiter}${process.env.PATH ?? ''}`, NOVA_OPENER_TEST_PID: pidFile},
+      encoding: 'utf8', timeout: 3000,
+    })
+    // spawn success precedes the fixture's JS startup; always collect its PID for cleanup.
+    for (let attempt = 0; attempt < 100 && pid === undefined; attempt++) {
+      try {
+        const value = Number(await readFile(pidFile, 'utf8'))
+        if (!Number.isInteger(value) || value <= 0) throw new Error('fixture PID pending')
+        pid = value
+      }
+      catch { await new Promise(resolve => setTimeout(resolve, 20)) }
+    }
+    assert.ok(pid !== undefined && Number.isInteger(pid) && pid > 0, 'native fixture started')
+    process.kill(pid, 0)
+    assert.equal(caller.status, 0, caller.error?.message ?? caller.stderr)
+  } finally {
+    if (pid !== undefined && Number.isInteger(pid) && pid > 0) {
+      try { process.kill(pid, 'SIGTERM') } catch { /* Fixture already exited. */ }
+    }
+    await rm(directory, {recursive: true, force: true})
+  }
 })
