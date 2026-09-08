@@ -1,0 +1,45 @@
+name: iOS
+on:
+  push:
+    paths: ['ios/**', 'fixtures/client-protocol/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['ios/**', 'fixtures/client-protocol/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-client:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 16.4
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Protocol and playback checks
+        run: swift test --package-path ios/Nova --scratch-path "$RUNNER_TEMP/nova-swift"
+      - name: Choose available iPhone simulator
+        run: |
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP'] + '/devices.json') as f:
+              devices = json.load(f)['devices']
+          candidates = [d for runtime, group in devices.items() if '.iOS-' in runtime for d in group if d.get('isAvailable') and d['name'].startswith('iPhone')]
+          if not candidates:
+              raise SystemExit('An installed iOS simulator runtime is required')
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('NOVA_SIMULATOR=' + candidates[0]['udid'] + '\n')
+          PY
+      - name: Build and run NovaTests (no microphone)
+        run: >-
+          xcodebuild test -project ios/Nova/Nova.xcodeproj -scheme Nova
+          -destination "platform=iOS Simulator,id=$NOVA_SIMULATOR"
+          -derivedDataPath "$RUNNER_TEMP/nova-derived"
+          -resultBundlePath "$RUNNER_TEMP/NovaTests.xcresult"
+          CODE_SIGNING_ALLOWED=NO
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NovaTests
+          path: ${{ runner.temp }}/NovaTests.xcresult
+          if-no-files-found: ignore

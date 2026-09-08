@@ -147,6 +147,7 @@ type ProviderReconnectReason =
   | 'refusal_ledger_overflow'
   | 'project_confirmation_carrier_recovery'
   | 'project_confirmation_expiry_cleanup'
+  | 'client_disconnect'
   | 'test'
 
 interface BoundToolOrigin {
@@ -249,7 +250,7 @@ export interface ServiceRuntime {
 
 /** The provider surface the service uses directly: three calls, everything else via the session. */
 export interface ServiceProvider {
-  sendAudio(pcm: Uint8Array): Promise<void>
+  sendAudio(pcm: Uint8Array, signal?: AbortSignal): Promise<void>
   /**
    * The event stream.
    *
@@ -767,8 +768,37 @@ export class RealtimeService {
     if (closeFailure !== null) throw asError(closeFailure.cause)
   }
 
+  #inputController = new AbortController()
+  #inputReady: Promise<void> | null = null
+  readonly #inputChanged = new Signal()
+  #discardedInputEpoch = -1
+
+  /** Replace only the provider session; host work remains owned by the existing graph. */
+  discardInputAudio(): Promise<void> {
+    // A phone-owned provider may still be awaiting its first successful SDK handshake.
+    if (!this.#connected) return Promise.resolve()
+    this.#inputController.abort()
+    this.#inputController = new AbortController()
+    this.#discardedInputEpoch = this.session.sessionEpoch
+    // Serialize repeated disconnects, including one during a pending replacement. A failed
+    // replacement deliberately leaves this barrier rejected so subsequent input stays closed.
+    const previous = this.#inputReady
+    const replace = async () => {
+      this.#discardedInputEpoch = this.session.sessionEpoch
+      await this.#reconnectProviderSession({reason: 'client_disconnect'})
+    }
+    const ready = previous === null ? replace() : previous.then(replace, replace)
+    this.#inputReady = ready
+    this.#inputChanged.set()
+    void ready.catch(() => undefined)
+    return ready
+  }
+
   async sendAudio(pcm: Uint8Array): Promise<void> {
-    await this.#provider.sendAudio(pcm)
+    const controller = this.#inputController
+    if (this.#inputReady !== null) await this.#inputReady
+    if (controller.signal.aborted) return
+    await this.#provider.sendAudio(pcm, controller.signal)
   }
 
   async localSpeechOnset(speechId: string): Promise<void> {
@@ -2441,6 +2471,7 @@ export class RealtimeService {
       // say, and an iterator suspended in `await` cannot be stopped from out here.
       for await (const event of this.#provider.events(signal)) {
         if (signal.aborted) return
+        if (event.session_epoch <= this.#discardedInputEpoch) continue
         if (event.session_epoch !== this.session.sessionEpoch) continue
         received = true
         try {
@@ -2457,6 +2488,20 @@ export class RealtimeService {
         if (this.#stop.signal.aborted) return
       }
       if (this.#stop.signal.aborted || this.#providerFailed) return
+      if (streamEpoch <= this.#discardedInputEpoch && this.#inputReady !== null) {
+        while (!signal.aborted) {
+          const ready: Promise<void> = this.#inputReady
+          try {
+            await ready
+            if (ready === this.#inputReady) break
+          } catch {
+            // Stay fail-closed until another remote disconnect requests a replacement.
+            this.#inputChanged.clear()
+            if (ready === this.#inputReady) await this.#inputChanged.wait(signal)
+          }
+        }
+        if (this.#stop.signal.aborted) return
+      }
       if (this.session.sessionEpoch !== streamEpoch) continue
       if (!received) return
     }
@@ -2508,6 +2553,7 @@ export class RealtimeService {
    * for an event the session refused.
    */
   async handleEvent(event: RealtimeProviderEvent): Promise<void> {
+    if (event.session_epoch <= this.#discardedInputEpoch) return
     this.#syncProjectConfirmationIsolation()
     if (event.kind === 'response_cancel_rejected') {
       if (this.#projectConfirmationIsolation.responseState({
@@ -2875,8 +2921,11 @@ export class RealtimeService {
           )
         }
         await this.#approvalHost.reserveExecutorApprovalItem(event.session_epoch, event.item_id)
+        if (event.session_epoch <= this.#discardedInputEpoch) return
         await this.#approvalHost.maybeRequestFreshExecutorApprovalResponse()
+        if (event.session_epoch <= this.#discardedInputEpoch) return
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
+        if (event.session_epoch <= this.#discardedInputEpoch) return
         this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
         this.#intakeUser = {text: event.text, origin_ref: originRef, epoch: event.session_epoch, inputRevision, localOnsetRevision}
         this.#intake?.userTurn(event.text, originRef, String(event.session_epoch))
@@ -3429,8 +3478,12 @@ export class RealtimeService {
     } else {
       try {
         const userTurn = this.#currentUserTurn(event, originRef)
-        acceptance = await this.#interceptHost(event, originRef)
-          ?? this.#bridge.acceptToolCall(event, {originRef, ...(userTurn === null ? {} : {userTurn})})
+        const intercepted = await this.#interceptHost(event, originRef)
+        if (event.session_epoch <= this.#discardedInputEpoch) {
+          if (semanticReserved) this.#semanticAcknowledgementReservations -= 1
+          return
+        }
+        acceptance = intercepted ?? this.#bridge.acceptToolCall(event, {originRef, ...(userTurn === null ? {} : {userTurn})})
       } catch (cause) {
         // The reservation was taken on the assumption the admission would happen. It did not, and a
         // reservation nobody releases is a slot permanently unavailable to every later call.
@@ -3611,12 +3664,13 @@ export class RealtimeService {
   /** Same current-user fence for controller actions and direct external MCP effects. */
   #currentUserTurn(event: ToolCallReady, originRef: string | null) {
     const user = this.#intakeUser
-    if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref
+    if (event.session_epoch <= this.#discardedInputEpoch || originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref
       || user.localOnsetRevision !== this.#localSpeechOnsetRevision || user.inputRevision !== this.session.userInputRevision) return null
     const revision = this.session.userInputRevision
     const localOnsetRevision = this.#localSpeechOnsetRevision
     return {originRef, sessionEpoch: event.session_epoch, acceptedUserInputRevision: revision,
-      stillWanted: (): boolean => this.session.sessionEpoch === event.session_epoch
+      stillWanted: (): boolean => event.session_epoch > this.#discardedInputEpoch
+        && this.session.sessionEpoch === event.session_epoch
         && this.session.userInputRevision === revision
         && this.#localSpeechOnsetRevision === localOnsetRevision
         && this.#intakeUser?.origin_ref === originRef}
@@ -3643,7 +3697,7 @@ export class RealtimeService {
     // Both act on the user's behalf, so both need the current user turn as origin: a spontaneous
     // `cancel` would stop work nobody asked to stop.
     const user = this.#intakeUser
-    if (originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref) {
+    if (event.session_epoch <= this.#discardedInputEpoch || originRef === null || user?.epoch !== event.session_epoch || originRef !== user.origin_ref) {
       return this.#refusalAcceptance(event, 'missing_origin_ref', '{"code":"missing_origin_ref"}')
     }
     const controller = this.#agentControllers.get(executor)

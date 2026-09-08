@@ -542,7 +542,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   publicProjectView(pendingConfirmation: boolean): PublicProjectView {
     const base = {
       ...this.#publicView,
-      roster: this.#publicView.roster.map(entry => ({...entry, running: this.#runningIn(entry.name)})),
+      roster: this.#publicView.roster.slice(0, MAX_ROSTER).map(entry => ({...entry, running: this.#runningIn(entry.name)})),
     }
     if (!pendingConfirmation) {
       return Object.freeze({

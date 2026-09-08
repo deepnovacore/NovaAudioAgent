@@ -15,6 +15,7 @@ const PATTERN = /['"]codex['"]|codex__|Codex[A-Z]/gu
 const COMPOSITION_ROOTS = new Set([
   'runtime/src/cli.ts',
   'runtime/src/desktop-entry.ts',
+  'runtime/src/production-composition.ts',
   'runtime/src/production-realtime-assembly.ts',
 ])
 

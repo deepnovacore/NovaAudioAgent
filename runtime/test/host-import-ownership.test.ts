@@ -27,13 +27,16 @@ test('desktop entry reaches coding-disabled composition without importing or con
     process.stdout.write('disabled-composition-reached'); return 0;
   }
   export function buildDesktopRealtimeComposition() { throw new Error('disabled-composition-reached'); }`
-  const config = `export function loadSettings() { return {executors: ['codex']}; }`
+  const configUrl = new URL('../src/config.js', import.meta.url).href
+  const config = `import {loadSettings as load} from ${JSON.stringify(configUrl)};
+    export {requireIntegratedRealtime} from ${JSON.stringify(configUrl)};
+    export function loadSettings() { return {...load({DASHSCOPE_API_KEY: 'fixture'}), executors: ['codex']}; }`
   const registry = `export function loadCapabilityRegistry() { return {modules: {coding: {enabled: false}}, overrides: [], mcpServers: {}, serverStatuses: []}; }`
   const telemetry = `export function createRealtimeTelemetry() { return {close() {}}; }`
   const replacements = {'./desktop-service.js': desktop, './config.js': config, './capability-registry.js': registry, './realtime/telemetry.js': telemetry}
   const hook = `export async function resolve(specifier, context, next) {
     const replacements = ${JSON.stringify(replacements)};
-    if (context.parentURL?.endsWith('/desktop-entry.js') && replacements[specifier]) {
+    if (['/desktop-entry.js', '/production-composition.js'].some(path => context.parentURL?.endsWith(path)) && replacements[specifier]) {
       return {url: 'data:text/javascript,' + encodeURIComponent(replacements[specifier]), shortCircuit: true};
     }
     const result = await next(specifier, context);

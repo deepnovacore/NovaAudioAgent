@@ -6,6 +6,29 @@ import {
 } from '../src/desktop-service.js'
 import type {PublishedGraphSnapshot} from '../src/workspace-graph/store.js'
 
+test('client-owned provider listens before waiting for phone and stops while unattached', async () => {
+  const order: string[] = []
+  const stop = new AbortController()
+  const never = new Promise<void>(() => { /* Deliberately parked until owner cancellation. */ })
+  const owner = new RealtimeDesktopService({
+    listenBeforeRealtime: true,
+    realtime: {service: {waitStopped: () => never}, start: () => {
+      order.push('provider'); stop.abort(); return never
+    }, stop: () => { order.push('stop'); return Promise.resolve() }},
+    desktop: {server: {
+      start: () => { order.push('listen'); return Promise.resolve({host: '127.0.0.1', port: 19876, token: 'a'.repeat(32)}) },
+      close: () => { order.push('close'); return Promise.resolve() },
+    }},
+    readyEndpoint: '', stop,
+    announce: () => { order.push('announce'); return Promise.resolve() },
+    cleanupGraceMs: 20,
+  })
+  await owner.run()
+  assert.deepEqual(order.slice(0, 3), ['listen', 'announce', 'provider'])
+  assert.equal(order.filter(x => x === 'listen').length, 1)
+  assert.ok(order.includes('stop')); assert.ok(order.includes('close'))
+})
+
 test('desktop owner rejects an invalid wrapper grace before touching resources', () => {
   const untouched = (): never => { throw new Error('resource was touched') }
   assert.throws(() => new RealtimeDesktopService({

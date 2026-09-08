@@ -505,7 +505,7 @@ test('Qwen realtime composition rejects a live Codex fallback', () => {
 })
 
 test('desktop entry leaves Codex prewarm to the realtime owner instead of blocking readiness', async () => {
-  const entry = await readFile(resolve(import.meta.dirname, '../../src/desktop-entry.ts'), 'utf8')
+  const entry = await readFile(resolve(import.meta.dirname, '../../src/production-composition.ts'), 'utf8')
   assert.match(entry, /ownership\.own\(\(\) => codexResource\.close\(\)\)/u)
   assert.doesNotMatch(entry, /await codexResource\.start\(\)/u)
 })

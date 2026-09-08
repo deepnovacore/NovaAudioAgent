@@ -370,7 +370,7 @@ test('actual desktop entry awaits discovery and owns cleanup when final exact fr
   const document = {version: 1, frontbrainToolBudget: 1, modules: {search: {enabled: false}, coding: {enabled: false}, camera: {enabled: false}},
     mcpServers: {external: {transport: 'streamable-http', url: local.url, exposeTo: {frontbrain: true}, tools: {lookup: enabled}}}}
   const replacements = {
-    './config.js': `import {loadSettings as load} from ${JSON.stringify(configUrl)}; export function loadSettings() {return {...load({NOVA_AUDIO_AGENT_MODEL_API_KEY:'fixture', DASHSCOPE_API_KEY:'fixture'}),executors:[]}}`,
+    './config.js': `import {loadSettings as load} from ${JSON.stringify(configUrl)}; export {requireIntegratedRealtime} from ${JSON.stringify(configUrl)}; export function loadSettings() {return {...load({NOVA_AUDIO_AGENT_MODEL_API_KEY:'fixture', DASHSCOPE_API_KEY:'fixture'}),executors:[]}}`,
     './capability-registry.js': `import {parseCapabilityRegistry} from ${JSON.stringify(registryUrl)}; export function loadCapabilityRegistry() {return parseCapabilityRegistry(${JSON.stringify(document)})}`,
     './desktop-service.js': `export {buildDesktopRealtimeComposition} from ${JSON.stringify(desktopUrl)};
       export async function runDesktopEntryWithStopSources({construct}) {
@@ -382,7 +382,7 @@ test('actual desktop entry awaits discovery and owns cleanup when final exact fr
   }
   const hook = `export async function resolve(specifier,context,next) {
     const replacements=${JSON.stringify(replacements)};
-    if(context.parentURL?.endsWith('/desktop-entry.js')&&replacements[specifier]) return {url:'data:text/javascript,'+encodeURIComponent(replacements[specifier]),shortCircuit:true};
+    if(['/desktop-entry.js','/production-composition.js'].some(path=>context.parentURL?.endsWith(path))&&replacements[specifier]) return {url:'data:text/javascript,'+encodeURIComponent(replacements[specifier]),shortCircuit:true};
     return next(specifier,context);
   }`
   const script = `import {register} from 'node:module'; register('data:text/javascript,'+encodeURIComponent(${JSON.stringify(hook)}),import.meta.url); await import(${JSON.stringify(new URL('../src/desktop-entry.js', import.meta.url).href)});`

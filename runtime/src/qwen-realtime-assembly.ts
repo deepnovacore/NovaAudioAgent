@@ -139,8 +139,7 @@ export function buildQwenRealtimeAssembly(
       coding: core.capabilities.modules.coding.enabled,
     },
     workspaceGraphPolicy: options.settings.workspace_graph_enabled,
-    executorApproval: options.codexResource?.approvalController !== null
-      && options.codexResource?.approvalController !== undefined,
+    executorApproval: (options.executorApproval ?? options.codexResource?.approvalController) != null,
   })
   const createWorkspaceGraph = () => workspaceGraphServiceFromSettings(
     options.settings,
@@ -184,6 +183,7 @@ export function buildQwenRealtimeAssembly(
       ? {}
       : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
+    ...(options.executorApproval === undefined ? {} : {executorApproval: options.executorApproval}),
     ...(options.codingAgentControllerFactory === undefined
       ? {}
       : {codingAgentControllerFactory: options.codingAgentControllerFactory}),
