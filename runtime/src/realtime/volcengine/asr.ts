@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import {reportUsage, type UsageReporter} from '../usage.js'
 import { gzipSync, gunzipSync } from 'node:zlib'
 import { isWellFormed, stripLikePython } from '../../python-text.js'
 import type {AsrClient, AsrSession, AsrTranscript} from '../cascaded/ports.js'
@@ -75,7 +76,7 @@ export class DoubaoAsrProtocol {
     return outboundFrame([0x11, 0x20 | flags, 0x11, 0], sequence, gzipSync(input.audio.pcm))
   }
 
-  decode(frame: Uint8Array): AsrTranscript | null {
+  decode(frame: Uint8Array, onFinalDuration?: (duration: number | undefined) => void): AsrTranscript | null {
     if (!(frame instanceof Uint8Array) || frame.byteLength > MAX_VOLCENGINE_WIRE_FRAME_BYTES
       || frame.byteLength < 12 || frame[0] !== 0x11) {
       throw new DoubaoAsrError('豆包 ASR 返回了无效协议帧')
@@ -118,6 +119,12 @@ export class DoubaoAsrProtocol {
     if (nested !== decoded) raiseProviderError(nested)
     const text = extractText(decoded)
     const final = flags === 0x03 || sequence < 0 || decoded.is_last_package === true
+    if (final) {
+      const info = nested.audio_info ?? decoded.audio_info
+      const duration = isObject(info) ? info.duration : undefined
+      onFinalDuration?.(typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
+        ? duration : undefined)
+    }
     return text !== '' || final ? {text, final} : null
   }
 }
@@ -162,6 +169,7 @@ export function asrHeaders(input: {
 }
 
 export interface DoubaoAsrClientOptions {
+  readonly onUsage?: UsageReporter
   readonly endpoint: string
   readonly apiKey: string
   readonly resourceId: string
@@ -174,7 +182,8 @@ export interface DoubaoAsrClientOptions {
 }
 
 export class DoubaoAsrClient implements AsrClient {
-  readonly #options: Required<Omit<DoubaoAsrClientOptions, 'connector' | 'idFactory'>>
+  readonly #options: Required<Omit<DoubaoAsrClientOptions, 'connector' | 'idFactory' | 'onUsage'>>
+  readonly #onUsage: UsageReporter | undefined
   readonly #connector: VolcBinaryConnector
   readonly #idFactory: () => string
   readonly #chunkBytes: number
@@ -205,6 +214,7 @@ export class DoubaoAsrClient implements AsrClient {
       connectTimeoutMs,
       receiveTimeoutMs,
     }
+    this.#onUsage = options.onUsage
     this.#connector = options.connector ?? webSocketVolcBinaryConnector
     this.#idFactory = options.idFactory ?? randomUUID
     this.#chunkBytes = chunkBytes
@@ -241,6 +251,8 @@ export class DoubaoAsrClient implements AsrClient {
       )
       this.#protocol.decode(acknowledgement)
       return new DoubaoAsrSession({
+        model: this.#options.resourceId,
+        ...(this.#onUsage === undefined ? {} : {onUsage: this.#onUsage}),
         socket,
         protocol: this.#protocol,
         sequence: 2,
@@ -263,6 +275,11 @@ export class DoubaoAsrClient implements AsrClient {
 }
 
 export class DoubaoAsrSession implements AsrSession {
+  readonly #onUsage: UsageReporter | undefined
+  readonly #model: string
+  readonly #usageId = randomUUID()
+  #dispatched = false
+  #usageReported = false
   readonly #socket: VolcBinarySocket
   readonly #protocol: DoubaoAsrProtocol
   readonly #chunkBytes: number
@@ -276,12 +293,16 @@ export class DoubaoAsrSession implements AsrSession {
   #closePromise: Promise<void> | undefined
 
   constructor(input: {
+    readonly onUsage?: UsageReporter
+    readonly model?: string
     readonly socket: VolcBinarySocket
     readonly protocol: DoubaoAsrProtocol
     readonly sequence: number
     readonly chunkBytes: number
     readonly receiveTimeoutMs: number
   }) {
+    this.#onUsage = input.onUsage
+    this.#model = input.model ?? 'volc.seedasr.sauc.duration'
     this.#socket = input.socket
     this.#protocol = input.protocol
     this.#sequence = input.sequence
@@ -310,6 +331,7 @@ export class DoubaoAsrSession implements AsrSession {
       while (this.#pending.byteLength > this.#chunkBytes) {
         const chunk = volcengineInputPcm(this.#pending.subarray(0, this.#chunkBytes))
         try {
+          this.#dispatched = true
           await this.#socket.send(this.#protocol.audio({
             sequence: this.#sequence,
             audio: chunk,
@@ -332,6 +354,7 @@ export class DoubaoAsrSession implements AsrSession {
       if (this.#finished) return
       if (this.#pending.byteLength === 0) throw new DoubaoAsrFailure('session')
       try {
+        this.#dispatched = true
         await this.#socket.send(this.#protocol.audio({
           sequence: this.#sequence,
           audio: volcengineInputPcm(this.#pending),
@@ -349,30 +372,45 @@ export class DoubaoAsrSession implements AsrSession {
   async *events(signal?: AbortSignal): AsyncIterable<AsrTranscript> {
     if (this.#eventsClaimed) throw new DoubaoAsrFailure('session')
     this.#eventsClaimed = true
-    while (!this.#closed) {
-      const raw = await receiveWithTimeout(
-        this.#socket, this.#receiveTimeoutMs, signal, 'receive',
-      )
-      let event: AsrTranscript | null
-      try {
-        event = this.#protocol.decode(raw)
-      } catch {
-        throw new DoubaoAsrFailure('receive')
+    try {
+      while (!this.#closed) {
+        const raw = await receiveWithTimeout(
+          this.#socket, this.#receiveTimeoutMs, signal, 'receive',
+        )
+        let event: AsrTranscript | null
+        try {
+          event = this.#protocol.decode(raw, duration => this.#reportUsage(duration))
+        } catch {
+          throw new DoubaoAsrFailure('receive')
+        }
+        if (event === null) continue
+        yield event
+        if (event.final) return
       }
-      if (event === null) continue
-      yield event
-      if (event.final) return
+    } finally {
+      this.#reportUsage()
     }
   }
 
   close(): Promise<void> {
     if (this.#closePromise !== undefined) return this.#closePromise
     this.#closed = true
+    this.#reportUsage()
     this.#pending = new Uint8Array()
     this.#closePromise = this.#socket.close().catch(() => {
       throw new DoubaoAsrFailure('session')
     })
     return this.#closePromise
+  }
+
+  #reportUsage(audioDurationMs?: number): void {
+    if (!this.#dispatched || this.#usageReported) return
+    this.#usageReported = true
+    reportUsage(this.#onUsage, {
+      id: this.#usageId, service: 'asr', provider: 'volcengine', model: this.#model,
+      status: audioDurationMs === undefined ? 'missing' : 'complete',
+      ...(audioDurationMs === undefined ? {} : {audioDurationMs}),
+    })
   }
 
   #serialized(operation: () => Promise<void>): Promise<void> {

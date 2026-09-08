@@ -28,3 +28,16 @@ test('private status projects only safe public fields and bounded exact counts',
   assert.ok(!JSON.stringify(projected).includes('private-secret'))
   assert.equal(publicRuntimeCapabilityStatus({toolCount: -1, toolBudget: 24}), null)
 })
+
+test('usage stays private, validates numbers and ignores closed children', () => {
+  const child = new EventEmitter(), received = []
+  const control = createBackendControl(child, {onUsage: report => received.push(report)})
+  const report = {id:'request-1',provider:'qwen',service:'llm',model:'qwen-flash',status:'complete',inputTokens:10,secret:'private'}
+  child.emit('message',{type:'nova.usage',report:{...report,inputTokens:Infinity}})
+  child.emit('message',{type:'nova.usage',report})
+  assert.equal(received.length,1)
+  assert.equal(received[0].secret,undefined)
+  control.close()
+  child.emit('message',{type:'nova.usage',report})
+  assert.equal(received.length,1)
+})

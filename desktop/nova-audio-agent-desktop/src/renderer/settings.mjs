@@ -1,3 +1,4 @@
+import {frontendUsageText} from './frontend-usage.mjs'
 import {createCapabilitiesEditor} from './capabilities-editor.mjs'
 import {createKnowledgePanel} from './knowledge-panel.mjs'
 // Settings are edited as one local transaction. Public drafts live in the
@@ -195,6 +196,9 @@ function updateButtons() {
 
 function render(view, _drafts, state) {
   if (!view) return
+  const [usageSummary, ...usageDetails] = frontendUsageText(view.frontendUsage).split('\n\n')
+  document.getElementById('frontend-usage').textContent = usageSummary
+  document.getElementById('frontend-usage-details').textContent = usageDetails.join('\n\n')
   currentView = view
   capabilityEditor.render(view)
   knowledgePanel.render(view)

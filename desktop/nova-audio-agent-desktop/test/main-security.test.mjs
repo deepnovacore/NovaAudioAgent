@@ -717,6 +717,7 @@ test('quit bounds a maintenance drain without bypassing backend shutdown', async
   let beforeQuit, releaseMaintenanceDeadline, releaseBackend, timeout
   const exits = []
   const context = vm.createContext({
+    sourceSmokeStage() {},
     app: {on: (name, handler) => { if (name === 'before-quit') beforeQuit = handler }, exit: code => exits.push(code)},
     wakeWord: null, releaseSmokeChannel: null, globalShortcut: {unregisterAll() {}}, nativeAudio: null,
     backendSupervisor: {stop: () => new Promise(resolve => { releaseBackend = resolve })}, backend: null,

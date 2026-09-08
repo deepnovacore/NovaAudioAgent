@@ -46,6 +46,7 @@ export function buildIntegratedRealtimeAssembly(
   const ids = options.ids ?? new MonotonicIdFactory()
   const capabilities = options.capabilities ?? capabilitiesFromSettings(options.settings)
   const qwenProvider = registry[provider]({
+    ...(options.onUsage === undefined ? {} : {onUsage: options.onUsage}),
     config,
     ...(options.connector === undefined ? {} : {connector: options.connector}),
     idFactory: () => ids.next('qwen'),

@@ -56,6 +56,7 @@ const SECRET_KEY_NAMES = [
 const SECRET_KEYS = new Set(SECRET_KEY_NAMES)
 const MAIN_LIVE_VIEW_FIELDS = [
   'codexStatus',
+  'frontendUsage',
   'backendStatus',
   'backendDiagnostic',
   'backendRetryInMs',
@@ -276,6 +277,9 @@ export function createSettingsController({ api, render, status, notice = () => {
           ? {}
           : mainLiveViewPatch(confirmedView)
         confirmedView = mergePatch(liveMainState, remoteView)
+        if (liveMainState.frontendUsage && liveMainState.frontendUsage.requests >= (remoteView?.frontendUsage?.requests ?? -1)) {
+          confirmedView.frontendUsage = liveMainState.frontendUsage
+        }
       }
       if (persisted) {
         const rejected = new Set(rejectedPaths.map(leafPathKey))

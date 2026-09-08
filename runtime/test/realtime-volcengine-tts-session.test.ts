@@ -13,6 +13,8 @@ import {
   type VolcBinarySocket,
 } from '../src/realtime/volcengine/websocket.js'
 
+import type {UsageReport, UsageReporter} from '../src/realtime/usage.js'
+
 class ScriptedSocket implements VolcBinarySocket {
   readonly sent: Uint8Array[] = []
   readonly incoming: (Uint8Array | Error | 'hang')[]
@@ -107,6 +109,7 @@ function normalHandshake(sessionId = 'tts-session'): Uint8Array[] {
 }
 
 function makeClient(socket: ScriptedSocket, options: {
+  readonly onUsage?: UsageReporter
   readonly receiveTimeoutMs?: number
   readonly idFactory?: () => string
 } = {}): {readonly value: DoubaoTtsClient; readonly connector: CapturingConnector} {
@@ -114,6 +117,7 @@ function makeClient(socket: ScriptedSocket, options: {
   return {
     value: new DoubaoTtsClient({
       endpoint: 'wss://speech.example/tts?secret=endpoint-nonce',
+      ...(options.onUsage === undefined ? {} : {onUsage: options.onUsage}),
       apiKey: 'tts-api-secret',
       resourceId: 'tts-resource-secret',
       voice: 'fixture-voice',
@@ -337,3 +341,56 @@ test('TTS close reaches the socket within its bound when an earlier write never 
       await settleWithin('blocked write release', blocked.catch(() => undefined))
     }
   })
+
+
+test('TTS reports terminal provider words once and cancelled work without usage as missing', async () => {
+  const reports: UsageReport[] = []
+  const onUsage = (report: UsageReport): void => { reports.push(report) }
+  for (const event of [EventType.SESSION_FINISHED, EventType.SESSION_CANCELED, EventType.SESSION_FAILED]) {
+    const socket = new ScriptedSocket([...normalHandshake(), serverMessage(event, {
+      sessionId: 'tts-session', payload: new TextEncoder().encode(JSON.stringify({usage: {text_words: 7}})),
+    })])
+    const session = await makeClient(socket, {onUsage}).value.open()
+    await session.sendText('hello')
+    const consume = async (): Promise<void> => { for await (const audio of session.events()) void audio }
+    if (event === EventType.SESSION_FAILED) await assert.rejects(consume())
+    else await consume()
+    await session.close()
+  }
+  assert.deepEqual(reports.map(report => [report.status, report.characters]),
+    [['complete', 7], ['complete', 7], ['complete', 7]])
+  const interrupted = await makeClient(new ScriptedSocket(normalHandshake()), {onUsage}).value.open()
+  await interrupted.sendText('hello')
+  await interrupted.cancel()
+  await interrupted.close()
+  await interrupted.close()
+  assert.equal(reports[3]?.status, 'missing')
+  assert.equal(reports[3]?.characters, undefined)
+  assert.equal(new Set(reports.map(report => report.id)).size, 4)
+  const empty = await makeClient(new ScriptedSocket(normalHandshake()), {onUsage}).value.open()
+  await empty.close()
+  assert.equal(reports.length, 4)
+})
+
+
+test('TTS aborted consumption reports missing once even when close follows', async () => {
+  const reports: UsageReport[] = []
+  const session = await makeClient(new ScriptedSocket(normalHandshake()), {
+    onUsage: report => { reports.push(report) },
+  }).value.open()
+  await session.sendText('hello')
+  const controller = new AbortController()
+  const waiting = session.events(controller.signal)[Symbol.asyncIterator]().next()
+  controller.abort()
+  await assert.rejects(waiting, {name: 'AbortError'})
+  await session.close()
+  assert.equal(reports.length, 1)
+  assert.equal(reports[0]?.status, 'missing')
+})
+
+test('TTS requests provider metering only when a usage reporter is installed', async () => {
+  const created = makeClient(new ScriptedSocket(normalHandshake()), {onUsage: () => { /* Header opt-in only. */ }})
+  const session = await created.value.open()
+  assert.equal(created.connector.calls[0]!.headers['X-Control-Require-Usage-Tokens-Return'], 'text_words')
+  await session.close()
+})

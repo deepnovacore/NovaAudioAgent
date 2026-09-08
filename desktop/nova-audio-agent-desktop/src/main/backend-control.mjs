@@ -1,3 +1,4 @@
+import {publicUsageReport} from './frontend-usage.mjs'
 import {randomUUID} from 'node:crypto'
 
 export function publicRuntimeCapabilityStatus(value) {
@@ -23,12 +24,17 @@ export function publicRuntimeCapabilityStatus(value) {
 }
 
 /** One private utility child owns every pending request; replacement closes this handle. */
-export function createBackendControl(child, {onStatus = () => {}} = {}) {
+export function createBackendControl(child, {onStatus = () => {}, onUsage = () => {}} = {}) {
   const pending = new Map()
   let closed = false
   const unavailable = () => new Error('backend control unavailable')
   const receive = message => {
     if (closed || !message || typeof message !== 'object') return
+    if (message.type === 'nova.usage') {
+      const report = publicUsageReport(message.report)
+      if (report) onUsage(report)
+      return
+    }
     if (message.type === 'nova.capabilities') {
       const value = publicRuntimeCapabilityStatus(message.status)
       if (value) onStatus(value)

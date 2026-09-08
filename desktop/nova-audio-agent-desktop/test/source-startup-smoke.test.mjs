@@ -45,3 +45,14 @@ test('source smoke reports only bounded lifecycle markers on an exit timeout', (
     '[desktop-smoke] quit_requested\n[desktop-smoke] maintenance_closing private-path\n'),
   /shutdown_stage=maintenance_closing$/u)
 })
+
+test('source smoke lifecycle clock emits integer milliseconds without private state', async () => {
+  const {readFile} = await import('node:fs/promises')
+  const {default: vm} = await import('node:vm')
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const body = source.slice(source.indexOf('function sourceSmokeStage('), source.indexOf("app.on('will-quit'"))
+  const lines = []
+  const context = vm.createContext({sourceStartupSmoke: true, process: {uptime: () => 1.23456}, writeSync: (fd, line) => lines.push([fd, line])})
+  vm.runInContext(body + "sourceSmokeStage('before_quit')", context)
+  assert.deepEqual(lines, [[2, '[desktop-smoke] before_quit elapsed_ms=1235\n']])
+})

@@ -120,6 +120,7 @@ const exitCode = await runDesktopEntryWithStopSources({
         })
         const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
           settings,
+          onUsage: control.publishUsage,
           capabilities,
           externalMcp,
           ...(knowledge === undefined ? {} : {knowledge}),

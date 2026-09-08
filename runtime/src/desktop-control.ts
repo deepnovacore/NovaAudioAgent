@@ -1,5 +1,6 @@
 import type {CapabilityStatus} from './capability-registry.js'
 import type {DesktopStopParentSource} from './desktop-service.js'
+import {reportUsage, type UsageReport} from './realtime/usage.js'
 
 type ParentPort = DesktopStopParentSource & {postMessage(message: unknown): void}
 export interface DesktopCapabilityState extends Partial<CapabilityStatus> {
@@ -13,7 +14,7 @@ export function installDesktopControl(options: {
   readonly signal: AbortSignal
   readonly status: () => DesktopCapabilityState | undefined
   readonly handle?: (method: string, params: unknown) => Promise<unknown>
-}): {publish(): void; dispose(): void} {
+}): {publish(): void; publishUsage: (report: UsageReport) => void; dispose(): void} {
   const port = options.parentPort
   let disposed = false
   let last = ''
@@ -56,7 +57,10 @@ export function installDesktopControl(options: {
   port?.on('message', receive)
   options.signal.addEventListener('abort', dispose, {once: true})
   if (options.signal.aborted) dispose()
-  return {publish, dispose}
+  return {publish, dispose, publishUsage: report => {
+    // Final metering may arrive while semantic shutdown is draining.
+    reportUsage(port === undefined ? undefined : value => port.postMessage({type: 'nova.usage', report: value}), report)
+  }}
 }
 export function desktopBudgetFailure(error: unknown): DesktopCapabilityState | undefined {
   const value = error as {readonly code?: unknown; readonly toolCount?: unknown; readonly toolBudget?: unknown}

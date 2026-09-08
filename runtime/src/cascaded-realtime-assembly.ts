@@ -1,3 +1,4 @@
+import {usageReporterForEndpoint, type UsageReporter} from './realtime/usage.js'
 import {capabilitiesFromSettings} from './config.js'
 /** Provider-neutral cascaded production assembly over closed, host-owned node registries. */
 
@@ -60,16 +61,19 @@ export type {
 } from './cascaded-realtime-config.js'
 
 export type CascadedAsrClientFactory = (input: {
+  readonly onUsage?: UsageReporter
   readonly config: VolcengineAsrConfig
   readonly idFactory: () => string
 }) => AsrClient
 
 export type CascadedTtsClientFactory = (input: {
+  readonly onUsage?: UsageReporter
   readonly config: VolcengineTtsConfig
   readonly idFactory: () => string
 }) => TtsClient
 
 export type QwenCascadedFactory = (input: {
+  readonly onUsage?: UsageReporter
   readonly config: QwenCascadedLlmConfig
   readonly clock: Clock
   readonly idFactory: () => string
@@ -77,6 +81,7 @@ export type QwenCascadedFactory = (input: {
 }) => CascadedLlmFactory
 
 export type ArkCascadedFactory = (input: {
+  readonly onUsage?: UsageReporter
   readonly config: ArkCascadedLlmConfig
   readonly instructions: string
 }) => CascadedLlmFactory
@@ -113,12 +118,14 @@ export interface AutoEndpointingFactoryInput {
 }
 
 export interface VolcengineAsrFactoryInput {
+  readonly onUsage?: UsageReporter
   readonly config: VolcengineAsrConfig
   readonly ids: IdFactory
   readonly clientFactory?: CascadedAsrClientFactory
 }
 
 export interface QwenLlmFactoryInput {
+  readonly onUsage?: UsageReporter
   readonly config: QwenCascadedLlmConfig
   readonly clock: Clock
   readonly ids: IdFactory
@@ -127,6 +134,7 @@ export interface QwenLlmFactoryInput {
 }
 
 export interface ArkLlmFactoryInput {
+  readonly onUsage?: UsageReporter
   readonly config: ArkCascadedLlmConfig
   readonly clock: Clock
   readonly ids: IdFactory
@@ -135,6 +143,7 @@ export interface ArkLlmFactoryInput {
 }
 
 export interface VolcengineTtsFactoryInput {
+  readonly onUsage?: UsageReporter
   readonly config: VolcengineTtsConfig
   readonly ids: IdFactory
   readonly clientFactory?: CascadedTtsClientFactory
@@ -177,6 +186,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
   asr: Object.freeze({
     volcengine: (input: VolcengineAsrFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultAsrClient)({
+        ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
         config: input.config,
         idFactory: () => input.ids.next('volcengine'),
       }),
@@ -186,6 +196,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     qwen: (input: QwenLlmFactoryInput) => (
       input.factory ?? defaultQwenLlmFactory
     )({
+      ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
       config: input.config,
       clock: input.clock,
       idFactory: () => input.ids.next('qwen-cascaded'),
@@ -194,6 +205,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     ark: (input: ArkLlmFactoryInput) => (
       input.factory ?? defaultArkLlmFactory
     )({
+      ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
       config: input.config,
       instructions: input.instructions,
     }),
@@ -201,6 +213,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
   tts: Object.freeze({
     volcengine: (input: VolcengineTtsFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultTtsClient)({
+        ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
         config: input.config,
         idFactory: () => input.ids.next('volcengine'),
       }),
@@ -235,12 +248,14 @@ export function buildCascadedRealtimeAssembly(
     ...(options.liveKitExecutor === undefined ? {} : {liveKitExecutor: options.liveKitExecutor}),
   })
   const asrFactory = registry.asr[selection.asrProvider]({
+    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.asr.endpoint)!}),
     config: selected.asr,
     ids,
     ...(options.asrClient === undefined ? {} : {clientFactory: options.asrClient}),
   })
   const llmFactory = selected.llm.provider === 'qwen'
     ? registry.llm.qwen({
+      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.llm.config.baseUrl)!}),
       config: selected.llm.config,
       clock,
       ids,
@@ -248,6 +263,7 @@ export function buildCascadedRealtimeAssembly(
       ...(options.qwenLlmFactory === undefined ? {} : {factory: options.qwenLlmFactory}),
     })
     : registry.llm.ark({
+      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.llm.config.baseUrl)!}),
       config: selected.llm.config,
       clock,
       ids,
@@ -255,6 +271,7 @@ export function buildCascadedRealtimeAssembly(
       ...(options.arkLlmFactory === undefined ? {} : {factory: options.arkLlmFactory}),
   })
   const ttsFactory = registry.tts[selection.ttsProvider]({
+    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.tts.endpoint)!}),
     config: selected.tts,
     ids,
     ...(options.ttsClient === undefined ? {} : {clientFactory: options.ttsClient}),
@@ -360,6 +377,7 @@ function buildEndpointing(
 }
 
 const defaultAsrClient: CascadedAsrClientFactory = input => new DoubaoAsrClient({
+  ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
   endpoint: input.config.endpoint,
   apiKey: input.config.apiKey,
   resourceId: input.config.resourceId,
@@ -368,6 +386,7 @@ const defaultAsrClient: CascadedAsrClientFactory = input => new DoubaoAsrClient(
 })
 
 const defaultTtsClient: CascadedTtsClientFactory = input => new DoubaoTtsClient({
+  ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
   endpoint: input.config.endpoint,
   apiKey: input.config.apiKey,
   resourceId: input.config.resourceId,
@@ -377,6 +396,7 @@ const defaultTtsClient: CascadedTtsClientFactory = input => new DoubaoTtsClient(
 })
 
 const defaultQwenLlmFactory: QwenCascadedFactory = input => createQwenCascadedLlmFactory({
+  ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
   ...input.config,
   instructions: input.instructions,
   clock: input.clock,
@@ -384,6 +404,7 @@ const defaultQwenLlmFactory: QwenCascadedFactory = input => createQwenCascadedLl
 })
 
 const defaultArkLlmFactory: ArkCascadedFactory = input => createArkCascadedLlmFactory({
+  ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
   ...input.config,
   instructions: input.instructions,
 })

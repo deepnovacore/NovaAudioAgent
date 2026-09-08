@@ -39,7 +39,7 @@ test('actual main keeps invalid model configuration visible when Coding is disab
 })
 test('actual settings view decrypts only for an open panel and caches the public generation', () => {
   let decrypts = 0
-  const context = vm.createContext({wakeWord: null, settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
+  const context = vm.createContext({frontendUsage: {snapshot: () => ({})}, wakeWord: null, settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
     readCapabilityDocument: () => ({version: 1}), decryptSecretsForSpawn: () => {decrypts++; return {}},
     readCapabilityEditor: () => ({document: {version: 1}, revision: 'test-revision', problems: []}), capabilityEnvironment: () => ({}), capabilityPath, statSync, capabilityDocumentRevision: () => 'fixed',
     runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
@@ -62,7 +62,7 @@ test('actual main refreshes a hand-edited registry while the panel is open and o
   const root = await mkdtemp(join(tmpdir(), 'nova-task4-cache-'))
   t.after(() => rm(root, {recursive: true, force: true}))
   const path = join(root, 'capabilities.json')
-  const context = vm.createContext({wakeWord: null, settingsWindow: {show() {}, focus() {}}, refreshManagedWorkspaceCapabilities: () => Promise.resolve(), sendToSettings: () => {}, capabilityEditorCache: null, settingsGeneration: 0,
+  const context = vm.createContext({frontendUsage: {snapshot: () => ({})}, wakeWord: null, settingsWindow: {show() {}, focus() {}}, refreshManagedWorkspaceCapabilities: () => Promise.resolve(), sendToSettings: () => {}, capabilityEditorCache: null, settingsGeneration: 0,
     currentSettings: {capabilitiesConfigPath: path}, process: {env: {}}, readCapabilityDocument, classifyBackendFailure,
     decryptSecretsForSpawn: () => ({}), capabilityEnvironment: () => ({}),
     readCapabilityEditor: settings => ({document: readCapabilityDocument(settings, {}), revision: 'test-revision', problems: []}), capabilityPath, capabilityDocumentRevision,
