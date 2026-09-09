@@ -41,7 +41,7 @@ test('Windows runtime runner keeps its explicit deferred POSIX suite inventory',
     readdirSync: () => [...excluded, 'cross-platform.test.js', 'fixture.js'],
     spawnSync: (_command, values) => {args = [...values]; return {status: 0}},
   })
-  assert.deepEqual(args, ['--test', resolve('/runtime/dist/test/cross-platform.test.js')])
+  assert.deepEqual(args, ['--test', '--test-concurrency=1', resolve('/runtime/dist/test/cross-platform.test.js')])
   assert.equal(process.exitCode, 0)
 })
 
