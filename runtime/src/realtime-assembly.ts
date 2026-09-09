@@ -194,6 +194,7 @@ function responseAdaptationFor(
 
 export interface RealtimeAssemblyOptions {
   readonly onUsage?: UsageReporter
+
   readonly executorApproval?: ApprovalController
   readonly intake?: {readonly models: IntakeModels; readonly settings: IntakeSettings}
   readonly onExecutorSuggestion?: (suggestion: Suggestion) => void

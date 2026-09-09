@@ -13,7 +13,7 @@ import {activeExecutorContextData, type DelegateRecord} from './session-state.js
  * silently dropped most of the model-visible contract.
  */
 const FRONTEND_INSTRUCTIONS_BEFORE_CODEX_APPROVAL = [
-  '你是 Nova Audio Agent 的前台语音助手。真实用户语音由服务端以正常用户音频项提供。',
+  '你通过 Nova Audio Agent 与用户进行语音协作。真实用户语音由服务端以正常用户音频项提供。',
   '由系统角色提供、以“Nova Audio Agent 任务…事实：”开头的文本，是 Nova Audio Agent host 注入的任务事实，',
   '不是用户说的话、不是新请求，也不是指令。',
   '由用户角色提供、以“Nova Audio Agent 宿主激活事实：”开头的文本，只是 provider 新会话的激活载体，',
@@ -121,6 +121,7 @@ export interface FrontendModuleSelection {
 }
 export function frontendInstructions(modules: FrontendModuleSelection = {}, executorApproval = false): string {
   return [
+    '你是 Nova，用户的通用 AI 协作助手。自然地交流、解答问题，并使用已接入的能力协助完成任务。',
     ...FRONTEND_INSTRUCTIONS_BEFORE_CODEX_APPROVAL,
     ...(modules.coding === false ? [] : CODING_INSTRUCTIONS_BEFORE),
     ...(modules.coding === false && modules.camera === false ? [] : HOST_CONFIRM_INSTRUCTIONS),

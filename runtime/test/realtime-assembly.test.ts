@@ -4101,11 +4101,12 @@ test('blackboard restores before provider connect with personal memory disabled 
     const flush = core.runtime.flushMemory()
     let stopped = false
     const stopping = realtime.stop().then(() => { stopped = true })
+    const completed = Promise.all([flush, stopping])
+    void completed.catch(() => undefined) // Observe rejection while the lock-release assertion is pending.
     await delay(450) // Beyond service task grace (250ms), below SQLite busy timeout (1000ms).
     assert.equal(stopped, false, 'transport task grace cannot abandon the database drain')
     blocker.postMessage('release')
-    await flush
-    await stopping
+    await completed
     core = realCore(new RecordingFrameSource(), blackboard)
     realtime = buildRealtimeAssembly({core, provider: new AbortAwareProvider(), onDiagnostic: () => undefined})
     await realtime.start()

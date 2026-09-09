@@ -17,6 +17,7 @@ import {compileToolSchema} from '../src/tool-schema.js'
 import {compileMemoryRecall} from '../src/realtime/recall.js'
 import {wakeReasonSchema} from '../src/slots.js'
 import {BlackboardSession} from '../src/memory/blackboard-session.js'
+import {BlackboardStore} from '../src/memory/blackboard-store.js'
 
 const append = (memory: Memory, text: string) => memory.append('conversation', {
   ts: 1, trust: 'trusted_user', priority: 100, content: {text},
@@ -433,5 +434,45 @@ test('shutdown bounds a blackboard flush blocked by another SQLite writer', asyn
     await blocker?.terminate()
     await session.close().catch(() => undefined)
     await rm(directory, {recursive: true, force: true})
+  }
+})
+
+
+test('session close cannot take store ownership before its admitted flush drains', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-close-owner-'))
+  const memory = new Memory({scope: {conversation_id: 'close-owner'}})
+  const session = new BlackboardSession(memory, {path: join(directory, 'board.sqlite'), ownerId: 'local'})
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let entered!: () => void
+  const committing = new Promise<void>(resolve => { entered = resolve })
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- The mock restores the receiver with call/apply.
+  const commit = BlackboardStore.prototype.commit
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- The mock restores the receiver with call/apply.
+  const close = BlackboardStore.prototype.close
+  let closeCalls = 0
+  let pending: Promise<unknown> | undefined
+  try {
+    await session.open()
+    t.mock.method(BlackboardStore.prototype, 'commit', async function(this: BlackboardStore, ...args: Parameters<typeof commit>) {
+      entered(); await gate; return commit.apply(this, args)
+    })
+    t.mock.method(BlackboardStore.prototype, 'close', function(this: BlackboardStore) {
+      closeCalls++; return close.call(this)
+    })
+    append(memory, 'must be committed before close')
+    const flushing = session.flush()
+    await committing
+    t.mock.timers.enable({apis: ['setTimeout']})
+    pending = Promise.all([flushing, session.close()])
+    t.mock.timers.tick(601)
+    assert.equal(closeCalls, 0, 'session cannot close the store while its write is admitted')
+    t.mock.timers.reset()
+    release()
+    await pending
+    assert.equal(closeCalls, 1)
+  } finally {
+    t.mock.timers.reset(); release(); await pending?.catch(() => undefined)
+    await session.close().catch(() => undefined); await rm(directory, {recursive: true, force: true})
   }
 })

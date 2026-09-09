@@ -116,6 +116,8 @@ export class BlackboardStore {
 
   close(): Promise<void> {
     this.#closing ??= (async () => {
+      // Admitted writes retain their RPC deadline; the close budget starts after their receipt.
+      try { await this.#inflight } catch { /* the operation's caller receives its failure */ }
       const timer = setTimeout(() => this.#fail(new BlackboardStoreError('unavailable')), 400)
       try { await this.#close() } finally { clearTimeout(timer) }
     })()
@@ -123,8 +125,6 @@ export class BlackboardStore {
   }
 
   async #close(): Promise<void> {
-    // Preserve the actual commit outcome; the existing RPC timeout bounds this drain.
-    try { await this.#inflight } catch { /* the operation's caller receives its failure */ }
     if (this.#closed) { await this.#termination; return }
     try {
       if (this.#worker !== undefined) await this.#request('close', z.null())

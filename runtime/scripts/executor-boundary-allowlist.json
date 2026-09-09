@@ -58,7 +58,7 @@
   },
   {
     "path": "runtime/src/cascaded-realtime-assembly.ts",
-    "pattern": "}, (options.executorApproval ?? options.codexResource?.approvalController) != null)",
+    "pattern": "}, (options.executorApproval ?? options.codexResource?.approvalController) != null, options.getPersona?.() ?? 'nova')",
     "reason": "Legacy codexResource field/configuration vocabulary retained in composition; its value is the generic CodingExecutorResource port, selected by role. This is naming debt."
   },
   {

@@ -128,6 +128,8 @@ export interface QwenConnectorOptions {
 export type QwenConnector = (options: QwenConnectorOptions) => Promise<QwenSocket>
 
 export interface QwenAdapterOptions {
+
+
   readonly url: string
   readonly apiKey: string
   readonly model: string
@@ -195,7 +197,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   readonly #itemConfirmationTimeout: number
   readonly #closeTimeout: number
   readonly #now: () => number
-  readonly #instructions: string
+  readonly #instructions: () => string
 
   readonly #speechIds = new Map<string, string>()
   readonly #pendingItems = new Map<string, PendingItem>()
@@ -236,10 +238,10 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     this.#closeTimeout = requirePositive(options.closeTimeout ?? DEFAULT_CLOSE_TIMEOUT,
       'closeTimeout')
     this.#now = options.now ?? (() => Date.now() / 1000)
-    const instructions = frontendInstructions(options.modules, options.executorApproval)
-    this.#instructions = options.workspaceGraphPolicy === true
-      ? `${instructions}\n${WORKSPACE_GRAPH_POLICY}`
-      : instructions
+    this.#instructions = () => {
+      const instructions = frontendInstructions(options.modules, options.executorApproval)
+      return options.workspaceGraphPolicy === true ? `${instructions}\n${WORKSPACE_GRAPH_POLICY}` : instructions
+    }
   }
 
   readonly userResponseMode = 'automatic' as const
@@ -274,7 +276,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
         session: {
           modalities: ['audio', 'text'],
           voice: this.#voice,
-          instructions: this.#instructions,
+          instructions: this.#instructions(),
           input_audio_format: 'pcm',
           output_audio_format: 'pcm',
           max_history_turns: 20,

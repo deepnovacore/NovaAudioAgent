@@ -309,3 +309,37 @@ test('byte retention preserves a fitting new record and rejects oversized writes
     assert.equal(snapshot.revision, 2)
   } finally { await store.close(); await rm(directory, {recursive: true, force: true}) }
 })
+
+test('store close budget starts after the in-flight commit receipt', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-close-receipt-'))
+  const store = new BlackboardStore({path: join(directory, 'board.sqlite'), ownerId: 'local', conversationId: 'close-receipt', channels: ['conversation']})
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- The mock restores the receiver with call/apply.
+  const send = Worker.prototype.postMessage
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- The mock restores the receiver with call/apply.
+  const terminate = Worker.prototype.terminate
+  let release: (() => void) | undefined
+  let terminated = 0
+  let pending: Promise<unknown> | undefined
+  try {
+    const initial = await store.open()
+    t.mock.method(Worker.prototype, 'postMessage', function(this: Worker, ...args: Parameters<typeof send>) {
+      if ((args[0] as {operation?: string}).operation === 'commit') release = () => send.apply(this, args)
+      else send.apply(this, args)
+    })
+    t.mock.method(Worker.prototype, 'terminate', function(this: Worker) { terminated++; return terminate.call(this) })
+    t.mock.timers.enable({apis: ['setTimeout']})
+    const writing = store.commit({generation: initial.generation, revision: 1, mutations: [{kind: 'append', item: item(1, 'durable receipt')}]})
+    pending = Promise.all([writing, store.close()])
+    t.mock.timers.tick(401)
+    assert.equal(terminated, 0, 'close must not terminate an admitted commit before its RPC deadline')
+    t.mock.timers.reset()
+    assert.ok(release)
+    release()
+    release = undefined
+    await pending
+    assert.equal(terminated, 1)
+  } finally {
+    t.mock.timers.reset(); release?.(); await pending?.catch(() => undefined)
+    await store.close().catch(() => undefined); await rm(directory, {recursive: true, force: true})
+  }
+})

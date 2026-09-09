@@ -51,13 +51,15 @@ export interface BuildQwenRealtimeAssemblyOptions
 /** Narrow provider-only form used by the integrated provider registry. */
 export interface BuildQwenRealtimeProviderOptions {
   readonly onUsage?: UsageReporter
+
+
   readonly config: QwenRealtimeConfig
   readonly connector?: QwenConnector
   readonly idFactory: () => string
   readonly now: () => number
   readonly workspaceGraphPolicy: boolean
   readonly executorApproval: boolean
-  readonly modules?: {readonly search: boolean; readonly camera: boolean; readonly coding: boolean; readonly knowledge?: boolean}
+  readonly modules?: {readonly workspace?: boolean; readonly search: boolean; readonly camera: boolean; readonly coding: boolean; readonly knowledge?: boolean}
 }
 
 /**
