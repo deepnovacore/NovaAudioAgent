@@ -519,3 +519,16 @@ test('provider failures cross the lifecycle boundary with fixed credential-safe 
   ))
   await session.close()
 })
+
+test('provider session forwards edited text and draft ASR with connection cancellation', async () => {
+  const provider = Object.assign(new FakeProvider(), {
+    submitText: (text: string, signal: AbortSignal) => {assert.equal(text, 'edited'); assert.equal(signal.aborted, false); return Promise.resolve()},
+    transcribeDraft: (_pcm: Uint8Array, signal: AbortSignal) => {assert.equal(signal.aborted, false); return Promise.resolve('draft')},
+  })
+  const session = new RealtimeProviderSession(provider)
+  await session.connect([])
+  await session.submitText('edited')
+  assert.equal(await session.transcribeDraft(new Uint8Array(2)), 'draft')
+  await session.close()
+  await assert.rejects(session.submitText('edited'))
+})

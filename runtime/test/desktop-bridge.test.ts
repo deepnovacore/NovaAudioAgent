@@ -105,6 +105,7 @@ class RecordingTelemetry implements RealtimeTelemetry {
 const TOKEN = '0'.repeat(32)
 
 interface Harness {
+  readonly service: BridgeService
   readonly bridge: DesktopSocketBridge
   readonly stopped: () => boolean
   readonly calls: string[]
@@ -178,7 +179,7 @@ function harness(
     executor: {executor: 'codex', display_name: 'Codex'},
     ...bridgeOverrides,
   })
-  return {bridge, stopped: () => aborted, calls, clock, telemetry}
+  return {bridge, service, stopped: () => aborted, calls, clock, telemetry}
 }
 
 function frame(epoch: number, sequence: number): Parameters<DesktopSocketBridge['onAudioFrame']>[0] {
@@ -1015,4 +1016,40 @@ test('coding tasks snapshot survives bubble filtering and authenticated replay',
   bridge.release()
   bridge.markAuthenticated()
   assert.deepEqual(findJsonFrame(drainJsonFrames(bridge), 'executor.tasks'), snapshot)
+})
+
+test('dictation buffers audio without sending it to the model; only explicit edited text is submitted', async () => {
+  const {bridge, service, calls} = harness()
+  let bytes = 0
+  service.transcribeDraft = pcm => {bytes = pcm.length; return Promise.resolve('draft')}
+  service.submitText = text => {calls.push('text:' + text); return Promise.resolve()}
+  bridge.markAuthenticated(); drainJsonFrames(bridge)
+  await bridge.receiveControl({type: 'input.dictation', id: 'd1', action: 'start'})
+  await bridge.receiveAudio(new Uint8Array(4))
+  assert.deepEqual(calls, [])
+  await bridge.receiveControl({type: 'input.dictation', id: 'd1', action: 'finish'})
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(bytes, 4)
+  assert.equal(findJsonFrame(drainJsonFrames(bridge), 'input.transcription').type, 'input.transcription')
+  await bridge.receiveAudio(new Uint8Array(2))
+  assert.deepEqual(calls, [], 'late draft audio must not fall through to live ASR')
+  await bridge.receiveControl({type: 'input.text', text: 'edited draft'})
+  assert.deepEqual(calls, ['text:edited draft'])
+  bridge.release()
+})
+
+test('cancelled dictation drops a late transcript and release aborts recognition', async () => {
+  const {bridge, service} = harness()
+  let finish!: (text: string) => void
+  let signal: AbortSignal | undefined
+  service.transcribeDraft = async (_pcm, current) => {signal = current; return new Promise(resolve => {finish = resolve})}
+  bridge.markAuthenticated(); drainJsonFrames(bridge)
+  await bridge.receiveControl({type: 'input.dictation', id: 'old', action: 'start'})
+  await bridge.receiveAudio(new Uint8Array(4))
+  await bridge.receiveControl({type: 'input.dictation', id: 'old', action: 'finish'})
+  await bridge.receiveControl({type: 'input.dictation', id: 'old', action: 'cancel'})
+  assert.equal(signal?.aborted, true)
+  finish('late draft'); await new Promise(resolve => setImmediate(resolve))
+  assert.equal(drainJsonFrames(bridge).some(frame => frame.type === 'input.transcription'), false)
+  bridge.release()
 })

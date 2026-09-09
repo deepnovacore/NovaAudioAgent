@@ -54,6 +54,9 @@ export const DEFAULT_MAX_OUTBOUND_FRAMES = 128
 /** What a parsed renderer control frame carries. */
 export interface DesktopCommand {
   readonly kind:
+    | 'input_audio'
+    | 'input_text'
+    | 'input_dictation'
     | 'authenticated'
     | 'speech_onset'
     | 'playback_started'
@@ -74,6 +77,8 @@ export interface BridgeService {
   readonly executorState: ExecutorState
   setCodingProgressNarration?(mode: 'smart' | 'continuous'): void
   discardInputAudio?(): Promise<void>
+  transcribeDraft?(pcm: Uint8Array, signal: AbortSignal): Promise<string>
+  submitText?(text: string): Promise<void>
   sendAudio(pcm: Uint8Array): Promise<void>
   localSpeechOnset(speechId: string): Promise<void>
   playbackStarted(utteranceId: string, generationEpoch: number): boolean
@@ -154,6 +159,8 @@ export class DesktopSocketBridge {
   #latestAssistantCaptionSequence = 0
   /** Assistant captions at or below this belong to a cleared turn. */
   #fencedAssistantCaptionSequence = 0
+  #draftInput = false
+  #dictation: {id: string; chunks: Uint8Array[]; size: number; finishing: boolean; controller: AbortController; timer: ReturnType<typeof setTimeout>} | undefined
   #claimed = false
   #authenticated = false
   #everAuthenticated = false
@@ -374,6 +381,8 @@ export class DesktopSocketBridge {
   }
 
   release(): void {
+    this.#cancelDictation()
+    this.#draftInput = false
     this.#claimed = false
     this.#authenticated = false
     this.#fencedGenerationEpoch = Math.max(
@@ -465,14 +474,59 @@ export class DesktopSocketBridge {
 
   async receiveAudio(raw: Uint8Array): Promise<void> {
     this.#recordUplink(raw.length)
-    await this.#service.sendAudio(validateInputPcm(raw))
+    const pcm = validateInputPcm(raw)
+    if (this.#dictation) {
+      const draft = this.#dictation
+      if (draft.finishing) return
+      if (draft.size + pcm.length > 16000 * 2 * 60) { this.#cancelDictation(); throw new Error('dictation too long') }
+      draft.chunks.push(pcm.slice()); draft.size += pcm.length
+      return
+    }
+    if (!this.#draftInput) await this.#service.sendAudio(pcm)
   }
 
   async receiveControl(control: DesktopControl): Promise<void> {
+    if (control.type === 'input.audio') { if (this.#dictation) throw new Error('dictation active'); this.#draftInput = false; return }
+    if (control.type === 'input.dictation') { this.#dictationControl(control.id, control.action); return }
+    if (control.type === 'input.text') {
+      if (this.#dictation) throw new Error('dictation active')
+      if (!this.#service.submitText) throw new Error('text input unavailable')
+      await this.#service.submitText(control.text)
+      return
+    }
     await this.#receiveCommand(commandFromControl(control))
   }
 
+  #cancelDictation(): void {
+    if (!this.#dictation) return
+    clearTimeout(this.#dictation.timer); this.#dictation.controller.abort(); this.#dictation = undefined
+  }
+
+  #dictationControl(id: string, action: 'start' | 'finish' | 'cancel'): void {
+    if (action === 'cancel') { if (this.#dictation?.id === id) this.#cancelDictation(); return }
+    if (!this.#service.transcribeDraft) throw new Error('dictation unavailable')
+    if (action === 'start') {
+      this.#draftInput = true
+      if (this.#dictation) throw new Error('dictation active')
+      const controller = new AbortController()
+      const timer = setTimeout(() => { if (this.#dictation?.controller === controller) this.#cancelDictation() }, 90000)
+      this.#dictation = {id, chunks: [], size: 0, finishing: false, controller, timer}
+      return
+    }
+    const draft = this.#dictation
+    if (draft?.id !== id || draft.finishing) throw new Error('stale dictation')
+    draft.finishing = true
+    const pcm = Buffer.concat(draft.chunks); draft.chunks = []
+    void this.#service.transcribeDraft(pcm, AbortSignal.any([draft.controller.signal, AbortSignal.timeout(30000)]))
+      .then(text => { if (this.#dictation === draft) this.#enqueue(JSON.stringify({type: 'input.transcription', id, text})) })
+      .catch(() => { if (this.#dictation === draft) this.#enqueue(JSON.stringify({type: 'input.transcription', id, error: 'recognition_failed'})) })
+      .finally(() => { if (this.#dictation === draft) this.#cancelDictation() })
+  }
+
   async #receiveCommand(command: DesktopCommand): Promise<void> {
+    if (command.kind === 'input_audio') return this.receiveControl({type: 'input.audio'})
+    if (command.kind === 'input_text') return this.receiveControl({type: 'input.text', text: String(command.payload.text)})
+    if (command.kind === 'input_dictation') return this.receiveControl({type: 'input.dictation', id: String(command.payload.id), action: command.payload.action as 'start' | 'finish' | 'cancel'})
     if (
       this.#telemetry !== undefined
       && command.kind !== 'playback_telemetry'
@@ -1008,6 +1062,9 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
     case 'executor.task_action':
     case 'coding.progress_narration':
       throw new DesktopProtocolError('desktop host control requires authenticated transport')
+    case 'input.audio': return {kind: 'input_audio', payload: {}}
+    case 'input.text': return {kind: 'input_text', payload: {text: control.text}}
+    case 'input.dictation': return {kind: 'input_dictation', payload: {id: control.id, action: control.action}}
     case 'speech.onset':
       return {
         kind: 'speech_onset',

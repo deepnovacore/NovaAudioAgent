@@ -46,7 +46,7 @@ jobs:
       - name: Prepare checkout-free installed smoke kit
         run: npm run prepare:release-smoke-kit --workspace @nova-audio-agent/desktop
       - name: Add portable unsigned result classifier to checkout-free kit
-        run: node -e "require('node:fs').copyFileSync('desktop/nova-audio-agent-desktop/scripts/run-unsigned-installed-smoke.mjs','desktop/nova-audio-agent-desktop/build/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs')"
+        run: node -e "require('node:fs').copyFileSync('clients/desktop/scripts/run-unsigned-installed-smoke.mjs','clients/desktop/build/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs')"
       # This is a same-workflow debugging artifact, not a release candidate.
       # The private repository's current plan does not provide attestations;
       # the downstream job still rehashes the closed bytes before execution.
@@ -54,9 +54,9 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            desktop/nova-audio-agent-desktop/build/release-artifacts/**
-            desktop/nova-audio-agent-desktop/build/release-digests/**
-            desktop/nova-audio-agent-desktop/build/release-smoke-kit/**
+            clients/desktop/build/release-artifacts/**
+            clients/desktop/build/release-digests/**
+            clients/desktop/build/release-smoke-kit/**
           if-no-files-found: error
 
   installed-smoke:

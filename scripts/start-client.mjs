@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { parseEnv } from 'node:util'
 
-import { codexCandidates } from '../desktop/nova-audio-agent-desktop/src/main/codex-discovery.mjs'
+import { codexCandidates } from '../clients/desktop/src/main/codex-discovery.mjs'
 
 const DESKTOP_WORKSPACE = '@nova-audio-agent/desktop'
 const SUPPORTED_PLATFORMS = new Set(['darwin', 'linux', 'win32'])
@@ -49,8 +49,8 @@ export function electronExecutablePath(rootDir, platform) {
   const pathApi = platform === 'win32' ? win32 : posix
   const distribution = pathApi.join(
     rootDir,
+    'clients',
     'desktop',
-    'nova-audio-agent-desktop',
     'node_modules',
     'electron',
     'dist',
@@ -170,8 +170,8 @@ export function planClientLaunch({
       command: nodeExecutable,
       args: [pathApi.join(
         rootDir,
+        'clients',
         'desktop',
-        'nova-audio-agent-desktop',
         'node_modules',
         'electron',
         'install.js',

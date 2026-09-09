@@ -123,3 +123,7 @@ npm ci && npm run check && npm run build && npm test
 ## 7. 许可证
 
 版权所有 2026 DeepNovaCore，[Apache License 2.0](LICENSE)。
+
+## 浏览器客户端
+
+浏览器客户端位于 `clients/webui`，与 `clients/desktop`、`clients/ios` 统一管理。启动 headless runtime 后运行 `npm run start:web`。连接凭据、浏览器音频和 HTTPS 部署见 [WebUI 使用说明](clients/webui/README.md)。

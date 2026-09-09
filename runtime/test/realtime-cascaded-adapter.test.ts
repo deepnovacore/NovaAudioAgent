@@ -513,6 +513,55 @@ test('cascaded happy path preserves VAD, ASR, LLM, TTS, and normalized event ord
   assert.equal(endpointing.resets, 2, 'connect and utterance completion reset endpointing')
 })
 
+test('typed input uses the normal user turn and LLM path without invoking ASR', async () => {
+  const onset = new Uint8Array([0, 0, 1, 0])
+  const endpointing = new ScriptedEndpointing(
+    [{kind: 'speech_start', pcm: onset}],
+    [{kind: 'speech_end', commit: true}],
+  )
+  const asrSession = new FakeAsrSession(
+    {text: '你', final: false},
+    {text: '你好 Nova', final: true},
+  )
+  const llm = new FakeLlm([
+    {kind: 'response_started', response_id: 'response-1'},
+    {kind: 'text_delta', text: '你好，'},
+    {kind: 'text_delta', text: '很高兴见到你。'},
+    {kind: 'response_completed', response_id: 'response-1'},
+  ])
+  const ttsSession = new FakeTtsSession(new Uint8Array([1, 2]))
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing,
+    asr: new FakeAsrClient(asrSession),
+    llm,
+    tts: new FakeTtsClient(ttsSession),
+    idFactory: ids('session-1', 'speech-1', 'item-1'),
+  })
+  const connected = await adapter.connect({tools: [], signal: new AbortController().signal})
+  const collecting = collectThroughTerminal(adapter)
+
+  await adapter.submitText('你好 Nova', new AbortController().signal)
+  const events = await settleWithin('Volcengine happy path', collecting)
+
+  assert.deepEqual(connected, {epoch: 1, provider_session_id: 'session-1'})
+  assert.deepEqual(events.map(event => event.kind), [
+    'user_speech_started',
+    'user_speech_ended',
+    'user_transcript_final',
+    'response_started',
+    'response_transcript_delta',
+    'response_transcript_delta',
+    'response_audio_delta',
+    'response_transcript_final',
+    'response_terminal',
+  ])
+  assert.deepEqual(asrSession.appended, [])
+  assert.deepEqual(llm.calls[0]?.inputs, [{kind: 'user_text', text: '你好 Nova'}])
+  assert.deepEqual(ttsSession.texts, ['你好，', '很高兴见到你。'])
+  assert.equal(ttsSession.closed, true)
+  assert.equal(endpointing.resets, 1)
+})
+
 test('cascaded preemptive-alert policy is fixed and cannot inherit the Qwen reconnect policy', () => {
   assert.deepEqual(CASCADED_PREEMPTIVE_ALERT_POLICY, {
     controlledPreemptiveAlertReconnect: false,

@@ -332,7 +332,6 @@ function recordingRegistries(calls: string[]): CascadedProviderRegistries {
   }
 }
 
-
 test('cascaded defaults resolve endpointing, ASR, Qwen LLM, and TTS in order', () => {
   const calls: string[] = []
   buildCascadedRealtimeAssembly({

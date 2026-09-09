@@ -187,6 +187,21 @@ export class RealtimeProviderSession {
     return this.connect({tools}, signal)
   }
 
+  async submitText(text: string, signal?: AbortSignal): Promise<void> {
+    if (typeof text !== 'string' || !text.trim() || text.length > 4000 || !this.#provider.submitText) throw new RealtimeProtocolError('text input unavailable')
+    const owner = this.#requiredConnectionOwner()
+    await this.#provider.submitText(text, combinedSignal(owner.controller.signal, signal))
+    this.#assertCurrentConnection(owner)
+  }
+
+  async transcribeDraft(pcm: Uint8Array, signal?: AbortSignal): Promise<string> {
+    if (!this.#provider.transcribeDraft) throw new RealtimeProtocolError('dictation unavailable')
+    const owner = this.#requiredConnectionOwner()
+    const text = await this.#provider.transcribeDraft(pcm, combinedSignal(owner.controller.signal, signal))
+    this.#assertCurrentConnection(owner)
+    return text
+  }
+
   async sendAudio(pcm: Uint8Array, signal?: AbortSignal): Promise<void> {
     if (!(pcm instanceof Uint8Array) || pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
       throw new RealtimeProtocolError('input PCM must be non-empty aligned PCM16 bytes')

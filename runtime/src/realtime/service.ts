@@ -254,6 +254,8 @@ export interface ServiceRuntime {
 
 /** The provider surface the service uses directly: three calls, everything else via the session. */
 export interface ServiceProvider {
+  transcribeDraft?(pcm: Uint8Array, signal: AbortSignal): Promise<string>
+  submitText?(text: string, signal: AbortSignal): Promise<void>
   sendAudio(pcm: Uint8Array, signal?: AbortSignal): Promise<void>
   /**
    * The event stream.
@@ -926,6 +928,18 @@ export class RealtimeService {
     this.#inputChanged.set()
     void ready.catch(() => undefined)
     return ready
+  }
+
+  async transcribeDraft(pcm: Uint8Array, signal: AbortSignal): Promise<string> {
+    if (!this.#provider.transcribeDraft) throw new Error('dictation unavailable')
+    return this.#provider.transcribeDraft(pcm, AbortSignal.any([signal, this.#inputController.signal]))
+  }
+
+  async submitText(text: string): Promise<void> {
+    const controller = this.#inputController
+    if (this.#inputReady !== null) await this.#inputReady
+    if (controller.signal.aborted || !this.#provider.submitText) throw new Error('text input unavailable')
+    await this.#provider.submitText(text, controller.signal)
   }
 
   async sendAudio(pcm: Uint8Array): Promise<void> {

@@ -20,7 +20,7 @@ if (mode === '--write') {
   const manifestPath = resolve(runtimeRoot, 'node-parity-audit.json')
   const sourceFiles = [
     ...await sourceTree(resolve(runtimeRoot, 'src'), new Set(['.ts'])),
-    ...await sourceTree(resolve(repositoryRoot, 'desktop/nova-audio-agent-desktop/src'), new Set(['.js', '.mjs', '.ts'])),
+    ...await sourceTree(resolve(repositoryRoot, 'clients/desktop/src'), new Set(['.js', '.mjs', '.ts'])),
   ].map(absolute => ({
     absolute,
     canonical: canonicalAuditPath(relative(repositoryRoot, absolute)),

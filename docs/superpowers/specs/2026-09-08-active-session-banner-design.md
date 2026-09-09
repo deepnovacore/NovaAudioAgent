@@ -17,8 +17,8 @@
 ## 2. 已核对的现状
 
 - `runtime/src/desktop-progress.ts` 已投影有界且经过清理的 `executor.progress` 和结果，进度携带 delegate 身份，但没有完整的 session 打开信息。
-- `desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs` 的进度呈现会在 6 或 12 秒后消失，不能作为常驻运行状态。现有 roster 提供运行任务 ID 与标题。
-- `desktop/nova-audio-agent-desktop/src/main/executor-result.mjs` 只打开结果对话框及 Memory Board，不是 Codex session 打开能力。
+- `clients/desktop/src/renderer/bubbles.mjs` 的进度呈现会在 6 或 12 秒后消失，不能作为常驻运行状态。现有 roster 提供运行任务 ID 与标题。
+- `clients/desktop/src/main/executor-result.mjs` 只打开结果对话框及 Memory Board，不是 Codex session 打开能力。
 - `runtime/src/executors/codex/adapter-project.ts` 持有运行槽、任务身份、session 与线程绑定；取消最终通过对应槽的 AbortController 完成。语音取消可以调用模型消歧，鼠标点击已选定任务不需要再消歧。
 - Codex 运行使用由宿主管理的项目 `CODEX_HOME`，不能假定全局 Codex 桌面可见所有线程。
 - `runtime/src/executors/codex/factory.ts` 当前传入 `developerInstructions: null`。传输层已有该参数的接线。
@@ -62,7 +62,7 @@
 - 桌面宿主：沿现有 IPC 和 WebSocket 认证检查处理操作；窗口尺寸与点击区域由主进程校验，renderer 不提交任意原生窗口参数。
 - session 打开目标：由宿主使用 work / session 映射解析可信绑定，不接受 renderer 传任意路径、命令、URL 或 CODEX_HOME。
 
-主要涉及 `runtime/src/desktop*.ts`、`runtime/src/realtime/service.ts`、Codex adapter/factory 及 `desktop/nova-audio-agent-desktop/src/{main,preload,renderer}` 对应模块。只提取本功能需要的状态控制模块，不重构整个 service 或窗口系统。生成的 wire frame 常量由既有 build 流程更新。
+主要涉及 `runtime/src/desktop*.ts`、`runtime/src/realtime/service.ts`、Codex adapter/factory 及 `clients/desktop/src/{main,preload,renderer}` 对应模块。只提取本功能需要的状态控制模块，不重构整个 service 或窗口系统。生成的 wire frame 常量由既有 build 流程更新。
 
 ## 6. 打开与取消
 

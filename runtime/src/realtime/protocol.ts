@@ -419,6 +419,8 @@ export interface RealtimeProvider {
    */
   readonly userResponseMode?: 'automatic' | 'requested'
 
+  submitText?(text: string, signal: AbortSignal): Promise<void>
+  transcribeDraft?(pcm: Uint8Array, signal: AbortSignal): Promise<string>
   /** Absent and false both prohibit original-media injection. */
   readonly mediaCapability?: RealtimeProviderMediaCapability
   /** Optional bounded response-guidance replacement capability. */

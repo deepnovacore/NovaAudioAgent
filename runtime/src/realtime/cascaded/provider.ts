@@ -7,6 +7,7 @@ import type {
   SessionIdentity,
   WorkspaceContextDeliveryRecord,
 } from '../protocol.js'
+import {transcribeDraft} from './transcribe.js'
 import type {RealtimeTelemetry} from '../telemetry.js'
 import {
   CascadedRealtimeAdapter,
@@ -121,6 +122,15 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
       if (this.#connectSettled === settled) this.#connectSettled = null
       settleConnect?.()
     }
+  }
+
+  transcribeDraft(pcm: Uint8Array, signal: AbortSignal): Promise<string> {
+    this.#requiredAdapter()
+    return transcribeDraft(this.#asrFactory.openClient(), pcm, signal)
+  }
+
+  submitText(text: string, signal: AbortSignal): Promise<void> {
+    return this.#requiredAdapter().submitText(text, signal)
   }
 
   sendAudio(pcm: Uint8Array, signal: AbortSignal): Promise<void> {

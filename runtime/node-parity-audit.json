@@ -1,68 +1,68 @@
 {
   "schema_version": 2,
   "files": [
-    "desktop/nova-audio-agent-desktop/src/main/app-icon.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/backend-control.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/backend-diagnostics.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/backend-supervisor.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/backend.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/camera-source.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/codex-discovery.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/debug-board-client.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/desktop-identity.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/desktop-startup.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/drag-controller.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/frontend-usage.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/knowledge-actions.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/launch-command.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/lifecycle-coordinator.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/main.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/native-audio.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/platform-config.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/project-directories.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/release-smoke-channel.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/security.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/settings-apply.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/startup-diagnostics.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/wake-word/runtime.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/wake-word/sherpa-detector.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/wake-word/worker.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/window-position.mjs",
-    "desktop/nova-audio-agent-desktop/src/main/workspace-actions.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/audio.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/backend-reconnect.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/board-scroll-state.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/capabilities-editor.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/capture-worklet.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/confirmation-controls.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/confirmation-countdown.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/drag-gesture.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/frontend-usage.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/index.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/knowledge-panel.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/memory-board.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/microphone-permission.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/palette-hover.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/release-camera-contract.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/release-camera.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/secret-revisions.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/settings-controller.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/settings.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/state.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/task-banner-layout.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/task-banner.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/voice-choice.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/wake-audio.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/wire-frame-types.mjs",
-    "desktop/nova-audio-agent-desktop/src/renderer/workspace-graph-board.mjs",
+    "clients/desktop/src/main/app-icon.mjs",
+    "clients/desktop/src/main/app-protocol.mjs",
+    "clients/desktop/src/main/backend-control.mjs",
+    "clients/desktop/src/main/backend-diagnostics.mjs",
+    "clients/desktop/src/main/backend-supervisor.mjs",
+    "clients/desktop/src/main/backend.mjs",
+    "clients/desktop/src/main/camera-source.mjs",
+    "clients/desktop/src/main/capabilities-settings.mjs",
+    "clients/desktop/src/main/codex-discovery.mjs",
+    "clients/desktop/src/main/debug-board-client.mjs",
+    "clients/desktop/src/main/desktop-identity.mjs",
+    "clients/desktop/src/main/desktop-startup.mjs",
+    "clients/desktop/src/main/drag-controller.mjs",
+    "clients/desktop/src/main/executor-result.mjs",
+    "clients/desktop/src/main/frontend-usage.mjs",
+    "clients/desktop/src/main/knowledge-actions.mjs",
+    "clients/desktop/src/main/launch-command.mjs",
+    "clients/desktop/src/main/lifecycle-coordinator.mjs",
+    "clients/desktop/src/main/main.mjs",
+    "clients/desktop/src/main/native-audio.mjs",
+    "clients/desktop/src/main/platform-config.mjs",
+    "clients/desktop/src/main/project-directories.mjs",
+    "clients/desktop/src/main/release-smoke-channel.mjs",
+    "clients/desktop/src/main/security.mjs",
+    "clients/desktop/src/main/settings-apply.mjs",
+    "clients/desktop/src/main/settings-store.mjs",
+    "clients/desktop/src/main/startup-diagnostics.mjs",
+    "clients/desktop/src/main/wake-word/model-manager.mjs",
+    "clients/desktop/src/main/wake-word/runtime.mjs",
+    "clients/desktop/src/main/wake-word/sherpa-detector.mjs",
+    "clients/desktop/src/main/wake-word/worker.mjs",
+    "clients/desktop/src/main/window-position.mjs",
+    "clients/desktop/src/main/workspace-actions.mjs",
+    "clients/desktop/src/renderer/audio.mjs",
+    "clients/desktop/src/renderer/backend-reconnect.mjs",
+    "clients/desktop/src/renderer/board-scroll-state.mjs",
+    "clients/desktop/src/renderer/bubbles.mjs",
+    "clients/desktop/src/renderer/camera.mjs",
+    "clients/desktop/src/renderer/capabilities-editor.mjs",
+    "clients/desktop/src/renderer/capture-worklet.mjs",
+    "clients/desktop/src/renderer/confirmation-controls.mjs",
+    "clients/desktop/src/renderer/confirmation-countdown.mjs",
+    "clients/desktop/src/renderer/drag-gesture.mjs",
+    "clients/desktop/src/renderer/frontend-usage.mjs",
+    "clients/desktop/src/renderer/index.mjs",
+    "clients/desktop/src/renderer/knowledge-panel.mjs",
+    "clients/desktop/src/renderer/memory-board.mjs",
+    "clients/desktop/src/renderer/microphone-permission.mjs",
+    "clients/desktop/src/renderer/orb-visual.mjs",
+    "clients/desktop/src/renderer/palette-hover.mjs",
+    "clients/desktop/src/renderer/release-camera-contract.mjs",
+    "clients/desktop/src/renderer/release-camera.mjs",
+    "clients/desktop/src/renderer/secret-revisions.mjs",
+    "clients/desktop/src/renderer/settings-controller.mjs",
+    "clients/desktop/src/renderer/settings.mjs",
+    "clients/desktop/src/renderer/state.mjs",
+    "clients/desktop/src/renderer/task-banner-layout.mjs",
+    "clients/desktop/src/renderer/task-banner.mjs",
+    "clients/desktop/src/renderer/voice-choice.mjs",
+    "clients/desktop/src/renderer/wake-audio.mjs",
+    "clients/desktop/src/renderer/wire-frame-types.mjs",
+    "clients/desktop/src/renderer/workspace-graph-board.mjs",
     "runtime/src/agent-controller.ts",
     "runtime/src/aoq-chat-server.ts",
     "runtime/src/approval-port.ts",
@@ -196,6 +196,7 @@
     "runtime/src/realtime/cascaded/ports.ts",
     "runtime/src/realtime/cascaded/provider.ts",
     "runtime/src/realtime/cascaded/qwen-llm.ts",
+    "runtime/src/realtime/cascaded/transcribe.ts",
     "runtime/src/realtime/confirmation-turn-isolation.ts",
     "runtime/src/realtime/evidence.ts",
     "runtime/src/realtime/frontend-instructions.ts",
@@ -256,7 +257,7 @@
   ],
   "occurrences": [
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
+      "file": "clients/desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 0,
       "line": 48,
@@ -264,10 +265,10 @@
       "snippet_sha256": "e4bbd87e4e69f04bbd796e31c93c95a1baa31f113ff9facf4e161751f3198d33",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
+      "test": "clients/desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
+      "file": "clients/desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 1,
       "line": 53,
@@ -275,10 +276,10 @@
       "snippet_sha256": "dcb61be837b6f667f217abcc36ceb29da1b110c02559ed97e4d7e7ae995a17cf",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
+      "test": "clients/desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
+      "file": "clients/desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 2,
       "line": 54,
@@ -286,10 +287,10 @@
       "snippet_sha256": "734a616732cc8f960a61a4289c3c9ba141a5c292c4e0662f2605ffdef22a874f",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
+      "test": "clients/desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
+      "file": "clients/desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 55,
@@ -297,10 +298,10 @@
       "snippet_sha256": "67f892fad8d89283ccb62973245a226ead4b83262f76d5e42a530a5c3cbb5565",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
+      "test": "clients/desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/app-protocol.mjs",
+      "file": "clients/desktop/src/main/app-protocol.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 4,
       "line": 60,
@@ -308,10 +309,10 @@
       "snippet_sha256": "0236fcedcb97aa639ddb276c7f9afdd3850fae5e7058d0b50057d6a67a7203d3",
       "disposition": "host_only_unicode",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary",
-      "test": "desktop/nova-audio-agent-desktop/test/app-protocol.test.mjs"
+      "test": "clients/desktop/test/app-protocol.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/backend-control.mjs",
+      "file": "clients/desktop/src/main/backend-control.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 66,
@@ -319,10 +320,10 @@
       "snippet_sha256": "4a497b11024888caf8552dc25fd5716c718f88e6a8902f1805609543f161af4a",
       "disposition": "intentional_utf16",
       "behavior": "private requests correlate, reject on close, and ignore late status",
-      "test": "desktop/nova-audio-agent-desktop/test/backend-control.test.mjs"
+      "test": "clients/desktop/test/backend-control.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/backend-diagnostics.mjs",
+      "file": "clients/desktop/src/main/backend-diagnostics.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 0,
       "line": 26,
@@ -330,10 +331,10 @@
       "snippet_sha256": "4f46122526d89ad40f40a24e6ad2af5f477964ac79bb61e350eb77c9a3eb30ea",
       "disposition": "host_only_unicode",
       "behavior": "collector accepts split stable diagnostics and never returns raw stderr",
-      "test": "desktop/nova-audio-agent-desktop/test/backend-diagnostics.test.mjs"
+      "test": "clients/desktop/test/backend-diagnostics.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/backend.mjs",
+      "file": "clients/desktop/src/main/backend.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 305,
@@ -341,10 +342,10 @@
       "snippet_sha256": "684f7177f4436806523b0588bd25dd9d7af62284556302eb4af00b755fd21ed6",
       "disposition": "host_only_unicode",
       "behavior": "passes token only through environment and dials back over loopback",
-      "test": "desktop/nova-audio-agent-desktop/test/backend.test.mjs"
+      "test": "clients/desktop/test/backend.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/backend.mjs",
+      "file": "clients/desktop/src/main/backend.mjs",
       "kind": "numeric_template",
       "occurrence_index": 1,
       "line": 393,
@@ -352,10 +353,10 @@
       "snippet_sha256": "d699203e9a71d41825ec7ffe9638890052be8461ce5e6fb8aba945de9d991d19",
       "disposition": "wire_json",
       "behavior": "passes token only through environment and dials back over loopback",
-      "test": "desktop/nova-audio-agent-desktop/test/backend.test.mjs"
+      "test": "clients/desktop/test/backend.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/backend.mjs",
+      "file": "clients/desktop/src/main/backend.mjs",
       "kind": "string_trim",
       "occurrence_index": 2,
       "line": 620,
@@ -363,10 +364,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "passes token only through environment and dials back over loopback",
-      "test": "desktop/nova-audio-agent-desktop/test/backend.test.mjs"
+      "test": "clients/desktop/test/backend.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
+      "file": "clients/desktop/src/main/capabilities-settings.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 48,
@@ -374,10 +375,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "combined operation validates settings, returns invalid/busy unchanged and distinguishes saved failures",
-      "test": "desktop/nova-audio-agent-desktop/test/capabilities-settings.test.mjs"
+      "test": "clients/desktop/test/capabilities-settings.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
+      "file": "clients/desktop/src/main/capabilities-settings.mjs",
       "kind": "locale_unicode",
       "occurrence_index": 1,
       "line": 90,
@@ -385,10 +386,10 @@
       "snippet_sha256": "d3ea0fe04ee87d0e0a02881a46d014a9ead5e302a346f7245b4fc6f9b0fe28b2",
       "disposition": "host_only_unicode",
       "behavior": "literal harmless HTTP headers remain editable without admitting credential headers",
-      "test": "desktop/nova-audio-agent-desktop/test/capabilities-settings.test.mjs"
+      "test": "clients/desktop/test/capabilities-settings.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
+      "file": "clients/desktop/src/main/capabilities-settings.mjs",
       "kind": "locale_unicode",
       "occurrence_index": 2,
       "line": 175,
@@ -396,10 +397,10 @@
       "snippet_sha256": "02fc169e48f5b0780c4ad0ad0ffc3cd6c899749f53a02ae88b4edaf2e9ab18f1",
       "disposition": "host_only_unicode",
       "behavior": "HOME and USER references are ordinary data while arbitrary authentication references stay protected",
-      "test": "desktop/nova-audio-agent-desktop/test/capabilities-settings.test.mjs"
+      "test": "clients/desktop/test/capabilities-settings.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/capabilities-settings.mjs",
+      "file": "clients/desktop/src/main/capabilities-settings.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 175,
@@ -407,10 +408,10 @@
       "snippet_sha256": "ea5e0758245563e28b86791e6c4b7a73053e821253c683b7df36e51a55272ab3",
       "disposition": "host_only_unicode",
       "behavior": "public probe refuses secret-bearing tool names, redacts descriptions and keeps identity",
-      "test": "desktop/nova-audio-agent-desktop/test/capabilities-settings.test.mjs"
+      "test": "clients/desktop/test/capabilities-settings.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
+      "file": "clients/desktop/src/main/executor-result.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 84,
@@ -418,10 +419,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "rejects malformed results before a native dialog can render them",
-      "test": "desktop/nova-audio-agent-desktop/test/executor-result.test.mjs"
+      "test": "clients/desktop/test/executor-result.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
+      "file": "clients/desktop/src/main/executor-result.mjs",
       "kind": "string_length",
       "occurrence_index": 1,
       "line": 84,
@@ -429,10 +430,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "rejects malformed results before a native dialog can render them",
-      "test": "desktop/nova-audio-agent-desktop/test/executor-result.test.mjs"
+      "test": "clients/desktop/test/executor-result.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
+      "file": "clients/desktop/src/main/executor-result.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 2,
       "line": 90,
@@ -440,10 +441,10 @@
       "snippet_sha256": "672ce8291ede462bd8e980c60f99dddfd60fa05d9ced0a39367283d5549ec607",
       "disposition": "host_only_unicode",
       "behavior": "rejects malformed results before a native dialog can render them",
-      "test": "desktop/nova-audio-agent-desktop/test/executor-result.test.mjs"
+      "test": "clients/desktop/test/executor-result.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/executor-result.mjs",
+      "file": "clients/desktop/src/main/executor-result.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 91,
@@ -451,10 +452,10 @@
       "snippet_sha256": "9808265026804d64c46861fc0692f893449c955569ecb790d8d82fbd1c260103",
       "disposition": "host_only_unicode",
       "behavior": "rejects malformed results before a native dialog can render them",
-      "test": "desktop/nova-audio-agent-desktop/test/executor-result.test.mjs"
+      "test": "clients/desktop/test/executor-result.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/knowledge-actions.mjs",
+      "file": "clients/desktop/src/main/knowledge-actions.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 29,
@@ -462,32 +463,32 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "file ingestion admits native paths only after data disclosure consent",
-      "test": "desktop/nova-audio-agent-desktop/test/knowledge-actions.test.mjs"
+      "test": "clients/desktop/test/knowledge-actions.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/main.mjs",
+      "file": "clients/desktop/src/main/main.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
-      "line": 1019,
+      "line": 1020,
       "snippet": "process.pid",
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "main owns single-instance lifecycle and denies renderer escape",
-      "test": "desktop/nova-audio-agent-desktop/test/main-security.test.mjs"
+      "test": "clients/desktop/test/main-security.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/main.mjs",
+      "file": "clients/desktop/src/main/main.mjs",
       "kind": "numeric_template",
       "occurrence_index": 1,
-      "line": 1528,
+      "line": 1529,
       "snippet": "Math.round(process.uptime() * 1000)",
       "snippet_sha256": "a17486e7deb334a3a4f3e2e6ef87f588d3b9d084acf74efed633512d166f48a7",
       "disposition": "wire_json",
       "behavior": "source smoke lifecycle clock emits integer milliseconds without private state",
-      "test": "desktop/nova-audio-agent-desktop/test/source-startup-smoke.test.mjs"
+      "test": "clients/desktop/test/source-startup-smoke.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/native-audio.mjs",
+      "file": "clients/desktop/src/main/native-audio.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 262,
@@ -495,10 +496,10 @@
       "snippet_sha256": "4691c2864aa2e27fbefa4838ac86d34ba2bc21b27a71009601904f3bb23eefd4",
       "disposition": "wire_json",
       "behavior": "macOS helper is pinned to Apple VoiceProcessingIO system AEC",
-      "test": "desktop/nova-audio-agent-desktop/test/native-audio.test.mjs"
+      "test": "clients/desktop/test/native-audio.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/platform-config.mjs",
+      "file": "clients/desktop/src/main/platform-config.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 2,
@@ -506,10 +507,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "desktop configuration lets the explicit process binary override saved discovery settings",
-      "test": "desktop/nova-audio-agent-desktop/test/platform-config.test.mjs"
+      "test": "clients/desktop/test/platform-config.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/platform-config.mjs",
+      "file": "clients/desktop/src/main/platform-config.mjs",
       "kind": "string_trim",
       "occurrence_index": 1,
       "line": 2,
@@ -517,10 +518,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "desktop configuration lets the explicit process binary override saved discovery settings",
-      "test": "desktop/nova-audio-agent-desktop/test/platform-config.test.mjs"
+      "test": "clients/desktop/test/platform-config.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
+      "file": "clients/desktop/src/main/settings-store.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 166,
@@ -528,10 +529,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
+      "test": "clients/desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
+      "file": "clients/desktop/src/main/settings-store.mjs",
       "kind": "string_trim",
       "occurrence_index": 1,
       "line": 181,
@@ -539,10 +540,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
+      "test": "clients/desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
+      "file": "clients/desktop/src/main/settings-store.mjs",
       "kind": "string_length",
       "occurrence_index": 2,
       "line": 228,
@@ -550,10 +551,10 @@
       "snippet_sha256": "5112417b26dcabce32653d1f32793b43b5ab7ff07de91af3d7cdcb5799a503ed",
       "disposition": "byte_length",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
+      "test": "clients/desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
+      "file": "clients/desktop/src/main/settings-store.mjs",
       "kind": "string_length",
       "occurrence_index": 3,
       "line": 229,
@@ -561,10 +562,10 @@
       "snippet_sha256": "5112417b26dcabce32653d1f32793b43b5ab7ff07de91af3d7cdcb5799a503ed",
       "disposition": "byte_length",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
+      "test": "clients/desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/settings-store.mjs",
+      "file": "clients/desktop/src/main/settings-store.mjs",
       "kind": "numeric_template",
       "occurrence_index": 4,
       "line": 741,
@@ -572,10 +573,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "the default settings are the documented schema",
-      "test": "desktop/nova-audio-agent-desktop/test/settings-store.test.mjs"
+      "test": "clients/desktop/test/settings-store.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
+      "file": "clients/desktop/src/main/wake-word/model-manager.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
       "line": 40,
@@ -583,10 +584,10 @@
       "snippet_sha256": "98e3af20e9d4f424d573c0c0ddeec706c9b38b5ceab466a16f0abdae101f192c",
       "disposition": "host_only_unicode",
       "behavior": "verified keyword cache works offline and stale keywords cannot be reused",
-      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
+      "test": "clients/desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
+      "file": "clients/desktop/src/main/wake-word/model-manager.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 1,
       "line": 40,
@@ -594,10 +595,10 @@
       "snippet_sha256": "b6e739e7c08a388d0610dbb80b87a499b868d0e911d460e99b7ccf19c4f60670",
       "disposition": "host_only_unicode",
       "behavior": "verified keyword cache works offline and stale keywords cannot be reused",
-      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
+      "test": "clients/desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
+      "file": "clients/desktop/src/main/wake-word/model-manager.mjs",
       "kind": "string_trim",
       "occurrence_index": 2,
       "line": 41,
@@ -605,10 +606,10 @@
       "snippet_sha256": "cdc8bda8867b2b85d8b3367a29b17b511f1d94c4405812a6e89ba844812e7793",
       "disposition": "host_only_unicode",
       "behavior": "verified keyword cache works offline and stale keywords cannot be reused",
-      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
+      "test": "clients/desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
+      "file": "clients/desktop/src/main/wake-word/model-manager.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 41,
@@ -616,10 +617,10 @@
       "snippet_sha256": "b6e739e7c08a388d0610dbb80b87a499b868d0e911d460e99b7ccf19c4f60670",
       "disposition": "host_only_unicode",
       "behavior": "verified keyword cache works offline and stale keywords cannot be reused",
-      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
+      "test": "clients/desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
+      "file": "clients/desktop/src/main/wake-word/model-manager.mjs",
       "kind": "numeric_template",
       "occurrence_index": 4,
       "line": 94,
@@ -627,10 +628,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "terminated download workers clean only their own partial files",
-      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
+      "test": "clients/desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
+      "file": "clients/desktop/src/main/wake-word/model-manager.mjs",
       "kind": "numeric_template",
       "occurrence_index": 5,
       "line": 122,
@@ -638,10 +639,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "terminated download workers clean only their own partial files",
-      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
+      "test": "clients/desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/wake-word/model-manager.mjs",
+      "file": "clients/desktop/src/main/wake-word/model-manager.mjs",
       "kind": "numeric_template",
       "occurrence_index": 6,
       "line": 122,
@@ -649,10 +650,10 @@
       "snippet_sha256": "6c90fd916a9af405d43529bb73613fab7b3b173e6c2712dca9fe0a61fb2b7b0e",
       "disposition": "wire_json",
       "behavior": "terminated download workers clean only their own partial files",
-      "test": "desktop/nova-audio-agent-desktop/test/wake-word-model.test.mjs"
+      "test": "clients/desktop/test/wake-word-model.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/main/window-position.mjs",
+      "file": "clients/desktop/src/main/window-position.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 490,
@@ -660,10 +661,10 @@
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
       "behavior": "accepts only finite bounded drag deltas",
-      "test": "desktop/nova-audio-agent-desktop/test/window-position.test.mjs"
+      "test": "clients/desktop/test/window-position.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
+      "file": "clients/desktop/src/renderer/bubbles.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 253,
@@ -671,10 +672,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "parses only bounded sanitized executor progress frames",
-      "test": "desktop/nova-audio-agent-desktop/test/progress-bubbles.test.mjs"
+      "test": "clients/desktop/test/progress-bubbles.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
+      "file": "clients/desktop/src/renderer/bubbles.mjs",
       "kind": "string_length",
       "occurrence_index": 1,
       "line": 253,
@@ -682,10 +683,10 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "behavior": "parses only bounded sanitized executor progress frames",
-      "test": "desktop/nova-audio-agent-desktop/test/progress-bubbles.test.mjs"
+      "test": "clients/desktop/test/progress-bubbles.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
+      "file": "clients/desktop/src/renderer/bubbles.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 2,
       "line": 259,
@@ -693,10 +694,10 @@
       "snippet_sha256": "672ce8291ede462bd8e980c60f99dddfd60fa05d9ced0a39367283d5549ec607",
       "disposition": "host_only_unicode",
       "behavior": "parses only bounded sanitized executor progress frames",
-      "test": "desktop/nova-audio-agent-desktop/test/progress-bubbles.test.mjs"
+      "test": "clients/desktop/test/progress-bubbles.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/bubbles.mjs",
+      "file": "clients/desktop/src/renderer/bubbles.mjs",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 3,
       "line": 260,
@@ -704,10 +705,10 @@
       "snippet_sha256": "9808265026804d64c46861fc0692f893449c955569ecb790d8d82fbd1c260103",
       "disposition": "host_only_unicode",
       "behavior": "parses only bounded sanitized executor progress frames",
-      "test": "desktop/nova-audio-agent-desktop/test/progress-bubbles.test.mjs"
+      "test": "clients/desktop/test/progress-bubbles.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
+      "file": "clients/desktop/src/renderer/camera.mjs",
       "kind": "string_length",
       "occurrence_index": 0,
       "line": 953,
@@ -715,10 +716,10 @@
       "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
       "disposition": "intentional_utf16",
       "behavior": "camera renderer constants and frame bytes match the independent v1 golden",
-      "test": "desktop/nova-audio-agent-desktop/test/camera.test.mjs"
+      "test": "clients/desktop/test/camera.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
+      "file": "clients/desktop/src/renderer/camera.mjs",
       "kind": "string_length",
       "occurrence_index": 1,
       "line": 955,
@@ -726,10 +727,10 @@
       "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
       "disposition": "intentional_utf16",
       "behavior": "camera renderer constants and frame bytes match the independent v1 golden",
-      "test": "desktop/nova-audio-agent-desktop/test/camera.test.mjs"
+      "test": "clients/desktop/test/camera.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
+      "file": "clients/desktop/src/renderer/camera.mjs",
       "kind": "string_length",
       "occurrence_index": 2,
       "line": 975,
@@ -737,10 +738,10 @@
       "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
       "disposition": "intentional_utf16",
       "behavior": "camera renderer constants and frame bytes match the independent v1 golden",
-      "test": "desktop/nova-audio-agent-desktop/test/camera.test.mjs"
+      "test": "clients/desktop/test/camera.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/camera.mjs",
+      "file": "clients/desktop/src/renderer/camera.mjs",
       "kind": "string_length",
       "occurrence_index": 3,
       "line": 989,
@@ -748,10 +749,10 @@
       "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
       "disposition": "intentional_utf16",
       "behavior": "camera renderer constants and frame bytes match the independent v1 golden",
-      "test": "desktop/nova-audio-agent-desktop/test/camera.test.mjs"
+      "test": "clients/desktop/test/camera.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/capabilities-editor.mjs",
+      "file": "clients/desktop/src/renderer/capabilities-editor.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 144,
@@ -759,10 +760,10 @@
       "snippet_sha256": "1aca80e8b55c802f7b43740da2990e1b5735bbb323d93eb5ebda8395b04025e2",
       "disposition": "wire_json",
       "behavior": "transportFields",
-      "test": "desktop/nova-audio-agent-desktop/scripts/renderer-capabilities-smoke.mjs"
+      "test": "clients/desktop/scripts/renderer-capabilities-smoke.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/frontend-usage.mjs",
+      "file": "clients/desktop/src/renderer/frontend-usage.mjs",
       "kind": "number_format",
       "occurrence_index": 0,
       "line": 12,
@@ -770,10 +771,10 @@
       "snippet_sha256": "3d5ab6f5ea30156f1b875236d99d61b5d6619465ceba4ffaf742efa762267ae6",
       "disposition": "wire_json",
       "behavior": "read-only UI distinguishes no reports, partial estimates and actual service units",
-      "test": "desktop/nova-audio-agent-desktop/test/frontend-usage.test.mjs"
+      "test": "clients/desktop/test/frontend-usage.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/memory-board.mjs",
+      "file": "clients/desktop/src/renderer/memory-board.mjs",
       "kind": "number_format",
       "occurrence_index": 0,
       "line": 45,
@@ -781,10 +782,10 @@
       "snippet_sha256": "bfb2853fc94d7bd1c7069adca219e03176b7325307b1a281cc70fbbc94828a93",
       "disposition": "wire_json",
       "behavior": "board auto-refresh is renderer-owned, guarded, and visibility-aware",
-      "test": "desktop/nova-audio-agent-desktop/test/memory-board.test.mjs"
+      "test": "clients/desktop/test/memory-board.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
+      "file": "clients/desktop/src/renderer/orb-visual.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 471,
@@ -792,10 +793,10 @@
       "snippet_sha256": "b1f51a511f1da0cd348b8f8598db32e61cb963e5fc69e2b41485bf99590ed75a",
       "disposition": "wire_json",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs",
-      "test": "desktop/nova-audio-agent-desktop/test/orb-visual.test.mjs"
+      "test": "clients/desktop/test/orb-visual.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
+      "file": "clients/desktop/src/renderer/orb-visual.mjs",
       "kind": "numeric_template",
       "occurrence_index": 1,
       "line": 471,
@@ -803,10 +804,10 @@
       "snippet_sha256": "ba4788b226aa8dc2e6dc74248bb9f618cfa8c959e0c26c147be48f6839a0b088",
       "disposition": "wire_json",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs",
-      "test": "desktop/nova-audio-agent-desktop/test/orb-visual.test.mjs"
+      "test": "clients/desktop/test/orb-visual.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
+      "file": "clients/desktop/src/renderer/orb-visual.mjs",
       "kind": "numeric_template",
       "occurrence_index": 2,
       "line": 471,
@@ -814,21 +815,21 @@
       "snippet_sha256": "16477688c0e00699c6cfa4497a3612d7e83c532062b64b250fed8908128ed548",
       "disposition": "wire_json",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs",
-      "test": "desktop/nova-audio-agent-desktop/test/orb-visual.test.mjs"
+      "test": "clients/desktop/test/orb-visual.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/orb-visual.mjs",
+      "file": "clients/desktop/src/renderer/orb-visual.mjs",
       "kind": "numeric_template",
       "occurrence_index": 3,
-      "line": 1256,
+      "line": 1260,
       "snippet": "rawPixelRatio",
       "snippet_sha256": "191e32938d345aa77f6718643a13976be4945f877323bc38526613632de27c40",
       "disposition": "wire_json",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs",
-      "test": "desktop/nova-audio-agent-desktop/test/orb-visual.test.mjs"
+      "test": "clients/desktop/test/orb-visual.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/state.mjs",
+      "file": "clients/desktop/src/renderer/state.mjs",
       "kind": "number_format",
       "occurrence_index": 0,
       "line": 95,
@@ -836,10 +837,10 @@
       "snippet_sha256": "fd121dc99ad57c470a6586ec4ebc7f5407729966db47e3e97a27f6dd020763ad",
       "disposition": "wire_json",
       "behavior": "projects voice and Codex state into one compact visible line",
-      "test": "desktop/nova-audio-agent-desktop/test/state.test.mjs"
+      "test": "clients/desktop/test/state.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/task-banner.mjs",
+      "file": "clients/desktop/src/renderer/task-banner.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 94,
@@ -847,10 +848,10 @@
       "snippet_sha256": "ff81c01c173415f18a78023d9c17084ca607f20ea7c37a478f52f3d499130b46",
       "disposition": "wire_json",
       "behavior": "cancel carries exact identity and stays cancelling until terminal, not merely the reply",
-      "test": "desktop/nova-audio-agent-desktop/test/task-banner.test.mjs"
+      "test": "clients/desktop/test/task-banner.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/task-banner.mjs",
+      "file": "clients/desktop/src/renderer/task-banner.mjs",
       "kind": "numeric_template",
       "occurrence_index": 1,
       "line": 94,
@@ -858,10 +859,10 @@
       "snippet_sha256": "28a4dae0461e17af56e979c2095abfbe0bfc45fe9ca8abf3144338a518a1bb8f",
       "disposition": "wire_json",
       "behavior": "cancel carries exact identity and stays cancelling until terminal, not merely the reply",
-      "test": "desktop/nova-audio-agent-desktop/test/task-banner.test.mjs"
+      "test": "clients/desktop/test/task-banner.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/task-banner.mjs",
+      "file": "clients/desktop/src/renderer/task-banner.mjs",
       "kind": "numeric_template",
       "occurrence_index": 2,
       "line": 142,
@@ -869,10 +870,10 @@
       "snippet_sha256": "ff6527ada3d61db9f3200984cb801a898c4669bc4fba7cd5f0b5e35e475da12f",
       "disposition": "wire_json",
       "behavior": "a suppressed combined reservation does not discard an alert before fallback",
-      "test": "desktop/nova-audio-agent-desktop/test/task-banner-layout.test.mjs"
+      "test": "clients/desktop/test/task-banner-layout.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/task-banner.mjs",
+      "file": "clients/desktop/src/renderer/task-banner.mjs",
       "kind": "numeric_template",
       "occurrence_index": 3,
       "line": 169,
@@ -880,10 +881,10 @@
       "snippet_sha256": "f6341fc13179f4b7a4e8c7ed14545cdcd0daeebbcd7a9710ee75a0760af6bef1",
       "disposition": "wire_json",
       "behavior": "cancel carries exact identity and stays cancelling until terminal, not merely the reply",
-      "test": "desktop/nova-audio-agent-desktop/test/task-banner.test.mjs"
+      "test": "clients/desktop/test/task-banner.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/workspace-graph-board.mjs",
+      "file": "clients/desktop/src/renderer/workspace-graph-board.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
       "line": 211,
@@ -891,10 +892,10 @@
       "snippet_sha256": "f6f9c83eccb7769affa383652ad5b819f8e1c29b41b4296b33df5f344cd3fb58",
       "disposition": "wire_json",
       "behavior": "graph renderer uses owned text nodes for active weak degraded stale and omission states",
-      "test": "desktop/nova-audio-agent-desktop/test/workspace-graph-board.test.mjs"
+      "test": "clients/desktop/test/workspace-graph-board.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/workspace-graph-board.mjs",
+      "file": "clients/desktop/src/renderer/workspace-graph-board.mjs",
       "kind": "string_trim",
       "occurrence_index": 1,
       "line": 307,
@@ -902,10 +903,10 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "graph payload validator clones the exact bounded view and rejects hidden or malformed data",
-      "test": "desktop/nova-audio-agent-desktop/test/workspace-graph-board.test.mjs"
+      "test": "clients/desktop/test/workspace-graph-board.test.mjs"
     },
     {
-      "file": "desktop/nova-audio-agent-desktop/src/renderer/workspace-graph-board.mjs",
+      "file": "clients/desktop/src/renderer/workspace-graph-board.mjs",
       "kind": "string_trim",
       "occurrence_index": 2,
       "line": 314,
@@ -913,7 +914,7 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "behavior": "graph payload validator clones the exact bounded view and rejects hidden or malformed data",
-      "test": "desktop/nova-audio-agent-desktop/test/workspace-graph-board.test.mjs"
+      "test": "clients/desktop/test/workspace-graph-board.test.mjs"
     },
     {
       "file": "runtime/src/agent-controller.ts",
@@ -952,7 +953,7 @@
       "file": "runtime/src/aoq-chat-server.ts",
       "kind": "numeric_template",
       "occurrence_index": 1,
-      "line": 303,
+      "line": 302,
       "snippet": "++c.outboundSequence",
       "snippet_sha256": "85c25bce541a62afebd51811cb635d8180e25d5659aa85fd0112043b7add2424",
       "disposition": "wire_json",
@@ -1095,7 +1096,7 @@
       "file": "runtime/src/client-pairing.ts",
       "kind": "string_length",
       "occurrence_index": 0,
-      "line": 12,
+      "line": 13,
       "snippet": "a.length",
       "snippet_sha256": "3464725ae1288b50e3537ec76f695de9416691e22ed2a263d42d36cae04510f2",
       "disposition": "intentional_utf16",
@@ -1106,7 +1107,7 @@
       "file": "runtime/src/client-pairing.ts",
       "kind": "string_length",
       "occurrence_index": 1,
-      "line": 12,
+      "line": 13,
       "snippet": "b.length",
       "snippet_sha256": "d1b6d6acf44fe50b15036221f791b051dec61c6d12e912cf36868b5c70122b1e",
       "disposition": "intentional_utf16",
@@ -1117,7 +1118,7 @@
       "file": "runtime/src/client-pairing.ts",
       "kind": "string_length",
       "occurrence_index": 2,
-      "line": 15,
+      "line": 16,
       "snippet": "text.length",
       "snippet_sha256": "729ab98fed3c6ebac3c36d8f7339cfec0c09b72ebc76a3b5c7cf88421239a3b1",
       "disposition": "intentional_utf16",
@@ -1128,7 +1129,7 @@
       "file": "runtime/src/client-pairing.ts",
       "kind": "unicode_property_regex",
       "occurrence_index": 3,
-      "line": 75,
+      "line": 77,
       "snippet": "/^[^\\p{Cc}]*$/u",
       "snippet_sha256": "f622801e4732e6d2ef212eaee710d91735fabae55bcfe73398f9ec3fdaf237cd",
       "disposition": "host_only_unicode",
@@ -1238,7 +1239,7 @@
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
       "occurrence_index": 0,
-      "line": 176,
+      "line": 183,
       "snippet": "options.token.length",
       "snippet_sha256": "c275f70c5b5482b38363f376ca48f2e845fdb97616d23b06996ed0c2c11163ff",
       "disposition": "byte_length",
@@ -1249,7 +1250,7 @@
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "numeric_template",
       "occurrence_index": 1,
-      "line": 211,
+      "line": 218,
       "snippet": "frame.generation_epoch",
       "snippet_sha256": "5edf78d0adb9685d199c1139cc293796b462ab20d043738c52c0c42f56a17586",
       "disposition": "wire_json",
@@ -1260,7 +1261,29 @@
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "numeric_string",
       "occurrence_index": 2,
-      "line": 506,
+      "line": 528,
+      "snippet": "String(command.payload.text)",
+      "snippet_sha256": "e30dabfb77f68d15ccc159bbb7a8d816b54d000e603ae8941ec5299a0e3c5b8d",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "dictation buffers audio without sending it to the model; only explicit edited text is submitted",
+      "disposition": "wire_json"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 3,
+      "line": 529,
+      "snippet": "String(command.payload.id)",
+      "snippet_sha256": "8b9c8e59ffd8c251d4c07ddf5dd70024872a1dc97e8b149861ebe44da3ff6389",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "dictation buffers audio without sending it to the model; only explicit edited text is submitted",
+      "disposition": "wire_json"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 4,
+      "line": 560,
       "snippet": "String(command.payload.ping_id)",
       "snippet_sha256": "a1ad30e4114dec558375eaa5aa4ac9e47e950c71951498ab2d55cab8b6bbe6d0",
       "disposition": "wire_json",
@@ -1270,8 +1293,8 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "numeric_string",
-      "occurrence_index": 3,
-      "line": 511,
+      "occurrence_index": 5,
+      "line": 565,
       "snippet": "String(command.payload.speech_id)",
       "snippet_sha256": "c778104bd510b23f0c81716a74c8de46c56a41f51853fdf4d87ffc8eec624352",
       "disposition": "wire_json",
@@ -1281,30 +1304,8 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "numeric_string",
-      "occurrence_index": 4,
-      "line": 515,
-      "snippet": "String(command.payload.utterance_id)",
-      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
-      "disposition": "wire_json",
-      "behavior": "typed audio and controls route once through the same bridge behavior",
-      "test": "runtime/test/desktop-bridge.test.ts"
-    },
-    {
-      "file": "runtime/src/desktop-bridge.ts",
-      "kind": "numeric_string",
-      "occurrence_index": 5,
-      "line": 521,
-      "snippet": "String(command.payload.utterance_id)",
-      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
-      "disposition": "wire_json",
-      "behavior": "typed audio and controls route once through the same bridge behavior",
-      "test": "runtime/test/desktop-bridge.test.ts"
-    },
-    {
-      "file": "runtime/src/desktop-bridge.ts",
-      "kind": "numeric_string",
       "occurrence_index": 6,
-      "line": 528,
+      "line": 569,
       "snippet": "String(command.payload.utterance_id)",
       "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
       "disposition": "wire_json",
@@ -1315,7 +1316,29 @@
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "numeric_string",
       "occurrence_index": 7,
-      "line": 535,
+      "line": 575,
+      "snippet": "String(command.payload.utterance_id)",
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "behavior": "typed audio and controls route once through the same bridge behavior",
+      "test": "runtime/test/desktop-bridge.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 8,
+      "line": 582,
+      "snippet": "String(command.payload.utterance_id)",
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "behavior": "typed audio and controls route once through the same bridge behavior",
+      "test": "runtime/test/desktop-bridge.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 9,
+      "line": 589,
       "snippet": "String(command.payload.utterance_id)",
       "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
       "disposition": "wire_json",
@@ -1325,8 +1348,8 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "numeric_template",
-      "occurrence_index": 8,
-      "line": 746,
+      "occurrence_index": 10,
+      "line": 800,
       "snippet": "index",
       "snippet_sha256": "1bc04b5291c26a46d918139138b992d2de976d6851d0893b0476b85bfbdfc6e6",
       "disposition": "wire_json",
@@ -1336,8 +1359,8 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 9,
-      "line": 1154,
+      "occurrence_index": 11,
+      "line": 1211,
       "snippet": "candidate.length",
       "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
       "disposition": "byte_length",
@@ -1347,8 +1370,8 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 10,
-      "line": 1154,
+      "occurrence_index": 12,
+      "line": 1211,
       "snippet": "expected.length",
       "snippet_sha256": "f38f50dbfa76a64db16ee2343e7225138da1f399ae716bf71434657dc2bcb2e7",
       "disposition": "byte_length",
@@ -1358,8 +1381,8 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 11,
-      "line": 1156,
+      "occurrence_index": 13,
+      "line": 1213,
       "snippet": "candidate.length",
       "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
       "disposition": "byte_length",
@@ -1508,6 +1531,28 @@
       "disposition": "host_only_unicode",
       "behavior": "public labels strip controls without splitting astral characters",
       "test": "runtime/test/desktop-tasks.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 143,
+      "snippet": "value.trim().length",
+      "snippet_sha256": "596bbf3d6a78bd9385b89516fde6ae0ca1c20cafaef9fc9604a76e20adbe37f3",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "dictation buffers audio without sending it to the model; only explicit edited text is submitted",
+      "disposition": "intentional_utf16"
+    },
+    {
+      "file": "runtime/src/desktop.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "line": 143,
+      "snippet": "value.trim()",
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "dictation buffers audio without sending it to the model; only explicit edited text is submitted",
+      "disposition": "host_only_unicode"
     },
     {
       "file": "runtime/src/executors/camera-mcp-result.ts",
@@ -3218,7 +3263,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "string_trim",
       "occurrence_index": 0,
-      "line": 128,
+      "line": 127,
       "snippet": "completion.text.trim()",
       "snippet_sha256": "ba1c3adb093f4b7014c8ebc75265dfa3f10805db6abb5947f4d0e219ed324042",
       "disposition": "host_only_unicode",
@@ -3229,7 +3274,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_template",
       "occurrence_index": 1,
-      "line": 172,
+      "line": 171,
       "snippet": "sessionEpoch",
       "snippet_sha256": "43e07199d0fabf68090847ba105f91902169399f6b20d779c4a9a8f7d84a8a49",
       "disposition": "wire_json",
@@ -3240,7 +3285,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_template",
       "occurrence_index": 2,
-      "line": 172,
+      "line": 171,
       "snippet": "userInputRevision",
       "snippet_sha256": "847f71731edce8e3e60447c6e8e43e640ec1a3811c0f96bfabfd56a15e293b29",
       "disposition": "wire_json",
@@ -3251,7 +3296,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "string_length",
       "occurrence_index": 3,
-      "line": 978,
+      "line": 977,
       "snippet": "bounded.length",
       "snippet_sha256": "f118a9ced4b942d3f573d52f4f9626a586d87ff5926de5579f32564466cdd803",
       "disposition": "intentional_utf16",
@@ -3262,7 +3307,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "string_length",
       "occurrence_index": 4,
-      "line": 978,
+      "line": 977,
       "snippet": "character.length",
       "snippet_sha256": "ae8df7594e0c7aedf5376e8eeacfcf48e7bc34c19b9a5b37f13a240002b844d5",
       "disposition": "intentional_utf16",
@@ -3273,7 +3318,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_template",
       "occurrence_index": 5,
-      "line": 1035,
+      "line": 1034,
       "snippet": "diagnostic.epoch",
       "snippet_sha256": "1a6b44db492d71ca7b6ec1613c5b12cac6e26d6ab62e876dcfc6cfec9e87cdc3",
       "disposition": "wire_json",
@@ -3284,7 +3329,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_template",
       "occurrence_index": 6,
-      "line": 1035,
+      "line": 1034,
       "snippet": "diagnostic.revision ?? 'none'",
       "snippet_sha256": "741c3f3c3e0ea8895413524b2576686f192ce6966d9f68d82b08c627cce629fe",
       "disposition": "wire_json",
@@ -3295,7 +3340,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "string_trim",
       "occurrence_index": 7,
-      "line": 1204,
+      "line": 1203,
       "snippet": "frame.text.trim()",
       "snippet_sha256": "01d37b81a601dc21825dbd6bd8aecca6ec1336a8b26793039369d83380dc5626",
       "disposition": "host_only_unicode",
@@ -3306,7 +3351,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_string",
       "occurrence_index": 8,
-      "line": 1401,
+      "line": 1400,
       "snippet": "String(index)",
       "snippet_sha256": "d2efa544579607640c4ad9a7049801e6e26cfc89d12ea29d1e127abd096902a1",
       "disposition": "wire_json",
@@ -3317,7 +3362,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_string",
       "occurrence_index": 9,
-      "line": 1439,
+      "line": 1438,
       "snippet": "String(index)",
       "snippet_sha256": "d2efa544579607640c4ad9a7049801e6e26cfc89d12ea29d1e127abd096902a1",
       "disposition": "wire_json",
@@ -3328,7 +3373,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_template",
       "occurrence_index": 10,
-      "line": 1453,
+      "line": 1452,
       "snippet": "toolCount",
       "snippet_sha256": "863e24fdb3ca8fcb45e185bc2bfb506aa01692ca2b5312a9d9d1a7d3cc4dd1f1",
       "disposition": "wire_json",
@@ -3339,7 +3384,7 @@
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_template",
       "occurrence_index": 11,
-      "line": 1453,
+      "line": 1452,
       "snippet": "toolBudget",
       "snippet_sha256": "8ea03da034d0756ff31fbdaa32f8f8d94ad901bcdcbdc0bfe02d43cf8fa24a62",
       "disposition": "wire_json",
@@ -3370,9 +3415,31 @@
     },
     {
       "file": "runtime/src/realtime/cascaded/adapter.ts",
-      "kind": "numeric_template",
+      "kind": "string_trim",
       "occurrence_index": 0,
-      "line": 863,
+      "line": 372,
+      "snippet": "text.trim()",
+      "snippet_sha256": "a2838f629ddddb232d2e7923abffa609125674aaaf98df603fdc620fd0822c64",
+      "test": "runtime/test/realtime-cascaded-adapter.test.ts",
+      "behavior": "typed input uses the normal user turn and LLM path without invoking ASR",
+      "disposition": "host_only_unicode"
+    },
+    {
+      "file": "runtime/src/realtime/cascaded/adapter.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 372,
+      "snippet": "text.length",
+      "snippet_sha256": "729ab98fed3c6ebac3c36d8f7339cfec0c09b72ebc76a3b5c7cf88421239a3b1",
+      "test": "runtime/test/realtime-cascaded-adapter.test.ts",
+      "behavior": "typed input uses the normal user turn and LLM path without invoking ASR",
+      "disposition": "intentional_utf16"
+    },
+    {
+      "file": "runtime/src/realtime/cascaded/adapter.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "line": 879,
       "snippet": "owner.epoch",
       "snippet_sha256": "e4c4c4f0c830154e4ddd59055a662b9a4d580a32e8cabb996b825470ba3010f6",
       "disposition": "wire_json",
@@ -3382,8 +3449,8 @@
     {
       "file": "runtime/src/realtime/cascaded/adapter.ts",
       "kind": "numeric_template",
-      "occurrence_index": 1,
-      "line": 863,
+      "occurrence_index": 3,
+      "line": 879,
       "snippet": "++owner.responseSequence",
       "snippet_sha256": "dbe8a0310f862ffb945b3f1c08466eea7a7b8e1c18c8fc7109aaaf48733aa2dd",
       "disposition": "wire_json",
@@ -3400,6 +3467,28 @@
       "disposition": "intentional_utf16",
       "behavior": "Qwen joins fragmented tool calls and retains a matched tool result with its assistant call",
       "test": "runtime/test/realtime-cascaded-qwen-llm.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/cascaded/transcribe.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 10,
+      "snippet": "result.text.length",
+      "snippet_sha256": "d09cef26fed436d1661ea39a1924ad8204fbd2e318dcadf0fdd4c00be314b5c8",
+      "test": "runtime/test/cascaded-transcribe.test.ts",
+      "behavior": "draft ASR returns only a final transcript and closes the isolated session",
+      "disposition": "intentional_utf16"
+    },
+    {
+      "file": "runtime/src/realtime/cascaded/transcribe.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "line": 23,
+      "snippet": "text.trim()",
+      "snippet_sha256": "a2838f629ddddb232d2e7923abffa609125674aaaf98df603fdc620fd0822c64",
+      "test": "runtime/test/cascaded-transcribe.test.ts",
+      "behavior": "draft ASR returns only a final transcript and closes the isolated session",
+      "disposition": "host_only_unicode"
     },
     {
       "file": "runtime/src/realtime/confirmation-turn-isolation.ts",
@@ -3490,10 +3579,32 @@
       "test": "runtime/test/realtime-protocol.test.ts"
     },
     {
+      "file": "runtime/src/realtime/provider-session.ts",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "line": 191,
+      "snippet": "text.trim()",
+      "snippet_sha256": "a2838f629ddddb232d2e7923abffa609125674aaaf98df603fdc620fd0822c64",
+      "test": "runtime/test/realtime-provider-session.test.ts",
+      "behavior": "provider session forwards edited text and draft ASR with connection cancellation",
+      "disposition": "host_only_unicode"
+    },
+    {
+      "file": "runtime/src/realtime/provider-session.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "line": 191,
+      "snippet": "text.length",
+      "snippet_sha256": "729ab98fed3c6ebac3c36d8f7339cfec0c09b72ebc76a3b5c7cf88421239a3b1",
+      "test": "runtime/test/realtime-provider-session.test.ts",
+      "behavior": "provider session forwards edited text and draft ASR with connection cancellation",
+      "disposition": "intentional_utf16"
+    },
+    {
       "file": "runtime/src/realtime/qwen.ts",
       "kind": "locale_unicode",
       "occurrence_index": 0,
-      "line": 1025,
+      "line": 1024,
       "snippet": "pythonStrip(rawMessage).toLowerCase()",
       "snippet_sha256": "34e0a23569d0befb45f01ca2dabcc70e96c35cd7654068b4e89080e2f72462c0",
       "disposition": "host_only_unicode",
@@ -3504,7 +3615,7 @@
       "file": "runtime/src/realtime/qwen.ts",
       "kind": "regex_unicode_semantics",
       "occurrence_index": 1,
-      "line": 1046,
+      "line": 1045,
       "snippet": "/\\bno active response\\b/iu",
       "snippet_sha256": "5f7b84590a3642096576dacde4cbf79cfd36165badca7682d0016aa93460d885",
       "disposition": "host_only_unicode",
@@ -3515,7 +3626,7 @@
       "file": "runtime/src/realtime/qwen.ts",
       "kind": "string_length",
       "occurrence_index": 2,
-      "line": 1337,
+      "line": 1336,
       "snippet": "encoded.length",
       "snippet_sha256": "76fefe5208771adc79057ba49a3a4b44b0d11b3bfc4a5e7df57c64c53ff654bf",
       "disposition": "byte_length",
@@ -3636,7 +3747,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
-      "line": 601,
+      "line": 603,
       "snippet": "intake.revision",
       "snippet_sha256": "92bd85dd07911afa71fba33c3937ab32ca330cc47ff981f566dea445d2bfebab",
       "disposition": "wire_json",
@@ -3647,7 +3758,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 1,
-      "line": 899,
+      "line": 901,
       "snippet": "abandoned",
       "snippet_sha256": "20e7f550122ee415de2b6d761a474ea5a363cbb575604f18b1fffb269e4cf48a",
       "disposition": "wire_json",
@@ -3658,7 +3769,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 2,
-      "line": 2507,
+      "line": 2521,
       "snippet": "event.seq",
       "snippet_sha256": "f96edcdd62f2ae0026bf653215e5def7ad15cb1ddcabbf8fa45d1ca6037f52b8",
       "disposition": "wire_json",
@@ -3669,7 +3780,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 3,
-      "line": 2615,
+      "line": 2629,
       "snippet": "payload.internal_activity",
       "snippet_sha256": "e8e901d528b989a403360b8379323876833636076a551d748c493316e71224d9",
       "disposition": "wire_json",
@@ -3680,7 +3791,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 4,
-      "line": 2617,
+      "line": 2631,
       "snippet": "payload.internal_activity",
       "snippet_sha256": "e8e901d528b989a403360b8379323876833636076a551d748c493316e71224d9",
       "disposition": "wire_json",
@@ -3691,7 +3802,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_string",
       "occurrence_index": 5,
-      "line": 3234,
+      "line": 3248,
       "snippet": "String(event.session_epoch)",
       "snippet_sha256": "c12e5e2af8c77a9316ec6d995d4700725fc0b12ae58d2514060261f8ce410791",
       "disposition": "wire_json",
@@ -3702,7 +3813,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 6,
-      "line": 4845,
+      "line": 4859,
       "snippet": "event.session_epoch",
       "snippet_sha256": "eb3fbfa4708d87bc9491f0ebd0b0d38c17351623f235745480d5d5024aa88379",
       "disposition": "wire_json",
@@ -3713,7 +3824,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 7,
-      "line": 5418,
+      "line": 5432,
       "snippet": "this.session.sessionEpoch",
       "snippet_sha256": "73f3d5bff15a17e3969ea80c5dd3718c21c6aea00d5d3791deed51ed23dbcc91",
       "disposition": "wire_json",
@@ -3724,7 +3835,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "string_length",
       "occurrence_index": 8,
-      "line": 5683,
+      "line": 5697,
       "snippet": "'suggestion:'.length",
       "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
       "disposition": "intentional_utf16",
@@ -3735,7 +3846,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "string_length",
       "occurrence_index": 9,
-      "line": 5728,
+      "line": 5742,
       "snippet": "'suggestion:'.length",
       "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
       "disposition": "intentional_utf16",
@@ -3746,7 +3857,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 10,
-      "line": 6424,
+      "line": 6438,
       "snippet": "generation.generation_epoch",
       "snippet_sha256": "312a76f17befeed056da4dbb995c9d86554a275b67fb89f365088c0a6039e0d9",
       "disposition": "wire_json",
@@ -3757,7 +3868,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 11,
-      "line": 6461,
+      "line": 6475,
       "snippet": "generationEpoch",
       "snippet_sha256": "88c621c35cd74d7f42af02c856f028ef45106d5181cd15e91d678c69d7019eb6",
       "disposition": "wire_json",
@@ -3768,7 +3879,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 12,
-      "line": 7065,
+      "line": 7079,
       "snippet": "floor + 1",
       "snippet_sha256": "a947109c5fb07fd3b221a2f220031120b6f5a79089dad0ff6ce5cbe7f27cc781",
       "disposition": "wire_json",
@@ -3779,7 +3890,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 13,
-      "line": 7066,
+      "line": 7080,
       "snippet": "floor",
       "snippet_sha256": "a3e1f4935b0919b346c2caf4da18078a1ebaf6451eb7f7b5dc79c11629b6368c",
       "disposition": "wire_json",
@@ -3790,7 +3901,7 @@
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
       "occurrence_index": 14,
-      "line": 7067,
+      "line": 7081,
       "snippet": "floor % 2 === 0 ? floor : floor + 1",
       "snippet_sha256": "a540ffd17090437f8d94ce8c1d341ca870696286623dee8d4e18cfdcfa78af6a",
       "disposition": "wire_json",
@@ -4153,7 +4264,7 @@
       "file": "runtime/src/server-config.ts",
       "kind": "string_trim",
       "occurrence_index": 0,
-      "line": 38,
+      "line": 45,
       "snippet": "readFileSync(fd, 'utf8').trim()",
       "snippet_sha256": "fd146c60078bd513e70cd961c268edbaec3b728314cc3226519488faaf0ca401",
       "disposition": "host_only_unicode",

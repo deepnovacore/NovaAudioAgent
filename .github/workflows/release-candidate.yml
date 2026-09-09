@@ -59,7 +59,7 @@ jobs:
         if: runner.os == 'Windows'
       # npm may restore the Electron package without its platform binary from
       # cache. The pinned install script is idempotent and closes that gap.
-      - run: node desktop/nova-audio-agent-desktop/node_modules/electron/install.js
+      - run: node clients/desktop/node_modules/electron/install.js
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run test:desktop
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
@@ -75,7 +75,7 @@ jobs:
         run: npm run inspect:release-package --workspace @nova-audio-agent/desktop
       - name: Provision pinned target-native Codex
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
-        run: npm install --prefix desktop/nova-audio-agent-desktop/build/release-codex --install-strategy=nested --package-lock=false --ignore-scripts --no-save --omit=dev @openai/codex@0.147.0
+        run: npm install --prefix clients/desktop/build/release-codex --install-strategy=nested --package-lock=false --ignore-scripts --no-save --omit=dev @openai/codex@0.147.0
       - name: Exercise packaged project authority, sandbox probe, and app-server lifecycle
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         env:
@@ -92,9 +92,9 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            desktop/nova-audio-agent-desktop/build/release-artifacts/**
-            desktop/nova-audio-agent-desktop/build/release-digests/**
-            desktop/nova-audio-agent-desktop/build/release-smoke-kit/**
+            clients/desktop/build/release-artifacts/**
+            clients/desktop/build/release-digests/**
+            clients/desktop/build/release-smoke-kit/**
           if-no-files-found: error
 
   installed-candidate-smoke:
@@ -158,7 +158,7 @@ jobs:
           pattern: candidate-*
           path: downloaded
       - name: Assemble only the complete digest-bound candidate matrix
-        run: node desktop/nova-audio-agent-desktop/scripts/assemble-release-artifact-root.mjs --input downloaded --output candidate-artifacts
+        run: node clients/desktop/scripts/assemble-release-artifact-root.mjs --input downloaded --output candidate-artifacts
       - name: Generate the honest pending external-evidence ledger
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}

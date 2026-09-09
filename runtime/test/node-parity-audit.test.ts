@@ -84,8 +84,8 @@ test('parity inventory names the final pipeline units and settings controller', 
     'utf8',
   )) as {files: readonly string[]}
   const finalUnits = [
-    'desktop/nova-audio-agent-desktop/src/renderer/secret-revisions.mjs',
-    'desktop/nova-audio-agent-desktop/src/renderer/settings-controller.mjs',
+    'clients/desktop/src/renderer/secret-revisions.mjs',
+    'clients/desktop/src/renderer/settings-controller.mjs',
     'runtime/src/cascaded-realtime-assembly.ts',
     'runtime/src/cascaded-realtime-config.ts',
     'runtime/src/integrated-realtime-assembly.ts',

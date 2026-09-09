@@ -1,0 +1,1136 @@
+/* Nova Audio Agent · WebUI stylesheet
+ *
+ * Layer order below is the cascade contract: later layers win regardless of
+ * where a rule physically sits, which is what replaced the old file's implicit
+ * "whatever is lower in the file wins" behaviour.
+ *
+ *   reset        normalisation + base element behaviour
+ *   tokens       every design token, both themes, colocated
+ *   layout       region-level shells (workspace / sidebar / stage / settings)
+ *   components   everything inside those regions
+ *   motion       every transition + @keyframes, with the reduced-motion gates last
+ *   theme-light  structural light-theme differences (the dark island); plain
+ *                colour swaps live in `tokens`, not here
+ *   responsive   every breakpoint
+ */
+@layer reset, tokens, layout, components, motion, theme-light, responsive;
+
+/* Self-hosted so the weight ramp below (450/550/650) is real rather than
+ * aspirational. Deliberately no unicode-range: font fallback is per-glyph, so
+ * CJK and the dingbat icons fall through Inter to "PingFang SC" on their own. */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-variable.woff2') format('woff2-variations'),
+       url('/fonts/inter-variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer reset {
+  * { box-sizing: border-box }
+  body { margin: 0 }
+  button, input, select { font: inherit }
+  button, a, input, select { -webkit-tap-highlight-color: transparent }
+  button { cursor: pointer; color: inherit }
+  a { color: inherit; text-decoration: none }
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 5px;
+  }
+  button:disabled { opacity: .35; cursor: not-allowed }
+  [hidden] { display: none !important }
+
+  :root {
+    font-size: 16px;
+    font-family: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+    font-synthesis: none;
+    background: var(--page);
+    color: var(--text);
+  }
+
+  /* -webkit-tap-highlight-color is cleared above, so every pressable surface
+   * needs an explicit pressed state or touch gets no feedback at all. */
+  button:active:not(:disabled) { transform: translateY(1px) }
+  button:active:not(:disabled), a:active { background-color: var(--hover) }
+}
+
+@layer tokens {
+  :root {
+    color-scheme: dark;
+
+    /* Ground / ink — unchanged values; the problem was never these twelve,
+     * it was the ~20 literals that bypassed them. */
+    --page: #0b0c14;
+    --input: #0c0d16;
+    --panel: #141420;
+    --panel-end: #101019;
+    --text: #edecf5;
+    --muted: #a6a0b7;
+    --gold: #edc694;
+    --line: #ffffff1a;
+    --surface: #ffffff08;   /* was #ffffff04 (1.6%) — cards could not separate from ground */
+    --hover: #ffffff12;     /* was #ffffff0b (4.3%) */
+    --accent-line: #edc69444;
+    --accent-soft: #edc69409;
+
+    /* Status marks. Amber stays out of these on purpose: per the star-core
+     * spec, state is carried by text as well, and these dots are the only
+     * place semantic colour is allowed to lead. */
+    --status-idle: #7c7488;
+    --status-connecting: #d9ad74;
+    --status-ok: #8fd39a;
+    --status-ok-glow: rgba(143, 211, 154, .28);
+    --status-error: #f2908f;
+    --status-error-glow: rgba(242, 144, 143, .24);
+    --status-muted: #efb4a8;          /* mic-off pressed state */
+    --status-muted-line: #efb4a855;
+    --status-muted-soft: #efb4a811;
+
+    /* Warm decorative marks (privacy diamond, footer bullet) — warm family,
+     * but dimmer than --gold so they read as texture, not as accent. */
+    --warm-dim: #a48a6e;
+    --brand-dim: #9d8271;
+    --glyph-dim: #5f5776;             /* the oversized empty-state glyph */
+    --scrollbar-thumb: #39364b;
+
+    /* Overlays */
+    --scrim: rgba(6, 5, 10, .66);
+    --shadow-drawer: 0 20px 60px -10px rgba(0, 0, 0, .55);
+
+    /* Elevation. --glow-amber is the client's only genuine amber glow, which
+     * is what "limited glow" in the spec means literally. */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, .35);
+    --shadow-sm: 0 4px 10px -2px rgba(0, 0, 0, .4);
+    --shadow-md: 0 10px 24px -6px rgba(0, 0, 0, .45);
+    --glow-amber: 0 0 14px -2px rgba(237, 198, 148, .4);
+
+    /* Ambient tints, as rgb triplets composed via rgba(var(--x), a) */
+    --halo-tint: 152, 107, 131;
+    --hairline-warm: 142, 104, 124;
+    --wash-tint: 37, 33, 57;
+
+    /* The theme's own strongest contrast pair, inverted. Declared once and
+     * never overridden per theme: aliasing --text/--page means it re-resolves
+     * on its own when the theme attribute flips. */
+    --fill-strong: var(--text);
+    --fill-strong-ink: var(--page);
+
+    /* Spacing — base 4px. Every stray value in the old file snapped to the
+     * nearest step; the largest single move was 37px -> 40px. */
+    --space-1: 2px;   --space-2: 4px;   --space-3: 6px;   --space-4: 8px;
+    --space-5: 10px;  --space-6: 12px;  --space-7: 16px;  --space-8: 20px;
+    --space-9: 24px;  --space-10: 28px; --space-11: 32px; --space-12: 40px;
+    --space-13: 48px; --space-14: 64px; --space-15: 80px;
+
+    /* Radius. --radius-md matches the desktop client's --radius:11px and
+     * --radius-xl matches its task-banner 18px — the first real cross-client
+     * alignment in this stylesheet. */
+    --radius-xs: 7px;
+    --radius-sm: 8px;
+    --radius-md: 11px;
+    --radius-lg: 15px;
+    --radius-xl: 18px;
+    --radius-pill: 999px;
+    --radius-full: 50%;
+
+    /* Type */
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-md: 13px;
+    --text-base: 15px;
+    --text-lg: 16px;
+    --text-display-xs: 24px;
+    --text-display-sm: 28px;
+    --text-display-md: 30px;
+    --text-display-lg: 34px;
+    --tracking-eyebrow: .14em;
+
+    /* Layers */
+    --z-background: -1;
+    --z-base: 0;
+    --z-overlay: 2;
+    --z-panel: 3;
+    --z-modal: 10;      /* reserved headroom; nothing uses it yet */
+
+    /* Motion */
+    --ease-standard: cubic-bezier(.4, 0, .2, 1);
+    --ease-out: cubic-bezier(0, 0, .2, 1);
+    --duration-fast: 120ms;
+    --duration-base: 200ms;
+    --duration-slow: 320ms;
+    --duration-breath: 3200ms;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --page: #f5f3ef;
+    --input: #fffdfa;
+    --panel: #fdfbf8;
+    --panel-end: #f1eee8;
+    --text: #2d2936;
+    --muted: #696273;
+    --gold: #865925;
+    --line: #40304420;
+    --surface: #ffffff80;
+    --hover: #42344f14;
+    --accent-line: #9a6b3438;
+    --accent-soft: #9a6b340c;
+
+    --status-idle: #948c9e;
+    --status-connecting: #a3722f;
+    --status-ok: #2f8f4e;
+    --status-ok-glow: rgba(47, 143, 78, .18);
+    --status-error: #c2453f;
+    --status-error-glow: rgba(194, 69, 63, .16);
+    --status-muted: #b5544a;
+    --status-muted-line: #b5544a55;
+    --status-muted-soft: #b5544a12;
+
+    --warm-dim: #8a6a45;
+    --brand-dim: #8a7259;
+    --glyph-dim: #b3aabf;
+    --scrollbar-thumb: #c9c2d1;
+
+    --scrim: rgba(45, 38, 30, .42);   /* warm dark over a cream ground, not flat black */
+    --shadow-drawer: 0 20px 60px -10px rgba(45, 38, 30, .28);
+
+    --shadow-xs: 0 1px 2px rgba(45, 38, 30, .10);
+    --shadow-sm: 0 4px 10px -2px rgba(45, 38, 30, .14);
+    --shadow-md: 0 10px 24px -6px rgba(45, 38, 30, .16);
+    --glow-amber: 0 0 14px -2px rgba(154, 107, 52, .32);
+
+    --halo-tint: 154, 107, 52;
+    --hairline-warm: 154, 107, 52;
+    --wash-tint: 230, 223, 238;
+  }
+}
+
+@layer layout {
+  /* No min-height here on purpose. It used to be 620px (560px on mobile),
+   * which on a height:100dvh/overflow:hidden shell pushed <body> past the
+   * viewport and leaked a second, page-level scrollbar that fought
+   * .main-stage's own. Pinning the shell to the viewport makes .main-stage the
+   * single intended scroll container on short screens. */
+  .workspace {
+    display: flex;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    width: 340px;
+    flex: none;
+    overflow: hidden;             /* keeps content from spilling mid-collapse */
+    background: linear-gradient(155deg, var(--panel), var(--panel-end));
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-11) var(--space-9) var(--space-8);
+    z-index: var(--z-panel);
+  }
+
+  /* The collapsed sidebar is defined entirely in the `responsive` layer: the
+   * max-width:760px and min-width:761px blocks partition every viewport, so a
+   * base rule here would only ever be overridden. The old file had one anyway,
+   * declared twice and then contradicted, which is why collapsing snapped. */
+
+  .main-stage {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    isolation: isolate;
+    /* Stage washes. These stay literal rather than tokenised: the stage is
+     * dark in both themes now (see theme-light), so they are no longer
+     * theme-dependent strays. */
+    background:
+      radial-gradient(ellipse at 51% 41%, #27204255 0%, #15162455 34%, transparent 67%),
+      radial-gradient(ellipse at 95% 0%, #25253f30, transparent 55%),
+      var(--page);
+  }
+
+  /* Starfield. 22 dots tiling seamlessly at 220x220 instead of five 1px
+   * radial-gradients pinned to viewport percentages, which slid around
+   * whenever the window resized. Colours are the four already in use. */
+  .main-stage::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-background);
+    opacity: .35;
+    background-repeat: repeat;
+    background-size: 220px 220px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Ccircle cx='56.9' cy='35' r='.55' fill='%23e2c9a5' fill-opacity='.32'/%3E%3Ccircle cx='12.6' cy='25.5' r='.7' fill='%23e2c9a5' fill-opacity='.32'/%3E%3Ccircle cx='154.9' cy='151.9' r='1' fill='%23b6add5' fill-opacity='.47'/%3E%3Ccircle cx='63.9' cy='186.8' r='.7' fill='%23d7cee9' fill-opacity='.43'/%3E%3Ccircle cx='38.3' cy='205.1' r='.85' fill='%23e2c9a5' fill-opacity='.23'/%3E%3Ccircle cx='26.1' cy='182.3' r='1.3' fill='%23f2ecff' fill-opacity='.57'/%3E%3Ccircle cx='157.8' cy='117.5' r='1' fill='%23e2c9a5' fill-opacity='.32'/%3E%3Ccircle cx='178.5' cy='134.7' r='.85' fill='%23b6add5' fill-opacity='.54'/%3E%3Ccircle cx='15.5' cy='53.4' r='.85' fill='%23e2c9a5' fill-opacity='.37'/%3E%3Ccircle cx='186.2' cy='85.1' r='1' fill='%23f2ecff' fill-opacity='.38'/%3E%3Ccircle cx='79.9' cy='145.4' r='.55' fill='%23b6add5' fill-opacity='.49'/%3E%3Ccircle cx='56.9' cy='102.2' r='.85' fill='%23b6add5' fill-opacity='.54'/%3E%3Ccircle cx='181.3' cy='167.4' r='.7' fill='%23e2c9a5' fill-opacity='.36'/%3E%3Ccircle cx='89.4' cy='19.8' r='1.3' fill='%23f2ecff' fill-opacity='.39'/%3E%3Ccircle cx='109.8' cy='190' r='1' fill='%23b6add5' fill-opacity='.41'/%3E%3Ccircle cx='57.3' cy='122.8' r='.85' fill='%23d7cee9' fill-opacity='.6'/%3E%3Ccircle cx='89.1' cy='51.6' r='.7' fill='%23d7cee9' fill-opacity='.36'/%3E%3Ccircle cx='15.8' cy='28.8' r='.7' fill='%23d7cee9' fill-opacity='.51'/%3E%3Ccircle cx='86' cy='129.9' r='1' fill='%23f2ecff' fill-opacity='.62'/%3E%3Ccircle cx='185' cy='8.4' r='.55' fill='%23f2ecff' fill-opacity='.56'/%3E%3Ccircle cx='76.8' cy='67' r='.7' fill='%23d7cee9' fill-opacity='.33'/%3E%3Ccircle cx='156.2' cy='155.7' r='1.3' fill='%23b6add5' fill-opacity='.48'/%3E%3C/svg%3E");
+  }
+
+  .settings {
+    min-height: 100dvh;
+    display: flex;
+    background:
+      radial-gradient(ellipse at 80% 20%, rgba(var(--wash-tint), .27), transparent 65%),
+      var(--page);
+  }
+
+  .settings-sidebar {
+    width: 260px;
+    flex: none;
+    min-height: 100dvh;
+    padding: var(--space-11) var(--space-10);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+  }
+
+  .settings-content {
+    padding: var(--space-15) 7vw;
+    flex: 1;
+    min-width: 0;
+  }
+  .settings-content > section { max-width: 720px; margin: auto }
+
+  .drawer-shade { display: none }
+}
+
+@layer components {
+  /* ---- brand lockup ------------------------------------------------------ */
+  /* Previously .brand-tag was position:absolute at a hardcoded top:34px/left:39px
+   * measured against the wordmark — which drifted the moment the font changed,
+   * and the font was always going to change because Inter was never loaded.
+   * A flex column needs no font metrics. */
+  .brand { display: flex; align-items: center; gap: var(--space-4) }
+  .brand-mark { color: var(--gold); font-size: 31px; font-weight: 400; line-height: 1 }
+  .brand-lockup { display: flex; flex-direction: column; gap: 1px }
+  .brand-name {
+    font-size: var(--text-display-sm);
+    font-weight: 650;
+    letter-spacing: -.045em;
+    line-height: 1;
+  }
+  .brand-tag {
+    font-size: var(--text-xs);
+    font-weight: 500;
+    letter-spacing: .12em;
+    line-height: 1;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .sidebar-top { display: flex; align-items: center; justify-content: space-between }
+
+  /* ---- shared small controls --------------------------------------------- */
+  /* 34px keeps the hit area above the spec's 32px floor while the glyph
+   * inside reads at 18px, matching .round-button's icon scale. */
+  .icon-button {
+    background: transparent;
+    border: 0;
+    width: 34px;
+    height: 34px;
+    display: inline-grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 21px;
+    border-radius: var(--radius-sm);
+  }
+  .icon-button svg { width: 18px; height: 18px; display: block }
+  .icon-button:hover, .round-button:hover { background: var(--hover); color: var(--text) }
+
+  .eyebrow {
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-eyebrow);
+    color: var(--muted);
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .theme-toggle {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 22px;
+  }
+  .theme-toggle:hover { background: var(--hover) }
+
+  /* ---- transcript -------------------------------------------------------- */
+  .transcript-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: var(--space-14) 0 var(--space-8);
+  }
+  .transcript-heading h2 {
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .transcript {
+    flex: 1;
+    overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    min-height: 0;
+  }
+  .transcript-empty {
+    padding-top: var(--space-14);
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.9;
+  }
+  .transcript-empty p { font-size: var(--text-base); color: var(--muted); margin: var(--space-5) 0 var(--space-1) }
+  .empty-lines { font-size: var(--text-display-lg); color: var(--glyph-dim) }
+
+  .caption { margin: 0 0 var(--space-9); padding: 0 var(--space-1) }
+  .caption strong {
+    display: block;
+    font-size: var(--text-md);
+    font-weight: 500;
+    letter-spacing: .08em;
+    color: var(--gold);
+    margin-bottom: var(--space-4);
+  }
+  .caption p {
+    font-size: var(--text-lg);
+    line-height: 1.9;
+    color: var(--text);
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  /* Structural differentiation, not just a label colour: the reader can tell
+   * their own turns from Nova's at a glance without reading either label. */
+  .caption[data-role="user"] { text-align: right }
+  .caption[data-role="user"] strong { color: var(--muted) }
+  /* Streaming vs settled. `final` was already tracked in transcript.mjs and
+   * never surfaced. Marked with a glyph as well as opacity so it is not
+   * colour-only. */
+  .caption.is-partial p { opacity: .78 }
+  .caption.is-partial p::after { content: " ···"; color: var(--muted) }
+
+  /* ---- sidebar footer ---------------------------------------------------- */
+  .sidebar-bottom { margin-top: var(--space-8) }
+  .privacy-note {
+    font-size: var(--text-sm);
+    color: var(--muted);
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-7) 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .privacy-note span { color: var(--warm-dim) }
+
+  .sidebar-links {
+    display: flex;
+    justify-content: space-between;
+    padding: var(--space-7) 1px 0;
+    font-size: var(--text-base);
+    color: var(--muted);
+  }
+  .sidebar-links a { display: inline-flex; align-items: center }
+  .sidebar-links a span { margin-left: 5px }
+  .sidebar-links button { border: 0; padding: 0; background: none }
+  .sidebar-links button span { margin-right: var(--space-3) }
+  .sidebar-links a:hover, .sidebar-links button:hover { color: var(--gold) }
+  .github-icon { width: 15px; height: 15px; vertical-align: middle; margin-right: var(--space-3) }
+
+  /* ---- stage chrome ------------------------------------------------------ */
+  .stage-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    padding: var(--space-10) var(--space-12);
+  }
+  .stage-header > .eyebrow { font-size: var(--text-xs) }
+
+  .connection-badge {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--text-md);
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+    padding: var(--space-4) var(--space-6);
+  }
+  .connection-badge i, .stage-footer i {
+    height: 4px;
+    width: 4px;
+    background: var(--status-idle);
+    border-radius: var(--radius-full);
+    display: inline-block;
+  }
+  .connection-badge[data-phase="connecting"] i { background: var(--status-connecting) }
+  .connection-badge[data-phase="connected"] i {
+    background: var(--status-ok);
+    box-shadow: 0 0 8px var(--status-ok-glow);
+  }
+  .connection-badge[data-phase="error"] i {
+    background: var(--status-error);
+    box-shadow: 0 0 8px var(--status-error-glow);
+  }
+
+  .stage-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-8) var(--space-12) var(--space-9);
+    color: var(--muted);
+    font-size: var(--text-sm);
+    letter-spacing: .08em;
+  }
+  .stage-footer span:first-child { font-size: var(--text-xs); letter-spacing: var(--tracking-eyebrow) }
+  .stage-footer i { margin-right: var(--space-3); background: var(--warm-dim) }
+
+  /* ---- voice stage ------------------------------------------------------- */
+  /* margin:auto centres the stage in the leftover space, but on its own it
+   * also lets tall content (a couple of decision cards) push the controls
+   * past the fold with nothing to scroll to, because a flex item cannot
+   * shrink below its content and auto margins eat the free space first.
+   * margin-block:auto with a zero flex-basis keeps the centring while
+   * letting .main-stage's own overflow-y take over once content exceeds it. */
+  .voice-stage {
+    margin-block: auto;
+    width: 100%;
+    flex: 0 0 auto;
+    padding: var(--space-8) var(--space-11) var(--space-12);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .orbit-label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-7);
+    font-size: var(--text-xs);
+    letter-spacing: .3em;
+    color: var(--muted);
+    margin-top: var(--space-6);
+  }
+  .orbit-label span {
+    width: 23px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(var(--hairline-warm), .4));
+  }
+  .orbit-label span:last-child { transform: rotate(180deg) }
+
+  .orb-wrap {
+    height: 340px;
+    width: 340px;
+    position: relative;
+    margin: var(--space-7) 0 var(--space-3);
+    display: grid;
+    place-items: center;
+  }
+  .orb-halo {
+    position: absolute;
+    inset: -55px;
+    z-index: var(--z-background);
+    background: radial-gradient(ellipse, rgba(var(--halo-tint), .19), transparent 66%);
+    filter: blur(18px);
+    pointer-events: none;
+  }
+  #orb { width: 320px; height: 320px; display: block }
+
+  .voice-stage h1 {
+    font-size: var(--text-display-md);
+    letter-spacing: .02em;
+    line-height: 1.2;
+    font-weight: 450;
+    margin: 0 0 var(--space-7);
+    color: var(--text);
+  }
+  .stage-description {
+    font-size: var(--text-base);
+    letter-spacing: .03em;
+    line-height: 1.8;
+    margin: 0;
+    max-width: 520px;
+    color: var(--muted);
+    min-height: 22px;
+  }
+  .voice-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-7);
+    margin-top: var(--space-11);
+  }
+  .control-hint { font-size: var(--text-md); color: var(--muted); margin: var(--space-8) 0 0 }
+
+  .context {
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: var(--space-6);
+    padding: var(--space-3) var(--space-6);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---- buttons ----------------------------------------------------------- */
+  /* Was a gradient amber fill with dark-brown ink, which is the one thing the
+   * star-core spec forbids ("amber for status dots, hairlines and limited
+   * glow; never a gradient hotspot"). --fill-strong is the theme's own
+   * text/ground pair inverted, so the primary action still reads loudest
+   * while amber retreats to a hairline plus a hover glow. */
+  .primary-button {
+    background: var(--fill-strong);
+    color: var(--fill-strong-ink);
+    border: 1px solid var(--accent-line);
+    padding: var(--space-6) var(--space-9);
+    border-radius: var(--radius-md);
+    font-size: var(--text-base);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-5);
+    font-weight: 600;
+    box-shadow: var(--shadow-md);
+  }
+  .primary-button:hover { box-shadow: var(--shadow-md), var(--glow-amber) }
+  .primary-button:active:not(:disabled) { box-shadow: var(--shadow-xs) }
+
+  .round-button {
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+  }
+  .round-button svg { width: 18px; height: 18px }
+  /* Two glyphs, one shown at a time, driven by the same aria-pressed the
+   * screen reader reads — no JS-side icon swapping to keep in sync. */
+  .round-button .icon-off { display: none }
+  .round-button[aria-pressed="true"] .icon-on { display: none }
+  .round-button[aria-pressed="true"] .icon-off { display: block }
+  .round-button:active:not(:disabled) { background: var(--hover) }
+  .round-button[aria-pressed="true"] {
+    color: var(--status-muted);
+    border-color: var(--status-muted-line);
+    background: var(--status-muted-soft);
+  }
+
+  /* ---- decision cards ---------------------------------------------------- */
+  .decisions { max-width: 520px; width: 100% }
+  .decision {
+    background: var(--panel);
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius-xl);
+    padding: var(--space-7);
+    text-align: left;
+    margin-top: var(--space-7);
+    font-size: var(--text-base);
+    box-shadow: var(--shadow-sm);
+  }
+  .decision p {
+    line-height: 1.7;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: var(--space-4) 0 var(--space-6);
+    color: var(--muted);
+  }
+  .decision-actions { display: flex; gap: var(--space-4); flex-wrap: wrap }
+  .decision button {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: var(--radius-xs);
+    padding: var(--space-4) var(--space-6);
+    font-size: 14px;
+  }
+  /* Keyed to the choice, not to :last-child. The old positional rule dressed
+   * up whichever button happened to come last, so a host sending only
+   * ['decline'] got a Decline button styled as the affirmative one. */
+  .decision button[data-choice="accept"] {
+    background: var(--fill-strong);
+    color: var(--fill-strong-ink);
+    border-color: var(--accent-line);
+    font-weight: 600;
+  }
+  .decision button[data-choice="decline"] { color: var(--muted) }
+  .decision button:hover:not(:disabled) { border-color: var(--accent-line) }
+
+  /* ---- settings ---------------------------------------------------------- */
+  /* The theme toggle used to be position:absolute over the content and could
+   * land on top of the back button, which the old file worked around by
+   * clamping the back button's width. A flex row makes the collision
+   * impossible instead of merely narrow. */
+  .settings-sidebar-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+  .back-button {
+    display: flex;
+    gap: var(--space-5);
+    color: var(--muted);
+    border: 0;
+    background: none;
+    font-size: var(--text-lg);
+    padding: var(--space-4) 0;
+    text-align: left;
+  }
+  .back-button:hover { color: var(--text) }
+  .back-button span { font-size: var(--text-base) }
+
+  .settings-sidebar h1 {
+    font-size: var(--text-display-md);
+    font-weight: 450;
+    line-height: 1.2;
+    margin: var(--space-13) 0 var(--space-11);
+  }
+  .settings-sidebar h1 span {
+    display: block;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: var(--tracking-eyebrow);
+    margin-top: var(--space-6);
+    color: var(--muted);
+  }
+  .settings-sidebar nav { display: flex; flex-direction: column; gap: var(--space-3) }
+  .settings-sidebar nav button {
+    text-align: left;
+    border: 1px solid transparent;
+    background: none;
+    padding: var(--space-6) var(--space-7);
+    font-size: var(--text-base);
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+  }
+  /* The generic .icon-button/.round-button hover rule never covered these, so
+   * the settings nav had no hover state at all. */
+  .settings-sidebar nav button:hover { background: var(--hover); color: var(--text) }
+  .settings-sidebar nav button span { display: inline-block; width: 28px; font-size: 17px }
+  .settings-sidebar nav button.selected {
+    background: var(--accent-soft);
+    border-color: var(--accent-line);
+    color: var(--gold);
+  }
+
+  .settings-brand {
+    margin-top: auto;
+    padding-top: var(--space-13);
+    color: var(--brand-dim);
+    font-size: var(--text-display-xs);
+    letter-spacing: -.04em;
+  }
+  .settings-brand span {
+    display: block;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: var(--tracking-eyebrow);
+    margin-top: var(--space-4);
+    color: var(--muted);
+  }
+
+  .settings-content h2 {
+    font-size: var(--text-display-lg);
+    font-weight: 450;
+    line-height: 1.2;
+    letter-spacing: .01em;
+    margin: var(--space-7) 0 var(--space-7);
+  }
+  .section-intro {
+    font-size: var(--text-lg);
+    color: var(--muted);
+    margin: 0 0 var(--space-12);
+    line-height: 1.8;
+  }
+
+  .settings-card {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    padding: var(--space-10);
+    box-shadow: var(--shadow-xs);
+  }
+  .settings-card label, .settings-card strong {
+    font-size: var(--text-lg);
+    font-weight: 500;
+    color: var(--text);
+  }
+  .settings-card p {
+    font-size: 14px;
+    line-height: 1.9;
+    color: var(--muted);
+    margin: var(--space-5) 0 var(--space-8);
+  }
+  .settings-card input[type="password"], .settings-card input[type="text"], .settings-card select {
+    width: 100%;
+    border: 1px solid var(--line);
+    background: var(--input);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: var(--space-6) var(--space-7);
+    font-size: var(--text-base);
+  }
+  .settings-card input::placeholder { color: var(--muted) }
+  /* Layered on top of the global focus ring rather than replacing it: the ring
+   * says "focused", the border says "this is the field". */
+  .settings-card input:focus-visible, .settings-card select:focus-visible {
+    border-color: var(--accent-line);
+    outline-offset: 2px;
+  }
+  .settings-card input[type="range"] {
+    width: 100%;
+    margin-top: var(--space-9);
+    accent-color: var(--gold);
+    height: 5px;
+  }
+
+  .card-footer {
+    margin-top: var(--space-9);
+    display: flex;
+    gap: var(--space-7);
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-footer > span { font-size: var(--text-md); color: var(--muted); line-height: 1.8 }
+  .card-footer .primary-button { white-space: nowrap; padding: var(--space-5) var(--space-7); font-size: 14px }
+
+  .info-note { font-size: 14px; color: var(--muted); margin: var(--space-9) 0 }
+  .setting-divider { height: 1px; background: var(--line); margin: var(--space-10) 0 }
+  .setting-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-8) }
+  .setting-row p { margin-bottom: 0 }
+  .setting-row output { color: var(--gold); font-size: var(--text-base) }
+  .setting-pill {
+    padding: var(--space-3) var(--space-5);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+    color: var(--muted);
+    font-size: var(--text-md);
+    white-space: nowrap;
+  }
+  .switch { accent-color: var(--gold); width: 19px; height: 19px; flex: none }
+
+  .text-link { font-size: var(--text-base); color: var(--gold) }
+  .text-link:hover { text-decoration: underline; text-decoration-color: var(--accent-line) }
+}
+
+@layer motion {
+  /* Everything that moves is declared here, and the two reduced-motion gates
+   * sit at the end of this layer so "is this animation gated?" is answerable
+   * by looking in one place. */
+
+  button, a { transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base), box-shadow var(--duration-base) }
+  button:active:not(:disabled), a:active { transition-duration: var(--duration-fast) }
+
+  /* Sidebar collapse. Width is animatable; the old rule toggled `display`,
+   * which is why 340px -> 76px snapped. Children are hidden with display in
+   * the responsive layer — that is fine, it is the container that must not. */
+  /* One declaration, deliberately. `transition` is a shorthand, so a second
+   * rule matching .sidebar at equal specificity later in this layer replaces
+   * this list wholesale rather than adding to it — which is exactly how the
+   * collapse animation got silently clobbered by the theme-flip rule below.
+   * The sidebar's colour transitions therefore live here too, and .sidebar is
+   * absent from that rule's selector list. */
+  .sidebar {
+    transition:
+      width var(--duration-slow) var(--ease-standard),
+      padding var(--duration-slow) var(--ease-standard),
+      transform var(--duration-slow) var(--ease-standard),
+      visibility var(--duration-slow) var(--ease-standard),
+      background-color var(--duration-base) var(--ease-standard),
+      border-color var(--duration-base) var(--ease-standard),
+      color var(--duration-base) var(--ease-standard);
+  }
+
+  /* Screen and scrim reveals are one-shot animations rather than transitions:
+   * both are toggled via [hidden] (display:none), which no transition can
+   * cross. Enter animates, exit is immediate. */
+  #settings:not([hidden]), #workspace:not([hidden]) {
+    animation: screen-in var(--duration-base) var(--ease-out);
+  }
+  @keyframes screen-in { from { opacity: 0 } }
+
+  .drawer-shade:not([hidden]) { animation: fade-in var(--duration-base) var(--ease-standard) }
+  @keyframes fade-in { from { opacity: 0 } }
+
+  /* New captions only: keyed reconciliation in app.mjs reuses existing nodes,
+   * so this fires once per utterance instead of on every streaming frame. */
+  .caption { animation: caption-in var(--duration-base) var(--ease-out) }
+  @keyframes caption-in { from { opacity: 0; transform: translateY(4px) } }
+
+  .connection-badge { transition: background var(--duration-base), border-color var(--duration-base) }
+  .connection-badge i { transition: background var(--duration-base), box-shadow var(--duration-base) }
+  /* State-conditional, not ambient: this stops as soon as the phase changes. */
+  .connection-badge[data-phase="connecting"] i {
+    animation: dot-breathe var(--duration-breath) ease-in-out infinite;
+  }
+  @keyframes dot-breathe { 50% { box-shadow: 0 0 6px 1px var(--status-connecting) } }
+
+  /* Theme flip. Only colour properties: the sidebar and stage grounds are
+   * gradients, and gradient lists do not interpolate, so those still swap
+   * instantly by design rather than animating badly. */
+  body, .main-stage, .settings, .settings-sidebar, .settings-card, .decision {
+    transition:
+      background-color var(--duration-base) var(--ease-standard),
+      border-color var(--duration-base) var(--ease-standard),
+      color var(--duration-base) var(--ease-standard);
+  }
+
+  /* The spec allows "subtle edge breathing" and nothing more. This is the one
+   * ambient animation in the client: opacity only, no size or hue movement. */
+  .orb-halo { animation: halo-breathe 5200ms ease-in-out infinite }
+  @keyframes halo-breathe { 50% { opacity: .7 } }
+
+  /* ---- gates (keep last in this layer) ---------------------------------- */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important }
+  }
+  .reduced-motion *, .reduced-motion *::before, .reduced-motion *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@layer theme-light {
+  /* The orb's plate is drawn by the shared desktop renderer as
+   * abyss:rgba(6,5,10,.95) and is theme-independent, so on a cream page it
+   * would read as a black hole. Instead of fighting that, the stage keeps a
+   * dark ground in light mode — the same division of labour the desktop app
+   * already uses (light settings window, dark orb window).
+   *
+   * The stage is full-bleed: its top, right and bottom edges are the window's
+   * own, and the only internal seam is the left one against the cream sidebar,
+   * which the sidebar's 1px border already draws. An earlier revision feathered
+   * the top and bottom back to the page colour to soften a boundary that does
+   * not exist there, and the resulting cream bands sat exactly where the header
+   * and footer live and washed their text out. */
+  [data-theme="light"] .main-stage {
+    background:
+      radial-gradient(ellipse at 51% 45%, #211b30 0%, #17131f 45%, #0d0b13 78%),
+      #0d0b13;
+    color: #e8e3ef;
+  }
+
+  /* Everything inside the island is a local, explicit exception. The global
+   * tokens stay page-scoped and context-unaware on purpose — making them
+   * context-sensitive would amount to a third theme. */
+  [data-theme="light"] .main-stage .stage-description,
+  [data-theme="light"] .main-stage .control-hint,
+  [data-theme="light"] .main-stage .orbit-label,
+  [data-theme="light"] .stage-header,
+  [data-theme="light"] .stage-header > .eyebrow,
+  [data-theme="light"] .stage-footer { color: #b9b0c4 }
+  [data-theme="light"] .main-stage .voice-stage h1 { color: #f2ecf9 }
+  [data-theme="light"] .main-stage .context { color: #b9b0c4; border-color: #ffffff22 }
+
+  [data-theme="light"] .connection-badge {
+    background: #ffffff14;
+    border-color: #ffffff22;
+    color: #d8d2e2;
+  }
+  [data-theme="light"] .main-stage .theme-toggle {
+    color: #e8e3ef;
+    border-color: #ffffff22;
+    background: #ffffff10;
+  }
+  [data-theme="light"] .main-stage .icon-button { color: #b9b0c4 }
+  [data-theme="light"] .main-stage .icon-button:hover,
+  [data-theme="light"] .main-stage .theme-toggle:hover { background: #ffffff1a; color: #f2ecf9 }
+
+  /* The controls reference --surface/--line/--fill-strong, which in light mode
+   * are tuned for the cream page, not for this dark ground. */
+  [data-theme="light"] .voice-stage .round-button {
+    background: #ffffff10;
+    border-color: #ffffff22;
+    color: #b9b0c4;
+  }
+  [data-theme="light"] .voice-stage .round-button:hover { background: #ffffff1a; color: #f2ecf9 }
+  [data-theme="light"] .voice-stage .primary-button {
+    background: #f4eff8;
+    color: #1b1725;
+    border-color: #9a6b3455;
+  }
+  [data-theme="light"] .voice-stage .decision {
+    background: #1a1626;
+    border-color: #9a6b3455;
+    color: #e8e3ef;
+  }
+  [data-theme="light"] .voice-stage .decision p { color: #b9b0c4 }
+  [data-theme="light"] .voice-stage .decision button {
+    background: #ffffff10;
+    border-color: #ffffff22;
+    color: #e8e3ef;
+  }
+  [data-theme="light"] .voice-stage .decision button[data-choice="accept"] {
+    background: #f4eff8;
+    color: #1b1725;
+  }
+  [data-theme="light"] .voice-stage .decision button[data-choice="decline"] { color: #b9b0c4 }
+
+  /* The starfield and halo no longer need a light-theme variant at all: the
+   * ground beneath them is dark again in both themes. The old
+   * `opacity:.12` override is deliberately gone. */
+}
+
+@layer responsive {
+  /* ---- >= 761px: desktop, and the collapsed icon rail -------------------- */
+  @media (min-width: 761px) {
+    .workspace:not(.collapsed) #expand { display: none }
+
+    /* The collapsed sidebar is a 76px rail. Only the container's width
+     * animates; its children are hidden outright, which is allowed. */
+    .workspace.collapsed .sidebar {
+      width: 76px;
+      padding: var(--space-10) var(--space-7) var(--space-8);
+      align-items: center;
+    }
+    .workspace.collapsed .brand { gap: 0 }
+    /* Was `font-size:0` on .brand — invisible-but-hit-testable text that any
+     * inherited font-size could resurrect. Now the labels are simply gone and
+     * the <a>'s aria-label carries the accessible name. */
+    .workspace.collapsed .brand-name,
+    .workspace.collapsed .brand-tag,
+    .workspace.collapsed #collapse,
+    .workspace.collapsed .transcript-heading,
+    .workspace.collapsed .transcript,
+    .workspace.collapsed .privacy-note,
+    .workspace.collapsed .link-label { display: none }
+    .workspace.collapsed .sidebar-bottom { margin-top: auto }
+    .workspace.collapsed .sidebar-links {
+      flex-direction: column;
+      gap: var(--space-9);
+      align-items: center;
+    }
+    .workspace.collapsed .sidebar-links button span { margin: 0; font-size: 20px }
+    .workspace.collapsed .github-icon { width: 19px; height: 19px; margin: 0 }
+  }
+
+  /* ---- <= 1050px --------------------------------------------------------- */
+  @media (max-width: 1050px) {
+    .sidebar {
+      width: 300px;
+      padding-left: var(--space-9);
+      padding-right: var(--space-9);
+    }
+    .voice-stage h1 { font-size: var(--text-display-xs) }
+    .settings-content { padding: var(--space-14) 5vw }
+    .settings-sidebar { width: 220px }
+    .orb-wrap { width: 300px; height: 300px }
+    #orb { width: 290px; height: 290px }
+  }
+
+  /* ---- <= 760px: single merged mobile block ----------------------------- */
+  /* The old file had two separate max-width:760px blocks whose combined effect
+   * depended on which one happened to sit lower. */
+  @media (max-width: 760px) {
+    /* Off-canvas drawer. Slides on transform instead of switching `display`,
+     * and visibility:hidden keeps the hidden panel out of the tab order and
+     * the accessibility tree. */
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: min(340px, 86vw);
+      box-shadow: var(--shadow-drawer);
+      transform: translateX(0);
+      visibility: visible;
+    }
+    .workspace.collapsed .sidebar { transform: translateX(-100%); visibility: hidden }
+
+    .drawer-shade:not([hidden]) {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: var(--scrim);
+      border: 0;
+      z-index: var(--z-overlay);
+    }
+
+    .stage-header { padding: var(--space-8) var(--space-8) }
+    .stage-header > .eyebrow { display: none }
+    .voice-stage { padding: var(--space-7) var(--space-9) var(--space-9) }
+    .orbit-label { letter-spacing: .22em }
+    .orb-wrap { height: 300px; width: 300px; margin-top: var(--space-7) }
+    #orb { width: 290px; height: 290px }
+    .voice-stage h1 { font-size: var(--text-display-xs); letter-spacing: .01em }
+    .stage-description { font-size: 14px; max-width: 300px }
+    .voice-controls { margin-top: var(--space-10) }
+    .stage-footer { padding: var(--space-8); font-size: var(--text-xs); gap: var(--space-6); flex-wrap: wrap }
+    .brand-tag { font-size: 10px; letter-spacing: .08em }
+
+    .settings { flex-direction: column }
+    .settings-sidebar {
+      width: 100%;
+      min-height: 0;
+      padding: var(--space-8) var(--space-9);
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .settings-sidebar h1 { margin: var(--space-9) 0 var(--space-7); font-size: var(--text-display-xs) }
+    .settings-sidebar h1 span, .settings-brand { display: none }
+    .settings-sidebar nav { flex-direction: row; gap: var(--space-2) }
+    .settings-sidebar nav button { flex: 1; text-align: center; padding: var(--space-5) var(--space-2) }
+    .settings-sidebar nav button span { width: var(--space-8) }
+    .settings-content { padding: var(--space-11) var(--space-9) }
+    .settings-content h2 { font-size: var(--text-display-md) }
+    .settings-card { padding: var(--space-8) }
+    .section-intro { font-size: var(--text-base); margin-bottom: var(--space-10) }
+    .card-footer { align-items: flex-start; flex-direction: column }
+    .card-footer .primary-button { align-self: flex-end }
+  }
+
+  /* ---- short viewports (desktop widths only) ---------------------------- */
+  @media (max-height: 760px) and (min-width: 761px) {
+    .orb-wrap { height: 280px; width: 280px; margin-top: var(--space-4) }
+    #orb { width: 280px; height: 280px }
+    .voice-stage { padding-bottom: var(--space-5) }
+    .voice-controls { margin-top: var(--space-9) }
+    .stage-header { padding-top: var(--space-8); padding-bottom: var(--space-8) }
+  }
+}
+
+@layer components {
+  #model-fields { border: 0; margin: 0; padding: 0; min-width: 0 }
+  .service-card + .service-card { margin-top: var(--space-8) }
+  .service-heading { margin-bottom: var(--space-8) }
+  .service-heading h3 { margin: var(--space-4) 0 0; font-size: var(--text-lg); font-weight: 500 }
+  .service-heading p { margin-bottom: 0 }
+  .service-grid, .secrets-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-8) }
+  .service-grid { margin-top: var(--space-8) }
+  .service-field { min-width: 0 }
+  .service-field + .service-field { margin-top: var(--space-8) }
+  .service-grid .service-field + .service-field { margin-top: 0 }
+  .service-field label { display: block; margin-bottom: var(--space-5) }
+  .secret-field { min-width: 0; padding-top: var(--space-7); border-top: 1px solid var(--line) }
+  .secret-field .setting-row { gap: var(--space-3) }
+  .secret-field label { font-size: var(--text-base) }
+  .secret-field p { margin: var(--space-4) 0 var(--space-5); font-size: var(--text-md) }
+  .secret-input { display: flex; align-items: center; gap: var(--space-3) }
+  .secret-input input { min-width: 0 }
+  .clear-secret { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-5); background: transparent; color: var(--muted); white-space: nowrap }
+  .clear-secret:hover { color: var(--text); background: var(--hover) }
+  .secret-field .setting-pill[data-present="true"] { color: var(--gold); border-color: var(--accent-line) }
+  .settings-save { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-7); padding: var(--space-8) 0 }
+  .settings-save p { max-width: 460px; font-size: var(--text-md); line-height: 1.8; color: var(--muted); margin: 0 }
+  .settings-save .primary-button { font-size: var(--text-base); padding: var(--space-6) var(--space-8); white-space: nowrap }
+  #settings-message[data-error="true"] { color: var(--status-muted) }
+  #settings-retry { border: 0; background: none; padding: 0 0 var(--space-7) }
+}
+@layer responsive {
+  @media (max-width: 760px) {
+    .service-grid, .secrets-grid { grid-template-columns: 1fr }
+    .settings-sidebar nav { flex-wrap: wrap }
+    .settings-sidebar nav button { white-space: nowrap; font-size: 14px }
+  }
+}

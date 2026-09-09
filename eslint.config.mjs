@@ -7,7 +7,7 @@ export default tseslint.config(
       '**/node_modules/**',
       'thirdparty/**',
       '.worktrees/**',
-      'desktop/nova-audio-agent-desktop/build/**',
+      'clients/desktop/build/**',
     ],
   },
   {

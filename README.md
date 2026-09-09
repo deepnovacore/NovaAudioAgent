@@ -132,3 +132,7 @@ invariants: [CONTRIBUTING.md](CONTRIBUTING.md).
 ## 7. License
 
 Copyright 2026 DeepNovaCore, [Apache License 2.0](LICENSE).
+
+## Browser client
+
+The browser client lives in `clients/webui`, alongside `clients/desktop` and `clients/ios`. Run `npm run start:web` after starting the headless runtime. See [WebUI setup](clients/webui/README.md) for credentials, audio and HTTPS configuration.

@@ -217,5 +217,3 @@ iOS 在工程落地后使用 shared scheme `Nova` 执行 `xcodebuild test`，des
 - [x] 星云轮廓稳定与相位连续修复。
 - [x] 49 后端回归、11 Swift 检查、签名设备构建。
 - [ ] 实际 Token 申请、AOQ 真机语音/打断、网络与 A/B 验收。
-
-

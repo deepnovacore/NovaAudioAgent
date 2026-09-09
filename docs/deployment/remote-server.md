@@ -319,8 +319,8 @@ NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE=aoq_chat \
 NOVA_AUDIO_AGENT_SERVER_PORT=19876 \
 NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE="$HOME/.nova-remote/client-token" \
 NOVA_AUDIO_AGENT_AOQ_API_HOST=llm-YOUR_WORKSPACE.cn-beijing.maas.aliyuncs.com \
-desktop/nova-audio-agent-desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron \
-  desktop/nova-audio-agent-desktop/scripts/aoq-server.mjs
+clients/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron \
+  clients/desktop/scripts/aoq-server.mjs
 ```
 
 Use the actual lowercase workspace host. The launcher neither exports keys to files nor sends them to a renderer. Stop it before starting the normal `relay` service. macOS may require user interaction to allow access to the already saved keychain item.
@@ -329,7 +329,7 @@ Use the actual lowercase workspace host. The launcher neither exports keys to fi
 
 Set `NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE=aoq_runtime` to enable tools, project state and approvals over the AOQ control connection. `relay` remains the server default; the keychain convenience launcher defaults to `aoq_runtime`, with an explicit `aoq_chat` override for standalone chat. Mode changes require a service restart. The phone's AOQ setting offers both modes; the authenticated server selects one explicitly.
 
-Runtime mode requires the same Codex configuration as the ordinary remote service: an absolute canonical `NOVA_AUDIO_AGENT_CODEX_BIN`, existing `NOVA_AUDIO_AGENT_CODEX_WORKSPACE`, validated native resources via `NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH`, and a capabilities configuration with coding enabled. Keep the existing approval mode. Do not reuse a voice-only test capabilities file that disables coding. Supply the existing support-model configuration as well as the DashScope key. In a source Mac checkout, the native resource root is `desktop/nova-audio-agent-desktop/build`; use its matching Electron runtime with the keychain launcher, as native resources are ABI-bound.
+Runtime mode requires the same Codex configuration as the ordinary remote service: an absolute canonical `NOVA_AUDIO_AGENT_CODEX_BIN`, existing `NOVA_AUDIO_AGENT_CODEX_WORKSPACE`, validated native resources via `NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH`, and a capabilities configuration with coding enabled. Keep the existing approval mode. Do not reuse a voice-only test capabilities file that disables coding. Supply the existing support-model configuration as well as the DashScope key. In a source Mac checkout, the native resource root is `clients/desktop/build`; use its matching Electron runtime with the keychain launcher, as native resources are ABI-bound.
 
 AOQ Audio stays on the phone. Data events and host commands use the private WSS connection and the existing Runtime/Qwen tool path. The listener starts before provider readiness so the phone can attach; `server-ready` proves only that the control listener exists. `aoq_provider_connected` confirms the SDK session/configuration handshake. A failed attachment logs `aoq_handshake_failed`, releases that phone and waits for a new connection.
 

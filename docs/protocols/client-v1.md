@@ -89,3 +89,13 @@ All media modes share pairing; the existing `hello` and media protocol are uncha
 - Pairing requests/credentials must not be logged, placed in URL parameters or automatically retried. If delivery or local Keychain persistence fails, regenerate an invitation and remove the orphan device entry. Network reachability/TLS remains a prerequisite.
 
 
+
+### 级联可编辑输入
+
+`client.ready.capabilities` 在级联主机上声明 `text_input`、`dictation`。以下 payload 复用绑定 connection_id、request_id 的 `client.command` 与去重回执：
+
+- `input.text`：`text` 为非空、最长 4000 UTF-16 单元的用户文本。
+- `input.dictation`：`id` 为草稿 ID，`action` 为 start/finish/cancel。start 后二进制 PCM 仅进入有界草稿缓冲（16 kHz PCM16，最多 60 秒）；finish 仅调用当前级联 ASR，30 秒超时；cancel 或断线取消识别。
+- `input.audio`：结束草稿输入模式，显式恢复连续语音；草稿完成后的迟到音频不会自动进入模型。
+
+识别返回 `input.transcription`，包含匹配的 `id` 和 `text`，失败时只返回 `error: recognition_failed`。草稿不是用户轮次，不触发 LLM 或工具；客户端必须显式发送编辑后的 input.text。

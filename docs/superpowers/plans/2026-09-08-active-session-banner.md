@@ -21,7 +21,7 @@
 
 ### Task 1: Continuous narration and executor expression
 
-**Files:** runtime/src/config.ts, environment-contract.ts, assembly.ts, runtime.ts, realtime/service.ts and frontend-instructions.ts, executors/codex/factory.ts; desktop/nova-audio-agent-desktop/src/main/settings-store.mjs and backend.mjs, renderer/settings.html and settings.mjs; corresponding runtime/test and desktop/nova-audio-agent-desktop/test files. New small narration-policy module allowed.
+**Files:** runtime/src/config.ts, environment-contract.ts, assembly.ts, runtime.ts, realtime/service.ts and frontend-instructions.ts, executors/codex/factory.ts; clients/desktop/src/main/settings-store.mjs and backend.mjs, renderer/settings.html and settings.mjs; corresponding runtime/test and clients/desktop/test files. New small narration-policy module allowed.
 
 **Interfaces:** Add codingProgressNarration desktop setting and corresponding runtime coding_progress_narration enum `smart | continuous`, default smart. Keep surrogate_model configured for intake. Parent does not edit these files except integration fixes after handoff. Settings is the sole configuration entry; do not expose a model tool for changing narration preferences.
 
@@ -43,7 +43,7 @@ type CodingProgressNarration = 'smart' | 'continuous'
 
 ### Task 2: Task banner, snapshot, and actions
 
-**Files:** runtime/src/desktop-tasks.ts (new), desktop-realtime.ts, desktop-bridge.ts, desktop.ts, desktop-wire.ts, coding-executor.ts, executors/codex/adapter-project.ts; desktop/nova-audio-agent-desktop/src/renderer/task-banner.mjs (new), task-banner.css (new), index.html, index.mjs; main/window-position.mjs if geometry needs adjustment. Corresponding tests.
+**Files:** runtime/src/desktop-tasks.ts (new), desktop-realtime.ts, desktop-bridge.ts, desktop.ts, desktop-wire.ts, coding-executor.ts, executors/codex/adapter-project.ts; clients/desktop/src/renderer/task-banner.mjs (new), task-banner.css (new), index.html, index.mjs; main/window-position.mjs if geometry needs adjustment. Corresponding tests.
 
 **Interfaces:** Wire frame `executor.tasks` with monotonic revision, active_project and bounded tasks; each task has work_id/executor/project/title/phase/summary/ts. Control `executor.task_action` has request_id, work_id, executor and action `open | cancel`; response `executor.task_action_result` echoes request/work and status. Host adapter exposes exact task action methods via an optional structural port, with no renderer-supplied paths.
 

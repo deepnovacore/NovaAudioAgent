@@ -368,6 +368,22 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     }
   }
 
+  submitText(text: string, signal: AbortSignal): Promise<void> {
+    if (typeof text !== 'string' || !text.trim() || text.length > 4000) return Promise.reject(new CascadedRealtimeError('configuration'))
+    const owner = this.#requiredOwner()
+    const operation = this.#audioTail.then(async () => {
+      throwIfAborted(combineSignals(owner.controller.signal, signal))
+      if (!this.#isCurrent(owner) || owner.asr !== null) throw new CascadedRealtimeError('state')
+      const speechId = this.#freshId(), itemId = this.#freshId()
+      await this.#emit(owner, {kind: 'user_speech_started', session_epoch: owner.epoch, speech_id: speechId, provider_item_id: itemId})
+      await this.#emit(owner, {kind: 'user_speech_ended', session_epoch: owner.epoch, speech_id: speechId, provider_item_id: itemId})
+      owner.userInput = {itemId, text, submitted: false}
+      await this.#emit(owner, {kind: 'user_transcript_final', session_epoch: owner.epoch, item_id: itemId, text})
+    })
+    this.#audioTail = operation.catch(() => undefined)
+    return operation
+  }
+
   sendAudio(pcm: Uint8Array, signal: AbortSignal): Promise<void> {
     let owned: Uint8Array
     try {

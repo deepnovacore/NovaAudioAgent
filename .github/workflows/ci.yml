@@ -42,9 +42,10 @@ jobs:
       - run: npm run test:runtime:win
         if: runner.os == 'Windows'
       - run: npm run test:cli
+      - run: npm run test:webui
       # npm may restore the Electron package without its platform binary from
       # cache. The pinned install script is idempotent and closes that gap.
-      - run: node desktop/nova-audio-agent-desktop/node_modules/electron/install.js
+      - run: node clients/desktop/node_modules/electron/install.js
       - run: npm run test:desktop
       - run: npm run smoke:capability-status --workspace @nova-audio-agent/desktop
         if: runner.os == 'macOS'
@@ -82,5 +83,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: desktop/nova-audio-agent-desktop/dist/**
+          path: clients/desktop/dist/**
           if-no-files-found: error
