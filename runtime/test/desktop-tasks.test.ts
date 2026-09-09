@@ -1,4 +1,5 @@
 import {join, delimiter} from 'node:path'
+import {tmpdir} from 'node:os'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {DesktopTasks, taskActionSchema, executorTasksSchema} from '../src/desktop-tasks.js'
@@ -38,7 +39,7 @@ test('retention preserves running tasks and stays below socket byte limit', () =
 test('native opener accepts only canonical existing directories and passes no shell', async () => {
   const {openTaskDirectory} = await import('../src/desktop-task-opener.js')
   const {realpath} = await import('node:fs/promises')
-  const path = await realpath('/tmp')
+  const path = await realpath(tmpdir())
   const launches: unknown[] = []
   await openTaskDirectory(path, (file, args) => { launches.push([file, args]); return Promise.resolve() }, 'darwin')
   assert.deepEqual(launches, [['/usr/bin/open', [path]]])
@@ -73,7 +74,7 @@ test('control-only project labels cannot invalidate outbound task snapshots', ()
 test('native opener drops an obsolete request after filesystem validation', async () => {
   const {openTaskDirectory} = await import('../src/desktop-task-opener.js')
   const {realpath} = await import('node:fs/promises')
-  const path = await realpath('/tmp')
+  const path = await realpath(tmpdir())
   let wanted = true
   let launched = false
   const opening = openTaskDirectory(path, () => { launched = true; return Promise.resolve() }, 'darwin', () => wanted)
@@ -95,7 +96,6 @@ test('empty roster names and titles retain valid task fallbacks', () => {
 test('a long-running native opener does not retain its caller process', {skip: process.platform === 'win32' ? 'POSIX executable fixture' : false}, async () => {
   const {spawnSync} = await import('node:child_process')
   const {mkdtemp, realpath, writeFile, readFile, rm} = await import('node:fs/promises')
-  const {tmpdir} = await import('node:os')
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'nova-opener-')))
   const pidFile = join(directory, 'pid')
   let pid: number | undefined
