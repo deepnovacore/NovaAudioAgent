@@ -1,3 +1,4 @@
+import {requirePosixServerStorage} from './server-config.js'
 import {createHash, randomBytes, randomUUID, timingSafeEqual} from 'node:crypto'
 import {closeSync, constants, fstatSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync} from 'node:fs'
 import {z} from 'zod'
@@ -29,6 +30,7 @@ export class ClientPairing {
   #attempts: number[] = []
 
   constructor(readonly master: string, readonly path: string, readonly now: () => number = Date.now) {
+    requirePosixServerStorage()
     secret.parse(master)
     let fd: number
     try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK) } catch (error) {

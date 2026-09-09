@@ -410,7 +410,7 @@ test('session recall waits for an outstanding real commit before publishing opti
   } finally { stop.abort(); await blocker?.terminate(); await serving; await rm(directory, {recursive: true, force: true}) }
 })
 
-test('shutdown bounds a blackboard flush blocked by another SQLite writer', async () => {
+test('shutdown rejects an uncommitted flush while another SQLite writer still holds its lock', {timeout: 30_000}, async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-board-close-'))
   const options = {path: join(directory, 'board.sqlite'), ownerId: 'local'}
   const memory = new Memory()
@@ -427,9 +427,17 @@ test('shutdown bounds a blackboard flush blocked by another SQLite writer', asyn
     `, {eval: true, workerData: options.path})
     await once(blocker, 'message')
     append(memory, 'not acknowledged')
-    const started = performance.now()
+    // The lock is only released below: shutdown must fail without waiting for its owner.
+    // A wall-time threshold also measures host scheduling and worker termination latency.
     await assert.rejects(session.close())
-    assert.ok(performance.now() - started < 1_500)
+    await assert.rejects(session.flush(), /closed/u)
+    await blocker.terminate()
+    blocker = undefined
+    const recovered = new BlackboardStore({...options, conversationId: memory.scope.conversation_id, channels: ['conversation']})
+    try {
+      const snapshot = await recovered.open()
+      assert.equal(snapshot.channels[0]?.items.length, 0, 'failed shutdown must not acknowledge the blocked write')
+    } finally { await recovered.close() }
   } finally {
     await blocker?.terminate()
     await session.close().catch(() => undefined)

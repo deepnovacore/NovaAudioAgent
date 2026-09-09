@@ -4,13 +4,14 @@ import {AoqRuntimeLink, AoqRealtimeAdapter} from '../src/realtime/aoq.js'
 
 test('AOQ waits for the phone, uses its session and replaces only the data connection', async () => {
   const link = new AoqRuntimeLink()
+  let now = 0
   const adapter = new AoqRealtimeAdapter({link, url: 'wss://unused.invalid', apiKey: 'unused',
-    model: 'qwen-audio-3.0-realtime-plus', voice: 'longanqian', connectTimeout: 0.03})
+    model: 'qwen-audio-3.0-realtime-plus', voice: 'longanqian', connectTimeout: 0.03, now: () => now})
   const abort = new AbortController()
   const sent: Record<string, unknown>[] = []
   const connect = adapter.connect({tools: [{type: 'function', name: 'dispatch'}], signal: abort.signal})
   // Waiting for a human to attach must not consume the provider handshake timeout.
-  await new Promise(resolve => setTimeout(resolve, 50))
+  now += 0.05
   const attach = (id: string) => {
     link.attach({id, disconnect: () => link.detach(id), send: event => {
       sent.push(event)

@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict'
-import {chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync} from 'node:fs'
+import {existsSync, chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {once} from 'node:events'
 import {test} from 'node:test'
 import {WebSocket} from 'ws'
-import {ClientPairing} from '../src/client-pairing.js'
+import {ClientPairing, pairingEndpoint} from '../src/client-pairing.js'
 import {ClientServer} from '../src/client-server.js'
 import {AoqChatServer} from '../src/aoq-chat-server.js'
 
 const master = 'a'.repeat(32)
 const endpoint = 'wss://mac.example/client/v1'
 
-test('pairing codes expire, rotate and redeem once; device hashes persist and revoke independently', t => {
+test('pairing codes expire, rotate and redeem once; device hashes persist and revoke independently', {skip: process.platform === 'win32' && 'POSIX device store integration'}, t => {
   const dir = mkdtempSync(join(tmpdir(), 'nova-pair-'))
   t.after(() => rmSync(dir, {recursive: true, force: true}))
   const path = join(dir, 'devices.json')
@@ -49,7 +49,7 @@ test('pairing codes expire, rotate and redeem once; device hashes persist and re
   }
 })
 
-test('device store fails closed on unsafe permissions, corruption, symlinks and owner rotation', t => {
+test('device store fails closed on unsafe permissions, corruption, symlinks and owner rotation', {skip: process.platform === 'win32' && 'POSIX device store integration'}, t => {
   const dir = mkdtempSync(join(tmpdir(), 'nova-pair-store-'))
   t.after(() => rmSync(dir, {recursive: true, force: true}))
   const path = join(dir, 'devices.json')
@@ -77,7 +77,7 @@ async function request(port: number, path: string, frame: object): Promise<Recor
 }
 
 for (const aoq of [false, true]) {
-  test(`scan redemption and revocation work on ${aoq ? 'AOQ' : 'relay'} without runtime access before hello`, {timeout: 5000}, async t => {
+  test(`scan redemption and revocation work on ${aoq ? 'AOQ' : 'relay'} without runtime access before hello`, {timeout: 5000, skip: process.platform === 'win32' && 'POSIX device store integration'}, async t => {
     const dir = mkdtempSync(join(tmpdir(), 'nova-pair-socket-'))
     t.after(() => rmSync(dir, {recursive: true, force: true}))
     const pairing = new ClientPairing(master, join(dir, 'devices.json'))
@@ -114,3 +114,18 @@ for (const aoq of [false, true]) {
     assert.equal(pairing.accepts(device.token), false)
   })
 }
+
+test('pairing endpoint validation is independent of host storage', () => {
+  assert.equal(pairingEndpoint('wss://mac.example'), endpoint)
+  for (const url of ['ws://mac.example', 'wss://user:pass@mac.example', 'wss://mac.example/?token=x', 'wss://mac.example/other']) {
+    assert.throws(() => pairingEndpoint(url))
+  }
+})
+
+test('Windows rejects pairing storage before creating a device file', {skip: process.platform !== 'win32'}, t => {
+  const dir = mkdtempSync(join(tmpdir(), 'nova-pair-unsupported-'))
+  t.after(() => rmSync(dir, {recursive: true, force: true}))
+  const path = join(dir, 'devices.json')
+  assert.throws(() => new ClientPairing(master, path), /requires POSIX/u)
+  assert.equal(existsSync(path), false)
+})

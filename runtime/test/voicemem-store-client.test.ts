@@ -4,6 +4,7 @@ import {createServer} from 'node:http'
 import {tmpdir} from 'node:os'
 import {DatabaseSync} from 'node:sqlite'
 import {join} from 'node:path'
+import {setTimeout as delay} from 'node:timers/promises'
 import test from 'node:test'
 import type {WorkerOptions} from 'node:worker_threads'
 
@@ -335,6 +336,22 @@ async function eventually(check:()=>boolean | Promise<boolean>):Promise<void>{
   assert.fail('condition did not become true')
 }
 
+/** Run every teardown even if an earlier close fails; remove files only after all owners close. */
+async function cleanup(actions: readonly (() => unknown)[]): Promise<void> {
+  const failures: unknown[] = []
+  for (const action of actions) { try { await action() } catch (error) { failures.push(error) } }
+  if (failures.length) throw new AggregateError(failures, 'memory fixture cleanup failed')
+}
+
+async function awaitExtraction(started: Promise<void>): Promise<void> {
+  const stop = new AbortController()
+  try {
+    await Promise.race([started, delay(5_000, undefined, {signal: stop.signal}).then(() => {
+      throw new Error('loopback extraction request did not arrive within 5000ms')
+    })])
+  } finally { stop.abort() }
+}
+
 test('real worker durably admits, recalls during learning, retries only on reopen, and projects astral text safely', {timeout:10000}, async t => {
   let provider: Awaited<ReturnType<typeof loopbackProvider>>
   try { provider=await loopbackProvider() }
@@ -345,10 +362,10 @@ test('real worker durably admits, recalls during learning, retries only on reope
   const directory=await mkdtemp(join(process.cwd(),'voicemem-worker-'))
   let store=new PersonalMemoryStoreClient({path:join(directory,'personal.sqlite'),userId:'host-user',
     embedding:{baseUrl:provider.baseUrl,apiKey:'loopback',model:'embed-test',dimensions:2},extractionModel:'extract-test'})
-  t.after(async()=>{await store.close();await provider.close();await rm(directory,{recursive:true,force:true})})
+  t.after(() => cleanup([() => store.close(), () => provider.close(), () => rm(directory, {recursive:true,force:true})]))
   await store.open()
   assert.deepEqual(await store.remember!({sourceId:'slow-id',sessionId:'s',sequence:1,text:'slow',occurredAt:null}),{state:'stored',sourceId:'slow-id'})
-  await provider.extractionStarted
+  await awaitExtraction(provider.extractionStarted)
   assert.deepEqual(await store.recall('slow'),{source:'personal',state:'empty',scope:'recent',hits:[],contextHits:[],degraded:false})
   provider.release()
   await eventually(()=>provider.calls.get('slow')===1)
@@ -384,7 +401,8 @@ test('real worker persists the exact previous reply and republishes learned glob
   const path=join(directory,'personal.sqlite')
   let store=new PersonalMemoryStoreClient({path,userId:'host-user',
     embedding:{baseUrl:provider.baseUrl,apiKey:'loopback',model:'embed-test',dimensions:2},extractionModel:'extract-test'})
-  t.after(async()=>{await store.close();await provider.close();await rm(directory,{recursive:true,force:true})})
+  const owners: {db?: DatabaseSync} = {}
+  t.after(() => cleanup([() => store.close(), () => owners.db?.close(), () => provider.close(), () => rm(directory, {recursive:true,force:true})]))
   await store.open()
   const deliveredPrefix='😀'.repeat(20_000)
   await store.remember!({sourceId:'preference-id',sessionId:'s',sequence:1,text:'preference',occurredAt:null,previousAssistantReply:deliveredPrefix})
@@ -393,8 +411,7 @@ test('real worker persists the exact previous reply and republishes learned glob
   await store.remember!({sourceId:'failed-id',sessionId:'s',sequence:2,text:'poison',occurredAt:null})
   await eventually(()=>provider.calls.get('poison')===1)
   assert.equal(store.responseAdaptation().revision, 1, 'failed learning cannot invent a response preference snapshot')
-  const db=new DatabaseSync(path)
-  t.after(()=>db.close())
+  const db=owners.db=new DatabaseSync(path)
   assert.equal((JSON.parse(String(db.prepare("SELECT payload FROM vm_sources WHERE id='preference-id'").get()!.payload)) as {previousAssistantReply?: unknown}).previousAssistantReply,deliveredPrefix)
   await store.close()
 
@@ -409,11 +426,11 @@ test('real worker snapshots only host-user reply preferences', async t => {
   const path=join(directory,'personal.sqlite')
   const options={path,userId:'host-user',embedding:{baseUrl:'https://example.invalid/v1',apiKey:'test-key',model:'embed-test',dimensions:2}}
   const initialized=new PersonalMemoryStoreClient(options)
-  t.after(async()=>{await initialized.close();await rm(directory,{recursive:true,force:true})})
+  const owners: {db?: DatabaseSync; reopened?: PersonalMemoryStoreClient} = {}
+  t.after(() => cleanup([() => owners.reopened?.close(), () => owners.db?.close(), () => initialized.close(), () => rm(directory, {recursive:true,force:true})]))
   await initialized.open()
   await initialized.close()
-  const db=new DatabaseSync(path)
-  t.after(()=>db.close())
+  const db=owners.db=new DatabaseSync(path)
   const insert=(id:string,subject:string,sourceRole:'user'|'assistant') => {
     const record={id,userId:'host-user',scope:'personal',kind:'trait',text:`${id} text`,subject,attribute:'reply_preference',slots:[],entities:[],emotion:'',authority:'inferred',occurredAt:null,recordedAt:'2026-09-06T00:00:00.000Z',sourceRole,revision:1,supersededBy:null,evidenceIds:[`${id}-source`]}
     db.prepare('INSERT INTO vm_memories VALUES (?,?,?,?,?,?,?,?)').run('host-user','personal',id,JSON.stringify(record),'[1,0]','embed-test',1,1)
@@ -422,8 +439,7 @@ test('real worker snapshots only host-user reply preferences', async t => {
   insert('third-party','another-user','user')
   insert('assistant-role','host-user','assistant')
 
-  const reopened=new PersonalMemoryStoreClient(options)
-  t.after(async()=>{await reopened.close()})
+  const reopened=owners.reopened=new PersonalMemoryStoreClient(options)
   await reopened.open()
   assert.deepEqual(reopened.responseAdaptation().replyPreferences,[{id:'self-user',text:'self-user text',evidenceIds:['self-user-source']}])
 })
@@ -440,12 +456,12 @@ test('storage damage fails a read or background drain without terminating the wo
   const path=join(directory,'personal.sqlite')
   const store=new PersonalMemoryStoreClient({path,userId:'host-user',
     embedding:{baseUrl:provider.baseUrl,apiKey:'loopback',model:'embed-test',dimensions:2},extractionModel:'extract-test'})
-  t.after(async()=>{provider.release();await store.close();await provider.close();await rm(directory,{recursive:true,force:true})})
+  const owners: {db?: DatabaseSync} = {}
+  t.after(() => cleanup([() => provider.release(), () => store.close(), () => owners.db?.close(), () => provider.close(), () => rm(directory, {recursive:true,force:true})]))
   await store.open()
-  const db=new DatabaseSync(path)
-  t.after(()=>db.close())
+  const db=owners.db=new DatabaseSync(path)
   await store.remember!({sourceId:'slow-id',sessionId:'s',sequence:1,text:'slow',occurredAt:null})
-  await provider.extractionStarted
+  await awaitExtraction(provider.extractionStarted)
   await store.remember!({sourceId:'queued-id',sessionId:'s',sequence:2,text:'queued',occurredAt:null})
   const queued=String(db.prepare("SELECT payload FROM vm_sources WHERE id='queued-id'").get()!.payload)
   db.prepare("UPDATE vm_sources SET payload=? WHERE id='queued-id'").run('{')

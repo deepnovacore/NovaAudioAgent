@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {mkdtempSync, readFileSync, statSync, chmodSync, rmSync, writeFileSync} from 'node:fs'
+import {existsSync, mkdtempSync, readFileSync, statSync, chmodSync, rmSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {EventEmitter, once} from 'node:events'
@@ -25,7 +25,7 @@ test('headless lifecycle starts and cleans up without a parent readiness endpoin
   assert.deepEqual(calls, ['start', 'ready', 'close', 'stop'])
 })
 
-test('token file is private, valid, never overwritten, and invalid config allocates nothing', async () => {
+test('token file is private, valid, never overwritten, and invalid config allocates nothing', {skip: process.platform === 'win32' && 'POSIX remote host private storage'}, async () => {
   const {initializeServerToken, loadServerConfig} = await import('../src/server-config.js')
   const {runServerEntry} = await import('../src/server-entry.js')
   const dir = mkdtempSync(join(tmpdir(), 'nova-server-'))
@@ -58,7 +58,7 @@ test('token file is private, valid, never overwritten, and invalid config alloca
   } finally { rmSync(dir, {recursive: true, force: true}) }
 })
 
-test('server ignores IPC disconnect, stops on SIGTERM, and removes signal bindings', async () => {
+test('server ignores IPC disconnect, stops on SIGTERM, and removes signal bindings', {skip: process.platform === 'win32' && 'POSIX remote host private storage'}, async () => {
   const {initializeServerToken} = await import('../src/server-config.js')
   const {runServerEntry} = await import('../src/server-entry.js')
   const dir = mkdtempSync(join(tmpdir(), 'nova-server-'))
@@ -150,7 +150,7 @@ for (const invalid of ['credential', 'endpoint', 'cascaded-credential'] as const
   }
 })
 
-test('AOQ entry starts without loading the desktop/provider graph and closes on SIGTERM', {timeout: 5000}, async () => {
+test('AOQ entry starts without loading the desktop/provider graph and closes on SIGTERM', {timeout: 5000, skip: process.platform === 'win32' && 'POSIX remote host private storage'}, async () => {
   const {execFile} = await import('node:child_process')
   const {promisify} = await import('node:util')
   const {createServer} = await import('node:net')
@@ -197,4 +197,21 @@ test('AOQ entry starts without loading the desktop/provider graph and closes on 
         NOVA_AUDIO_AGENT_SERVER_PORT: String(address.port), NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE: 'aoq_chat', NOVA_AUDIO_AGENT_AOQ_API_HOST: 'llm-test.cn-beijing.maas.aliyuncs.com'},
     })
   } finally { rmSync(dir, {recursive: true, force: true}) }
+})
+
+test('Windows rejects remote private storage before creating credentials or allocating resources', {skip: process.platform !== 'win32'}, async t => {
+  const {initializeServerToken, loadServerConfig} = await import('../src/server-config.js')
+  const {runServerEntry} = await import('../src/server-entry.js')
+  const dir = mkdtempSync(join(tmpdir(), 'nova-server-unsupported-'))
+  t.after(() => rmSync(dir, {recursive: true, force: true}))
+  const tokenFile = join(dir, 'token')
+  const environment = {NOVA_AUDIO_AGENT_SERVER_PORT: '19876', NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: tokenFile}
+  assert.throws(() => initializeServerToken(tokenFile), /requires POSIX/u)
+  assert.throws(() => loadServerConfig(environment), /requires POSIX/u)
+  let allocated = false
+  assert.equal(await runServerEntry({environment, construct: () => { allocated = true; throw new Error('unexpected allocation') },
+    onDiagnostic: () => { /* Only the exit status is relevant. */ }, processEvents: new EventEmitter()}), 2)
+  assert.equal(allocated, false)
+  assert.equal(existsSync(tokenFile), false)
+  assert.equal(existsSync(`${tokenFile}.devices.json`), false)
 })

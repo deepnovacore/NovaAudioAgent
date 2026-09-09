@@ -1427,7 +1427,6 @@ test('close releases the never-settling spawn deadline handle instead of pinning
     './fixtures/codex/pending-spawn-handle-child.js',
     import.meta.url,
   ))
-  const startedAt = Date.now()
   const child = spawnChild(process.execPath, [fixture], {
     cwd: process.cwd(),
     env: {PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? ''},
@@ -1439,7 +1438,11 @@ test('close releases the never-settling spawn deadline handle instead of pinning
   let stderr = ''
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')
-  child.stdout.on('data', (chunk: string) => { stdout += chunk })
+  let closeReportedAt: number | undefined
+  child.stdout.on('data', (chunk: string) => {
+    stdout += chunk
+    if (closeReportedAt === undefined && stdout.includes('\n')) closeReportedAt = Date.now()
+  })
   child.stderr.on('data', (chunk: string) => { stderr += chunk })
   const exitCode = await new Promise<number | null>((resolve, reject) => {
     const hardTimer = setTimeout(() => {
@@ -1450,15 +1453,18 @@ test('close releases the never-settling spawn deadline handle instead of pinning
       clearTimeout(hardTimer)
       reject(error)
     })
-    child.once('exit', code => {
+    child.once('close', code => {
       clearTimeout(hardTimer)
       resolve(code)
     })
   })
-  const elapsedMs = Date.now() - startedAt
   assert.equal(exitCode, 0, stderr)
-  assert.equal(elapsedMs < runtime.CODEX_TREE_GRACE_MS + 3000, true, `child exit took ${elapsedMs} ms`)
   const result = JSON.parse(stdout) as Record<string, unknown>
+  // Cold module loading precedes close; only the fixture's close and subsequent natural exit own these budgets.
+  assert.ok(typeof result.closeElapsedMs === 'number')
+  assert.ok(result.closeElapsedMs < runtime.CODEX_TREE_GRACE_MS + 3000, `close took ${String(result.closeElapsedMs)} ms`)
+  assert.ok(closeReportedAt !== undefined, 'fixture must report close completion before exiting')
+  assert.ok(Date.now() - closeReportedAt < 3000, 'child remained alive after close completed')
   assert.equal(result.runCode, 'transport_lost')
   assert.equal(result.closeCode, 'transport_lost')
 })

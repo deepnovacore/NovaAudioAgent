@@ -271,9 +271,22 @@ test('summary-only writes report cross-channel capacity pruning within their own
 test('extending raw-record retention does not extend an existing summary or hide its invalidation', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-blackboard-'))
   const options = {path: join(directory, 'memory.sqlite'), ownerId: 'local', conversationId: 'one', channels: ['conversation']}
+  // The worker uses max(Date.now(), persisted last_now), so its existing monotonic
+  // clock floor lets this fixture advance expiry without waiting for wall time.
+  const setClock = async (at: number): Promise<void> => {
+    const clock = new Worker(`
+      const {parentPort,workerData}=require('node:worker_threads');
+      const {DatabaseSync}=require('node:sqlite');
+      const db=new DatabaseSync(workerData.path);
+      db.prepare('UPDATE meta SET last_now=?').run(workerData.at);
+      db.close(); parentPort.postMessage('done');
+    `, {eval: true, workerData: {path: options.path, at}})
+    try { await once(clock, 'message') } finally { await clock.terminate() }
+  }
   let store = new BlackboardStore({...options, retention: {ttlMs: 1000}})
   try {
     const {generation} = await store.open()
+    await setClock(Date.UTC(2100, 0, 1))
     await store.commit({generation, revision: 1, mutations: [
       {kind: 'append', item: item(1, 'retained source')},
       {kind: 'summary', channel: 'conversation', text: 'short-lived summary', throughSequence: 1, retentionRevision: 0},
@@ -281,8 +294,9 @@ test('extending raw-record retention does not extend an existing summary or hide
     const expires = (await store.load()).channels[0]!.summary!.expiresAtMs
     await store.close()
     store = new BlackboardStore({...options, retention: {ttlMs: 100_000}})
-    await store.open()
-    await delay(Math.max(0, expires - Date.now() + 20))
+    const reopened = await store.open()
+    assert.equal(reopened.channels[0]?.summary?.expiresAtMs, expires, 'reopen must not extend summary expiry')
+    await setClock(expires + 1)
     const receipt = await store.commit({generation, revision: 2, mutations: []})
     assert.deepEqual(receipt.retention, [{channel: 'conversation', retentionRevision: 1, prunedThroughSequence: 0}])
     const snapshot = await store.load()

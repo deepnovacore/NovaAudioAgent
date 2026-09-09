@@ -10,6 +10,14 @@ Stop the desktop instance before starting this service on the same host/project
 state. Do not let two runtimes own the same writable workspace or state directory.
 This service is not included automatically in existing desktop release packaging.
 
+## Host platform scope
+
+The current remote host credential and pairing stores require POSIX ownership and
+0600/0700 permissions. Windows remote host storage is unsupported and is rejected
+before creating a token or device state; Windows mode bits are not a substitute
+for verified private DACLs. This restriction does not disable the Windows desktop
+application or platform-independent client protocols. macOS remains the first
+remote deployment target; Linux deployment requires its separate acceptance.
 ## Build and configure
 
 Use Node >=22.13 and a checkout with its normal workspace dependencies installed.

@@ -10,6 +10,11 @@ export class ServerConfigurationError extends Error {
   override readonly name = 'ServerConfigurationError'
 }
 
+/** The remote host credential backend requires POSIX ownership and mode checks. */
+export function requirePosixServerStorage(): void {
+  if (process.platform === 'win32') throw new ServerConfigurationError('remote host private storage requires POSIX; Windows is not supported')
+}
+
 function tokenPath(path: string | undefined): string {
   if (!path || !isAbsolute(path)) throw new ServerConfigurationError('server token file must be absolute')
   return path
@@ -17,10 +22,12 @@ function tokenPath(path: string | undefined): string {
 
 /** Exclusive creation; rotation is an explicit stop, remove, initialize, restart operation. */
 export function initializeServerToken(path: string): void {
+  requirePosixServerStorage()
   writeFileSync(tokenPath(path), `${randomBytes(16).toString('hex')}\n`, {flag: 'wx', mode: 0o600})
 }
 
 export function loadServerConfig(environment: NodeJS.ProcessEnv = process.env): ServerConfig {
+  requirePosixServerStorage()
   const mediaMode = environment.NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE ?? 'relay'
   if (mediaMode !== 'relay' && mediaMode !== 'aoq_chat' && mediaMode !== 'aoq_runtime') throw new ServerConfigurationError('invalid server media mode')
   const rawPort = environment.NOVA_AUDIO_AGENT_SERVER_PORT ?? ''

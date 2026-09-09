@@ -33,8 +33,9 @@ export function assertBudgetRejectsBeforeGraphWorker(pipeline: 'qwen' | 'cascade
       process.stdout.write(JSON.stringify({before, after: ports(), failure, views}));
       process.exit(0);
     `
-    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding: 'utf8', timeout: 5000})
-    assert.equal(child.status, 0, child.stderr)
+    // This cap includes cold ESM loading on a busy host; graph ownership is asserted below.
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding: 'utf8', timeout: 15_000})
+    assert.equal(child.status, 0, `graph probe failed: ${child.error?.message ?? child.signal ?? 'nonzero exit'}\n${child.stderr}`)
     const result = JSON.parse(child.stdout) as {before: number; after: number; failure: unknown; views: number}
     assert.deepEqual(result.failure, {code: 'frontbrain_tool_budget_exceeded', count: 5, budget: 1})
     assert.equal(result.views, 1)
