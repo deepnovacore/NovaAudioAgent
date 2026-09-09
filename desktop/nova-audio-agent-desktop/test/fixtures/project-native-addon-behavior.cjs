@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict')
 const {
   closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync,
-  renameSync, rmSync, statSync, symlinkSync, writeFileSync,
+  realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } = require('node:fs')
 const {join} = require('node:path')
 const {spawn, spawnSync} = require('node:child_process')
@@ -73,7 +73,7 @@ if (mode === 'hold') {
       assertNativeDirectoryRejected(process.env.SystemRoot)
     }
 
-    const container = mkdtempSync(join(process.cwd(), 'build', 'nova-project-native-behavior-'))
+    const container = realpathSync.native(mkdtempSync(join(process.cwd(), 'build', 'nova-project-native-behavior-')))
     const root = join(container, 'root')
     mkdirSync(root)
     bindWindowsCurrentOwner(container)
