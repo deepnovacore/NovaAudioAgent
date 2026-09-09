@@ -88,8 +88,9 @@ test('integrated registry receives only selected provider inputs and cannot insp
         assert.equal('searchTransport' in input, false)
         assert.equal('codexResource' in input, false)
         assert.deepEqual(Object.keys(input).sort(), [
-          'config', 'connector', 'executorApproval', 'idFactory', 'modules', 'now', 'workspaceGraphPolicy',
+          'config', 'connector', 'executorApproval', 'idFactory', 'modules', 'now', 'persona', 'workspaceGraphPolicy',
         ])
+        assert.equal(input.persona, 'nova')
         assert.equal(input.workspaceGraphPolicy, false)
         assert.equal(input.executorApproval, false)
         assert.equal(Object.isFrozen(input.config), true)
