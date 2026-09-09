@@ -1211,3 +1211,5 @@ test('the close deadline keeps an otherwise idle child alive until cleanup settl
   assert.equal(result.stdout, 'closed\n')
   assert.equal(result.stderr, '')
 })
+
+

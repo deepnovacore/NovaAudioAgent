@@ -92,6 +92,7 @@ interface AdmittedCommittedWorkspace {
 }
 
 export interface RealtimeAssemblyOptions {
+
   readonly executorApproval?: ApprovalController
   readonly intake?: {readonly models: IntakeModels; readonly settings: IntakeSettings}
   readonly onExecutorSuggestion?: (suggestion: Suggestion) => void

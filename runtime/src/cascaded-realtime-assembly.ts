@@ -219,7 +219,7 @@ export function buildCascadedRealtimeAssembly(
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const capabilities = options.capabilities ?? capabilitiesFromSettings(options.settings)
-  const instructions = frontendInstructions({
+  const currentInstructions = () => frontendInstructions({
     search: capabilities.modules.search.enabled,
     camera: options.cameraModuleEnabled ?? capabilities.modules.camera.enabled,
     coding: capabilities.modules.coding.enabled,
@@ -238,7 +238,8 @@ export function buildCascadedRealtimeAssembly(
     ids,
     ...(options.asrClient === undefined ? {} : {clientFactory: options.asrClient}),
   })
-  const llmFactory = selected.llm.provider === 'qwen'
+  let instructions = currentInstructions()
+  const createLlmFactory = () => selected.llm.provider === 'qwen'
     ? registry.llm.qwen({
       config: selected.llm.config,
       clock,
@@ -253,6 +254,12 @@ export function buildCascadedRealtimeAssembly(
       instructions,
       ...(options.arkLlmFactory === undefined ? {} : {factory: options.arkLlmFactory}),
   })
+  let selectedLlmFactory = createLlmFactory()
+  const llmFactory: CascadedLlmFactory = {open: () => {
+    const next = currentInstructions()
+    if (next !== instructions) { instructions = next; selectedLlmFactory = createLlmFactory() }
+    return selectedLlmFactory.open()
+  }}
   const ttsFactory = registry.tts[selection.ttsProvider]({
     config: selected.tts,
     ids,

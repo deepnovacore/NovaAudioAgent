@@ -1989,6 +1989,9 @@ export class RealtimeService {
    * waiting on it rather than to the narration stream.
    */
   projectRuntimeEvent(event: EventRecord): void {
+    if (event.kind === 'handoff') this.#telemetry?.record('tool.finished', {
+      executor: event.payload.channel, delegate_id: event.payload.delegate_id, outcome: event.payload.outcome,
+    })
     if (event.kind === 'handoff' && this.#resolveSyncResult(event)) return
     if (event.kind === 'deadline') {
       if (this.#expireSyncResult(event)) return
@@ -2978,6 +2981,10 @@ export class RealtimeService {
         }
       }
     } else if (event.kind === 'tool_call_ready') {
+      this.#telemetry?.record('tool.call', {
+        name: this.#tools.bindings.get(event.name)?.logical_name ?? (event.name === 'confirm' ? 'confirm' : 'unknown'),
+        call_id: event.call_id, outcome: accepted ? 'received' : 'rejected',
+      })
       if (!accepted) {
         // A refused confirmation tool still owes the provider a terminal result, or the protocol stalls
         // waiting for one that will never come.
@@ -3493,6 +3500,7 @@ export class RealtimeService {
     }
 
     this.#recordToolAdmission({
+      callId: event.call_id,
       logicalName: binding?.logical_name ?? null,
       acceptance,
       superseded,
@@ -3801,6 +3809,7 @@ export class RealtimeService {
   }
 
   #recordToolAdmission(input: {
+    readonly callId: string
     readonly logicalName: string | null
     readonly acceptance: ToolAcceptance
     readonly superseded: boolean
@@ -3815,7 +3824,8 @@ export class RealtimeService {
           : input.acceptance.sync_result
             ? 'sync'
             : 'delegated'
-    this.#telemetry.record('tool.admission', {logical_name: input.logicalName, outcome})
+    this.#telemetry.record('tool.admission', {logical_name: input.logicalName, call_id: input.callId,
+      delegate_id: input.acceptance.delegate_id, outcome})
   }
 
   /** Give the provider the result it is holding a slot for, once. */

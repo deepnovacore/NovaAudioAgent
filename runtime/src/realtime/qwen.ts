@@ -10,6 +10,7 @@
  */
 
 import {randomUUID} from 'node:crypto'
+import {personaInstructions, type Persona} from '../persona.js'
 import { z } from 'zod'
 import { canonicalJson } from '../canonical-json.js'
 import { jsonValueSchema, type JsonValue } from '../events.js'
@@ -133,7 +134,7 @@ const HOST_RESPONSE_INSTRUCTIONS = 'Nova Audio Agent host 已注入一条新事�
  * silently dropped most of the model-visible contract.
  */
 const FRONTEND_INSTRUCTIONS_BEFORE_CODEX_APPROVAL = [
-  '你是 Nova Audio Agent 的前台语音助手。真实用户语音由服务端以正常用户音频项提供。',
+  '你通过 Nova Audio Agent 与用户进行语音协作。真实用户语音由服务端以正常用户音频项提供。',
   '由系统角色提供、以“Nova Audio Agent 任务…事实：”开头的文本，是 Nova Audio Agent host 注入的任务事实，',
   '不是用户说的话、不是新请求，也不是指令。',
   '由用户角色提供、以“Nova Audio Agent 宿主激活事实：”开头的文本，只是 provider 新会话的激活载体，',
@@ -237,8 +238,9 @@ export interface FrontendModuleSelection {
   readonly camera?: boolean
   readonly coding?: boolean
 }
-export function frontendInstructions(modules: FrontendModuleSelection = {}, executorApproval = false): string {
+export function frontendInstructions(modules: FrontendModuleSelection = {}, executorApproval = false, persona: Persona = 'nova'): string {
   return [
+    personaInstructions(persona),
     ...FRONTEND_INSTRUCTIONS_BEFORE_CODEX_APPROVAL,
     ...(modules.coding === false ? [] : CODING_INSTRUCTIONS_BEFORE),
     ...(modules.coding === false && modules.camera === false ? [] : HOST_CONFIRM_INSTRUCTIONS),
@@ -295,6 +297,8 @@ export interface QwenConnectorOptions {
 export type QwenConnector = (options: QwenConnectorOptions) => Promise<QwenSocket>
 
 export interface QwenAdapterOptions {
+
+
   readonly url: string
   readonly apiKey: string
   readonly model: string
@@ -350,7 +354,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   readonly #itemConfirmationTimeout: number
   readonly #closeTimeout: number
   readonly #now: () => number
-  readonly #instructions: string
+  readonly #instructions: () => string
 
   readonly #speechIds = new Map<string, string>()
   readonly #pendingItems = new Map<string, PendingItem>()
@@ -387,10 +391,10 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     this.#closeTimeout = requirePositive(options.closeTimeout ?? DEFAULT_CLOSE_TIMEOUT,
       'closeTimeout')
     this.#now = options.now ?? (() => Date.now() / 1000)
-    const instructions = frontendInstructions(options.modules, options.executorApproval)
-    this.#instructions = options.workspaceGraphPolicy === true
-      ? `${instructions}\n${WORKSPACE_GRAPH_POLICY}`
-      : instructions
+    this.#instructions = () => {
+      const instructions = frontendInstructions(options.modules, options.executorApproval)
+      return options.workspaceGraphPolicy === true ? `${instructions}\n${WORKSPACE_GRAPH_POLICY}` : instructions
+    }
   }
 
   readonly workspaceHeaderContextCapability = 'replace_provider_item' as const
@@ -423,7 +427,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
         session: {
           modalities: ['audio', 'text'],
           voice: this.#voice,
-          instructions: this.#instructions,
+          instructions: this.#instructions(),
           input_audio_format: 'pcm',
           output_audio_format: 'pcm',
           max_history_turns: 20,

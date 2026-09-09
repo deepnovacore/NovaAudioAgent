@@ -87,3 +87,5 @@ All media modes share pairing; the existing `hello` and media protocol are uncha
 - One active 128-bit random invitation per process, valid 120 seconds, consumed synchronously after durable device registration. New invitations replace old ones. Up to 8 concurrent pairing/management sockets, 4096-byte requests, five-second socket lifetime, 60 redemption attempts/minute per host and 32 registered devices.
 - Each successful exchange issues a distinct 128-bit device token. The private store persists only token hashes and is bound to the master token. Relay and both AOQ modes accept these in their normal `hello`. Revoking a device persists the removal before closing its active sockets with 4003.
 - Pairing requests/credentials must not be logged, placed in URL parameters or automatically retried. If delivery or local Keychain persistence fails, regenerate an invitation and remove the orphan device entry. Network reachability/TLS remains a prerequisite.
+
+
