@@ -443,7 +443,8 @@ test('quitting drains the backend on the stdin sentinel instead of killing it', 
 
   assert.match(beforeQuit, /event\.preventDefault\(\)/)
   assert.match(beforeQuit, /shutdownBackendBestEffort\(backend\)/)
-  assert.match(beforeQuit, /app\.exit\(0\)/)
+  assert.match(beforeQuit, /app\.quit\(\)/)
+  assert.doesNotMatch(beforeQuit, /app\.exit\(/)
   // Every teardown path goes through the helper, so no bare signal survives.
   assert.doesNotMatch(source, /backend\??\.kill\(/)
 })
@@ -780,28 +781,38 @@ test('the mute toggle drops microphone input at both ingress points', async () =
   assert.match(renderer, /openSettingsButton\.addEventListener\('click', \(\) => window\.novaAudioAgentDesktop\.orbMenu\.openSettings\?\.\(\)\)/)
 })
 
-test('quit bounds a maintenance drain without bypassing backend shutdown', async () => {
+test('quit drains once and resumes normal window shutdown only after backend completion', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const {default: vm} = await import('node:vm')
   let beforeQuit, releaseMaintenanceDeadline, releaseBackend, timeout
-  const exits = []
+  let prevented = 0, quits = 0, backendStops = 0
+  const event = {preventDefault() { prevented++ }}
   const context = vm.createContext({
     sourceSmokeStage() {},
-    app: {on: (name, handler) => { if (name === 'before-quit') beforeQuit = handler }, exit: code => exits.push(code)},
+    app: {
+      on: (name, handler) => { if (name === 'before-quit') beforeQuit = handler },
+      quit() { quits++; beforeQuit(event) },
+      exit() { assert.fail('normal shutdown must close windows before quitting') },
+    },
     wakeWord: null, releaseSmokeChannel: null, globalShortcut: {unregisterAll() {}}, nativeAudio: null,
-    backendSupervisor: {stop: () => new Promise(resolve => { releaseBackend = resolve })}, backend: null,
-    managedWorkspaceMaintenance: {close: () => new Promise(() => {})}, quitDrain: null,
+    backendSupervisor: {stop: () => { backendStops++; return new Promise(resolve => { releaseBackend = resolve }) }}, backend: null,
+    managedWorkspaceMaintenance: {close: () => new Promise(() => {})}, quitDrain: null, quitDrained: false,
     wait: milliseconds => { timeout = milliseconds; return new Promise(resolve => { releaseMaintenanceDeadline = resolve }) },
   })
   vm.runInContext(source.slice(source.indexOf("app.on('before-quit'")), context)
-  beforeQuit({preventDefault() {}})
+  beforeQuit(event)
+  beforeQuit(event)
+  assert.equal(prevented, 2)
+  assert.equal(backendStops, 1)
   assert.equal(timeout, 3000)
   releaseMaintenanceDeadline()
   await Promise.resolve()
-  assert.deepEqual(exits, [], 'backend still owns its shutdown deadline')
+  assert.equal(quits, 0, 'backend still owns its shutdown deadline')
   releaseBackend()
   await context.quitDrain
-  assert.deepEqual(exits, [0])
+  assert.equal(quits, 1)
+  assert.equal(prevented, 2, 'the resumed quit must reach normal window shutdown')
+  assert.equal(backendStops, 1)
 })
 
 test('settings IPC restarts for capability commits while wake-only updates stay local', async () => {

@@ -17,6 +17,8 @@ const directory = resolve(import.meta.dirname, '../dist/test')
 const tests = readdirSync(directory)
   .filter(file => file.endsWith('.test.js') && !posixTests.has(file))
   .map(file => resolve(directory, file))
-const result = spawnSync(process.execPath, ['--test', ...tests], { stdio: 'inherit' })
+// Native workers and cold module loads compete with unrelated fixtures' short
+// deadlines on Windows. Files are isolated; concurrency inside each case is unchanged.
+const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...tests], { stdio: 'inherit' })
 if (result.error) throw result.error
 process.exitCode = result.status ?? 1

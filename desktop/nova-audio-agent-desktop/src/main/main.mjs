@@ -180,6 +180,7 @@ let projectNativeAuthorityPresent = false
 let managedWorkspaceMaintenance = null
 let managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
 let quitDrain = null
+let quitDrained = false
 let releaseSmokeChannel = null
 // Settings and debug boards are main-owned IPC surfaces. Neither relays through
 // the orb renderer or shares the realtime voice socket.
@@ -1533,6 +1534,7 @@ app.on('quit', () => sourceSmokeStage('quit'))
 
 app.on('before-quit', event => {
   sourceSmokeStage('before_quit')
+  if (quitDrained) return
   app.isQuitting = true
   releaseSmokeChannel?.close()
   globalShortcut.unregisterAll()
@@ -1541,7 +1543,8 @@ app.on('before-quit', event => {
   if (!backendSupervisor && !backend && !managedWorkspaceMaintenance) return
   // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
   // kill would cut the session off mid-teardown, and on Windows there is no
-  // graceful signal at all. Later passes keep holding; the first pass exits.
+  // graceful signal at all. Resume normal window shutdown after the drain;
+  // app.exit bypasses that ordering and can hang in Windows native teardown.
   event.preventDefault()
   if (quitDrain) return
   const backendDrain = backendSupervisor
@@ -1555,8 +1558,8 @@ app.on('before-quit', event => {
     sourceSmokeStage('maintenance_closed')
   }), wait(3000).then(() => sourceSmokeStage('maintenance_deadline'))])
   const drain = Promise.all([backendDrain, maintenanceDrain])
-  const exit = () => { sourceSmokeStage('app_exit_requested'); app.exit(0) }
-  quitDrain = drain.then(exit, exit)
+  const resumeQuit = () => { quitDrained = true; sourceSmokeStage('quit_resumed'); app.quit() }
+  quitDrain = drain.then(resumeQuit, resumeQuit)
 })
 
 app.on('window-all-closed', event => event.preventDefault?.())

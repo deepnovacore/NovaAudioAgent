@@ -14,7 +14,7 @@ export function assertSourceStartupSmokeResult(result, stdout, stderr) {
   const diagnostic = stderr.match(/\[desktop-diagnostic\] [a-z_]+(?: code=[a-z_]+)?/u)?.[0] ?? 'unavailable'
   const loadError = stderr.match(/\b(?:ERR_[A-Z_]+|MODULE_NOT_FOUND|SyntaxError|ReferenceError|TypeError)\b/u)?.[0] ?? 'unavailable'
   const failure = result.timedOut ? 'source_startup_smoke_timeout' : 'source_startup_smoke_failed'
-  const stages = [...stderr.matchAll(/\[desktop-smoke\] (window_ready|quit_requested|before_quit|maintenance_closing|maintenance_closed|maintenance_deadline|app_exit_requested|will_quit|quit)\b(?: elapsed_ms=([0-9]+))?/gu)]
+  const stages = [...stderr.matchAll(/\[desktop-smoke\] (window_ready|quit_requested|before_quit|maintenance_closing|maintenance_closed|maintenance_deadline|app_exit_requested|quit_resumed|will_quit|quit)\b(?: elapsed_ms=([0-9]+))?/gu)]
   const last = stages.at(-1)
   const timing = Number.isFinite(result.readyAfterMs) ? ` ready_after_ms=${Math.round(result.readyAfterMs)}` : ''
   const shutdown = last === undefined ? '' : ` shutdown_stage=${last[1]}${last[2] === undefined ? '' : ` stage_elapsed_ms=${last[2]}`}`

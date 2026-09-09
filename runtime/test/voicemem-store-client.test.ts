@@ -359,10 +359,12 @@ test('real worker durably admits, recalls during learning, retries only on reope
     if((error as NodeJS.ErrnoException).code==='EPERM' && process.env.NOVA_MEMORY_SDK_ACCEPTANCE !== '1') { t.skip('sandbox does not permit loopback listeners'); return }
     throw error
   }
-  const directory=await mkdtemp(join(process.cwd(),'voicemem-worker-'))
-  let store=new PersonalMemoryStoreClient({path:join(directory,'personal.sqlite'),userId:'host-user',
+  const owners: {directory?: string; store?: PersonalMemoryStoreClient; db?: DatabaseSync} = {}
+  t.after(() => cleanup([() => provider.release(), () => owners.store?.close(), () => owners.db?.close(), () => provider.close(),
+    () => owners.directory === undefined ? undefined : rm(owners.directory, {recursive:true,force:true})]))
+  const directory=owners.directory=await mkdtemp(join(process.cwd(),'voicemem-worker-'))
+  let store=owners.store=new PersonalMemoryStoreClient({path:join(directory,'personal.sqlite'),userId:'host-user',
     embedding:{baseUrl:provider.baseUrl,apiKey:'loopback',model:'embed-test',dimensions:2},extractionModel:'extract-test'})
-  t.after(() => cleanup([() => store.close(), () => provider.close(), () => rm(directory, {recursive:true,force:true})]))
   await store.open()
   assert.deepEqual(await store.remember!({sourceId:'slow-id',sessionId:'s',sequence:1,text:'slow',occurredAt:null}),{state:'stored',sourceId:'slow-id'})
   await awaitExtraction(provider.extractionStarted)
@@ -384,7 +386,7 @@ test('real worker durably admits, recalls during learning, retries only on reope
   await eventually(()=>provider.calls.get('good')===1)
   assert.equal(provider.calls.get('poison'),1)
   await store.close()
-  store=new PersonalMemoryStoreClient({path:join(directory,'personal.sqlite'),userId:'host-user',
+  store=owners.store=new PersonalMemoryStoreClient({path:join(directory,'personal.sqlite'),userId:'host-user',
     embedding:{baseUrl:provider.baseUrl,apiKey:'loopback',model:'embed-test',dimensions:2},extractionModel:'extract-test'})
   await store.open()
   await eventually(()=>provider.calls.get('poison')===2)
@@ -397,12 +399,13 @@ test('real worker persists the exact previous reply and republishes learned glob
     if((error as NodeJS.ErrnoException).code==='EPERM' && process.env.NOVA_MEMORY_SDK_ACCEPTANCE !== '1') { t.skip('sandbox does not permit loopback listeners'); return }
     throw error
   }
-  const directory=await mkdtemp(join(process.cwd(),'voicemem-worker-preferences-'))
+  const owners: {directory?: string; store?: PersonalMemoryStoreClient; db?: DatabaseSync} = {}
+  t.after(() => cleanup([() => provider.release(), () => owners.store?.close(), () => owners.db?.close(), () => provider.close(),
+    () => owners.directory === undefined ? undefined : rm(owners.directory, {recursive:true,force:true})]))
+  const directory=owners.directory=await mkdtemp(join(process.cwd(),'voicemem-worker-preferences-'))
   const path=join(directory,'personal.sqlite')
-  let store=new PersonalMemoryStoreClient({path,userId:'host-user',
+  let store=owners.store=new PersonalMemoryStoreClient({path,userId:'host-user',
     embedding:{baseUrl:provider.baseUrl,apiKey:'loopback',model:'embed-test',dimensions:2},extractionModel:'extract-test'})
-  const owners: {db?: DatabaseSync} = {}
-  t.after(() => cleanup([() => store.close(), () => owners.db?.close(), () => provider.close(), () => rm(directory, {recursive:true,force:true})]))
   await store.open()
   const deliveredPrefix='😀'.repeat(20_000)
   await store.remember!({sourceId:'preference-id',sessionId:'s',sequence:1,text:'preference',occurredAt:null,previousAssistantReply:deliveredPrefix})
@@ -415,7 +418,7 @@ test('real worker persists the exact previous reply and republishes learned glob
   assert.equal((JSON.parse(String(db.prepare("SELECT payload FROM vm_sources WHERE id='preference-id'").get()!.payload)) as {previousAssistantReply?: unknown}).previousAssistantReply,deliveredPrefix)
   await store.close()
 
-  store=new PersonalMemoryStoreClient({path,userId:'host-user',
+  store=owners.store=new PersonalMemoryStoreClient({path,userId:'host-user',
     embedding:{baseUrl:provider.baseUrl,apiKey:'loopback',model:'embed-test',dimensions:2},extractionModel:'extract-test'})
   await store.open()
   assert.deepEqual(store.responseAdaptation().replyPreferences,[{id:store.responseAdaptation().replyPreferences[0]!.id,text:'Keep replies concise.',evidenceIds:['preference-id']}])
@@ -452,12 +455,13 @@ test('storage damage fails a read or background drain without terminating the wo
     if((error as NodeJS.ErrnoException).code==='EPERM' && process.env.NOVA_MEMORY_SDK_ACCEPTANCE !== '1') { t.skip('sandbox does not permit loopback listeners'); return }
     throw error
   }
-  const directory=await mkdtemp(join(process.cwd(),'voicemem-worker-damage-'))
+  const owners: {directory?: string; store?: PersonalMemoryStoreClient; db?: DatabaseSync} = {}
+  t.after(() => cleanup([() => provider.release(), () => owners.store?.close(), () => owners.db?.close(), () => provider.close(),
+    () => owners.directory === undefined ? undefined : rm(owners.directory, {recursive:true,force:true})]))
+  const directory=owners.directory=await mkdtemp(join(process.cwd(),'voicemem-worker-damage-'))
   const path=join(directory,'personal.sqlite')
-  const store=new PersonalMemoryStoreClient({path,userId:'host-user',
+  const store=owners.store=new PersonalMemoryStoreClient({path,userId:'host-user',
     embedding:{baseUrl:provider.baseUrl,apiKey:'loopback',model:'embed-test',dimensions:2},extractionModel:'extract-test'})
-  const owners: {db?: DatabaseSync} = {}
-  t.after(() => cleanup([() => provider.release(), () => store.close(), () => owners.db?.close(), () => provider.close(), () => rm(directory, {recursive:true,force:true})]))
   await store.open()
   const db=owners.db=new DatabaseSync(path)
   await store.remember!({sourceId:'slow-id',sessionId:'s',sequence:1,text:'slow',occurredAt:null})
