@@ -25,6 +25,8 @@ import {
   watchBackendExit,
 } from '../src/main/backend.mjs'
 
+// Keep macOS Unix socket paths short; other platforms use their own temporary directory.
+const smokeTmp = process.platform === 'darwin' ? '/private/tmp' : tmpdir()
 const TOKEN = 'abcdef0123456789abcdef0123456789'
 const capabilityMode = process.argv.includes('--capability-status')
 const memoryClearMode = capabilityMode && process.argv.includes('--memory-clear')
@@ -42,7 +44,7 @@ if (capabilityMode) {
   process.on('uncaughtException', error => finish(1, error))
   process.on('unhandledRejection', error => finish(1, error))
   deadline = setTimeout(() => finish(1, new Error('capability smoke exceeded 45 seconds')), 45_000)
-  fixtureRoot = mkdtempSync('/private/tmp/nova-utility-capabilities-')
+  fixtureRoot = mkdtempSync(resolve(smokeTmp, 'nova-utility-capabilities-'))
   app.setPath('userData', fixtureRoot)
   trace('isolated userData; waiting for app readiness')
 } else {
@@ -256,7 +258,7 @@ async function runCapabilityStatus() {
       let readinessTimeouts = 0
       let finishExit
       const exited = new Promise(resolveExit => {finishExit = resolveExit})
-      const environment = {PATH: process.env.PATH, HOME: root, USERPROFILE: root, TMPDIR: '/private/tmp',
+      const environment = {PATH: process.env.PATH, HOME: root, USERPROFILE: root, TMPDIR: smokeTmp,
         NOVA_AUDIO_AGENT_MODEL_API_KEY: 'dummy-model-key', NOVA_AUDIO_AGENT_MODEL_BASE_URL: `https://127.0.0.1:${port}`,
         DASHSCOPE_API_KEY: 'dummy-dashscope-key', NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: `wss://127.0.0.1:${port}/qwen`,
         NOVA_AUDIO_AGENT_BLACKBOARD_PATH: resolve(root, 'blackboard.sqlite'), NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID: 'utility-smoke',

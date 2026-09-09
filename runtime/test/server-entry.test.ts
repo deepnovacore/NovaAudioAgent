@@ -165,14 +165,15 @@ test('AOQ entry starts without loading the desktop/provider graph and closes on 
   assert.ok(address && typeof address !== 'string')
   await new Promise<void>(resolve => probe.close(() => resolve()))
   // A fresh module loader catches eager imports as well as accidental construction.
+  const loader = `export function resolve(specifier, context, nextResolve) {
+    if (/(desktop|production-composition|client-server|client-protocol|realtime-assembly|codex)/u.test(specifier)) throw new Error('forbidden graph import');
+    return nextResolve(specifier, context);
+  }`
   const script = `
     import assert from 'node:assert/strict';
-    import {registerHooks} from 'node:module';
+    import {register} from 'node:module';
     import {EventEmitter} from 'node:events';
-    registerHooks({resolve(specifier, context, nextResolve) {
-      if (/(desktop|production-composition|client-server|client-protocol|realtime-assembly|codex)/u.test(specifier)) throw new Error('forbidden graph import');
-      return nextResolve(specifier, context);
-    }});
+    register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(loader)}`)}, import.meta.url);
     const {runServerEntry} = await import(${JSON.stringify(new URL('../src/server-entry.js', import.meta.url).href)});
     const events = new EventEmitter();
     let ready = false;
