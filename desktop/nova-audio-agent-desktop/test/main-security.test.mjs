@@ -781,7 +781,7 @@ test('the mute toggle drops microphone input at both ingress points', async () =
   assert.match(renderer, /openSettingsButton\.addEventListener\('click', \(\) => window\.novaAudioAgentDesktop\.orbMenu\.openSettings\?\.\(\)\)/)
 })
 
-test('quit drains once and resumes normal window shutdown only after backend completion', async () => {
+for (const hasBackend of [true, false]) test(`quit drains once before normal window shutdown (backend=${hasBackend})`, async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const {default: vm} = await import('node:vm')
   let beforeQuit, releaseMaintenanceDeadline, releaseBackend, timeout
@@ -795,7 +795,7 @@ test('quit drains once and resumes normal window shutdown only after backend com
       exit() { assert.fail('normal shutdown must close windows before quitting') },
     },
     wakeWord: null, releaseSmokeChannel: null, globalShortcut: {unregisterAll() {}}, nativeAudio: null,
-    backendSupervisor: {stop: () => { backendStops++; return new Promise(resolve => { releaseBackend = resolve }) }}, backend: null,
+    backendSupervisor: hasBackend ? {stop: () => { backendStops++; return new Promise(resolve => { releaseBackend = resolve }) }} : null, backend: null,
     managedWorkspaceMaintenance: {close: () => new Promise(() => {})}, quitDrain: null, quitDrained: false,
     wait: milliseconds => { timeout = milliseconds; return new Promise(resolve => { releaseMaintenanceDeadline = resolve }) },
   })
@@ -803,16 +803,18 @@ test('quit drains once and resumes normal window shutdown only after backend com
   beforeQuit(event)
   beforeQuit(event)
   assert.equal(prevented, 2)
-  assert.equal(backendStops, 1)
+  assert.equal(backendStops, Number(hasBackend))
   assert.equal(timeout, 3000)
   releaseMaintenanceDeadline()
   await Promise.resolve()
-  assert.equal(quits, 0, 'backend still owns its shutdown deadline')
-  releaseBackend()
+  if (hasBackend) {
+    assert.equal(quits, 0, 'backend still owns its shutdown deadline')
+    releaseBackend()
+  }
   await context.quitDrain
   assert.equal(quits, 1)
   assert.equal(prevented, 2, 'the resumed quit must reach normal window shutdown')
-  assert.equal(backendStops, 1)
+  assert.equal(backendStops, Number(hasBackend))
 })
 
 test('settings IPC restarts for capability commits while wake-only updates stay local', async () => {

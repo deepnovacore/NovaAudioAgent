@@ -397,16 +397,19 @@ test('actual desktop entry awaits discovery and owns cleanup when final exact fr
   } finally {await local.close()}
 })
 
-test('startup cancellation closes a real stdio child stuck in tools/list without executing any tool', async () => {
+test('startup cancellation closes a real stdio child stuck in tools/list without executing any tool', {timeout: 20_000}, async () => {
   const fixture = await stdioFixture('hang-list')
   const abort = new AbortController()
   const pending = prepareExternalMcp(parseCapabilityRegistry({version: 1, mcpServers: {external: fixture.config}}), abort.signal)
+  let discoverySettled = false
+  void pending.finally(() => { discoverySettled = true }).catch(() => undefined)
   try {
     let pid = 0
-    for (let i = 0; i < 100 && pid === 0; i += 1) {
+    // Discovery already owns a bounded startup deadline; do not add a one-second cold-load race.
+    while (pid === 0 && !discoverySettled) {
       try {pid = Number(await readFile(fixture.marker, 'utf8'))} catch {await delay(10)}
     }
-    assert.ok(pid > 0)
+    assert.ok(pid > 0, 'bounded discovery ended before the fixture started')
     abort.abort()
     const prepared = await pending
     assert.deepEqual(prepared.adapters, [])

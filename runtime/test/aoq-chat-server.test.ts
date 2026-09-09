@@ -331,10 +331,12 @@ test('runtime negotiates explicitly, registers before credentials, and owns sess
   let hook!: ProviderConnection
   let authenticated = false
   const events: unknown[] = []
-  const server = new AoqChatServer({token, port: 0, heartbeatMs: 30, issueCredential: () => Promise.resolve(allocation), runtime: runtimeOptions({
+  let receivedEvents!: () => void
+  const eventsReceived = new Promise<void>(resolve => { receivedEvents = resolve })
+  const server = new AoqChatServer({token, port: 0, issueCredential: () => Promise.resolve(allocation), runtime: runtimeOptions({
     onClientAuthenticated: () => { authenticated = true },
     onProviderConnect: connection => { hook = connection },
-    onProviderEvent: (id, event) => { events.push([id, event]) },
+    onProviderEvent: (id, event) => { events.push([id, event]); if (events.length === 2) receivedEvents() },
   })})
   t.after(() => server.close())
   const readiness = await server.start()
@@ -362,7 +364,7 @@ test('runtime negotiates explicitly, registers before credentials, and owns sess
   assert.equal((await client.next()).sequence, 2)
   providerEvent(client.socket, hook.id, 1, {type: 'session.updated'})
   providerEvent(client.socket, hook.id, 2, {type: 'response.text.delta', delta: 'hello'})
-  await once(client.socket, 'ping')
+  await eventsReceived
   assert.deepEqual(events, [[hook.id, {type: 'session.updated'}], [hook.id, {type: 'response.text.delta', delta: 'hello'}]])
 })
 

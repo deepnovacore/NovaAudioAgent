@@ -1540,13 +1540,13 @@ app.on('before-quit', event => {
   globalShortcut.unregisterAll()
   wakeWord?.stop()
   void nativeAudio?.deactivate()
+  if (quitDrain) { event.preventDefault(); return }
   if (!backendSupervisor && !backend && !managedWorkspaceMaintenance) return
   // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
   // kill would cut the session off mid-teardown, and on Windows there is no
   // graceful signal at all. Resume normal window shutdown after the drain;
   // app.exit bypasses that ordering and can hang in Windows native teardown.
   event.preventDefault()
-  if (quitDrain) return
   const backendDrain = backendSupervisor
     ? backendSupervisor.stop()
     : backend ? shutdownBackendBestEffort(backend) : Promise.resolve()
