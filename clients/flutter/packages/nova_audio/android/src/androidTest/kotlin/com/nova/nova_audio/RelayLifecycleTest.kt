@@ -15,4 +15,15 @@ class RelayLifecycleTest {
    } finally { audio.disconnect() }
   }
  }
+ @Test fun oversizedAoqCallbackDoesNotMakeBacklogNegative() {
+  val instrumentation=InstrumentationRegistry.getInstrumentation()
+  instrumentation.runOnMainSync {
+   val audio=AoqAudio(instrumentation.targetContext){_,_->}
+   val method=audio.javaClass.methods.firstOrNull { it.name=="onDataMsg" } ?: return@runOnMainSync
+   val message=method.parameterTypes.single().getDeclaredConstructor().newInstance()
+   message.javaClass.getField("data").set(message,ByteArray(65537))
+   val counter=audio.javaClass.getDeclaredField("callbackBytes").apply { isAccessible=true }.get(audio) as java.util.concurrent.atomic.AtomicInteger
+   repeat(3) { method.invoke(audio,message);assertEquals(0,counter.get()) }
+  }
+ }
 }

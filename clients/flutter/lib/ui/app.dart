@@ -519,28 +519,34 @@ class _ConversationScreenState extends State<ConversationScreen>
                           child: TextField(
                             controller: _draft,
                             minLines: 1,
-                            maxLines: 3,
+                            maxLines: 5,
                             enabled: !input.recording && !input.transcribing,
                             decoration: InputDecoration(
                               hintText: t('Type a message…'),
                               filled: true,
+                              fillColor: Colors.white.withValues(alpha: .06),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide.none,
                               ),
                             ),
                           ),
                         ),
-                        IconButton(
-                          onPressed:
-                              input.busy ||
-                                  _draft.text.trim().isEmpty ||
-                                  _draft.text.trim().length > 4000
-                              ? null
-                              : input.sendDraft,
-                          tooltip: t('Send message'),
-                          icon: const Icon(Icons.arrow_upward, color: mint),
-                        ),
                       ],
+                    ),
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: IconButton(
+                        onPressed:
+                            input.busy ||
+                                _draft.text.trim().isEmpty ||
+                                _draft.text.trim().length > 4000
+                            ? null
+                            : input.sendDraft,
+                        tooltip: t('Send message'),
+                        icon: const Icon(Icons.arrow_upward, color: mint),
+                      ),
                     ),
                     if (_dictationMode)
                       Semantics(
@@ -619,7 +625,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                   else if (!_textMode || !_session.connected)
                     SizedBox(
                       width: double.infinity,
-                      child: FilledButton.icon(
+                      child: FilledButton(
                         style: FilledButton.styleFrom(
                           minimumSize: const Size.fromHeight(58),
                         ),
@@ -631,16 +637,20 @@ class _ConversationScreenState extends State<ConversationScreen>
                             : _session.connected
                             ? _model.startVoice
                             : _connect,
-                        icon: Icon(_session.connected ? Icons.mic : Icons.link),
-                        label: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Text(
-                            t(
-                              _session.connected
-                                  ? 'Start conversation'
-                                  : 'Connect',
+                        child: Row(
+                          children: [
+                            Icon(_session.connected ? Icons.mic : Icons.link),
+                            const SizedBox(width: 10),
+                            Text(
+                              t(
+                                _session.connected
+                                    ? 'Start conversation'
+                                    : 'Connect',
+                              ),
                             ),
-                          ),
+                            const Spacer(),
+                            const Icon(Icons.north_east),
+                          ],
                         ),
                       ),
                     ),

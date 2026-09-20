@@ -109,7 +109,7 @@ class AoqAudio(private val context:Context,private val event:(String,Map<String,
  }}
  override fun onDataMsg(message:AoqDataMsg){
   val bytes=message.data ?: return
-  if(bytes.size>65536 || callbackBytes.addAndGet(bytes.size)>262144){callbackBytes.addAndGet(-bytes.size);main.post{fail("AOQ callback backlog")};return}
+  if(callbackBytes.addAndGet(bytes.size)>262144 || bytes.size>65536){callbackBytes.addAndGet(-bytes.size);main.post{fail("AOQ callback backlog")};return}
   val copy=bytes.copyOf();main.post{try{receive(copy)}finally{callbackBytes.addAndGet(-copy.size)}}
  }
  override fun onLocalAudioVolumeIndication(volume:AoqAudioVolume){val level=volume.volume.coerceIn(0,255)/255.0;main.post{if(live)event("level",mapOf("level" to level))}}

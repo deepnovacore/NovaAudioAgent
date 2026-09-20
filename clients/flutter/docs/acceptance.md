@@ -39,3 +39,22 @@ Independent source review: four findings fixed and covered by regressions (AOQ
 clear ownership, edited-address token carryover, dictation onset isolation,
 malformed display-event cleanup). Previous default suite: 56 passed, one opt-in
 socket test skipped; the socket test separately passed with the synthetic host.
+
+## Additional simulator evidence (2026-09-20)
+
+Android API 36 executed all nine public screenshot scenes after composer and
+primary-button layout corrections: disconnected, settings top/bottom, connected
+empty, chat, draft keyboard, approval, expired approval, disconnected history.
+Images reside on the local external disk in
+`DeveloperStorage/Evidence/nova-flutter/public-android`.
+The original SwiftUI public client also ran on iPhone 15/iOS 17.5 with a local
+synthetic WebSocket host; disconnected/settings/connected/chat screenshots are
+in the sibling `original-public-ios` directory. This is not pixel-perfect
+acceptance: platform font/control rendering and some settings spacing differ.
+The original Nova icon is reused without modification.
+
+Android instrumentation: two tests passed (three playback start/stop cycles
+without capture, and oversized AOQ callbacks retaining a non-negative backlog).
+The latter first failed at -65537, then passed after fixing reservation order.
+Native JVM tests passed. Current public Dart tests: 57 passed, one opt-in socket
+case skipped; analyzer passed. No acoustic AEC claim follows from these tests.
