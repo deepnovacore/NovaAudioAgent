@@ -41,8 +41,12 @@ dependencies:
   shared_preferences: ^2.5.5
   mobile_scanner: ^7.4.2
   flutter_web_auth_2: ^5.1.0
+  flutter_markdown_plus: 1.0.12
+  url_launcher: 6.3.2
 
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 

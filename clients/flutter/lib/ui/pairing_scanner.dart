@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../protocol/pairing.dart';
+import 'strings.dart';
 
 class PairingScanner extends StatefulWidget {
-  const PairingScanner({super.key});
+  const PairingScanner({super.key, this.language = 'en'});
+  final String language;
   @override
   State<PairingScanner> createState() => _PairingScannerState();
 }
@@ -39,7 +41,7 @@ class _PairingScannerState extends State<PairingScanner>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Scan Nova QR code')),
+    appBar: AppBar(title: Text(tr(widget.language, 'Scan Nova QR code'))),
     body: Stack(
       children: [
         MobileScanner(

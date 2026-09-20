@@ -30,6 +30,11 @@ void main() {
         ),
       ),
     );
+    await tester.scrollUntilVisible(
+      find.byType(TextField).first,
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.enterText(
       find.byType(TextField).first,
       'wss://b.example/client/v1',

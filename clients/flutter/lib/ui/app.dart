@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:nova_audio/channel_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../connection/session.dart';
@@ -9,6 +10,7 @@ import '../services/preferences.dart';
 import 'settings_sheet.dart';
 import 'strings.dart';
 import 'voice_orb.dart';
+import 'assistant_text.dart';
 
 const ink = Color.fromRGBO(9, 14, 20, 1),
     mint = Color.fromRGBO(148, 235, 217, 1);
@@ -63,6 +65,8 @@ class _ConversationScreenState extends State<ConversationScreen>
   Credential? _credential;
   final _draft = TextEditingController(), _scroll = ScrollController();
   Timer? _clock;
+  final _latestUser = GlobalKey();
+  int _messageCount = 0;
   bool _textMode = false, _dictationMode = false;
   String? _error;
   int _revision = 0;
@@ -120,7 +124,26 @@ class _ConversationScreenState extends State<ConversationScreen>
       );
     }
     if (!_session.editableInput) _textMode = false;
+    final messages = _model.transcript.messages;
+    final newUser =
+        messages.length != _messageCount &&
+        messages.isNotEmpty &&
+        messages.last.role == 'user';
+    _messageCount = messages.length;
     setState(() {});
+    if (newUser) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final target = _latestUser.currentContext;
+        if (mounted && target != null) {
+          Scrollable.ensureVisible(
+            target,
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 250),
+          );
+        }
+      });
+    }
   }
 
   @override
@@ -139,9 +162,15 @@ class _ConversationScreenState extends State<ConversationScreen>
   }
 
   Future<void> _settings() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SettingsSheet(
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      clipBehavior: Clip.antiAlias,
+      backgroundColor: const Color(0xff1c1c1e),
+      builder: (_) => FractionallySizedBox(
+        heightFactor: .92,
+        child: SettingsSheet(
           session: _session,
           credential: _credential,
           language: _session.language,
@@ -208,196 +237,265 @@ class _ConversationScreenState extends State<ConversationScreen>
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 12, 16, 8),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               child: Row(
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'NOVA',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 5,
-                          ),
-                        ),
-                        Text(
-                          t(_session.status),
-                          key: const Key('connection-status'),
-                          style: TextStyle(
-                            color: _session.connected ? mint : Colors.white54,
-                          ),
-                        ),
-                      ],
+                  const Expanded(
+                    child: Text(
+                      'Nova',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -.6,
+                      ),
                     ),
                   ),
-                  IconButton(
-                    onPressed: _settings,
-                    tooltip: t('Settings'),
-                    icon: const Icon(Icons.tune),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-              child: SegmentedButton<bool>(
-                segments: [
-                  if (_session.editableInput)
-                    ButtonSegment(value: true, label: Text(t('Text chat'))),
-                  ButtonSegment(
-                    value: false,
-                    label: Text(t('Live conversation')),
-                  ),
-                ],
-                selected: {_textMode},
-                onSelectionChanged: (selected) async {
-                  final text = selected.single;
-                  if (text) {
-                    await _model.switchToText();
-                  } else {
-                    await _model.switchToVoice();
-                  }
-                  if (mounted) setState(() => _textMode = text);
-                },
-              ),
-            ),
-            Expanded(
-              child: ListView(
-                controller: _scroll,
-                padding: const EdgeInsets.all(24),
-                children: [
-                  if (!_textMode)
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 32),
-                        child: Semantics(
-                          label: t(
-                            _session.voice ? 'Listening' : 'Live conversation',
-                          ),
-                          child: VoiceOrb(
-                            listening: _session.voice,
-                            level: _session.inputLevel,
+                  Tooltip(
+                    message: t('Settings'),
+                    child: TextButton(
+                      onPressed: _settings,
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.white.withValues(alpha: .055),
+                        minimumSize: const Size(58, 44),
+                        shape: StadiumBorder(
+                          side: BorderSide(
+                            color: Colors.white.withValues(alpha: .09),
                           ),
                         ),
                       ),
-                    ),
-                  if (messages.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 24),
-                      child: Text(
-                        t(
-                          _session.connected
-                              ? 'Your conversation appears here'
-                              : 'Connect to your Nova host to begin',
-                        ),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.white54),
-                      ),
-                    ),
-                  for (final message in messages)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 18),
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: message.role == 'user'
-                            ? mint.withValues(alpha: 0.10)
-                            : Colors.white.withValues(alpha: 0.035),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            message.role == 'user' ? t('You') : 'Nova',
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 12,
-                            ),
+                          Icon(
+                            Icons.circle,
+                            size: 6,
+                            color: _session.connected ? mint : Colors.white38,
                           ),
-                          const SizedBox(height: 8),
-                          SelectableText(message.text),
+                          const SizedBox(width: 7),
+                          const Icon(
+                            CupertinoIcons.slider_horizontal_3,
+                            size: 16,
+                            color: Colors.white70,
+                          ),
                         ],
                       ),
                     ),
-                  if (_model.approvals.cards.isNotEmpty)
-                    Text(
-                      t('Needs your confirmation'),
-                      style: const TextStyle(
-                        color: mint,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  for (final card in _model.approvals.cards)
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              card.project,
-                              style: const TextStyle(color: Colors.white54),
-                            ),
-                            Text(
-                              card.title,
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            SelectableText(card.detail),
-                            if (!card.actionable(DateTime.now()))
-                              Text(t('Expired / waiting for host')),
-                            Wrap(
-                              spacing: 8,
-                              children: [
-                                for (final decision in card.decisions)
-                                  OutlinedButton(
-                                    onPressed:
-                                        _session.connected &&
-                                            card.actionable(DateTime.now()) &&
-                                            !_model.approvals.submitted
-                                                .contains(card.id)
-                                        ? () => _model.decide(card, decision)
-                                        : null,
-                                    child: Text(
-                                      t(
-                                        decision == 'decline'
-                                            ? 'Decline'
-                                            : decision == 'acceptForSession'
-                                            ? 'Approve for session'
-                                            : 'Approve',
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  if (_model.tasks.isNotEmpty) Text(t('Tasks')),
-                  for (final entry in _model.tasks.entries)
-                    ListTile(
-                      title: Text(entry.key),
-                      subtitle: Text(entry.value),
-                    ),
-                  if (_model.results.isNotEmpty) Text(t('Results')),
-                  for (final result in _model.results.values)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: SelectableText(result),
-                    ),
-                  if (_error != null)
-                    Text(
-                      _error!,
-                      style: const TextStyle(color: Colors.orangeAccent),
-                    ),
+                  ),
                 ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: _session.editableInput
+                    ? CupertinoSlidingSegmentedControl<bool>(
+                        groupValue: _textMode,
+                        backgroundColor: const Color(0xff292b30),
+                        thumbColor: const Color(0xff62646b),
+                        children: {
+                          true: Text(t('Text chat')),
+                          false: Text(t('Live conversation')),
+                        },
+                        onValueChanged: (text) async {
+                          if (text == null) return;
+                          if (text) {
+                            await _model.switchToText();
+                          } else {
+                            await _model.switchToVoice();
+                          }
+                          if (mounted) setState(() => _textMode = text);
+                        },
+                      )
+                    : Container(
+                        padding: const EdgeInsets.symmetric(vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xff62646b),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          t('Live conversation'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  ListView(
+                    controller: _scroll,
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    padding: const EdgeInsets.fromLTRB(20, 6, 20, 18),
+                    children: [
+                      if (!_textMode && messages.isEmpty) ...[
+                        Center(
+                          child: ExcludeSemantics(
+                            child: SizedBox(
+                              height: 248,
+                              child: VoiceOrb(
+                                listening: _session.voice && !_session.muted,
+                                level: _session.inputLevel,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          t(_session.status),
+                          key: const Key('connection-status'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: _session.connected ? mint : Colors.white54,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                      if (messages.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 60, bottom: 18),
+                          child: Text(
+                            t('What would you like to talk about?'),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.white54),
+                          ),
+                        ),
+                      for (final message in messages)
+                        Container(
+                          key:
+                              message == messages.last && message.role == 'user'
+                              ? _latestUser
+                              : ValueKey(message.id),
+                          margin: const EdgeInsets.only(bottom: 18),
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            color: message.role == 'user'
+                                ? mint.withValues(alpha: 0.10)
+                                : Colors.white.withValues(alpha: 0.035),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                message.role == 'user' ? t('You') : 'Nova',
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              if (message.role == 'assistant')
+                                AssistantText(message.text)
+                              else
+                                SelectableText(message.text),
+                            ],
+                          ),
+                        ),
+                      if (_model.approvals.cards.isNotEmpty)
+                        Text(
+                          t('Needs your confirmation'),
+                          style: const TextStyle(
+                            color: mint,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      for (final card in _model.approvals.cards)
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  card.project,
+                                  style: const TextStyle(color: Colors.white54),
+                                ),
+                                Text(
+                                  card.title,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
+                                SelectableText(card.detail),
+                                if (!card.actionable(DateTime.now()))
+                                  Text(t('Expired / waiting for host')),
+                                Wrap(
+                                  spacing: 8,
+                                  children: [
+                                    for (final decision in card.decisions)
+                                      OutlinedButton(
+                                        onPressed:
+                                            _session.connected &&
+                                                card.actionable(
+                                                  DateTime.now(),
+                                                ) &&
+                                                !_model.approvals.submitted
+                                                    .contains(card.id)
+                                            ? () =>
+                                                  _model.decide(card, decision)
+                                            : null,
+                                        child: Text(
+                                          t(
+                                            decision == 'decline'
+                                                ? 'Decline'
+                                                : decision == 'acceptForSession'
+                                                ? 'Approve for session'
+                                                : 'Approve',
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      if (_model.tasks.isNotEmpty) Text(t('Tasks')),
+                      for (final entry in _model.tasks.entries)
+                        ListTile(
+                          title: Text(entry.key),
+                          subtitle: Text(entry.value),
+                        ),
+                      if (_model.results.isNotEmpty) Text(t('Results')),
+                      for (final result in _model.results.values)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: SelectableText(result),
+                        ),
+                      if (_error != null)
+                        Text(
+                          _error!,
+                          style: const TextStyle(color: Colors.orangeAccent),
+                        ),
+                    ],
+                  ),
+                  Positioned(
+                    right: 12,
+                    bottom: 12,
+                    child: IconButton.filledTonal(
+                      tooltip: t('Latest messages'),
+                      icon: const Icon(Icons.arrow_downward),
+                      onPressed: () {
+                        if (_scroll.hasClients) {
+                          _scroll.animateTo(
+                            _scroll.position.maxScrollExtent,
+                            duration: MediaQuery.disableAnimationsOf(context)
+                                ? Duration.zero
+                                : const Duration(milliseconds: 250),
+                            curve: Curves.easeOut,
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 20, 28, 14),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -522,6 +620,9 @@ class _ConversationScreenState extends State<ConversationScreen>
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(58),
+                        ),
                         key: Key(
                           _session.connected ? 'start-voice' : 'connect',
                         ),

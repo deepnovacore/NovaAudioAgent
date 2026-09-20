@@ -1,5 +1,6 @@
 allprojects {
     repositories {
+        flatDir { dirs(rootProject.file("../packages/nova_audio/Vendor")) }
         google()
         mavenCentral()
     }

@@ -3,7 +3,7 @@
 Implementation is in progress; this is not release acceptance.
 
 Verified locally:
-- 53 Flutter tests, including shared protocol vectors, input/approval state,
+- 57 Flutter tests, including shared protocol vectors, input/approval state,
   permissions cancelled before completion, AOQ ready fencing and large-text layouts.
 - Dart analyzer clean at that run.
 - Actual WebSocket integration with the repository ClientServer: cascaded text,
@@ -16,8 +16,8 @@ Verified locally:
   mute pacing and the shared protocol fixture.
 
 Pending:
-- Full current Android APK: SDK platform 35 installation was interrupted and is
-  being completed on external storage. Earlier Maven download timeout recovered.
+- Updated screenshot-test APK after UI parity changes; previous complete public
+  APK built and launched on Android API 36. AOQ AAR packaging was fixed.
 - Full iOS build: matching iOS 18.5 simulator platform runtime absent; download
   is on external storage. A 17.5 runtime does not satisfy storyboard compilation.
 - Simulator/device navigation and side-by-side original visual comparisons.
@@ -37,5 +37,5 @@ committed. No redistribution rights are inferred from SDK download access.
 
 Independent source review: four findings fixed and covered by regressions (AOQ
 clear ownership, edited-address token carryover, dictation onset isolation,
-malformed display-event cleanup). Latest default suite: 56 passed, one opt-in
+malformed display-event cleanup). Previous default suite: 56 passed, one opt-in
 socket test skipped; the socket test separately passed with the synthetic host.

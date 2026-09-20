@@ -102,7 +102,7 @@ class _SettingsSheetState extends State<SettingsSheet>
 
   Future<Credential?> _scan() async {
     final invitation = await Navigator.of(context).push<PairingCode>(
-      MaterialPageRoute(builder: (_) => const PairingScanner()),
+      MaterialPageRoute(builder: (_) => PairingScanner(language: _language)),
     );
     if (invitation == null || !mounted) return null;
     final confirmed = await showDialog<bool>(
@@ -126,31 +126,218 @@ class _SettingsSheetState extends State<SettingsSheet>
     return _pairing.redeem(invitation);
   }
 
+  Widget group(List<Widget> children, {String? title, String? footer}) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 26),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (title != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  t(title),
+                  style: const TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+              ),
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xff2c2c2e),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: children,
+              ),
+            ),
+            if (footer != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                child: Text(
+                  t(footer),
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(t('Settings'))),
+    backgroundColor: const Color(0xff1c1c1e),
+    appBar: AppBar(
+      automaticallyImplyLeading: false,
+      backgroundColor: const Color(0xff1c1c1e),
+      centerTitle: true,
+      title: Text(
+        t('Connection settings'),
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(t('Done')),
+        ),
+      ],
+    ),
     body: SafeArea(
       child: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
         children: [
-          TextField(
-            controller: _server,
-            enabled: !_locked,
-            autocorrect: false,
-            decoration: InputDecoration(
-              labelText: t('Server'),
-              hintText: 'wss://host/client/v1',
+          group(
+            [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: DropdownButtonFormField<String>(
+                  initialValue: _language,
+                  decoration: const InputDecoration(
+                    labelText: '语言 / Language',
+                    border: InputBorder.none,
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'en', child: Text('English')),
+                    DropdownMenuItem(value: 'zh', child: Text('简体中文')),
+                  ],
+                  onChanged: _locked
+                      ? null
+                      : (value) async {
+                          if (value == null) return;
+                          setState(() => _language = value);
+                          await widget.configure(_language, _media);
+                        },
+                ),
+              ),
+            ],
+            footer:
+                'The first launch follows your system language. Disconnect before changing it.\n\nThe AI prompt language applies on the next supported host connection; it does not change the voice model or guarantee the reply language.',
+          ),
+          group([
+            TextButton(
+              onPressed: _locked || _login == null
+                  ? null
+                  : () => _run(() async {
+                      if (!await _login.health()) {
+                        throw const FormatException(
+                          'Login service unavailable',
+                        );
+                      }
+                      try {
+                        _browserLogin = true;
+                        return await _login.start();
+                      } finally {
+                        _browserLogin = false;
+                      }
+                    }),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(t('Feishu login')),
+              ),
             ),
+            if (_login == null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  t('This build has no login service configured'),
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+          ], footer: 'Enabled when a deployment configures a login service.'),
+          group(
+            [
+              TextButton.icon(
+                onPressed: _locked ? null : () => _run(_scan),
+                icon: const Icon(Icons.qr_code_scanner),
+                label: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(t('Scan pairing code')),
+                ),
+              ),
+            ],
+            footer:
+                'Scan the Nova QR code on your host to fill the address and securely save the connection.',
           ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _token,
-            enabled: !_locked,
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: InputDecoration(labelText: t('Token')),
+          group(
+            [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  controller: _server,
+                  enabled: !_locked,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    labelText: t('Server'),
+                    hintText: 'wss://host/client/v1',
+                    border: InputBorder.none,
+                  ),
+                ),
+              ),
+              const Divider(height: 1, indent: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  controller: _token,
+                  enabled: !_locked,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: InputDecoration(
+                    labelText: t('Token'),
+                    border: InputBorder.none,
+                  ),
+                ),
+              ),
+              const Divider(height: 1, indent: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: DropdownButtonFormField<String>(
+                  initialValue: _media,
+                  decoration: InputDecoration(
+                    labelText: t('Media transport'),
+                    border: InputBorder.none,
+                  ),
+                  items: [
+                    for (final v in ['auto', 'relay', 'aoq'])
+                      DropdownMenuItem(
+                        value: v,
+                        child: Text(
+                          v == 'auto'
+                              ? t('Auto')
+                              : v == 'relay'
+                              ? t('Relay')
+                              : 'AOQ',
+                        ),
+                      ),
+                  ],
+                  onChanged: _locked
+                      ? null
+                      : (v) async {
+                          if (v == null) return;
+                          setState(() => _media = v);
+                          await widget.configure(_language, _media);
+                        },
+                ),
+              ),
+            ],
+            title: 'Manual connection',
+            footer: 'The connection token is stored securely on this device.',
           ),
+          group([
+            Slider(
+              value: widget.session.speechThreshold,
+              min: .01,
+              max: .15,
+              label: widget.session.speechThreshold.toStringAsFixed(3),
+              onChanged: (v) =>
+                  setState(() => widget.session.speechThreshold = v),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text(
+                '${t('Raise in noisy environments; lower for quiet speech.')} ${widget.session.speechThreshold.toStringAsFixed(3)}',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ),
+          ], title: 'Speech detection threshold'),
           if (widget.session.connected || widget.session.connecting)
             TextButton(
               onPressed: () async {
@@ -159,45 +346,6 @@ class _SettingsSheetState extends State<SettingsSheet>
               },
               child: Text(t('Disconnect')),
             ),
-          Text(t('Speech detection threshold')),
-          Slider(
-            value: widget.session.speechThreshold,
-            min: 0.01,
-            max: 0.15,
-            label: widget.session.speechThreshold.toStringAsFixed(3),
-            onChanged: (value) =>
-                setState(() => widget.session.speechThreshold = value),
-          ),
-          const SizedBox(height: 24),
-          DropdownButtonFormField<String>(
-            initialValue: _language,
-            decoration: InputDecoration(labelText: t('Language')),
-            items: const [
-              DropdownMenuItem(value: 'en', child: Text('English')),
-              DropdownMenuItem(value: 'zh', child: Text('中文')),
-            ],
-            onChanged: _locked ? null : (v) => setState(() => _language = v!),
-          ),
-          const SizedBox(height: 16),
-          DropdownButtonFormField<String>(
-            initialValue: _media,
-            decoration: InputDecoration(labelText: t('Media transport')),
-            items: [
-              for (final v in ['auto', 'relay', 'aoq'])
-                DropdownMenuItem(
-                  value: v,
-                  child: Text(
-                    v == 'auto'
-                        ? t('Auto')
-                        : v == 'relay'
-                        ? t('Relay')
-                        : 'AOQ',
-                  ),
-                ),
-            ],
-            onChanged: _locked ? null : (v) => setState(() => _media = v!),
-          ),
-          const SizedBox(height: 24),
           FilledButton(
             onPressed: _locked
                 ? null
@@ -209,32 +357,6 @@ class _SettingsSheetState extends State<SettingsSheet>
                   ),
             child: Text(t('Save and connect')),
           ),
-          OutlinedButton.icon(
-            onPressed: _locked ? null : () => _run(_scan),
-            icon: const Icon(Icons.qr_code_scanner),
-            label: Text(t('Scan pairing code')),
-          ),
-          OutlinedButton(
-            onPressed: _locked || _login == null
-                ? null
-                : () => _run(() async {
-                    if (!await _login.health()) {
-                      throw const FormatException('Login service unavailable');
-                    }
-                    try {
-                      _browserLogin = true;
-                      return await _login.start();
-                    } finally {
-                      _browserLogin = false;
-                    }
-                  }),
-            child: Text(t('Feishu login')),
-          ),
-          if (_login == null)
-            Text(
-              t('This build has no login service configured'),
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
           TextButton(
             onPressed: _locked
                 ? null

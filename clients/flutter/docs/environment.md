@@ -8,12 +8,17 @@ build with the external volume unmounted. The previous Pub cache was copied,
 39822 entries verified by SHA-256 and link targets, and retained for rollback.
 No existing shared Xcode cache or device data was removed.
 
-Android shell debug APK built successfully. No Android device is attached.
-iOS Flutter destination build is blocked because Xcode reports iOS 18.5 platform
-not installed. No usable iOS simulator runtime is installed. A wireless iPhone
-is discoverable, but newer OS compatibility/signing/install are unverified.
-Direct SDK compilation also stops at asset catalog compilation because no iOS simulator
-runtime is available. This is an environment gate, not a passed iOS build.
+Full public Android debug APK built and launched on an API 36 arm64 emulator.
+The existing external AVD is used read-only; emulator results are not AEC proof.
+iOS 17.5 runtime is mounted read-only from the existing external DMG and the
+original SwiftUI app builds with the external acceptance Xcode copy. Flutter's
+asset compiler additionally requires 18.5, downloading to external storage.
+CoreSimulator rejected creating a device set on external storage; an existing
+local iPhone simulator is used, without deleting or relocating user device data.
+
+The pinned AOQ iOS SDK contains device binaries only. For simulator builds use
+`NOVA_AOQ_SIMULATOR=1 flutter build ios --simulator`; omit this environment flag
+for device builds to include the real SDK. The simulator advertises no AOQ.
 
 Source and tool versions are recorded for reproducibility; caches, credentials,
 signing material, local SDK configuration and device identifiers are not committed.

@@ -1,6 +1,21 @@
 String tr(String language, String text) =>
     language == 'zh' ? (_zh[text] ?? text) : text;
 const _zh = <String, String>{
+  'Connection settings': '连接设置',
+  'Done': '完成',
+  'Manual connection': '手动连接',
+  'The connection token is stored securely on this device.': '连接密钥仅安全保存在这台设备上。',
+  'Enabled when a deployment configures a login service.': '由部署方配置登录服务后启用。',
+  'Scan the Nova QR code on your host to fill the address and securely save the connection.':
+      '扫描主机上的 Nova 二维码，自动填入地址并安全保存连接凭据。',
+  'Raise in noisy environments; lower for quiet speech.':
+      '环境嘈杂时调高；轻声说话时调低。当前阈值',
+  'The first launch follows your system language. Disconnect before changing it.\n\nThe AI prompt language applies on the next supported host connection; it does not change the voice model or guarantee the reply language.':
+      '首次按系统首选语言设置，之后保留你的选择。更改语言前请先断开连接。\n\nAI 仅切换 system prompt 的语言，不保证回复始终使用该语言；不自动识别或切换语言，也不更换语音模型或音色。\n\nAI 提示词在下次连接支持此设置的主机时生效。',
+
+  'What would you like to talk about?': '有什么想聊的？',
+  'Latest messages': '查看最新消息',
+  'Scan Nova QR code': '扫描 Nova 配对码',
   'Speech detection threshold': '语音检测阈值',
   'Not connected': '尚未连接',
   'Connecting': '正在连接',

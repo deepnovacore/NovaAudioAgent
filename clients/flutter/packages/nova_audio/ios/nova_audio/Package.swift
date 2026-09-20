@@ -3,7 +3,8 @@
 
 import PackageDescription
 import Foundation
-let hasAOQ = FileManager.default.fileExists(atPath: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Vendor/AoqClientSdk.xcframework").path)
+// The vendor framework contains device code only; SwiftPM cannot filter a binary target by simulator.
+let hasAOQ = ProcessInfo.processInfo.environment["NOVA_AOQ_SIMULATOR"] != "1" && FileManager.default.fileExists(atPath: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Vendor/AoqClientSdk.xcframework").path)
 
 let package = Package(
     name: "nova_audio",

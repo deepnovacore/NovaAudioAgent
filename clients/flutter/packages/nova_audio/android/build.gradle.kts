@@ -20,7 +20,7 @@ android {
 }
 kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }
 dependencies {
-    if (aoqSdk.exists()) implementation(files(aoqSdk))
+    if (aoqSdk.exists()) implementation(mapOf("name" to "AoqClientSdk-release", "ext" to "aar"))
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     testImplementation("junit:junit:4.13.2")
