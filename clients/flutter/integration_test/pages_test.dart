@@ -46,6 +46,7 @@ void main() {
     await binding.convertFlutterSurfaceToImage();
     Future<void> shot(String name) async {
       await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 300));
       expect(tester.takeException(), isNull);
       await binding.takeScreenshot(name);
     }
@@ -96,7 +97,7 @@ void main() {
     await tester.tap(find.text('Text chat'));
     await shot('public-05-chat');
     await tester.enterText(find.byType(TextField), '保留中的草稿');
-    await shot('public-06-draft-keyboard');
+    await shot('public-06-draft');
     FocusManager.instance.primaryFocus?.unfocus();
     await event({
       'type': 'executor.approval',
@@ -124,6 +125,13 @@ void main() {
       'local_detail': {'command': 'echo synthetic'},
       'allowed_decisions': ['accept', 'decline'],
     });
+    await tester.pump();
+    expect(
+      tester
+          .widgetList<OutlinedButton>(find.byType(OutlinedButton))
+          .every((button) => button.onPressed == null),
+      isTrue,
+    );
     await shot('public-08-expired-approval');
     await session.end();
     await shot('public-09-disconnected-history');

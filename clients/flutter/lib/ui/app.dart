@@ -404,8 +404,12 @@ class _ConversationScreenState extends State<ConversationScreen>
                         ),
                       for (final card in _model.approvals.cards)
                         Card(
+                          color: Colors.white.withValues(alpha: .05),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
                           child: Padding(
-                            padding: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(20),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -420,13 +424,52 @@ class _ConversationScreenState extends State<ConversationScreen>
                                   ).textTheme.titleMedium,
                                 ),
                                 SelectableText(card.detail),
-                                if (!card.actionable(DateTime.now()))
-                                  Text(t('Expired / waiting for host')),
-                                Wrap(
-                                  spacing: 8,
+                                Text(
+                                  card.busy
+                                      ? t('Waiting for host')
+                                      : card.deadline == null
+                                      ? t('Waiting for host update')
+                                      : card.deadline!.isAfter(DateTime.now())
+                                      ? t('Valid for {0} seconds').replaceFirst(
+                                          '{0}',
+                                          '${card.deadline!.difference(DateTime.now()).inSeconds.clamp(0, 3600)}',
+                                        )
+                                      : t('Expired / waiting for host'),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white54,
+                                  ),
+                                ),
+                                if (_model.approvals.submitted.contains(
+                                  card.id,
+                                ))
+                                  Text(
+                                    t('Submitted / waiting for host'),
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: mint,
+                                    ),
+                                  ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     for (final decision in card.decisions)
                                       OutlinedButton(
+                                        style: OutlinedButton.styleFrom(
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                          side: BorderSide.none,
+                                          backgroundColor: mint.withValues(
+                                            alpha: .14,
+                                          ),
+                                          disabledBackgroundColor: Colors.white
+                                              .withValues(alpha: .04),
+                                          disabledForegroundColor:
+                                              Colors.white38,
+                                        ),
                                         onPressed:
                                             _session.connected &&
                                                 card.actionable(
@@ -537,7 +580,13 @@ class _ConversationScreenState extends State<ConversationScreen>
                     const SizedBox(height: 10),
                     Align(
                       alignment: Alignment.centerRight,
-                      child: IconButton(
+                      child: IconButton.filled(
+                        style: IconButton.styleFrom(
+                          backgroundColor: mint,
+                          foregroundColor: ink,
+                          disabledBackgroundColor: mint.withValues(alpha: .2),
+                          disabledForegroundColor: mint.withValues(alpha: .4),
+                        ),
                         onPressed:
                             input.busy ||
                                 _draft.text.trim().isEmpty ||
@@ -545,7 +594,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                             ? null
                             : input.sendDraft,
                         tooltip: t('Send message'),
-                        icon: const Icon(Icons.arrow_upward, color: mint),
+                        icon: const Icon(Icons.arrow_upward),
                       ),
                     ),
                     if (_dictationMode)

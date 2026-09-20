@@ -12,6 +12,15 @@ const server = new ClientServer({port,token:'0123456789abcdef0123456789abcdef',
     if(value.type === 'input.text') {
       await caption('user',value.text)
       await caption('assistant',`Synthetic reply: ${value.text}`)
+      if(value.text.includes('approval')) await send({
+        type:'executor.approval', executor:'synthetic', pending_approval:true,
+        pending_approval_id:'screen-check',pending_approval_busy:false,
+        expires_in_seconds:value.text.includes('expired')?0:300,
+        work:{project:'Synthetic project',title:'Review change'},
+        operation_summary:'Confirm synthetic action',
+        local_detail:{command:'echo synthetic',cwd:'/synthetic'},
+        allowed_decisions:['accept','acceptForSession','decline'],
+      })
     }
     if(value.type === 'input.dictation' && value.action === 'finish') {
       await send({type:'input.transcription',id:value.id,text:'Synthetic dictation result'})
