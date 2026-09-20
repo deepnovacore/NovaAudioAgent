@@ -25,6 +25,31 @@ void main() {
     await s.receive(handshake(), s.generation);
   }
 
+  test(
+    'dictation does not send speech onset into the voice conversation',
+    () async {
+      final audio = FakeAudio(), transport = FakeTransport();
+      final session = Session(
+        audio: audio,
+        requestMicrophone: () async => true,
+        openTransport: (_) async => transport,
+      );
+      addTearDown(session.dispose);
+      await ready(session);
+      audio.controller.add({
+        'generation': session.generation,
+        'kind': 'control',
+        'control': {'type': 'speech.onset'},
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        transport.sent.whereType<String>().any(
+          (v) => v.contains('speech.onset'),
+        ),
+        false,
+      );
+    },
+  );
   for (final background in [true, false]) {
     test(
       'late microphone grant after ${background ? 'background' : 'end'} cannot capture',

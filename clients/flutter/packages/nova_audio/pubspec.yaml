@@ -7,3 +7,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.nova.nova_audio
+        pluginClass: NovaAudioPlugin
+      ios:
+        pluginClass: NovaAudioPlugin

@@ -6,6 +6,8 @@ import 'package:nova_audio/nova_audio.dart';
 import '../protocol/wire.dart';
 import '../protocol/request_id.dart';
 import 'recovery.dart';
+import 'package:nova_audio/aoq_port.dart';
+import '../protocol/aoq_bridge.dart';
 import 'transport.dart';
 
 final class Session extends ChangeNotifier {
@@ -43,6 +45,7 @@ final class Session extends ChangeNotifier {
   Uri? _endpoint;
   String _token = '';
   int generation = 0;
+  int _captureRevision = 0;
   bool connected = false,
       connecting = false,
       voice = false,
@@ -51,6 +54,9 @@ final class Session extends ChangeNotifier {
   double inputLevel = 0, speechThreshold = 0.045;
   String status = 'Not connected', language = 'en', mediaPreference = 'auto';
   Ready? ready;
+  bool _offeredAOQ = false;
+  String? _aoqRequest;
+  AOQRuntimeBridge? _aoqBridge;
   bool get editableInput => ready?.editableInput ?? false;
   String? get connection => ready?.connection;
 
@@ -101,8 +107,12 @@ final class Session extends ChangeNotifier {
               _fail(id, transport.closeCode ?? 1006, 'Connection closed'),
             ),
           );
-      // AOQ is added only when a compiled native adapter reports availability.
-      if (mediaPreference == 'aoq') {
+      _offeredAOQ =
+          audio is AoqPort &&
+          (await audio.capabilities())['aoq'] == true &&
+          mediaPreference != 'relay';
+      if (id != generation || !_requested) return;
+      if (mediaPreference == 'aoq' && !_offeredAOQ) {
         await _fail(id, 4006, 'This build does not include AOQ');
         return;
       }
@@ -112,9 +122,15 @@ final class Session extends ChangeNotifier {
               'type': 'hello',
               'token': _token,
               'protocol_version': 1,
-              'language': language,
+              'language': language == 'zh' ? 'zh-CN' : language,
               'media': {
-                'transports': ['host_pcm_v1'],
+                'transports': [
+                  if (mediaPreference != 'aoq') 'host_pcm_v1',
+                  if (_offeredAOQ) ...[
+                    'qwen_aoq_runtime_v1',
+                    'qwen_aoq_chat_v1',
+                  ],
+                ],
               },
             }),
           )
@@ -131,7 +147,15 @@ final class Session extends ChangeNotifier {
         if (message is! String) {
           throw const FormatException('Expected client.ready');
         }
-        ready = Wire.ready(Wire.json(Uint8List.fromList(utf8.encode(message))));
+        ready = Wire.ready(
+          Wire.json(Uint8List.fromList(utf8.encode(message))),
+          allowAOQ: _offeredAOQ,
+          allowAOQRuntime: _offeredAOQ,
+        );
+        if (ready!.aoqChat && _transport is SocketTransport) {
+          (_transport as SocketTransport).monitorHeartbeat();
+        }
+        if (ready!.aoqRuntime) _aoqBridge = AOQRuntimeBridge(ready!.connection);
         _watchdog?.cancel();
         _watchdog = null;
         _recovery.markReady(nowMs());
@@ -142,20 +166,64 @@ final class Session extends ChangeNotifier {
         return;
       }
       if (message is List<int>) {
+        if (ready!.aoqChat) {
+          throw const FormatException(
+            "AOQ control connection cannot carry PCM",
+          );
+        }
         final bytes = Uint8List.fromList(message);
         Wire.audio(bytes);
         await audio.enqueue(bytes);
         return;
       }
       if (message is! String) throw const FormatException('Unsupported frame');
-      final value = Wire.json(Uint8List.fromList(utf8.encode(message)));
+      final value = Wire.json(
+        Uint8List.fromList(utf8.encode(message)),
+        limit: ready!.aoqRuntime ? 131072 : 16384,
+      );
       switch (value['type']) {
+        case 'aoq.credentials':
+          if (!ready!.aoqChat ||
+              !voiceStarting ||
+              _aoqRequest == null ||
+              value['request_id'] != _aoqRequest ||
+              value['connection_id'] != connection ||
+              (ready!.aoqRuntime &&
+                  (value['mode'] != 'runtime' || value['session'] != null))) {
+            throw const FormatException('Stale AOQ credentials');
+          }
+          _aoqRequest = null;
+          await audio.stop();
+          if (id != generation || !voiceStarting || !foreground) return;
+          await (audio as AoqPort).startAoq(
+            value,
+            generation: id,
+            runtime: ready!.aoqRuntime,
+          );
+        case 'aoq.command':
+          if (_aoqBridge == null || audio is! AoqPort) {
+            throw const FormatException('Unexpected AOQ command');
+          }
+          await (audio as AoqPort).aoqCommand(_aoqBridge!.command(value));
+        case 'aoq.error':
+          await end();
+          status = 'AOQ unavailable. Check host configuration.';
+          _notify();
+        case 'playback.alert':
+          status = 'Playback interrupted';
+          _notify();
         case 'playback.clear':
           final identity = Wire.identity(value);
-          await audio.clear(identity.utteranceId, identity.epoch);
+          if (ready?.aoqRuntime == true) {
+            await (audio as AoqPort).aoqClear();
+          } else {
+            await audio.clear(identity.utteranceId, identity.epoch);
+          }
         case 'playback.terminal':
           final identity = Wire.identity(value);
-          await audio.terminal(identity.utteranceId, identity.epoch);
+          if (ready?.aoqRuntime != true) {
+            await audio.terminal(identity.utteranceId, identity.epoch);
+          }
         case 'clock.ping':
           command({
             'type': 'clock.pong',
@@ -223,17 +291,33 @@ final class Session extends ChangeNotifier {
     }
   }
 
-  Future<bool> startCapture({required bool capture}) async {
+  Future<bool> startCapture({
+    required bool capture,
+    bool Function()? beforeStart,
+  }) async {
     if (!connected || !foreground || _disposed) return false;
     final id = generation;
+    final captureRevision = ++_captureRevision;
     if (capture) {
       final granted = await requestMicrophone();
-      if (id != generation || !connected || !foreground) return false;
+      if (id != generation ||
+          captureRevision != _captureRevision ||
+          !connected ||
+          !foreground) {
+        return false;
+      }
       if (!granted) {
         status = 'Microphone permission denied';
         _notify();
         return false;
       }
+    }
+    if (beforeStart != null && !beforeStart()) return false;
+    if (id != generation ||
+        captureRevision != _captureRevision ||
+        !connected ||
+        !foreground) {
+      return false;
     }
     try {
       await audio.startRelay(
@@ -241,7 +325,10 @@ final class Session extends ChangeNotifier {
         capture: capture,
         threshold: speechThreshold,
       );
-      return id == generation && connected && foreground;
+      return id == generation &&
+          captureRevision == _captureRevision &&
+          connected &&
+          foreground;
     } catch (e) {
       if (id == generation) {
         await audio.stop();
@@ -257,6 +344,45 @@ final class Session extends ChangeNotifier {
     voiceStarting = true;
     _notify();
     final id = generation;
+    if (ready?.aoqChat == true) {
+      final revision = ++_captureRevision;
+      final granted = await requestMicrophone();
+      if (id != generation ||
+          revision != _captureRevision ||
+          !connected ||
+          !foreground) {
+        return;
+      }
+      if (!granted) {
+        voiceStarting = false;
+        status = 'Microphone permission denied';
+        _notify();
+        return;
+      }
+      await audio.stop();
+      if (id != generation ||
+          revision != _captureRevision ||
+          !connected ||
+          !foreground) {
+        return;
+      }
+      _aoqRequest = requestId();
+      await sendRaw(
+        jsonEncode({
+          'type': 'aoq.connect',
+          'request_id': _aoqRequest,
+          'connection_id': connection,
+        }),
+      );
+      _watchdog = Timer(const Duration(seconds: 25), () {
+        if (id == generation && voiceStarting) {
+          unawaited(_fail(id, 0, 'AOQ startup timed out'));
+        }
+      });
+      status = 'Connecting AOQ';
+      _notify();
+      return;
+    }
     if (editableInput) command({'type': 'input.audio'});
     final started = await startCapture(capture: true);
     if (id != generation) return;
@@ -269,6 +395,9 @@ final class Session extends ChangeNotifier {
   }
 
   Future<void> stopCapture() async {
+    _captureRevision++;
+    voice = false;
+    voiceStarting = false;
     await audio.stop();
     inputLevel = 0;
     _notify();
@@ -306,6 +435,33 @@ final class Session extends ChangeNotifier {
   void _onAudio(Map<String, Object?> event) {
     if (event['generation'] != generation || !connected || _disposed) return;
     switch (event['kind']) {
+      case 'aoq_ready':
+        if (!voiceStarting || ready?.aoqChat != true) return;
+        _watchdog?.cancel();
+        _watchdog = null;
+        voiceStarting = false;
+        voice = true;
+        status = 'Listening';
+        _notify();
+      case 'aoq_caption':
+        _host.add({
+          'type': 'aoq_caption',
+          'role': event['role'],
+          'text': event['text'],
+        });
+      case 'aoq_event':
+        try {
+          final value = event['event'] is Map
+              ? Map<String, dynamic>.from(event['event'] as Map)
+              : Wire.json(
+                  Uint8List.fromList(utf8.encode(event['json'] as String)),
+                  limit: 65536,
+                );
+          final envelope = _aoqBridge?.envelope(value);
+          if (envelope != null) unawaited(sendRaw(jsonEncode(envelope)));
+        } catch (_) {
+          unawaited(_fail(generation, 0, 'Invalid AOQ event'));
+        }
       case 'pcm':
         final pcm = event['pcm'];
         if (pcm is Uint8List) unawaited(sendRaw(pcm));
@@ -317,7 +473,9 @@ final class Session extends ChangeNotifier {
         }
       case 'control':
         final control = event['control'];
-        if (control is Map) command(Map<String, dynamic>.from(control));
+        if (control is Map && (control['type'] != 'speech.onset' || voice)) {
+          command(Map<String, dynamic>.from(control));
+        }
       case 'stopped':
         unawaited(
           end().then((_) {
@@ -329,10 +487,14 @@ final class Session extends ChangeNotifier {
   }
 
   Future<void> _reset() async {
+    _captureRevision++;
     generation++;
     connected = false;
     connecting = false;
     ready = null;
+    _aoqRequest = null;
+    _aoqBridge = null;
+    _offeredAOQ = false;
     voice = false;
     voiceStarting = false;
     muted = false;
@@ -379,6 +541,9 @@ final class Session extends ChangeNotifier {
     }
     _notify();
   }
+
+  Future<void> rejectHostData() =>
+      _fail(generation, 4006, 'Incompatible host data');
 
   Future<void> end() async {
     _requested = false;

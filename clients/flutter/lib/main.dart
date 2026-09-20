@@ -1,15 +1,8 @@
 import 'package:flutter/material.dart';
+import 'ui/app.dart';
+export 'ui/app.dart' show NovaApp;
 
-void main() => runApp(const NovaApp());
-
-class NovaApp extends StatelessWidget {
-  const NovaApp({super.key});
-  @override
-  Widget build(BuildContext context) => const MaterialApp(
-    home: Scaffold(
-      body: SafeArea(
-        child: Column(children: [Text('NOVA'), Text('Not connected')]),
-      ),
-    ),
-  );
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const NovaApp());
 }
