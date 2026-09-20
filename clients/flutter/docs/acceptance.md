@@ -1,6 +1,6 @@
 # Mobile acceptance evidence
 
-Android implementation/build/page checks are recorded below. iOS device, live-service and physical-audio gates remain open; this is not release acceptance.
+Android and iOS build/page checks are recorded below. Signed-device, live-service and physical-audio gates remain open; this is not release acceptance.
 
 Verified locally:
 - 57 Flutter tests, including shared protocol vectors, input/approval state,
@@ -16,8 +16,7 @@ Verified locally:
   mute pacing and the shared protocol fixture.
 
 Pending:
-- Full iOS device/AOQ build and physical-device acceptance (simulator has no
-  device-only AOQ binary).
+- Signed physical-device acceptance (simulator has no device-only AOQ binary).
 - Remaining source-to-screen visual differences and real-device navigation.
 - Physical relay/AOQ voice on iOS and Android; permission, interruptions, route
   changes, Bluetooth, speaker playback, reconnect and lifecycle acceptance.
@@ -70,3 +69,10 @@ passed on iPhone 15/iOS 17.5, including three native playback-only start/stop
 cycles and explicit disabled-button checks after approval expiry. Files are in
 `public-ios`. Flutter integration images capture the Flutter surface; original
 reference simctl images include system chrome. This is not pixel identity.
+
+The public iOS device-target debug build passed without signing
+on 2026-09-21. The public build took 89.7 seconds; its Runner.debug.dylib links
+@rpath/AoqClientSdk.framework/AoqClientSdk and the framework is bundled. This
+verifies compilation/packaging, not installation, live calls or acoustic AEC.
+The final public Android nine-scene run passed after the approval presentation
+fix; its production-entry APK was rebuilt successfully afterward.

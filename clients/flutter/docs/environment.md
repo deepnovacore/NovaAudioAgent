@@ -12,7 +12,7 @@ Full public Android debug APK built and launched on an API 36 arm64 emulator.
 The existing external AVD is used read-only; emulator results are not AEC proof.
 iOS 17.5 runtime is mounted read-only from the existing external DMG and the
 original SwiftUI app builds with the external acceptance Xcode copy. Flutter's
-asset compiler additionally requires 18.5, downloading to external storage.
+asset compiler additionally requires 18.5, now installed from external storage.
 CoreSimulator rejected creating a device set on external storage; an existing
 local iPhone simulator is used, without deleting or relocating user device data.
 
