@@ -1,6 +1,7 @@
+import {StreamingAsrClient} from './realtime/cascaded/streaming-asr.js'
 import {committedConversationPairsSchema} from './realtime/history.js'
 import {cascadedProviderRegistries,type CascadedProviderRegistries} from './composition/cascaded-realtime-assembly.js'
-import {CocktailAsrClient,BreezeTtsClient} from './realtime/cascaded/http-speech.js'
+import {BreezeTtsClient} from './realtime/cascaded/http-speech.js'
 import {requireSelectedCascadedLlmConfig,resolveEndpointingConfig} from './config/cascaded-realtime-config.js'
 import {requireSelectedCascadedRealtimeConfig} from './config/cascaded-realtime-config.js'
 import type {buildCascadedTextProvider} from './cascaded-text-provider.js'
@@ -27,7 +28,7 @@ export function buildCascadedVoiceProvider(options:ConversationVoiceProviderOpti
   return new CascadedRealtimeProvider({
     language:options.settings.language,
     endpointingFactory:registry.endpointing.auto({config:selected?.endpointing??resolveEndpointingConfig(options.settings),clock:options.clock}),
-    asrFactory:local?{openClient:()=>new CocktailAsrClient(local.asr)}:registry.asr.volcengine({config:selected!.asr,ids,...metering(selected!.asr.endpoint)}),
+    asrFactory:local?{openClient:()=>new StreamingAsrClient(local.asr)}:registry.asr.volcengine({config:selected!.asr,ids,...metering(selected!.asr.endpoint)}),
     ttsFactory:local?{openClient:()=>new BreezeTtsClient(local.tts)}:registry.tts.volcengine({config:selected!.tts,ids,...metering(selected!.tts.endpoint)}),
     llmFactory:{open:()=>llm.open(history===undefined?undefined:{history})},
     idFactory:options.idFactory,

@@ -43,7 +43,7 @@ try{
  for(let i=0;i<pcm.length;i+=3200){socket.send(pcm.subarray(i,i+3200));await delay(100)}
  for(let i=0;i<40;i++){socket.send(Buffer.alloc(3200));await delay(100)}
  await done;await delay(500)
- assert.ok(result.events.some(e=>e.type==='caption'&&e.role==='user'&&e.text.includes('AI')),'no user transcript')
+ assert.ok(result.events.some(e=>e.type==='caption'&&e.role==='user'&&e.text.includes(process.env.EXPECT_TEXT??'欢迎')),'no user transcript')
  assert.ok(result.events.some(e=>e.type==='caption'&&e.role==='assistant'&&e.final),'no final assistant caption')
  assert.ok(result.events.some(e=>e.type==='client.command_result'&&e.status==='applied'),'no control acknowledgement')
  result.passed=true

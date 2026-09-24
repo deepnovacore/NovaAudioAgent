@@ -35,9 +35,9 @@ case "$service" in
       --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 \
       --default-chat-template-kwargs '{"enable_thinking":false}' ;;
   asr)
-    export CUDA_VISIBLE_DEVICES="$(cuda_ordinal "$asr_gpu")" COCKTAIL_MODEL_PATH="$root/models/cocktail"
+    export CUDA_VISIBLE_DEVICES="$(cuda_ordinal "$asr_gpu")" WHISPER_MODEL_PATH="$root/models/whisper"
     verify_gpu "$asr_gpu" "$root/env-asr/bin/python"
-    exec "$root/env-asr/bin/python" -m uvicorn asr_server:app --app-dir "$root/repo/runtime/scripts/local-serving" --host 127.0.0.1 --port 18102 ;;
+    exec "$root/env-asr/bin/python" -m uvicorn whisper_server:app --app-dir "$root/repo/runtime/scripts/local-serving" --host 127.0.0.1 --port 18102 ;;
   tts)
     export CUDA_VISIBLE_DEVICES="$(cuda_ordinal "$llm_gpu")" PYTHONPATH="$root/breeze-src"
     verify_gpu "$llm_gpu" "$root/env-tts/bin/python"

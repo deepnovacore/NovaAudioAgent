@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {loadSettings, requirePersonalMemory} from '../dist/src/config/config.js'
 import {requireSelectedCascadedLlmConfig} from '../dist/src/config/cascaded-realtime-config.js'
-const profile = {llm:{baseUrl:'http://127.0.0.1:18101/v1',model:'Qwen/Qwen3.5-4B'},asr:{endpoint:'http://127.0.0.1:18102/v1/audio/transcriptions',referenceAudio:'/tmp/reference.wav'},tts:{endpoint:'http://127.0.0.1:18103/v1/audio/speech'},embedding:{baseUrl:'http://127.0.0.1:18104/v1',model:'Qwen/Qwen3-Embedding-0.6B'}}
+const profile = {llm:{baseUrl:'http://127.0.0.1:18101/v1',model:'Qwen/Qwen3.5-4B'},asr:{endpoint:'http://127.0.0.1:18102/v1/audio/stream'},tts:{endpoint:'http://127.0.0.1:18103/v1/audio/speech'},embedding:{baseUrl:'http://127.0.0.1:18104/v1',model:'Qwen/Qwen3-Embedding-0.6B'}}
 test('local serving routes conversation and memory without cloud credentials',()=>{
  const settings=loadSettings({NOVA_AUDIO_AGENT_LOCAL_SERVING:JSON.stringify(profile)})
  assert.equal(settings.pipeline_mode,'cascaded')
@@ -18,27 +18,11 @@ test('local serving rejects credential URLs and non-loopback plaintext',()=>{
  }
 })
 
-test('HTTP adapters preserve final ASR and streaming PCM across odd chunks',async()=>{
- const {CocktailAsrClient,BreezeTtsClient}=await import('../dist/src/realtime/cascaded/http-speech.js')
- const {mkdtemp,writeFile,rm}=await import('node:fs/promises')
- const path=await mkdtemp('/tmp/nova-speech-test-')
- try{
-  await writeFile(`${path}/reference.wav`,Buffer.alloc(48))
-  const asr=await new CocktailAsrClient({...profile.asr,referenceAudio:`${path}/reference.wav`,apiKey:'',fetch:async(_url,init)=>{
-   assert.equal(init.redirect,'error'); assert.ok(init.body.get('reference_audio'))
-   const wav=Buffer.from(await init.body.get('file').arrayBuffer()); assert.equal(wav.toString('ascii',0,4),'RIFF')
-   return Response.json({text:''})
-  }}).open()
-  const reading=Array.fromAsync(asr.events())
-  await asr.append(new Uint8Array(320));await asr.finish()
-  assert.deepEqual(await reading,[{text:'',final:true}]);await asr.close()
-  let calls=0
-  const tts=await new BreezeTtsClient({...profile.tts,instruction:'clear',apiKey:'',fetch:async()=>{
-   calls++;return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([1,2,3]));c.enqueue(new Uint8Array([4]));c.close()}}),{headers:{'content-type':'audio/pcm','x-sample-rate':'24000','x-sample-format':'s16le'}})
-  }}).open()
-  const audio=Array.fromAsync(tts.events());await tts.sendText('你好。');await tts.finish()
-  assert.deepEqual([...Buffer.concat((await audio).map(x=>Buffer.from(x.pcm)))],[1,2,3,4]);assert.equal(calls,1);await tts.close()
- }finally{await rm(path,{recursive:true,force:true})}
+test('TTS preserves streaming PCM across odd chunks',async()=>{
+ const {BreezeTtsClient}=await import('../dist/src/realtime/cascaded/http-speech.js')
+ const tts=await new BreezeTtsClient({...profile.tts,instruction:'clear',apiKey:'',fetch:async()=>new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([1,2,3]));c.enqueue(new Uint8Array([4]));c.close()}}),{headers:{'content-type':'audio/pcm','x-sample-rate':'24000','x-sample-format':'s16le'}})}).open()
+ const audio=Array.fromAsync(tts.events());await tts.sendText('你好。');await tts.finish()
+ assert.deepEqual([...Buffer.concat((await audio).map(x=>Buffer.from(x.pcm)))],[1,2,3,4]);await tts.close()
 })
 
 test('TTS cancellation aborts its active request and prevents queued speech',async()=>{
@@ -55,20 +39,30 @@ test('TTS cancellation aborts its active request and prevents queued speech',asy
  await assert.rejects(session.sendText('第三句。'));await session.close()
 })
 
-test('ASR finish submits without blocking the next speech admission',async()=>{
- const {CocktailAsrClient}=await import('../dist/src/realtime/cascaded/http-speech.js')
- const {mkdtemp,writeFile,rm}=await import('node:fs/promises')
- const path=await mkdtemp('/tmp/nova-asr-admission-')
- let release
- const pending=new Promise(resolve=>{release=resolve})
- let session
+test('streaming ASR emits partial before finish, final once, and rejects premature close',async()=>{
+ const {WebSocketServer}=await import('ws')
+ const {once}=await import('node:events')
+ const {StreamingAsrClient}=await import('../dist/src/realtime/cascaded/streaming-asr.js')
+ const server=new WebSocketServer({host:'127.0.0.1',port:0});await once(server,'listening')
+ let disconnect=false,busyOnce=true
+ server.on('connection',socket=>{
+  if(busyOnce){busyOnce=false;socket.close(1013);return}
+  socket.send(JSON.stringify({type:'ready',sampleRate:16000,format:'s16le'}))
+  socket.on('message',(data,binary)=>{
+   if(disconnect){socket.close();return}
+   if(binary)socket.send(JSON.stringify({text:'hello',final:false,replace:true}))
+   else if(data.toString()==='finish')setTimeout(()=>socket.send(JSON.stringify({text:'hello world',final:true,replace:true})),50)
+  })
+ })
+ const client=new StreamingAsrClient({endpoint:`http://127.0.0.1:${server.address().port}/v1/audio/stream`,apiKey:''})
  try{
-  await writeFile(`${path}/ref.wav`,Buffer.alloc(48))
-  session=await new CocktailAsrClient({...profile.asr,referenceAudio:`${path}/ref.wav`,apiKey:'',fetch:async()=>{await pending;return Response.json({text:'late'})}}).open()
-  await session.append(new Uint8Array(320))
-  const submitted=await Promise.race([session.finish().then(()=>true),new Promise(resolve=>setTimeout(()=>resolve(false),30))])
-  assert.equal(submitted,true,'finish must not wait for model inference')
- }finally{release();await session?.close();await rm(path,{recursive:true,force:true})}
+  const session=await client.open();const events=session.events()[Symbol.asyncIterator]()
+  await session.append(new Uint8Array(320));assert.equal((await events.next()).value.text,'hello')
+  await session.finish();assert.equal((await events.next()).value.final,true);assert.equal((await events.next()).done,true)
+  await session.close();disconnect=true
+  const failed=await client.open();const reading=Array.fromAsync(failed.events());void reading.catch(()=>{})
+  await failed.append(new Uint8Array(320));await assert.rejects(reading,/closed before final/);await failed.close()
+ }finally{for(const c of server.clients)c.terminate();await new Promise(resolve=>server.close(resolve))}
 })
 
 test('TTS tolerates brief upstream cancellation cleanup before the next request',async()=>{
@@ -92,7 +86,7 @@ test('stage metrics distinguish first transcript, endpoint latency and delivery 
  const {voiceMetrics}=await import('./local-serving/metrics.mjs')
  const events=[{kind:'user_speech_started',ms:100},{kind:'user_transcript_delta',ms:600,text:'hello'},{kind:'user_speech_ended',ms:1000},{kind:'user_transcript_final',ms:1100,text:'hello'},{kind:'response_audio_delta',ms:1500},{kind:'response_terminal',ms:2000,status:'completed'}]
  const telemetry=[{name:'cascaded.llm.requested',ms:1110},{name:'cascaded.llm.first_text',ms:1300},{name:'volcengine.tts.first_text',ms:1400}]
- const result=voiceMetrics(events,telemetry,48000,{startedMs:0,acousticEndMs:800})
+ const result=voiceMetrics(events,telemetry,48000,{startedMs:0,acousticStartMs:100,acousticEndMs:800,reference:'hello world'})
  assert.equal(result.speechStartToFirstTranscriptMs,500)
  assert.equal(result.endpointToFirstAudioMs,500)
  assert.equal(result.estimatedAcousticEndToFirstAudioMs,700)
@@ -100,4 +94,6 @@ test('stage metrics distinguish first transcript, endpoint latency and delivery 
  assert.equal(result.ttsDeliveryRtf,.6)
  assert.equal(result.llmCompletionMs,null)
  assert.equal(result.firstTranscriptBeforeEndpoint,true)
+ assert.equal(result.firstUsefulTranscriptFromSpeechEventMs,500)
+ assert.equal(result.finalTranscriptCount,1)
 })

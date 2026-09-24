@@ -72,7 +72,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     model: settings.pipeline_mode === 'cascaded'
       ? requireSelectedCascadedLlmConfig(settings).config.model
       : settings.integrated_provider === 'stepfun' ? settings.stepfun_realtime_model : settings.qwen_realtime_model,
-    asr: settings.local_serving ? 'cocktail-http' : settings.cascade_asr_provider, tts: settings.local_serving ? 'breeze-http' : settings.cascade_tts_provider,
+    asr: settings.local_serving ? 'whisper-stream' : settings.cascade_asr_provider, tts: settings.local_serving ? 'breeze-http' : settings.cascade_tts_provider,
     vision: settings.conversation_vision_enabled,
   })
   let publishExecutorApproval: (view: ExecutorApprovalView) => void = () => undefined

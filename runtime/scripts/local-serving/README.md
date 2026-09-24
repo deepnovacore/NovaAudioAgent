@@ -1,12 +1,11 @@
 # Local cascaded serving experiment
 
-> 2026-09-25: Cocktail has been retired at the user's request. The setup below is
-> a historical experiment; see [ASR replacement research](ASR-RESEARCH.md) for the
-> active Whisper investigation. No replacement has passed full Nova acceptance yet.
+> Cocktail is retired. ASR now uses a prewarmed CUDA faster-whisper service with
+> revisable WebSocket transcripts. See [measurements and limitations](ASR-RESEARCH.md).
 
 Based on `v0.3.0dev` at `d2b1bd8bd4ac70f48fe31ba364809241d08150a5`.
 Nova remains the Node/TypeScript conversation owner. ASR, LLM, TTS and embeddings
-are separate HTTP services; they may run on one host or behind separate TLS
+are separate HTTP/WebSocket services; they may run on one host or behind separate TLS
 endpoints/SSH tunnels. No model-specific SDK enters the conversation protocol.
 
 ## Hardware budget
@@ -14,7 +13,7 @@ endpoints/SSH tunnels. No model-specific SDK enters the conversation protocol.
 | Device | Services | Configuration |
 | --- | --- | --- |
 | First 24 GiB GPU | Qwen3.5-4B conversation + extraction; Breeze TTS 2 | vLLM 50% GPU memory, 8192 context, one sequence; Breeze partial graph decode |
-| Second 24 GiB GPU | Xiaomi CocktailASR-1 | BF16, one utterance at a time |
+| Second 24 GiB GPU | Whisper large-v3-turbo | FP16, one utterance at a time |
 | CPU | Qwen3-Embedding-0.6B, Nova, SQLite | 1024 dimensions, 4 Torch threads |
 
 These are two separate 24 GiB budgets, not a pooled 48 GiB allocation. Extraction
@@ -29,9 +28,8 @@ backends, quantization and a new full-process memory/quality acceptance run.
 
 ## Model sources and tested runtimes
 
-- [CocktailASR-1](https://huggingface.co/Ease3/Xiaomi-CocktailASR-1): local weights,
-  Torch 2.10.0+cu128, Transformers 4.51.3. Official demo source commit
-  `8729d3b8db1f2d9b8ac0266d713c0d06a88bff9a`.
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper): 1.2.1, CTranslate2 4.7.2;
+  multilingual large-v3-turbo, CUDA FP16, Silero VAD, startup warmup.
 - [Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B): vLLM 0.17.1,
   Torch 2.10.0+cu128. Text-only serving; thinking disabled for voice and extraction.
 - [Breeze TTS 2](https://github.com/breezeblue-ai/breeze-tts): source commit
@@ -41,7 +39,7 @@ backends, quantization and a new full-process memory/quality acceptance run.
   and releases admission on HTTP disconnect, including before the first byte.
   The model/output license is research/non-commercial; review it before product use.
 - [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B): CPU,
-  same isolated environment as Cocktail.
+  same environment as ASR.
 
 Download weights and dependencies before offline execution. Use separate Python
 environments for ASR/embedding and TTS. Do not upgrade a shared serving environment.
@@ -65,8 +63,8 @@ CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 python -m vllm.entrypoints.openai.api_se
   --default-chat-template-kwargs '{"enable_thinking":false}'
 
 # From this directory, with the ASR environment active.
-CUDA_VISIBLE_DEVICES=1 COCKTAIL_MODEL_PATH=/models/cocktail HF_HUB_OFFLINE=1 \
-  python -m uvicorn asr_server:app --host 127.0.0.1 --port 18102
+CUDA_VISIBLE_DEVICES=1 WHISPER_MODEL_PATH=/models/whisper HF_HUB_OFFLINE=1 \
+  python -m uvicorn whisper_server:app --host 127.0.0.1 --port 18102
 EMBEDDING_MODEL_PATH=/models/embedding HF_HUB_OFFLINE=1 \
   python -m uvicorn embedding_server:app --host 127.0.0.1 --port 18104
 
@@ -77,17 +75,23 @@ CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 python -m breeze_infer.api \
   --fast-backbone-decode --fast-depth-decoder
 ```
 
-Cocktail input is mono PCM16 WAV at 16 kHz, with a **1–4 second reference of the
-target speaker**. It is utterance-based, not streaming ASR. Reference bytes are
-uploaded by Nova; servers never resolve caller-provided file paths. Empty final
-transcripts produce no user turn or LLM request. Cancellation stops local delivery;
-Cocktail GPU work may finish the current bounded utterance before it accepts another.
+ASR uses `/v1/audio/stream`: wait for a JSON `ready` message, send binary mono
+16kHz PCM16 frames, then the text control `finish`. Responses are full hypotheses
+with `replace:true`; exactly one final ends a successful utterance. Input is
+bounded to 65s (including pre-roll around a 60s speech cap) and each frame to 64KB. Nova owns turn endpointing; internal VAD
+spans only separate decoding and language detection. Cancellation closes the socket;
+in-flight CUDA work completes before admission is released. The client retries
+explicit busy admission for up to about 1s. No target-speaker reference is needed.
+`ASR_MIN_SPEECH_SECONDS` (default .8) and `ASR_PARTIAL_INTERVAL_SECONDS` (default .2)
+control the latency/quality tradeoff. Partials remain provisional and can be wrong;
+only final text enters the LLM. Silence returns an empty final. Language-uncertain
+final spans fail explicitly instead of silently forcing a transcript.
 Breeze uses multipart text/instruction and returns streaming mono PCM16 at 24 kHz.
 
 ## Connect Nova
 
 Set `NOVA_AUDIO_AGENT_LOCAL_SERVING` to the JSON contents of `profile.example.json`
-(edit `referenceAudio` to an absolute local WAV path). The profile takes precedence
+The profile takes precedence
 over cloud model routing. It forces cascaded mode and disables conversation camera.
 An omitted `extraction` connection shares `llm`; `embedding` always has its own
 endpoint. For remote services, tunnel ports 18101–18104 to the Nova host or use HTTPS.
@@ -104,6 +108,8 @@ Build before testing (`npm run build --workspace @nova-audio-agent/runtime`).
 
 ```sh
 node --test runtime/scripts/local-serving.test.mjs
+# Directory contains the public clean-zh.wav and jfk.flac probes described in ASR-RESEARCH.md:
+python runtime/scripts/local-serving/live-whisper.py /path/to/asr-probes
 node runtime/scripts/local-serving/live-memory.mjs
 node runtime/scripts/local-serving/live-components.mjs /tmp/components-result.json
 node runtime/scripts/local-serving/live-voice.mjs /path/to/fixtures
@@ -111,7 +117,7 @@ node runtime/scripts/local-serving/live-voice.mjs /path/to/fixtures
 python runtime/scripts/local-serving/test_breeze_cancel.py
 ```
 
-The voice fixture directory must contain `reference.wav` (1–4 s) and `target.wav`
+The voice fixture directory must contain `target.wav`
 (mono PCM16, 16 kHz). The live voice test calls the production conversation voice
 assembly and its real endpointing path, replays input at microphone cadence, and
 writes `nova-reply.wav` and event evidence. It is not a real microphone/device test.
@@ -140,7 +146,7 @@ LLM/TTS share the first; embedding hides CUDA. Start LLM before TTS so vLLM memo
 profiling does not race TTS allocation. Wait for each `/health` to return 200.
 
 The root layout is `repo/` (Nova), `breeze-src/` (patched pinned upstream),
-`env-llm/`, `env-asr/`, `env-tts/`, and `models/{llm,cocktail,breeze,embedding}/`.
+`env-llm/`, `env-asr/`, `env-tts/`, and `models/{llm,whisper,breeze,embedding}/`.
 Existing read-only environments/weights may be symlinked into that layout.
 A process supervisor can run the same foreground commands; the script neither
 kills unrelated processes nor changes machine services.
@@ -172,3 +178,9 @@ SSH tunnels and remote model servers are separate processes, outside this sandbo
 This is a tested macOS experiment policy, not a portable production firewall.
 The test confirmed loopback HTTP succeeds, external TCP fails with `EPERM`, and
 the real Nova server can still complete an authenticated voice turn under this policy.
+
+Local `endpointing.maxSilenceMs` defaults to 1200ms for the LiveKit semantic
+extension branch (legacy non-local default remains 2500ms). Raise it for speakers
+with long within-sentence pauses. It is not a hard wall-clock response deadline;
+VAD and turn-detector processing add time. Runtime preserves low-VAD frames inside
+an active utterance so decoding does not lose quiet words or pause boundaries.

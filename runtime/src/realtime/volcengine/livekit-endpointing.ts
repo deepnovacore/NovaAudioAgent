@@ -12,7 +12,6 @@ import type {
 const SAMPLE_RATE = 16_000
 const BYTES_PER_SAMPLE = 2
 const FRAME_SAMPLES = 512
-const EXTENSION_SAMPLES = 2_500 * (SAMPLE_RATE / 1_000)
 const PREDICTION_TIMEOUT_SECONDS = 1.25
 const CLEANUP_TIMEOUT_MS = 1_000
 const TIMING_LIMITS = Object.freeze([
@@ -25,7 +24,7 @@ const TIMING_LIMITS = Object.freeze([
 
 export type LiveKitVolcEndpointingConfig = Pick<VolcengineRealtimeConfig,
   | 'vadThreshold' | 'vadPreRollMs' | 'vadMinSpeechMs' | 'vadSilenceEndMs'
-  | 'vadSpeechPadMs' | 'vadMaxUtteranceMs'>
+  | 'vadSpeechPadMs' | 'vadMaxUtteranceMs'> & {readonly maxSilenceMs?:number}
 
 export interface LiveKitVolcEndpointingOptions {
   readonly telemetry?: RealtimeTelemetry
@@ -284,7 +283,7 @@ export class LiveKitVolcEndpointing implements EndpointingPort {
       if (this.#expectsStartEvent(event) || this.#expectsEndEvent(event)) {
         epoch.pendingBoundaryPosition = position
       }
-      this.#inferenceDone(event, frameRange.start, position)
+      this.#inferenceDone(event, position)
     }
   }
 
@@ -293,13 +292,13 @@ export class LiveKitVolcEndpointing implements EndpointingPort {
     if (current === null) {
       const duration = samplesForMilliseconds(requiredMilliseconds(event.speechDuration))
       const firstSpeech = Math.max(frameStart, position - duration)
-      this.#events.push({kind: 'speech_start', pcm: this.#slice(frameStart, position)})
+      this.#emitAudio('speech_start', frameStart, position)
       this.#utterance = {phase: 'active', firstSpeech, outputCursor: position, lastSpeech: position}
       return
     }
     if (current.phase !== 'extension') return
     if (position > current.outputCursor) {
-      this.#events.push({kind: 'speech_audio', pcm: this.#slice(current.outputCursor, position)})
+      this.#emitAudio('speech_audio', current.outputCursor, position)
     }
     current.phase = 'active'
     current.outputCursor = position
@@ -307,13 +306,13 @@ export class LiveKitVolcEndpointing implements EndpointingPort {
     this.#forceAtCaps(position)
   }
 
-  #inferenceDone(event: PublicVadEvent, frameStart: number, position: number): void {
+  #inferenceDone(event: PublicVadEvent, position: number): void {
     const current = this.#utterance
     if (current === null) return
     if (!finiteProbability(event.probability)) throw new Error('invalid VAD probability')
     if (current.phase === 'active' && event.probability > this.#deactivationThreshold) {
-      const start = Math.max(current.outputCursor, frameStart)
-      if (position > start) this.#events.push({kind: 'speech_audio', pcm: this.#slice(start, position)})
+      // Preserve low-probability speech and pauses between accepted frames.
+      this.#emitAudio('speech_audio', current.outputCursor, position)
       current.outputCursor = Math.max(current.outputCursor, position)
       current.lastSpeech = position
     }
@@ -372,7 +371,7 @@ export class LiveKitVolcEndpointing implements EndpointingPort {
     if (current === null) return
     const maximumReached = position - current.firstSpeech >= this.#maximumUtteranceSamples
     const extensionReached = current.phase === 'extension'
-      && position - current.lastSpeech >= EXTENSION_SAMPLES
+      && position - current.lastSpeech >= samplesForMilliseconds(this.#config.maxSilenceMs ?? 2500)
     if (maximumReached || extensionReached) this.#commitEnd(position)
   }
 
@@ -381,7 +380,7 @@ export class LiveKitVolcEndpointing implements EndpointingPort {
     if (current === null) return
     const padEnd = Math.min(position, current.outputCursor + this.#speechPadSamples)
     if (padEnd > current.outputCursor) {
-      this.#events.push({kind: 'speech_audio', pcm: this.#slice(current.outputCursor, padEnd)})
+      this.#emitAudio('speech_audio', current.outputCursor, padEnd)
     }
     this.#events.push({kind: 'speech_end', commit: true})
     const preRollBytes = samplesForMilliseconds(this.#config.vadPreRollMs) * BYTES_PER_SAMPLE
@@ -390,6 +389,14 @@ export class LiveKitVolcEndpointing implements EndpointingPort {
     this.#utterance = null
     if (this.#epoch !== null) this.#epoch.rotateRequested = true
     this.#pruneRecords()
+  }
+
+  #emitAudio(kind: 'speech_start' | 'speech_audio', start: number, end: number): void {
+    // All paths (pre-roll, active speech, resumed pauses, tail) share the wire limit.
+    for (let offset = start; offset < end; offset += 32_000) {
+      this.#events.push({kind: offset === start ? kind : 'speech_audio',
+        pcm: this.#slice(offset, Math.min(end, offset + 32_000))})
+    }
   }
 
   #validateEventFrames(event: PublicVadEvent, position: number): {readonly start: number} {
@@ -588,6 +595,7 @@ class OwnedFrameProducer {
 }
 
 function validateConfig(config: LiveKitVolcEndpointingConfig): void {
+  if(config.maxSilenceMs!==undefined&&(!Number.isSafeInteger(config.maxSilenceMs)||config.maxSilenceMs<300||config.maxSilenceMs>2500))throw new ConfigurationError('invalid endpointing maxSilenceMs')
   if (!Number.isFinite(config.vadThreshold) || config.vadThreshold <= 0 || config.vadThreshold > 1) {
     throw new ConfigurationError(
       'invalid configuration: NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD',

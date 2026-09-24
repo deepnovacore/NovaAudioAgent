@@ -1,4 +1,5 @@
-import {CocktailAsrClient,BreezeTtsClient} from '../realtime/cascaded/http-speech.js'
+import {StreamingAsrClient} from '../realtime/cascaded/streaming-asr.js'
+import {BreezeTtsClient} from '../realtime/cascaded/http-speech.js'
 import {resolveEndpointingConfig} from '../config/cascaded-realtime-config.js'
 import {resolveCascadedSelection} from '../config/config.js'
 import type {CommittedConversationPair} from '../realtime/history.js'
@@ -270,7 +271,7 @@ export function buildTextRealtimeAssembly(
   }),{
     transcribeDraft:(pcm:Uint8Array,signal:AbortSignal)=>{
       signal.throwIfAborted()
-      if(options.settings.local_serving)return transcribeDraft(new CocktailAsrClient(options.settings.local_serving.asr),pcm,signal)
+      if(options.settings.local_serving)return transcribeDraft(new StreamingAsrClient(options.settings.local_serving.asr),pcm,signal)
       const config=requireSelectedCascadedAsrConfig(options.settings)
       const factory=registry.asr.volcengine({config,ids,...(options.asrClient===undefined?{}:{clientFactory:options.asrClient}),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,config.endpoint)!})})
       return transcribeDraft(factory.openClient(),pcm,signal)
@@ -312,7 +313,7 @@ export function buildCascadedRealtimeAssembly(
       : {capability: options.endpointingCapability}),
     ...(options.liveKitExecutor === undefined ? {} : {liveKitExecutor: options.liveKitExecutor}),
   })
-  const asrFactory:AsrFactory = local ? {openClient:()=>new CocktailAsrClient(local.asr)} : registry.asr[selection.asrProvider]({
+  const asrFactory:AsrFactory = local ? {openClient:()=>new StreamingAsrClient(local.asr)} : registry.asr[selection.asrProvider]({
     ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected!.asr.endpoint)!}),
     config: selected!.asr,
     ids,

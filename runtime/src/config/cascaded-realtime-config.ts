@@ -13,6 +13,7 @@ import {stripLikePython} from '../text/python-text.js'
 export {DASHSCOPE_COMPATIBLE_BASE_URL} from './config.js'
 
 export interface AutoEndpointingConfig {
+  readonly maxSilenceMs?: number
   readonly vadThreshold: number
   readonly vadPreRollMs: number
   readonly vadMinSpeechMs: number
@@ -119,6 +120,7 @@ export function resolveEndpointingConfig(settings: Settings): AutoEndpointingCon
     throw new ConfigurationError('火山 VAD max utterance 不能短于 min speech')
   }
   return Object.freeze({
+    ...(settings.local_serving?{maxSilenceMs:settings.local_serving.endpointing.maxSilenceMs}:{}),
     vadThreshold: settings.volcengine_vad_threshold,
     vadPreRollMs: settings.volcengine_vad_pre_roll_ms,
     vadMinSpeechMs: settings.volcengine_vad_min_speech_ms,

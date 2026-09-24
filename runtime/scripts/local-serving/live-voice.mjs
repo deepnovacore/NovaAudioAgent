@@ -11,8 +11,8 @@ import {RealClock} from '../../dist/src/core/clock.js'
 const directory=process.argv[2]
 if(!directory)throw Error('Usage: node live-voice.mjs <fixture/output-directory>')
 await mkdir(directory,{recursive:true})
-const profile={llm:{baseUrl:'http://127.0.0.1:18101/v1',model:'Qwen/Qwen3.5-4B'},asr:{endpoint:'http://127.0.0.1:18102/v1/audio/transcriptions',referenceAudio:join(directory,'reference.wav')},tts:{endpoint:'http://127.0.0.1:18103/v1/audio/speech'},embedding:{baseUrl:'http://127.0.0.1:18104/v1',model:'Qwen/Qwen3-Embedding-0.6B'}}
-const settings=loadSettings({NOVA_AUDIO_AGENT_LOCAL_SERVING:JSON.stringify(profile),NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS:'1500'})
+const profile={llm:{baseUrl:'http://127.0.0.1:18101/v1',model:'Qwen/Qwen3.5-4B'},asr:{endpoint:'http://127.0.0.1:18102/v1/audio/stream'},tts:{endpoint:'http://127.0.0.1:18103/v1/audio/speech'},embedding:{baseUrl:'http://127.0.0.1:18104/v1',model:'Qwen/Qwen3-Embedding-0.6B'}}
+const settings=loadSettings({NOVA_AUDIO_AGENT_LOCAL_SERVING:JSON.stringify(profile),NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS:process.env.ENDPOINT_SILENCE_MS??'600'})
 const telemetry=[],events=[],audio=[],input={}
 let telemetryStart=performance.now()
 const provider=buildConversationVoiceProvider({settings,clock:new RealClock(),idFactory:randomUUID,telemetry:{record:(name,fields)=>(telemetry.push({name,fields,ms:Math.round(performance.now()-telemetryStart)}),name.includes('capability')&&console.error(name,JSON.stringify(fields)))}})
@@ -37,14 +37,14 @@ try{
   }
  })();void reader.catch(()=>{})
  const pcm=dataChunk(await readFile(join(directory,'target.wav')))
- input.startedMs=stamp();const bounds=acousticBounds(pcm);input.acousticEndMs=bounds.endMs===null?null:input.startedMs+bounds.endMs
+ input.reference=process.env.REFERENCE_TEXT;input.startedMs=stamp();const bounds=acousticBounds(pcm);input.acousticStartMs=bounds.startMs===null?null:input.startedMs+bounds.startMs;input.acousticEndMs=bounds.endMs===null?null:input.startedMs+bounds.endMs
  const feedStart=performance.now()
  for(let i=0;i<pcm.length;i+=640){await provider.sendAudio(pcm.subarray(i,i+640),signal);await delay(Math.max(0,feedStart+(i+640)/32-performance.now()))}
  for(let i=0;i<40;i++){await provider.sendAudio(new Uint8Array(3200),signal);await delay(100)}
  await reader
  signal.throwIfAborted()
  assert.ok(events.some(e=>e.kind==='response_terminal'&&e.status==='completed'),'no completed response terminal')
- assert.ok(events.some(e=>e.kind==='user_transcript_final'&&e.text?.includes('AI')),'missing real ASR transcript')
+ assert.ok(events.some(e=>e.kind==='user_transcript_final'&&e.text?.includes(process.env.EXPECT_TEXT??'欢迎')),'missing real ASR transcript')
  assert.ok(audio.length,'missing synthesized speech')
  const metrics=voiceMetrics(events,telemetry,Buffer.concat(audio).length,input)
  if(process.env.REQUIRE_STREAMING==='1'){

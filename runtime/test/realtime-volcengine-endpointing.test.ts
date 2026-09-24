@@ -613,6 +613,38 @@ test('unlikely EOT extension is forced once on the first frame at or after 2.5 s
   await endpointing.close()
 })
 
+test('configured local EOT cap commits within 1.2 seconds', async () => {
+  const active = pcmWindow(40)
+  const quiet = pcmWindow(0)
+  const {surface} = fakeSurface((frame, number, allFrames) => {
+    const samplesIndex = number * FRAME_SAMPLES
+    if (number === 1 && frame.data[0] === 40) return [
+      inference(frame, samplesIndex, 0.9),
+      {...inference(frame, samplesIndex, 0.9), type: TYPES.START_OF_SPEECH,
+        speechDuration: 32, speaking: true},
+    ]
+    if (number === 2 && frame.data[0] === 0) return [
+      inference(frame, samplesIndex, 0.1),
+      {...inference(frame, samplesIndex, 0.1), type: TYPES.END_OF_SPEECH,
+        frames: allFrames, speechDuration: 32, silenceDuration: 32, speaking: false},
+    ]
+    return [inference(frame, samplesIndex, 0.1)]
+  }, [0.1])
+  const endpointing = new LiveKitVolcEndpointing({surface, executor, config: config({maxSilenceMs:1200})})
+  const events = []
+  events.push(...await endpointing.feed(active, new AbortController().signal))
+  for (let index = 0; index < 38; index += 1) {
+    const batch = await endpointing.feed(quiet, new AbortController().signal)
+    events.push(...batch)
+    if (batch.some(event => event.kind === 'speech_end')) break
+  }
+  assert.equal(events.filter(event => event.kind === 'speech_end').length, 1)
+  assert.deepEqual(events.at(-1), {kind: 'speech_end', commit: true})
+  assert.equal(events.find(event => event.kind === 'speech_audio')?.kind === 'speech_audio'
+    ? events.find(event => event.kind === 'speech_audio')!.pcm.byteLength : -1, 960)
+  await endpointing.close()
+})
+
 test('configured maximum utterance forces one end at the first complete frame after 15 seconds',
   async () => {
     const active = pcmWindow(50)
@@ -1046,3 +1078,46 @@ test('real Task7B adapter preserves endpoint start/audio/end, ASR, and transcrip
       await endpointing.close()
     }
   })
+
+
+for (const gapFrames of [1, 100]) test(`resumed speech preserves ${gapFrames} low-VAD frames in bounded messages`, async () => {
+  const {surface} = fakeSurface((frame, number) => {
+    const event = inference(frame, number * FRAME_SAMPLES, number > 1 && number <= gapFrames + 1 ? 0.1 : 0.9)
+    return number === 1 ? [event, {...event, type: TYPES.START_OF_SPEECH,
+      speechDuration: 32, speaking: true}] : [event]
+  })
+  const endpointing = new LiveKitVolcEndpointing({surface, executor, config: config()})
+  try {
+    const signal = new AbortController().signal
+    await endpointing.feed(pcmWindow(100), signal)
+    for(let i=0;i<gapFrames;i++) await endpointing.feed(pcmWindow(200), signal)
+    const events = await endpointing.feed(pcmWindow(300), signal)
+    const chunks = events.flatMap(event => event.kind === 'speech_audio' ? [event.pcm] : [])
+    assert.ok(chunks.every(chunk => chunk.length <= 64000))
+    const audio = concat(...chunks)
+    assert.equal(countSample(audio, 200), FRAME_SAMPLES * gapFrames, 'low VAD probability must not cut words or pause boundaries')
+    assert.equal(countSample(audio, 300), FRAME_SAMPLES)
+  } finally { await endpointing.close() }
+})
+
+for (const mode of ['initial', 'resume']) test(`large ${mode} audio is split without losing samples`, async () => {
+  const {surface} = fakeSurface((frame, number, allFrames) => {
+    const event = inference(frame, number * FRAME_SAMPLES, .1)
+    if (mode === 'resume' && number === 1) return [{...event, probability:.9,
+      type:TYPES.START_OF_SPEECH, speechDuration:32, speaking:true}]
+    if (mode === 'resume' && number === 2) return [{...event,
+      type:TYPES.END_OF_SPEECH, frames:allFrames, speechDuration:32, silenceDuration:32, speaking:false}]
+    if (number === 66) return [{...event, probability:.9, type:TYPES.START_OF_SPEECH,
+      frames:allFrames, speechDuration:32, speaking:true}]
+    return [event]
+  }, [.1])
+  const endpointing = new LiveKitVolcEndpointing({surface,executor,config:config({vadPreRollMs:2000,vadMinSpeechMs:100})})
+  try {
+    const events=[]
+    for(let i=0;i<66;i++) events.push(...await endpointing.feed(pcmWindow(123),new AbortController().signal))
+    const chunks=events.flatMap(e=>e.kind==='speech_start'||e.kind==='speech_audio'?[e.pcm]:[])
+    assert.ok(chunks.length>1)
+    assert.ok(chunks.every(c=>c.length<=64000))
+    assert.equal(countSample(concat(...chunks),123),66*FRAME_SAMPLES)
+  }finally{await endpointing.close()}
+})

@@ -12,7 +12,8 @@ export const servingEndpoint = z.string().max(2048).refine(value => {
 const connection = z.object({baseUrl: servingEndpoint, model: z.string().min(1).max(256), apiKey: z.string().min(1).max(4096).default('local')}).strict()
 export const localServingSchema = z.object({
   llm: connection,
-  asr: z.object({endpoint: servingEndpoint, referenceAudio: z.string().min(1).max(4096), apiKey: z.string().max(4096).default('')} ).strict(),
+  endpointing: z.object({maxSilenceMs:z.number().int().min(300).max(2500).default(1200)}).strict().default({maxSilenceMs:1200}),
+  asr: z.object({endpoint: servingEndpoint, apiKey: z.string().max(4096).default('')} ).strict(),
   tts: z.object({endpoint: servingEndpoint, instruction: z.string().max(2000).default('自然、清晰的中文语音'), apiKey: z.string().max(4096).default('')} ).strict(),
   extraction: connection.optional(),
   embedding: connection.extend({dimensions:z.number().int().min(1).max(4096).default(1024)}),
