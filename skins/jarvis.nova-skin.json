@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "id": "jarvis",
+  "name": "Jarvis · Particle Core",
+  "renderer": "particle-core",
+  "color": "#5cddff",
+  "accent": "#dcc399",
+  "particleCount": 480,
+  "rotationSpeed": 0.17
+}

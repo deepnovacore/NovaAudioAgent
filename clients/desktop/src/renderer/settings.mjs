@@ -1,3 +1,4 @@
+import {createSkinPanel} from './skin-panel.mjs'
 import {t} from './locale.mjs'
 import {localizeDocument} from './locale.mjs'
 localizeDocument(document)
@@ -116,6 +117,8 @@ const clarificationDepth = document.querySelector('#clarificationDepth')
 
 const categoryButtons = SETTINGS_CATEGORIES.map(category => document.querySelector(`#category-${category.id}`))
 let activeCategory = SETTINGS_CATEGORIES[0].id
+const skinPanel = createSkinPanel({document, stage: patch => controller.stage(patch), discard: () => controller.discardFields(['skinId', 'importedSkins'])})
+window.addEventListener('beforeunload', () => skinPanel.destroy(), {once: true})
 const phonePanel = createPhonePanel({document, api, save: saveAll})
 
 // Sections are addressed by id from the category table rather than by a markup
@@ -345,6 +348,7 @@ function render(view, _drafts, state) {
   if (!view) return
   document.getElementById('language').value = view.language ?? 'zh-CN'
   currentView = view
+  skinPanel.render(view, state)
   renderUsage()
   renderVision(view)
   capabilityEditor.render(view)

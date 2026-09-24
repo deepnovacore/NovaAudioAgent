@@ -26,6 +26,22 @@
       <button type="button" class="nav-item" id="category-codex" data-category="codex" aria-current="false" tabindex="-1">编程</button>
     </nav>
     <main>
+      <section class="setting-section" id="orb-skin-section">
+        <h2>悬浮球皮肤</h2>
+        <div class="skin-layout">
+          <canvas id="orb-skin-preview" width="116" height="116" role="img" aria-label="所选皮肤静态预览"></canvas>
+          <div class="skin-controls">
+            <label for="orb-skin">当前皮肤</label>
+            <select id="orb-skin"><option value="nova">Nova</option></select>
+            <label for="orb-skin-file">导入皮肤</label>
+            <input id="orb-skin-file" type="file" accept=".json,application/json">
+            <button type="button" id="orb-skin-remove" disabled>移除所选皮肤</button>
+            <button type="button" id="orb-skin-discard">放弃皮肤修改</button>
+          </div>
+        </div>
+        <p class="hint">选择或导入后点击保存，即时应用外观；放弃修改可恢复。支持 Nova JSON 皮肤包。</p>
+        <p id="orb-skin-status" role="status" aria-live="polite"></p>
+      </section>
       <section class="setting-section" id="language-section">
         <h2>语言 / Language</h2>
         <label for="language">语言 / Language</label>

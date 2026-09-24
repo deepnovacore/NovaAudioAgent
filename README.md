@@ -14,6 +14,8 @@
 > **An always-on voice agent with restrained proactivity and the capability of workspace management.**
 
 
+> **Branch preview — Nova Visor:** [Approved transparent desktop HUD concept and demo goals](docs/DESKTOP_VISOR_DEMO.md). A Jarvis-style interactive desktop layer that keeps normal apps visible and usable. Static concept only; the desktop overlay is not implemented yet.
+
 ## News
 
 - **2026-09-24 · 🎉 [v0.2.3 Released!](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — A guided first run: one DashScope API Key is enough to start talking, a setup window tests the key before saving, and search, camera and memory switch themselves on once their key is present.

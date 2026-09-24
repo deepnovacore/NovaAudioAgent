@@ -73,6 +73,7 @@ async function mountSettingsPanel(initialView, apiOverrides = {}) {
   let push
   runInNewContext(script.replace(/^import[\s\S]*?from '[^']+'\n/gm, ''), {
     t, localizeDocument, createPhonePanel, ...settingsController, ...settingsCategories, ...voiceChoice, createSecretRevisions, frontendUsageText, renderFrontendUsage,
+    createSkinPanel: () => ({render() {}, destroy() {}}),
     createCapabilitiesEditor: () => ({render() {}}),
     createKnowledgePanel: () => ({render() {}}),
     document: {
@@ -80,7 +81,7 @@ async function mountSettingsPanel(initialView, apiOverrides = {}) {
       querySelector: node, querySelectorAll: () => [], getElementById: id => node(`#${id}`),
       createElement: () => ({children: [], append(...items) {this.children.push(...items)}}), addEventListener() {},
     },
-    window: {novaAudioAgentDesktop: {settings: {
+    window: {addEventListener() {}, novaAudioAgentDesktop: {settings: {
       phoneAction: async () => ({state: 'idle'}), get: async () => initialView, onChanged: listener => { push = listener }, ...apiOverrides,
     }}},
   })

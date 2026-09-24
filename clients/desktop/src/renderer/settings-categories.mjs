@@ -5,7 +5,7 @@ import {t} from './locale.mjs'
 // text that additive attributes would disturb.
 export const SETTINGS_CATEGORIES = Object.freeze([
   Object.freeze({id: 'general', label: t("通用"), sections: Object.freeze([
-    'language-section', 'wake-word-section', 'notifications-section',
+    'language-section', 'orb-skin-section', 'wake-word-section', 'notifications-section',
     'intent-section', 'proactivity-section',
   ])}),
   Object.freeze({id: 'usage', label: t("用量"), sections: Object.freeze(['frontend-usage-section'])}),

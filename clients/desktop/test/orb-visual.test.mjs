@@ -1097,8 +1097,8 @@ test('the renderer feeds the visual from the same render pass as data-state', as
 
   // Construction goes through the guarded factory: a canvas that cannot be
   // acquired must not take the socket, drag, and label wiring down with it.
-  assert.match(source, /import \{ createOrbVisualSafe \} from '\.\/orb-visual\.mjs'/)
-  assert.match(source, /const visual = createOrbVisualSafe\(/)
+  assert.match(source, /import \{ createSkinVisual \} from '\.\/orb-skin-visual\.mjs'/)
+  assert.match(source, /const visual = createSkinVisual\(/)
   assert.doesNotMatch(source, /[^e]createOrbVisual\(/, 'never the unguarded factory')
   assert.match(source, /prefers-reduced-motion: reduce/)
   assert.match(source, /prefers-contrast: more/)
@@ -1118,11 +1118,11 @@ test('the renderer applies the bootstrap palette and future settings pushes', as
   assert.match(source, /palette: 'ember',/)
   // Once bootstrap resolves, the palette it carries (if any) is applied live;
   // optional chaining keeps this a no-op today instead of a throw.
-  assert.match(source, /paletteHover\.reset\(bootstrap\.settings\?\.palette\)/)
+  assert.match(source, /applySkin\(bootstrap\.settings\)/)
   // Future live pushes swap the palette the same way, guarded the same way.
   assert.match(
     source,
-    /window\.novaAudioAgentDesktop\.settings\?\.onChanged\?\.\(next => \{\s*paletteHover\.reset\(next\.palette\)/,
+    /window\.novaAudioAgentDesktop\.settings\?\.onChanged\?\.\(next => \{\s*applySkin\(next\)/,
   )
 })
 
@@ -1133,7 +1133,7 @@ test('the renderer wires long-hover palette touring and live accessibility prefe
   assert.match(source, /transition: \(palette, options\) => visual\.transitionPalette\(palette, options\)/)
   assert.match(source, /orb\.addEventListener\('pointerenter', \(\) => paletteHover\.enter\(\)\)/)
   assert.match(source, /orb\.addEventListener\('pointerleave', \(\) => paletteHover\.leave\(\)\)/)
-  assert.match(source, /paletteHover\.setDisabled\(reducedMotionQuery\.matches \|\| highContrastQuery\.matches\)/)
+  assert.match(source, /paletteHover\.setDisabled\(customSkinActive \|\| reducedMotionQuery\.matches \|\| highContrastQuery\.matches\)/)
   assert.match(source, /paletteHover\.destroy\(\)/)
 })
 

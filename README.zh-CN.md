@@ -16,6 +16,8 @@
 
 https://github.com/user-attachments/assets/061697f3-fff6-47d6-924b-8a29eef4ab45
 
+> **分支预览 · Nova Visor：** [已选定的透明桌面 HUD 效果与 Demo 目标](docs/DESKTOP_VISOR_DEMO.md)。面向“可交互桌面壁纸”的 Jarvis 体验，保留正常电脑操作。当前为静态概念展示，桌面叠加层尚未实现。
+
 ## News
 
 - **2026-09-24 · 🎉 [v0.2.3 已发布！](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — 首次启动更顺手：只要一个 DashScope API Key 就能开始对话，设置窗口会先测试密钥再保存；搜索、摄像头与记忆在配好对应密钥后自动启用。

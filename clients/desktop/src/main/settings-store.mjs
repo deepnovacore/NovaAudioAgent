@@ -1,3 +1,4 @@
+import {normalizeSkinSettings} from '../renderer/orb-skins.mjs'
 import {preferredLanguage} from '../renderer/locale.mjs'
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
@@ -39,6 +40,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   version: SETTINGS_VERSION,
   language: 'zh-CN',
   palette: 'ember',
+  skinId: 'nova',
+  importedSkins: Object.freeze([]),
   proactivity: 'balanced',
   codingProgressNarration: 'smart',
   codexHeartbeatSeconds: 30,
@@ -245,6 +248,7 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
     : typeof rawVersion === 'number' && rawVersion >= SETTINGS_VERSION
   return {
     version: SETTINGS_VERSION,
+    ...normalizeSkinSettings(source, fallback),
     language: pick(source.language, fallback.language, DEFAULT_SETTINGS.language, value => ['zh-CN', 'en'].includes(value) ? value : null),
     palette: pick(source.palette, fallback.palette, DEFAULT_SETTINGS.palette, validPalette),
     codingProgressNarration: pick(source.codingProgressNarration, fallback.codingProgressNarration, DEFAULT_SETTINGS.codingProgressNarration, value => value === 'smart' || value === 'continuous' ? value : null),
@@ -300,7 +304,7 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
 }
 
 export function backendSettings(settings) {
-  const {palette, wakeWordEnabled, autoHideSeconds, codingProgressNarration, phoneConnectionEnabled, phoneServerPort, phoneServerTokenFile, phoneServerUrl, ...backend} = normalizeSettings(settings)
+  const {skinId, importedSkins, palette, wakeWordEnabled, autoHideSeconds, codingProgressNarration, phoneConnectionEnabled, phoneServerPort, phoneServerTokenFile, phoneServerUrl, ...backend} = normalizeSettings(settings)
   return backend
 }
 
@@ -312,6 +316,8 @@ export function publicSettings(settings) {
     version: normalized.version,
     language: normalized.language,
     palette: normalized.palette,
+    skinId: normalized.skinId,
+    importedSkins: normalized.importedSkins,
     proactivity: normalized.proactivity,
     codingProgressNarration: normalized.codingProgressNarration,
     codexHeartbeatSeconds: normalized.codexHeartbeatSeconds,
@@ -360,6 +366,8 @@ export function orbSettings(settings) {
     codingProgressNarration: normalized.codingProgressNarration,
     language: normalized.language,
     palette: normalized.palette,
+    skinId: normalized.skinId,
+    importedSkins: normalized.importedSkins,
     conversationVisionEnabled: normalized.conversationVisionEnabled,
     startListeningOnLaunch: normalized.startListeningOnLaunch,
     wakeWordEnabled: normalized.wakeWordEnabled,
