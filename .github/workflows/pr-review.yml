@@ -22,7 +22,7 @@ jobs:
     # Opt in only after creating a dedicated, capped OpenRouter key.
     if: vars.PR_REVIEW_ENABLED == 'true' && github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read
@@ -62,27 +62,49 @@ jobs:
           test "$(git rev-parse refs/remotes/origin/review-head)" = "$REVIEW_HEAD"
           git -c core.hooksPath=/dev/null fetch --no-tags origin "$REVIEW_BASE"
           git cat-file -e "$REVIEW_BASE^{commit}"
-          mkdir -p "$RUNNER_TEMP/nova-review-codex"
-          cp .github/codex/config.toml "$RUNNER_TEMP/nova-review-codex/config.toml"
           {
             cat .github/codex/review.md
             printf '\nPR number: %s\nBASE_SHA: %s\nHEAD_SHA: %s\nRepository: %s\n' \
               "$REVIEW_NUMBER" "$REVIEW_BASE" "$REVIEW_HEAD" "$GITHUB_REPOSITORY"
           } > "$RUNNER_TEMP/nova-review-prompt.md"
+      - name: Prepare an isolated review user without changing runner services
+        if: steps.prepare.outputs.run == 'true'
+        run: |
+          sudo useradd --create-home --user-group --shell /bin/bash nova-review
+          sudo chmod 755 /home/nova-review
+          sudo install -d -o nova-review -g nova-review -m 755 /home/nova-review/.codex
+          sudo install -o root -g root -m 644 .github/codex/config.toml /home/nova-review/.codex/config.toml
+          # The proxy starts as runner; the action locks this file before Codex starts.
+          sudo touch "/home/nova-review/.codex/$GITHUB_RUN_ID.json"
+          sudo chmod 666 "/home/nova-review/.codex/$GITHUB_RUN_ID.json"
+          # Only the public checkout is shared; ancestor directories need traversal only.
+          chmod -R a+rX "$GITHUB_WORKSPACE"
+          chmod o+x /home/runner "$GITHUB_WORKSPACE/.." "$GITHUB_WORKSPACE/../.."
+          sudo -u nova-review git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(id -Gn nova-review)" = nova-review
+          sudo -u nova-review test -r "$GITHUB_WORKSPACE/.git/HEAD"
+          if sudo -u nova-review sudo -n true 2>/dev/null || sudo -u nova-review test -w "$GITHUB_WORKSPACE"; then
+            echo 'Review user must have neither sudo nor checkout write access.' >&2
+            exit 1
+          fi
       - name: Review diff and its wider impact through OpenRouter
         if: steps.prepare.outputs.run == 'true'
         id: codex
-        timeout-minutes: 45
-        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e
+        timeout-minutes: 15
+        # Temporary pin to the stdio lifecycle fix in openai/codex-action#151.
+        # Do not recover output from failed runs.
+        uses: openai/codex-action@f93255fd2e5a17a0b4bd557599535e80c8607537
         with:
           codex-version: '0.156.1'
           openai-api-key: ${{ secrets.OPENROUTER_API_KEY }}
           responses-api-endpoint: https://openrouter.ai/api/v1/responses
           model: ${{ fromJSON(steps.prepare.outputs.result).model }}
           effort: medium
-          safety-strategy: drop-sudo
+          safety-strategy: unprivileged-user
+          codex-user: nova-review
           permission-profile: ':read-only'
-          codex-home: ${{ runner.temp }}/nova-review-codex
+          # Match sudo's default HOME instead of relying on preserved CODEX_HOME.
+          codex-home: /home/nova-review/.codex
           prompt-file: ${{ runner.temp }}/nova-review-prompt.md
           codex-args: '["--ephemeral"]'
 

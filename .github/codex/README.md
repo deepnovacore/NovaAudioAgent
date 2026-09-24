@@ -51,7 +51,7 @@ whole-repository audit, automatic approval or merge gate.
 - One agent run produces both sections. New PR revisions cancel older runs;
   successful base/head/model combinations are deduplicated using the bot comment.
   Delete that comment to deliberately review the same revision/model again.
-- The review step has a 45-minute timeout, the job 60 minutes. The prompt asks
+- The review step has a 15-minute timeout, the job 20 minutes. The prompt asks
   for about 20 inspection commands and at most three distinct root-cause findings.
   These are time/prompt controls, **not a per-run dollar or token cap**.
   Codex/provider retries and repeated context can still incur additional usage.
@@ -75,7 +75,9 @@ whole-repository audit, automatic approval or merge gate.
 Executable scripts, prompts and configuration come from the workflow revision.
 PR commits are fetched as Git objects but never checked out; Codex inspects them
 using `git diff`, `git show` and `git grep`. The agent runs with read-only
-permissions and `drop-sudo` on a disposable GitHub runner. It has no GitHub write
+permissions as a dedicated `nova-review` user without sudo or checkout write
+access on a disposable GitHub runner. The user has a separate UID and primary
+group from the runner and API proxy; host service socket permissions are not changed. It has no GitHub write
 token. A separate publishing job validates the current base/head and updates
 only this workflow's bot comment; model text is passed as data, never shell/JS.
 PR code and instructions remain untrusted. Only public PR code is sent to
@@ -114,3 +116,37 @@ These samples do not establish general model accuracy.
 评审测试；显式配置上下文大小，不直接假设完整的模型窗口。
 fork 的真实 GitHub Linux runner 验证还覆盖了发现故意引入的发布 URL 错误，
 以及修复后更新同一条评论（见上方验证 PR）。这些样例不代表模型的一般准确率。
+
+## Action exit fix / Action 退出修复
+
+The action is temporarily pinned to commit
+`f93255fd2e5a17a0b4bd557599535e80c8607537` from the **unmerged** upstream
+[PR #151](https://github.com/openai/codex-action/pull/151). Its private stdout/stderr
+pipes prevent surviving Codex descendants from holding the runner's log transport
+open after the direct process exits. It retains live log forwarding, bounds the
+final log drain, and leaves the action’s privilege-isolation implementations unchanged.
+The CLI stays pinned to `0.156.1` and `:read-only` remains enabled.
+
+Use the supported `unprivileged-user` strategy with a dedicated account instead
+of `drop-sudo`, which mutates runner sudo/group/service-socket permissions.
+[Upstream issue #160](https://github.com/openai/codex-action/issues/160) reports
+host-service disruption in that path. Our fork run with the dedicated account
+confirmed that the step timeout, cleanup, and log upload work; this does not by
+itself prove which host mutation caused the original hangs. The trusted config
+lives in the review account's default home because sudo can reset `CODEX_HOME`.
+The account cannot write the public checkout or use sudo, and has no API key or
+GitHub write token. This is a different supported isolation strategy, not the
+same `drop-sudo` privilege chain.
+
+This is a reviewed source commit, **not an upstream release**. Replace it with a
+pinned upstream release containing the fix after repeating the regression and
+fork checks. Keep the job timeout as the backstop; increasing it does not repair
+an output-stream hang. Publishing still requires a successful review job and a
+nonempty final message; a written file alone does not turn failure into success.
+
+暂时固定到上游尚未合并的 PR #151 提交，并非正式发布版。修复隔离了输出管道，
+避免残留子进程阻止 runner 收尾。另改用独立 UID、独立主组、无 sudo 的审查用户，
+避免修改 runner 的宿主服务权限；保留只读沙箱、CLI 版本与独立发布检查。
+可信配置放在审查用户默认 home，不依赖 sudo 保留环境变量。
+上游发布包含该修复的版本后，应重跑回归及 fork 验证再更新固定提交。
+job 的 20 分钟上限仍是最后保障；不从失败或取消的运行中自动发布结果。
