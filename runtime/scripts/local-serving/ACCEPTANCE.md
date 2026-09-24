@@ -8,12 +8,14 @@ is not real-microphone/device acceptance and does not establish app-wide no-egre
 
 | Physical GPU | Processes | Highest sampled total |
 | --- | --- | ---: |
-| GPU2 | Qwen3.5-4B vLLM + Breeze TTS 2 | 21,910 MiB (21.40 GiB) |
+| GPU2 | Qwen3.5-4B vLLM + Breeze TTS 2 | 22,100 MiB (21.58 GiB) |
 | GPU3 | CocktailASR-1 BF16 | 17,802 MiB (17.38 GiB) |
 
 Qwen3-Embedding-0.6B and Nova's memory ledger run on CPU. The other two installed
-GPUs were not used by this experiment. GPU memory was sampled once per second;
-subsecond peaks may be missed. The sampled per-device maxima sum to 38.78 GiB.
+GPUs were not used by this experiment. The live-run trace sampled GPU memory once
+per second; a post-restart spot check raised the observed GPU2 maximum to 22,100
+MiB. Subsecond peaks may be missed. The observed per-device maxima sum to 38.97
+GiB; they are not necessarily simultaneous.
 
 ## Breeze TTS 2 performance
 
