@@ -157,6 +157,7 @@ function turnKey(sessionEpoch: number, userInputRevision: number): string {
 }
 
 export function configuredMemoryConsumer(settings: AssemblyOptions['settings'], mode: 'text'|'voice'): string|undefined {
+  if(settings.local_serving)return embeddingHash('sha256').update(JSON.stringify({provider:'openai-compatible',endpoint:settings.local_serving.llm.baseUrl,model:settings.local_serving.llm.model})).digest('hex')
   try {
     const selected = mode === 'text' || settings.pipeline_mode === 'cascaded' ? requireSelectedCascadedLlmConfig(settings) : undefined
     const voice = selected === undefined ? requireIntegratedRealtime(settings) : undefined
@@ -1338,16 +1339,16 @@ export function composeRealtime(
   options: Omit<RealtimeAssemblyOptions, 'core' | 'provider' | 'idFactory'> & {readonly settings: AssemblyOptions['settings']; readonly idFactory: () => string},
   providerTuning: Required<Pick<RealtimeAssemblyOptions, 'controlledPreemptiveAlertReconnect' | 'preemptiveAlertHistoryRecovery' | 'preemptiveAlertHistoryPairs'>>,
 ): RealtimeAssembly {
-  const local = (options.createPersonalMemory as {localMemoryConfig?:{path:string;userId:string;extractionModel:string;embedding:{baseUrl:string;apiKey:string;model:string}}} | undefined)?.localMemoryConfig
+  const local = (options.createPersonalMemory as {localMemoryConfig?:{path:string;userId:string;extractionModel:string;extraction?:{baseUrl:string;apiKey:string;model:string};embedding:{baseUrl:string;apiKey:string;model:string;dimensions?:number}}} | undefined)?.localMemoryConfig
   let sharedClient: WorkspaceGraphStoreClient | undefined
   const getClient = () => sharedClient ??= new WorkspaceGraphStoreClient(memoryPath(options.settings.workspace_graph_path.replace(/^~(?=\/)/u, memoryHome())))
-  const sharedEmbedding=core.knowledge?.embedding??(local?new DashScopeEmbeddingProvider({baseUrl:local.embedding.baseUrl,apiKey:local.embedding.apiKey,model:local.embedding.model}):undefined)
-  const memoryGateway=local?new OpenAIModelGateway({baseUrl:local.embedding.baseUrl,apiKey:local.embedding.apiKey,clock:new RealClock()}):core.gateway
+  const sharedEmbedding=core.knowledge?.embedding??(local?new DashScopeEmbeddingProvider({baseUrl:local.embedding.baseUrl,apiKey:local.embedding.apiKey,model:local.embedding.model,...(local.embedding.dimensions===undefined?{}:{dims:local.embedding.dimensions})}):undefined)
+  const memoryGateway=local?new OpenAIModelGateway({baseUrl:(local.extraction??local.embedding).baseUrl,apiKey:(local.extraction??local.embedding).apiKey,clock:new RealClock(),...(options.settings.local_serving?{thinkingControl:'chat-template' as const}:{})}):core.gateway
   const useLocalLedger=local!==undefined||(core.knowledge!==undefined&&options.createPersonalMemory===undefined)
   const createPersonalMemory = useLocalLedger ? () => {
     const memory = new SubstrateMemoryResource({client:getClient(),userId:local?.userId??options.settings.memory_user_id,
-      ...(sharedEmbedding?{embedding:sharedEmbedding,embeddingFingerprint:embeddingHash('sha256').update((core.knowledge?options.settings.model_base_url:local!.embedding.baseUrl)+'|'+sharedEmbedding.id).digest('hex')} : {}),
-      extractionFingerprint:embeddingHash('sha256').update((local?.embedding.baseUrl??options.settings.model_base_url)+'|'+(local?.extractionModel??options.settings.fast_model)).digest('hex'),
+      ...(sharedEmbedding?{embedding:sharedEmbedding,embeddingFingerprint:embeddingHash('sha256').update((options.settings.local_serving?.embedding.baseUrl??(core.knowledge?options.settings.model_base_url:local!.embedding.baseUrl))+'|'+sharedEmbedding.id).digest('hex')} : {}),
+      extractionFingerprint:embeddingHash('sha256').update((local?.extraction?.baseUrl??local?.embedding.baseUrl??options.settings.model_base_url)+'|'+(local?.extractionModel??options.settings.fast_model)).digest('hex'),
       personalMemoryEnabled:local!==undefined,inputConsent:local!==undefined,includeWorkspaceGraph:false,
       conversationProviders: [...new Set((['text','voice'] as const).map(mode=>configuredMemoryConsumer(options.settings,mode)).filter((value): value is string=>value!==undefined))],
       consolidation:{enabled:options.settings.memory_consolidation_enabled,timezone:options.settings.memory_consolidation_timezone,hour:options.settings.memory_consolidation_hour},

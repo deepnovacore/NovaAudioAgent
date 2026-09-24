@@ -31,7 +31,7 @@ export interface VolcengineAsrConfig {
 }
 
 export interface QwenCascadedLlmConfig {
-  readonly provider?: 'qwen' | 'deepseek'
+  readonly provider?: 'qwen' | 'deepseek' | 'openai-compatible'
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
@@ -77,6 +77,7 @@ export function requireSelectedCascadedRealtimeConfig(
 
 /** Text sessions require only their selected LLM, independent of speech configuration. */
 export function requireSelectedCascadedLlmConfig(settings:Settings):SelectedCascadedLlmConfig {
+  if(settings.local_serving)return {provider:'qwen',config:{...settings.local_serving.llm,provider:'openai-compatible'}}
   const selection=resolveCascadedSelection(settings)
   const apiKey=stripLikePython((selection.llmProvider==='qwen'?settings.dashscope_api_key:selection.llmProvider==='deepseek'?settings.deepseek_api_key:settings.ark_api_key)??'')
   if(!apiKey)throw new ConfigurationError(`缺少 ${selection.llmProvider==='qwen'?'DASHSCOPE_API_KEY':selection.llmProvider==='deepseek'?'DEEPSEEK_API_KEY':'ARK_API_KEY'}`)
@@ -104,7 +105,7 @@ export function requireSelectedCascadedLlmConfig(settings:Settings):SelectedCasc
     })
 }
 
-function resolveEndpointingConfig(settings: Settings): AutoEndpointingConfig {
+export function resolveEndpointingConfig(settings: Settings): AutoEndpointingConfig {
   if (!(settings.volcengine_vad_threshold > 0 && settings.volcengine_vad_threshold <= 1)) {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内')
   }
@@ -201,4 +202,10 @@ function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): s
     && parsed.hash === ''
   if (!valid) throw new ConfigurationError(`${name} 必须是安全的 ${scheme}:// 地址`)
   return normalized
+}
+
+/** Validate the selected graph without requiring credentials for unselected cloud services. */
+export function validateSelectedCascadedRealtimeConfig(settings:Settings):void {
+  if(settings.local_serving){resolveEndpointingConfig(settings);requireSelectedCascadedLlmConfig(settings);return}
+  requireSelectedCascadedRealtimeConfig(settings)
 }

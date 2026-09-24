@@ -36,6 +36,7 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_WATCH_MODEL', 'core', false, true, 'never', 'fast model', 'Watch model override.', 'Watch 模型覆盖。'],
   ['NOVA_AUDIO_AGENT_SURROGATE_MODEL', 'core', false, true, 'never', 'qwen-plus', 'Surrogate model.', 'Surrogate 模型。'],
   ['NOVA_AUDIO_AGENT_COMPRESSOR_MODEL', 'core', false, true, 'never', 'qwen-flash', 'Memory compressor model.', '记忆压缩模型。'],
+  ['NOVA_AUDIO_AGENT_LOCAL_SERVING', 'core', true, false, 'never', '', 'Experimental local serving profile JSON; contains endpoint credentials.', '实验性本地服务配置 JSON；包含端点凭据。'],
   ['NOVA_AUDIO_AGENT_PIPELINE_MODE', 'core', false, true, 'never', 'integrated', 'Product pipeline shape: integrated or cascaded.', '产品管线形态：集成或级联。'],
   ['NOVA_AUDIO_AGENT_NEWS_LANGUAGE', 'core', false, true, 'never', 'en', 'Native RSS language: zh-CN or en. Desktop supplies OS language independently of UI preference; applied at runtime start.', '原生 RSS 语言：zh-CN 或 en；桌面传入系统语言，独立于界面偏好，运行时启动时生效。'],
   ['NOVA_AUDIO_AGENT_LANGUAGE', 'core', false, true, 'never', 'zh-CN', 'AI system prompt language: zh-CN or en; desktop supplies its saved preference.', 'AI system prompt 语言：zh-CN 或 en；桌面端会提供其保存的偏好。'],

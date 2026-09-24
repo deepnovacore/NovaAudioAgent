@@ -7,7 +7,7 @@ import {
   requireIntegratedRealtime,
   type Settings,
 } from './config.js'
-import {requireSelectedCascadedRealtimeConfig} from './cascaded-realtime-config.js'
+import {validateSelectedCascadedRealtimeConfig} from './cascaded-realtime-config.js'
 import {stripLikePython} from '../text/python-text.js'
 
 const diagnosticIdSchema = z.enum([
@@ -16,6 +16,7 @@ const diagnosticIdSchema = z.enum([
   'provider.qwen',
   'provider.stepfun',
   'provider.volcengine',
+  'provider.local',
   'executors.contract',
   'search.credential',
   'camera.source',
@@ -29,6 +30,8 @@ const diagnosticCodeSchema = z.enum([
   'qwen_configuration_invalid',
   'stepfun_configuration_valid',
   'stepfun_configuration_invalid',
+  'local_configuration_valid',
+  'local_configuration_invalid',
   'volcengine_configuration_valid',
   'volcengine_configuration_invalid',
   'executor_configuration_valid',
@@ -122,10 +125,10 @@ function providerCheck(settings: Settings): DiagnosticCheck {
     }
   }
   try {
-    requireSelectedCascadedRealtimeConfig(settings)
-    return check('provider.volcengine', 'pass', 'volcengine_configuration_valid')
+    validateSelectedCascadedRealtimeConfig(settings)
+    return settings.local_serving ? check('provider.local', 'pass', 'local_configuration_valid') : check('provider.volcengine', 'pass', 'volcengine_configuration_valid')
   } catch {
-    return check('provider.volcengine', 'fail', 'volcengine_configuration_invalid')
+    return settings.local_serving ? check('provider.local', 'fail', 'local_configuration_invalid') : check('provider.volcengine', 'fail', 'volcengine_configuration_invalid')
   }
 }
 

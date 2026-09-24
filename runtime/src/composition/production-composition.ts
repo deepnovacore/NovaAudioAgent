@@ -19,7 +19,7 @@ import {randomUUID} from 'node:crypto'
 import {loadCapabilityRegistry} from '../config/capability-registry.js'
 import {prepareExternalMcp} from '../executors/mcp.js'
 import {loadSettings, requireIntegratedRealtime} from '../config/config.js'
-import {requireSelectedCascadedLlmConfig, requireSelectedCascadedRealtimeConfig} from '../config/cascaded-realtime-config.js'
+import {requireSelectedCascadedLlmConfig, validateSelectedCascadedRealtimeConfig} from '../config/cascaded-realtime-config.js'
 import {remoteClientMedia} from '../server/server-config.js'
 import type {ClientMedia} from '../server/client-protocol.js'
 import {buildDesktopRealtimeComposition, type DesktopConstructionOwnership} from '../desktop/desktop-session.js'
@@ -48,7 +48,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   const media = remote ? remoteClientMedia(loadedSettings) : undefined
   if (!remote) requireSelectedCascadedLlmConfig(loadedSettings)
   else if (loadedSettings.pipeline_mode === 'integrated') requireIntegratedRealtime(loadedSettings)
-  else requireSelectedCascadedRealtimeConfig(loadedSettings)
+  else validateSelectedCascadedRealtimeConfig(loadedSettings)
   const externalMcp = await prepareExternalMcp(loadCapabilityRegistry({environment: remote
       ? {...environment, NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED: 'false'} : environment}), stop.signal)
   const releaseExternal = ownership.own(() => externalMcp.close())
@@ -68,11 +68,11 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   ownership.own(() => telemetry.close())
   telemetry.record('pipeline.configuration', {
     pipeline: settings.pipeline_mode,
-    provider: settings.pipeline_mode === 'cascaded' ? settings.cascade_llm_provider : settings.integrated_provider,
+    provider: settings.local_serving ? 'openai-compatible' : settings.pipeline_mode === 'cascaded' ? settings.cascade_llm_provider : settings.integrated_provider,
     model: settings.pipeline_mode === 'cascaded'
       ? requireSelectedCascadedLlmConfig(settings).config.model
       : settings.integrated_provider === 'stepfun' ? settings.stepfun_realtime_model : settings.qwen_realtime_model,
-    asr: settings.cascade_asr_provider, tts: settings.cascade_tts_provider,
+    asr: settings.local_serving ? 'cocktail-http' : settings.cascade_asr_provider, tts: settings.local_serving ? 'breeze-http' : settings.cascade_tts_provider,
     vision: settings.conversation_vision_enabled,
   })
   let publishExecutorApproval: (view: ExecutorApprovalView) => void = () => undefined

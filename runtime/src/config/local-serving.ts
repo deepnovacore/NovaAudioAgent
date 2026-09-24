@@ -1,0 +1,20 @@
+import {z} from 'zod'
+
+/** Plain HTTP is only allowed on loopback; remote servers use TLS or a tunnel. */
+export const servingEndpoint = z.string().max(2048).refine(value => {
+  try {
+    const url = new URL(value)
+    return !url.username && !url.password && !url.search && !url.hash
+      && (url.protocol === 'https:' || (url.protocol === 'http:'
+        && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
+  } catch { return false }
+}, 'serving endpoint must use HTTPS or loopback HTTP')
+const connection = z.object({baseUrl: servingEndpoint, model: z.string().min(1).max(256), apiKey: z.string().min(1).max(4096).default('local')}).strict()
+export const localServingSchema = z.object({
+  llm: connection,
+  asr: z.object({endpoint: servingEndpoint, referenceAudio: z.string().min(1).max(4096), apiKey: z.string().max(4096).default('')} ).strict(),
+  tts: z.object({endpoint: servingEndpoint, instruction: z.string().max(2000).default('自然、清晰的中文语音'), apiKey: z.string().max(4096).default('')} ).strict(),
+  extraction: connection.optional(),
+  embedding: connection.extend({dimensions:z.number().int().min(1).max(4096).default(1024)}),
+}).strict()
+export type LocalServing = z.infer<typeof localServingSchema>

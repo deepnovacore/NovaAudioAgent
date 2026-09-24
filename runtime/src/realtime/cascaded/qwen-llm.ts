@@ -33,7 +33,7 @@ export class QwenCascadedLlmFailure extends Error {
 }
 
 export interface QwenCascadedLlmFactoryOptions {
-  readonly provider?: 'qwen' | 'deepseek'
+  readonly provider?: 'qwen' | 'deepseek' | 'openai-compatible'
   readonly baseUrl: string; readonly apiKey: string; readonly model: string; readonly instructions: string
   readonly fetchImpl?: typeof globalThis.fetch; readonly idFactory?: () => string; readonly clock?: Clock
   readonly onUsage?: UsageReporter
@@ -55,7 +55,7 @@ function schema(tool: CascadedLlmTool): JsonObject { return {type: 'function', f
 function size(units: readonly (readonly Message[])[]): {items: number; codepoints: number} { const all = units.flat(); return {items: all.length, codepoints: all.reduce((sum, item) => sum + codePointLengthLikePython(JSON.stringify(withoutImage(item))), 0)} }
 
 class Session implements CascadedLlmSession {
-  readonly #provider: 'qwen' | 'deepseek'
+  readonly #provider: 'qwen' | 'deepseek' | 'openai-compatible'
   readonly #onUsage: UsageReporter | undefined
   readonly #endpoint: string; readonly #apiKey: string; readonly #model: string; readonly #instructions: string; readonly #fetch: typeof fetch
   readonly #idleTimeoutMs: number; readonly #closeTimeoutMs: number; readonly #active = new Set<Active>()
@@ -91,6 +91,7 @@ class Session implements CascadedLlmSession {
     const messages = [{role: 'system' as const, content: systemContent}, ...context]
     const body: Record<string, JsonValue> = {model: this.#model, messages: messages as unknown as JsonValue, stream: true, stream_options: {include_usage: true}}
     if (this.#provider === 'deepseek') body.thinking = {type: 'disabled'}
+    else if (this.#provider === 'openai-compatible') body.chat_template_kwargs = {enable_thinking:false}
     else body.enable_thinking = false
     if (input.tools.length > 0) { body.tools = input.tools.map(schema); body.parallel_tool_calls = false }
     const active: Active = {completion: null, usageDeadline: null, controller: new AbortController(), reader: null, failureCode: null}
@@ -105,7 +106,7 @@ class Session implements CascadedLlmSession {
     }
     try {
       let response: Response
-      try { response = await this.#timed(this.#fetch(this.#endpoint, {method: 'POST', headers: {authorization: `Bearer ${this.#apiKey}`, 'content-type': 'application/json', accept: 'text/event-stream'}, body: JSON.stringify(body), signal: active.controller.signal}), active) }
+      try { response = await this.#timed(this.#fetch(this.#endpoint, {method: 'POST', redirect: 'error', headers: {authorization: `Bearer ${this.#apiKey}`, 'content-type': 'application/json', accept: 'text/event-stream'}, body: JSON.stringify(body), signal: active.controller.signal}), active) }
       catch (error) { if (error instanceof QwenCascadedLlmFailure) throw error; throw fail(input.signal.aborted ? 'aborted' : this.#closed ? 'closed' : 'network') }
       if (!response.ok) { await this.#cancel(response.body?.getReader() ?? null); throw fail('http', response.status) }
       if (response.body === null || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')) { await this.#cancel(response.body?.getReader() ?? null); throw fail('protocol') }

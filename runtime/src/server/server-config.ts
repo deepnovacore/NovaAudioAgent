@@ -58,6 +58,8 @@ export function loadServerConfig(environment: NodeJS.ProcessEnv = process.env): 
 
 /** Remote v1 advertises the fixed PCM formats of these production adapters only. */
 export function validateRemoteAudioSettings(settings: Settings): void {
+  // Local HTTP adapters enforce mono PCM16: 16 kHz ASR and 24 kHz TTS.
+  if (settings.local_serving) return
   if (settings.pipeline_mode === 'integrated' && settings.integrated_provider === 'qwen') return
   if (settings.pipeline_mode === 'cascaded' && settings.cascade_asr_provider === 'volcengine'
     && settings.cascade_tts_provider === 'volcengine' && settings.doubao_tts_output_sample_rate === 24_000) return

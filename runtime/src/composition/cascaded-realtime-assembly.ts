@@ -1,3 +1,6 @@
+import {CocktailAsrClient,BreezeTtsClient} from '../realtime/cascaded/http-speech.js'
+import {resolveEndpointingConfig} from '../config/cascaded-realtime-config.js'
+import {resolveCascadedSelection} from '../config/config.js'
 import type {CommittedConversationPair} from '../realtime/history.js'
 import {transcribeDraft} from '../realtime/cascaded/transcribe.js'
 import type {PromptLanguage} from '../realtime/prompt-language.js'
@@ -267,6 +270,7 @@ export function buildTextRealtimeAssembly(
   }),{
     transcribeDraft:(pcm:Uint8Array,signal:AbortSignal)=>{
       signal.throwIfAborted()
+      if(options.settings.local_serving)return transcribeDraft(new CocktailAsrClient(options.settings.local_serving.asr),pcm,signal)
       const config=requireSelectedCascadedAsrConfig(options.settings)
       const factory=registry.asr.volcengine({config,ids,...(options.asrClient===undefined?{}:{clientFactory:options.asrClient}),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,config.endpoint)!})})
       return transcribeDraft(factory.openClient(),pcm,signal)
@@ -283,8 +287,10 @@ export function buildCascadedRealtimeAssembly(
   registry: CascadedProviderRegistries = options.registries ?? cascadedProviderRegistries,
 ): RealtimeAssembly {
   options = filterDisabledCoding(options)
-  const selected = requireSelectedCascadedRealtimeConfig(options.settings)
-  const selection = selected.selection
+  const local=options.settings.local_serving
+  const selected = local ? undefined : requireSelectedCascadedRealtimeConfig(options.settings)
+  const selection = selected?.selection ?? resolveCascadedSelection(options.settings)
+  const selectedLlm = requireSelectedCascadedLlmConfig(options.settings)
   validateCodingResource(options)
   const createPersonalMemory = options.createPersonalMemory
     ?? personalMemoryFactory(options.settings)
@@ -299,32 +305,32 @@ export function buildCascadedRealtimeAssembly(
   }, (options.executorApproval ?? options.codexResource?.approvalController) != null)
 
   const endpointingFactory = registry.endpointing[selection.endpointingProvider]({
-    config: selected.endpointing,
+    config: selected?.endpointing ?? resolveEndpointingConfig(options.settings),
     clock,
     ...(options.endpointingCapability === undefined
       ? {}
       : {capability: options.endpointingCapability}),
     ...(options.liveKitExecutor === undefined ? {} : {liveKitExecutor: options.liveKitExecutor}),
   })
-  const asrFactory = registry.asr[selection.asrProvider]({
-    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.asr.endpoint)!}),
-    config: selected.asr,
+  const asrFactory:AsrFactory = local ? {openClient:()=>new CocktailAsrClient(local.asr)} : registry.asr[selection.asrProvider]({
+    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected!.asr.endpoint)!}),
+    config: selected!.asr,
     ids,
     ...(options.asrClient === undefined ? {} : {clientFactory: options.asrClient}),
   })
   let instructions = currentInstructions()
-  const createLlmFactory = () => selected.llm.provider !== 'ark'
+  const createLlmFactory = () => selectedLlm.provider !== 'ark'
     ? registry.llm.qwen({
-      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.llm.config.baseUrl)!}),
-      config: selected.llm.config,
+      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selectedLlm.config.baseUrl)!}),
+      config: selectedLlm.config,
       clock,
       ids,
       instructions,
       ...(options.qwenLlmFactory === undefined ? {} : {factory: options.qwenLlmFactory}),
     })
     : registry.llm.ark({
-      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.llm.config.baseUrl)!}),
-      config: selected.llm.config,
+      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selectedLlm.config.baseUrl)!}),
+      config: selectedLlm.config,
       clock,
       ids,
       instructions,
@@ -336,9 +342,9 @@ export function buildCascadedRealtimeAssembly(
     if (next !== instructions) { instructions = next; selectedLlmFactory = createLlmFactory() }
     return selectedLlmFactory.open()
   }}
-  const ttsFactory = registry.tts[selection.ttsProvider]({
-    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.tts.endpoint)!}),
-    config: selected.tts,
+  const ttsFactory:TtsFactory = local ? {openClient:()=>new BreezeTtsClient(local.tts)} : registry.tts[selection.ttsProvider]({
+    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected!.tts.endpoint)!}),
+    config: selected!.tts,
     ids,
     ...(options.ttsClient === undefined ? {} : {clientFactory: options.ttsClient}),
   })
@@ -347,8 +353,8 @@ export function buildCascadedRealtimeAssembly(
     options,
     selection.llmProvider,
     selection.llmModel,
-    selected.llm.config.apiKey,
-    selected.llm.config.baseUrl,
+    selectedLlm.config.apiKey,
+    selectedLlm.config.baseUrl,
     clock,
   )
   const core = buildAssembly({
@@ -404,7 +410,7 @@ function supportComposition(
   const gateway = new OpenAIModelGateway({
     baseUrl: connection.baseUrl,
     apiKey: connection.apiKey,
-    ...(connection.source !== 'generic' && provider === 'deepseek' ? {thinkingControl: 'deepseek' as const} : {}),
+    ...(options.settings.local_serving ? {thinkingControl:'chat-template' as const} : connection.source !== 'generic' && provider === 'deepseek' ? {thinkingControl: 'deepseek' as const} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })

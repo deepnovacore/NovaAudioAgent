@@ -215,7 +215,7 @@ export interface OpenAIGatewayOptions {
   readonly clock: Clock
   readonly metrics?: MetricsSink
   readonly fetch?: typeof globalThis.fetch
-  readonly thinkingControl?: 'deepseek'
+  readonly thinkingControl?: 'deepseek' | 'chat-template'
   readonly requestTimeout?: number
   /** Maximum silence between SSE body chunks, in seconds. */
   readonly streamIdleTimeout?: number
@@ -228,7 +228,7 @@ export class OpenAIModelGateway implements ModelGateway {
   readonly #clock: Clock
   readonly #metrics: MetricsSink
   readonly #fetch: typeof globalThis.fetch
-  readonly #thinkingControl: 'deepseek' | undefined
+  readonly #thinkingControl: 'deepseek' | 'chat-template' | undefined
   readonly #requestTimeout: number
   readonly #streamIdleTimeout: number
 
@@ -348,13 +348,14 @@ export class OpenAIModelGateway implements ModelGateway {
     try {
       const response = await this.#fetch(this.#endpoint, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           // The credential rides in the header and never in a log line or metric.
           authorization: `Bearer ${this.#apiKey}`,
           'content-type': 'application/json',
           accept: body.stream === true ? 'text/event-stream' : 'application/json',
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(this.#thinkingControl === 'chat-template' ? {...body,chat_template_kwargs:{enable_thinking:false}} : body),
         signal: signal === undefined
           ? timeout.signal : AbortSignal.any([signal, timeout.signal]),
       })

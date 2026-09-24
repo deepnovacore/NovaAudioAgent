@@ -1,0 +1,6 @@
+{
+  "llm": {"baseUrl": "http://127.0.0.1:18101/v1", "model": "Qwen/Qwen3.5-4B"},
+  "asr": {"endpoint": "http://127.0.0.1:18102/v1/audio/transcriptions", "referenceAudio": "/absolute/path/to/reference.wav"},
+  "tts": {"endpoint": "http://127.0.0.1:18103/v1/audio/speech", "instruction": "自然、清晰的中文语音"},
+  "embedding": {"baseUrl": "http://127.0.0.1:18104/v1", "model": "Qwen/Qwen3-Embedding-0.6B", "dimensions": 1024}
+}

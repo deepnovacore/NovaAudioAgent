@@ -1,3 +1,4 @@
+import {localServingSchema} from './local-serving.js'
 import {parseCapabilityRegistry, type CapabilityRegistry} from './capability-registry.js'
 import { z } from 'zod'
 import { stripLikePython } from '../text/python-text.js'
@@ -29,6 +30,7 @@ export const STEPFUN_COMPATIBLE_BASE_URL = 'https://api.stepfun.com/v1'
 const STEPFUN_SUPPORT_MODEL = 'step-3.7-flash'
 
 export const settingsSchema = z.object({
+  local_serving: localServingSchema.nullable().default(null),
   model_base_url: z.url().default(DASHSCOPE_COMPATIBLE_BASE_URL),
   model_api_key: z.string().nullable().default(null),
   openrouter_api_key: z.string().nullable().default(null),
@@ -194,6 +196,7 @@ interface LocalPersonalMemoryConfig {
   readonly connection: 'local'
   readonly provider: 'voicemem' | 'mem0'
   readonly extractionModel: string
+  readonly extraction?: {readonly baseUrl:string; readonly apiKey:string; readonly model:string}
   readonly path: string
   readonly userId: string
   readonly embedding: {
@@ -224,7 +227,11 @@ export class ConfigurationError extends Error {
 }
 
 export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textConversations = false): Settings {
-  const pipelineMode = parsePipelineMode(environment.NOVA_AUDIO_AGENT_PIPELINE_MODE)
+  let serving: unknown = null
+  if (environment.NOVA_AUDIO_AGENT_LOCAL_SERVING !== undefined) {
+    try { serving = localServingSchema.parse(JSON.parse(environment.NOVA_AUDIO_AGENT_LOCAL_SERVING)) } catch { throw new ConfigurationError('invalid NOVA_AUDIO_AGENT_LOCAL_SERVING') }
+  }
+  const pipelineMode = serving === null ? parsePipelineMode(environment.NOVA_AUDIO_AGENT_PIPELINE_MODE) : 'cascaded'
   const integratedProvider = pipelineMode === 'integrated'
     ? parseIntegratedProvider(environment.NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER)
     : undefined
@@ -251,6 +258,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textC
   const supportDefault = (value: string | undefined): string | undefined =>
     value ?? (stepfunSupport ? STEPFUN_SUPPORT_MODEL : undefined)
   const candidate = {
+    local_serving: serving,
     model_base_url: optionalString(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL),
     model_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_MODEL_API_KEY),
     openrouter_api_key: optionalSecret(environment.OPENROUTER_API_KEY),
@@ -409,6 +417,14 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textC
     throw new ConfigurationError('NOVA_AUDIO_AGENT_MEMORY_BACKEND was removed; use NOVA_AUDIO_AGENT_MEMORY_CONNECTION')
   }
   resolveMemoryConnection(result.data)
+  if (result.data.local_serving) {
+    const local=result.data.local_serving
+    if (result.data.memory_connection === 'remote') throw new ConfigurationError('local serving requires local or disabled memory')
+    return {...result.data, model_base_url:local.llm.baseUrl, model_api_key:local.llm.apiKey,
+      fast_model:(local.extraction??local.llm).model, surrogate_model:local.llm.model,
+      planner_model:local.llm.model, compressor_model:local.llm.model, watch_model:local.llm.model,
+      cascade_llm_model:local.llm.model, camera_module_enabled:false, conversation_vision_enabled:false}
+  }
   return result.data
 }
 
@@ -432,13 +448,16 @@ export function requirePersonalMemory(settings: Settings): PersonalMemoryConfig 
     url: requiredSetting(settings.memory_url, 'NOVA_AUDIO_AGENT_MEMORY_URL'),
     token: requiredCredential(settings.memory_token, 'NOVA_AUDIO_AGENT_MEMORY_TOKEN'),
   })
+  const serving = settings.local_serving
+  const extraction = serving ? (serving.extraction ?? serving.llm) : undefined
   return Object.freeze({
+    ...(extraction ? {extraction} : {}),
     connection: 'local',
     provider: settings.memory_provider ?? 'voicemem',
     path: requiredSetting(settings.memory_path, 'NOVA_AUDIO_AGENT_MEMORY_PATH'),
     userId: requiredSetting(settings.memory_user_id, 'NOVA_AUDIO_AGENT_MEMORY_USER_ID'),
-    extractionModel: requiredSetting(settings.fast_model, 'NOVA_AUDIO_AGENT_FAST_MODEL'),
-    embedding: Object.freeze({
+    extractionModel: extraction?.model ?? requiredSetting(settings.fast_model, 'NOVA_AUDIO_AGENT_FAST_MODEL'),
+    embedding: serving ? serving.embedding : Object.freeze({
       baseUrl: secureEndpoint(settings.model_base_url, 'https', 'NOVA_AUDIO_AGENT_MODEL_BASE_URL'),
       apiKey: requiredCredential(resolveModelApiKey(settings), 'DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY'),
       model: requiredSetting(settings.embedding_model, 'NOVA_AUDIO_AGENT_EMBEDDING_MODEL'),
@@ -517,6 +536,7 @@ export function resolveModelApiKey(settings: Settings): string | null {
 
 /** Preset monitor models keep their credential on their own provider endpoint. */
 export function resolveWatchModelConnection(settings: Settings): {readonly baseUrl: string; readonly apiKey: string} | null {
+  if (settings.local_serving) return settings.local_serving.llm
   const model = stripLikePython(settings.watch_model ?? '')
   if (supportsVision('stepfun', model)) return {
     baseUrl: STEPFUN_COMPATIBLE_BASE_URL,
@@ -539,6 +559,7 @@ export function resolveSupportModelConnection(
   settings: Settings,
   selectedProvider: {readonly baseUrl: string; readonly apiKey: string},
 ): SupportModelConnection {
+  if (settings.local_serving) return {source:'generic', ...settings.local_serving.llm}
   const genericKey = stripLikePython(settings.model_api_key ?? '')
   return genericKey === ''
     ? Object.freeze({
