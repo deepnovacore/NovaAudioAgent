@@ -468,6 +468,12 @@ export class RealtimeSessionState {
    * A final ends the accumulation: the next delta starts a new one even under the same item id,
    * because what follows a final is a revision rather than a continuation.
    */
+  clearUserCaption(itemId:string):boolean {
+    if(this.#userCaptionItem!==itemId)return false
+    this.resetUserCaptionTarget()
+    return true
+  }
+
   resetUserCaptionTarget(): void {
     this.#userCaptionItem = null
     this.#userCaptionText = ''

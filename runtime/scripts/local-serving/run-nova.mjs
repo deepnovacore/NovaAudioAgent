@@ -15,6 +15,7 @@ await writeFile(capabilities,JSON.stringify({version:1,modules:{search:{enabled:
 const environment={}
 for(const name of ['PATH','HOME','TMPDIR','LANG','LD_LIBRARY_PATH'])if(process.env[name]!==undefined)environment[name]=process.env[name]
 Object.assign(environment,{
+ NOVA_AUDIO_AGENT_REALTIME_TELEMETRY:join(state,'realtime.jsonl'),
  NOVA_AUDIO_AGENT_LOCAL_SERVING:JSON.stringify(profile),NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE:token,NOVA_AUDIO_AGENT_SERVER_PORT:port,
  NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG:capabilities,NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'local',
  NOVA_AUDIO_AGENT_MEMORY_PATH:join(state,'legacy-memory.sqlite'),NOVA_AUDIO_AGENT_MEMORY_LEDGER_PATH:join(state,'ledger.sqlite'),

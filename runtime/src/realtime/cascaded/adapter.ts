@@ -108,6 +108,9 @@ interface ActiveAsr {
   readonly controller: AbortController
   readonly speechId: string
   readonly itemId: string
+  readonly startedAt:number
+  endedAt:number|null
+  firstTranscriptRecorded:boolean
   task: Promise<void>
   speechEnded: boolean
   failed: boolean
@@ -759,6 +762,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
   async #startAsr(owner: EpochOwner, pcm: Uint8Array, signal: AbortSignal): Promise<void> {
     if (owner.asr !== null) await this.#discardAsr(owner)
     this.#warmStandbyTts(owner)
+    const startedAt = performance.now()
     const speechId = this.#freshId()
     const itemId = this.#freshId()
     await this.#emit(owner, {
@@ -791,7 +795,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     }
     const controller = new AbortController()
     const active: ActiveAsr = {
-      session, controller, speechId, itemId,
+      session, controller, speechId, itemId, startedAt, endedAt:null, firstTranscriptRecorded:false,
       task: Promise.resolve(), speechEnded: false, failed: false,
     }
     owner.asr = active
@@ -823,6 +827,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     }
     if (!active.speechEnded) {
       active.speechEnded = true
+      active.endedAt = performance.now()
       await this.#emit(owner, {
         kind: 'user_speech_ended', session_epoch: owner.epoch,
         speech_id: active.speechId, provider_item_id: active.itemId,
@@ -864,9 +869,14 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         if ([...transcript.text].length > MAX_REALTIME_TEXT) {
           throw new Error('ASR transcript is too large')
         }
+        if(transcript.inferenceMs!==undefined)this.#record('cascaded.asr.inference',{epoch:owner.epoch,item_id:active.itemId,duration_ms:transcript.inferenceMs,audio_ms:transcript.audioMs??0,final:transcript.final})
+        if(transcript.text.trim()&&!active.firstTranscriptRecorded){
+          active.firstTranscriptRecorded=true
+          this.#record('cascaded.asr.first_transcript',{epoch:owner.epoch,item_id:active.itemId,duration_ms:performance.now()-active.startedAt,partial:!transcript.final})
+        }
         if (transcript.final) {
           finalSeen = true
-          this.#record('volcengine.asr.final', {epoch: owner.epoch})
+          this.#record('volcengine.asr.final', {epoch: owner.epoch,item_id:active.itemId,...(active.endedAt!==null?{after_endpoint_ms:performance.now()-active.endedAt}:{})})
           if (stripLikePython(transcript.text) === '') {
             await this.#emit(owner, {
               kind: 'user_transcript_failed', session_epoch: owner.epoch, item_id: active.itemId,
@@ -881,10 +891,11 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
           return
         } else {
           this.#record('volcengine.asr.partial', {epoch: owner.epoch})
-          if (transcript.text.length >= 6) void this.#prepareRecall(owner, active.itemId, transcript.text)
+          if (!transcript.replace && transcript.text.length >= 6) void this.#prepareRecall(owner, active.itemId, transcript.text)
           await this.#emit(owner, {
             kind: 'user_transcript_delta', session_epoch: owner.epoch,
             item_id: active.itemId, text: transcript.text,
+            ...(transcript.replace?{replace:true}:{}),
           })
         }
       }
@@ -916,6 +927,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     if (active === null) return
     if (!active.speechEnded) {
       active.speechEnded = true
+      active.endedAt = performance.now()
       await this.#emit(owner, {
         kind: 'user_speech_ended', session_epoch: owner.epoch,
         speech_id: active.speechId, provider_item_id: active.itemId,
@@ -1065,6 +1077,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         if (!this.#isCurrent(owner) || owner.response !== active) return
         this.#record('memory.prerecall.injected', {injected: memoryContext !== null})
       }
+      const llmRequestedAt=performance.now()
       this.#record('cascaded.llm.requested', {epoch: owner.epoch, response_id: active.id})
       this.#warmStandbyTts(owner)
       for await (const event of owner.llm.stream({
@@ -1109,7 +1122,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
           if (transcriptLength > MAX_REALTIME_TEXT) throw new Error('LLM response text overflow')
           transcript.push(event.text)
           if (transcriptLength === [...event.text].length) {
-            this.#record('cascaded.llm.first_text', {epoch: owner.epoch, response_id: active.id})
+            this.#record('cascaded.llm.first_text', {epoch: owner.epoch, response_id: active.id,duration_ms:performance.now()-llmRequestedAt})
           }
           await this.#emit(owner, {
             kind: 'response_transcript_delta', session_epoch: owner.epoch,
@@ -1133,6 +1146,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
           if (llmResponseId === null || event.response_id !== llmResponseId) {
             throw new Error('LLM terminal identity mismatch')
           }
+          this.#record('cascaded.llm.completed',{epoch:owner.epoch,response_id:active.id,duration_ms:performance.now()-llmRequestedAt,characters:transcriptLength})
           if (textSeen) {
             if(!this.#textOnly){
             if (active.tts === null) throw new Error('missing TTS state')
@@ -1636,7 +1650,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
   }
 
   #record(kind: string, payload: Readonly<Record<string, boolean | number | string>>): void {
-    this.#telemetry.record(kind, payload)
+    this.#telemetry.record(kind, {...payload,monotonic_ms:performance.now()})
   }
 }
 

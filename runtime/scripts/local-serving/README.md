@@ -1,5 +1,9 @@
 # Local cascaded serving experiment
 
+> 2026-09-25: Cocktail has been retired at the user's request. The setup below is
+> a historical experiment; see [ASR replacement research](ASR-RESEARCH.md) for the
+> active Whisper investigation. No replacement has passed full Nova acceptance yet.
+
 Based on `v0.3.0dev` at `d2b1bd8bd4ac70f48fe31ba364809241d08150a5`.
 Nova remains the Node/TypeScript conversation owner. ASR, LLM, TTS and embeddings
 are separate HTTP services; they may run on one host or behind separate TLS

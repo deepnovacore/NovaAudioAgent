@@ -87,3 +87,17 @@ test('remote local serving audio format is independent of legacy cloud TTS setti
  const settings=loadSettings({NOVA_AUDIO_AGENT_LOCAL_SERVING:JSON.stringify(profile),NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE:'16000'})
  assert.equal(remoteClientMedia(settings).pipeline,'cascaded')
 })
+
+test('stage metrics distinguish first transcript, endpoint latency and delivery RTF',async()=>{
+ const {voiceMetrics}=await import('./local-serving/metrics.mjs')
+ const events=[{kind:'user_speech_started',ms:100},{kind:'user_transcript_delta',ms:600,text:'hello'},{kind:'user_speech_ended',ms:1000},{kind:'user_transcript_final',ms:1100,text:'hello'},{kind:'response_audio_delta',ms:1500},{kind:'response_terminal',ms:2000,status:'completed'}]
+ const telemetry=[{name:'cascaded.llm.requested',ms:1110},{name:'cascaded.llm.first_text',ms:1300},{name:'volcengine.tts.first_text',ms:1400}]
+ const result=voiceMetrics(events,telemetry,48000,{startedMs:0,acousticEndMs:800})
+ assert.equal(result.speechStartToFirstTranscriptMs,500)
+ assert.equal(result.endpointToFirstAudioMs,500)
+ assert.equal(result.estimatedAcousticEndToFirstAudioMs,700)
+ assert.equal(result.llmFirstTextMs,190)
+ assert.equal(result.ttsDeliveryRtf,.6)
+ assert.equal(result.llmCompletionMs,null)
+ assert.equal(result.firstTranscriptBeforeEndpoint,true)
+})

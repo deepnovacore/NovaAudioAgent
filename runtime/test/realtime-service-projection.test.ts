@@ -1136,3 +1136,17 @@ test('steer receipts settle internally without startup or final narration', () =
   assert.equal(service.session.delegateState('d-1'), 'completed')
   assert.deepEqual(queued(), [])
 })
+
+
+test('revisable streaming ASR captions replace provisional text without concatenation',async()=>{
+  const captions:{text:string}[]=[]
+  const {service}=realtimeServiceHarness('pipeline',{onCaption:frame=>captions.push(frame)})
+  await service.connect()
+  try{
+    const session_epoch=service.session.sessionEpoch
+    for(const text of ['人门','人们设计',''])await service.handleEvent({kind:'user_transcript_delta',session_epoch,item_id:'one',text,replace:true})
+    await service.handleEvent({kind:'user_transcript_delta',session_epoch,item_id:'one',text:'错误字幕',replace:true})
+    await service.handleEvent({kind:'user_transcript_failed',session_epoch,item_id:'one'})
+    assert.deepEqual(captions.map(frame=>frame.text),['人门','人们设计','','错误字幕',''])
+  }finally{await service.close()}
+})

@@ -1794,8 +1794,11 @@ export class RealtimeSession {
     const accepted = options.accepted ?? null
     switch (event.kind) {
       case 'user_transcript_delta':
+        if(event.replace)this.#state.resetUserCaptionTarget()
         this.#state.trackUserCaption(event.item_id)
         return {...this.#state.appendCaption({role: 'user', text: event.text, final: false}), message_id: `user:${this.sessionEpoch}:${event.item_id}`}
+      case 'user_transcript_failed':
+        return this.#state.clearUserCaption(event.item_id)?{role:'user',text:'',final:true,message_id:`user:${this.sessionEpoch}:${event.item_id}`}:null
       case 'user_transcript_final': {
         // A final the reducer refused is not the user's turn, so it must not reach the display.
         if (accepted === false) return null
