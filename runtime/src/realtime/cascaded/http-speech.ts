@@ -1,5 +1,6 @@
 import {setTimeout as delay} from 'node:timers/promises'
 import type {TtsAudio, TtsClient, TtsSession} from './ports.js'
+import type {RealtimeTelemetry} from '../telemetry.js'
 import {servingEndpoint} from '../../config/local-serving.js'
 
 type HttpOptions = {readonly endpoint:string; readonly apiKey:string; readonly fetch?:typeof fetch}
@@ -34,13 +35,16 @@ export class Output<T> {
 }
 
 export class BreezeTtsClient implements TtsClient {
-  constructor(readonly options:HttpOptions & {readonly instruction:string}) {servingEndpoint.parse(options.endpoint)}
+  constructor(readonly options:HttpOptions & {readonly instruction:string;readonly telemetry?:RealtimeTelemetry}) {servingEndpoint.parse(options.endpoint)}
   async open(signal?:AbortSignal):Promise<TtsSession>{
     signal?.throwIfAborted()
     const controller=new AbortController(),combined=signalFor(controller.signal,signal),output=new Output<TtsAudio>()
-    let buffer='',total=0,finished=false,tail=Promise.resolve(),timer:ReturnType<typeof setTimeout>|undefined
-    const fail=(error:unknown)=>{if(timer)clearTimeout(timer);timer=undefined;buffer='';controller.abort(error);output.end(error)}
+    let total=0,finished=false,tail=Promise.resolve()
+    const fail=(error:unknown)=>{controller.abort(error);output.end(error)}
+    let firstTextAt:number|undefined
     const synthesize=async(text:string)=>{
+      const requestedAt=performance.now()
+      this.options.telemetry?.record('cascaded.tts.http_requested',{text_characters:text.length,since_first_text_ms:firstTextAt===undefined?0:requestedAt-firstTextAt})
       combined.throwIfAborted()
       const body=new FormData();body.set('text',text);body.set('instruction',this.options.instruction)
       const requestSignal=AbortSignal.any([combined,AbortSignal.timeout(60000)])
@@ -57,6 +61,7 @@ export class BreezeTtsClient implements TtsClient {
       try {
         for(;;){
           const part=await reader.read();combined.throwIfAborted();if(part.done)break
+          if(bytes===0&&part.value.byteLength)this.options.telemetry?.record('cascaded.tts.http_first_audio',{duration_ms:performance.now()-requestedAt})
           bytes+=part.value.byteLength;if(bytes>24000*2*120)throw new Error('TTS audio overflow')
           const joined=new Uint8Array(leftover.length+part.value.length);joined.set(leftover);joined.set(part.value,leftover.length)
           const even=joined.length-(joined.length%2)
@@ -67,17 +72,17 @@ export class BreezeTtsClient implements TtsClient {
       }finally{await reader.cancel().catch(()=>{});reader.releaseLock()}
     }
     const enqueue=(text:string)=>{if(!text.trim())return;tail=tail.then(()=>synthesize(text));void tail.catch(fail)}
-    const flush=()=>{if(timer)clearTimeout(timer);timer=undefined;const text=buffer;buffer='';enqueue(text)}
-    const stop=async()=>{if(timer)clearTimeout(timer);buffer='';finished=true;controller.abort(aborted());output.end();await tail.catch(()=>{})}
+    const stop=async()=>{finished=true;controller.abort(aborted());output.end();await tail.catch(()=>{})}
     return {
       sendText:async(text,requestSignal)=>{
         combined.throwIfAborted();requestSignal?.throwIfAborted()
         if(finished||total+text.length>32000)throw new Error('invalid TTS text')
-        total+=text.length;buffer+=text
-        for(;;){const match=buffer.match(/^([\s\S]*?[。！？!?\n]|[\s\S]{160})/u);if(!match)break;buffer=buffer.slice(match[0].length);enqueue(match[0])}
-        if(buffer&&!timer)timer=setTimeout(flush,250)
+        if(text.length)firstTextAt??=performance.now()
+        total+=text.length
+        // Nova's TextChunker already chooses speech boundaries; do not buffer twice.
+        for(const chunk of text.match(/[\s\S]{1,160}/gu)??[])enqueue(chunk)
       },
-      finish:async requestSignal=>{requestSignal?.throwIfAborted();combined.throwIfAborted();if(finished)throw new Error('TTS already finished');finished=true;flush();await tail;combined.throwIfAborted();output.end()},
+      finish:async requestSignal=>{requestSignal?.throwIfAborted();combined.throwIfAborted();if(finished)throw new Error('TTS already finished');finished=true;await tail;combined.throwIfAborted();output.end()},
       cancel:stop,close:stop,
       events:requestSignal=>output.events(signalFor(combined,requestSignal)),
     }

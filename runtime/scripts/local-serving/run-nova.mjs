@@ -21,6 +21,14 @@ Object.assign(environment,{
  NOVA_AUDIO_AGENT_MEMORY_PATH:join(state,'legacy-memory.sqlite'),NOVA_AUDIO_AGENT_MEMORY_LEDGER_PATH:join(state,'ledger.sqlite'),
  NOVA_AUDIO_AGENT_BLACKBOARD_PATH:join(state,'blackboard.sqlite'),NOVA_AUDIO_AGENT_KNOWLEDGE_PATH:join(state,'knowledge.sqlite'),
 })
+// A healthy vLLM process may still pay first-request kernel/compile costs.
+// Consume a real bounded request before exposing Nova's user-facing endpoint.
+const warmStarted=performance.now()
+const warm=await fetch(profile.llm.baseUrl.replace(/\/+$/u,'')+'/chat/completions',{method:'POST',headers:{authorization:`Bearer ${profile.llm.apiKey}`,'content-type':'application/json'},body:JSON.stringify({model:profile.llm.model,messages:[{role:'user',content:'Synthetic startup warmup. Reply briefly. '+ 'hello '.repeat(3072)}],max_tokens:16,chat_template_kwargs:{enable_thinking:false}}),signal:AbortSignal.timeout(120000)})
+if(!warm.ok){await warm.body?.cancel();throw Error(`Local LLM warmup HTTP ${warm.status}`)}
+const warmResult=await warm.json()
+if(!warmResult.choices?.[0]?.message)throw Error('Local LLM warmup returned no completion')
+console.error(`[local-llm-warmup] completed in ${Math.round(performance.now()-warmStarted)} ms`)
 const child=spawn(process.execPath,[fileURLToPath(new URL('../../dist/src/server-entry.js',import.meta.url))],{env:environment,stdio:'inherit'})
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>child.kill(signal))
 child.on('error',error=>{console.error(error.message);process.exitCode=1})

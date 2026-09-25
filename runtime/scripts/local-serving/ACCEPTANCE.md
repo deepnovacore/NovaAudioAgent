@@ -167,3 +167,58 @@ model, long consolidation inputs and broad extraction accuracy remain untested.
 Evidence lives under output/local-serving-20260925: endpointing-ab.json,
 endpointing-balanced.json, balanced-nova/, memory-dedicated-schema*.json and
 asr-memory-concurrent.json. Local focused gateway/endpoint/serving tests: 50 passed.
+
+## 2026-09-25: final transcript to audio latency repair
+
+The earlier 3569 ms server result decomposed into 67 ms host work, 3267 ms until
+published LLM text, almost no phrase wait, and 231 ms TTS. The local Qwen adapter
+buffered all text whenever any tool was available. Local text now streams before
+terminal; a mixed text/tool response fails without dispatching the tool. Buffered
+cloud behavior remains unchanged. A separate multi-turn failure was traced to
+Qwen3.5 rejecting system messages after dialogue; local system context now stays
+in the initial system message with dialogue order preserved.
+
+Breeze was already resident and warm. Nova's TextChunker already emits speech
+clauses, but the HTTP adapter buffered them another 250 ms. Removing that duplicate
+buffer produced actual HTTP first-audio timings of 229–338 ms in measured runs.
+Telemetry now records HTTP request and first audio separately from first text.
+
+Repeated trials exposed background contention: Workbench/summary requests still
+used the foreground single-sequence LLM, including a 42.84 s auxiliary generation.
+vLLM reported one running and one waiting request. Both generic and support model
+routes now use the independent extraction endpoint; conversation stays on 18101.
+
+Preserved intermediate results: streamed-server 916 ms; streamed-round2 1201 ms;
+latency-final-1 7252 ms (background contention); isolated-latency-1 1131 ms;
+isolated-latency-2 1672 ms (first phrase generation). These are not discarded passes.
+
+The foreground vLLM service now enables torch compilation and CUDA Graph capture
+for batch size 1, retaining max_num_seqs=1 and GPU budget 0.50. Capture reported
+0.03 GiB. Total sampled GPU usage was 20500 MiB on the foreground/TTS card and
+14809 MiB on the ASR/background card. No third GPU is used. The first request after
+this restart took 12200 ms; run-nova.mjs now consumes a real bounded synthetic
+warmup before exposing the Nova server. Startup cost is distinct from warm latency.
+
+Two consecutive warm authenticated server replays passed the 1200 ms budget:
+
+| Stage | Run 1 | Run 2 |
+| --- | ---: | ---: |
+| Final transcript to LLM request | 79 ms | 81 ms |
+| LLM request to first text | 266 ms | 349 ms |
+| First text to first speech clause | 133 ms | 59 ms |
+| TTS HTTP request to first audio | 312 ms | 338 ms |
+| Client final transcript to first audio | 790 ms | 828 ms |
+
+Captions, audio framing and simulated playback acknowledgements passed in both.
+Evidence: graph-latency-2/, graph-latency-3/, latency-breakdown.json, and the retained
+realtime.jsonl. These are prerecorded Chinese live replays, not p95, physical audio
+playback, broad response-quality, or arbitrary-length context acceptance. Background
+work still queues on its own service and shares compute with ASR.
+Local regression: 107 serving/adapter tests plus 44 configuration/composition tests.
+Remote Linux serving/adapter regression: 107 passed. No merge or push performed.
+
+Startup-flow verification also passed: the synthetic warmup completed in 301 ms
+on the already warm model, before server-ready. Its subsequent first voice replay
+passed at 752 ms final-transcript-to-audio (warm-start-latency/). This verifies the
+startup ordering, not a second cold-model startup benchmark. The three final
+replays were 790, 828 and 752 ms; no p95 claim is made.

@@ -37,6 +37,8 @@ export interface QwenCascadedLlmFactoryOptions {
   readonly baseUrl: string; readonly apiKey: string; readonly model: string; readonly instructions: string
   readonly fetchImpl?: typeof globalThis.fetch; readonly idFactory?: () => string; readonly clock?: Clock
   readonly onUsage?: UsageReporter
+  /** Stream exclusive text turns; a later mixed tool call fails without executing it. */
+  readonly streamTextWithTools?: boolean
   readonly idleTimeoutMs?: number; readonly closeTimeoutMs?: number
 }
 interface Call { readonly id: string; readonly type: 'function'; readonly function: {readonly name: string; readonly arguments: string} }
@@ -57,6 +59,7 @@ function size(units: readonly (readonly Message[])[]): {items: number; codepoint
 class Session implements CascadedLlmSession {
   readonly #provider: 'qwen' | 'deepseek' | 'openai-compatible'
   readonly #onUsage: UsageReporter | undefined
+  readonly #streamTextWithTools: boolean
   readonly #endpoint: string; readonly #apiKey: string; readonly #model: string; readonly #instructions: string; readonly #fetch: typeof fetch
   readonly #idleTimeoutMs: number; readonly #closeTimeoutMs: number; readonly #active = new Set<Active>()
   #started = false; #seeded = false
@@ -64,6 +67,7 @@ class Session implements CascadedLlmSession {
   constructor(options: QwenCascadedLlmFactoryOptions,history?:readonly CommittedConversationPair[]) {
     this.#provider = options.provider ?? 'qwen'
     this.#onUsage = options.onUsage
+    this.#streamTextWithTools = options.streamTextWithTools ?? false
     if (!options.apiKey || !options.model || !options.instructions) throw fail('configuration')
     this.#endpoint = endpoint(options.baseUrl); this.#apiKey = options.apiKey; this.#model = options.model; this.#instructions = options.instructions; this.#fetch = options.fetchImpl ?? globalThis.fetch
     this.#idleTimeoutMs = options.idleTimeoutMs ?? 30_000; this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000
@@ -88,7 +92,11 @@ class Session implements CascadedLlmSession {
       ? [...(unresolved?.slice(-1) ?? []),
         ...input.inputs.filter(item => item.kind === 'host_activation' || item.kind === 'tool_result').map(message)]
       : [...this.#history.flat(), ...(unresolved ?? []), ...current]
-    const messages = [{role: 'system' as const, content: systemContent}, ...context]
+    // Qwen3.5's serving template permits system content only at the beginning.
+    // Keep host context in its original authority role, and preserve dialogue order.
+    const messages = this.#provider === 'openai-compatible'
+      ? [{role:'system' as const,content:[systemContent,...context.filter(item=>item.role==='system').map(item=>item.content)].join('\n\n')},...context.filter(item=>item.role!=='system')]
+      : [{role: 'system' as const, content: systemContent}, ...context]
     const body: Record<string, JsonValue> = {model: this.#model, messages: messages as unknown as JsonValue, stream: true, stream_options: {include_usage: true}}
     if (this.#provider === 'deepseek') body.thinking = {type: 'disabled'}
     else if (this.#provider === 'openai-compatible') body.chat_template_kwargs = {enable_thinking:false}
@@ -111,6 +119,7 @@ class Session implements CascadedLlmSession {
       if (!response.ok) { await this.#cancel(response.body?.getReader() ?? null); throw fail('http', response.status) }
       if (response.body === null || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')) { await this.#cancel(response.body?.getReader() ?? null); throw fail('protocol') }
       active.reader = response.body.getReader()
+      const streamText = input.tools.length === 0 || this.#streamTextWithTools
       let started = false, text = '', sawText = false
       const fragments = new Map<number, Fragment>()
       events = this.#events(active)[Symbol.asyncIterator]()
@@ -128,21 +137,22 @@ class Session implements CascadedLlmSession {
           if (!object(choice) || !object(choice.delta)) throw fail('protocol')
           const content = choice.delta.content, calls = choice.delta.tool_calls
           if (content !== undefined && content !== null && typeof content !== 'string') throw fail('protocol'); if (calls !== undefined && !Array.isArray(calls)) throw fail('protocol')
-          if (!started && ((input.tools.length === 0 && typeof content === 'string' && content !== '') || (choice.finish_reason !== undefined && choice.finish_reason !== null))) { if (responseId === null) throw fail('protocol'); started = true; yield {kind: 'response_started', response_id: responseId} }
+          if (streamText && ((sawText || (typeof content === 'string' && content !== '')) && (fragments.size > 0 || (calls?.length ?? 0) > 0))) throw fail('protocol')
+          if (!started && ((streamText && typeof content === 'string' && content !== '') || (choice.finish_reason !== undefined && choice.finish_reason !== null))) { if (responseId === null) throw fail('protocol'); started = true; yield {kind: 'response_started', response_id: responseId} }
           if (typeof content === 'string' && content !== '') sawText = true
-          if (typeof content === 'string' && content !== '') { text += content; if (input.tools.length === 0) yield {kind: 'text_delta', text: content} }
+          if (typeof content === 'string' && content !== '') { text += content; if (streamText) yield {kind: 'text_delta', text: content} }
           for (const call of calls ?? []) this.#fragment(fragments, call)
           if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
             if (typeof choice.finish_reason !== 'string' || responseId === null) throw fail('protocol')
             if (choice.finish_reason === 'stop') {
               if (fragments.size > 0) throw fail('protocol')
-              // With tools enabled, wait for the response kind before publishing speech.
-              if (input.tools.length > 0 && text !== '') yield {kind: 'text_delta', text}
+              // Buffered providers wait for the terminal response kind before publishing speech.
+              if (!streamText && text !== '') yield {kind: 'text_delta', text}
               this.#history.push([...(unresolved ?? []), ...current, {role: 'assistant' as const, content: text}].map(withoutImage))
               this.#unresolved = null; terminal = true
               yield {kind: 'response_completed', response_id: responseId}; return
             } else if (choice.finish_reason === 'tool_calls') {
-              if ((sawText && input.tools.length === 0) || fragments.size === 0) throw fail('protocol'); const callsOut = this.#calls(fragments)
+              if ((sawText && streamText) || fragments.size === 0) throw fail('protocol'); const callsOut = this.#calls(fragments)
               for (const call of callsOut) yield {kind: 'tool_call', item_id: call.id, call_id: call.id, name: call.function.name, arguments: JSON.parse(call.function.arguments) as JsonObject}
               this.#unresolved = [...(unresolved ?? []), ...current, {role: 'assistant', content: null, tool_calls: callsOut}]
               terminal = true; yield {kind: 'response_completed', response_id: responseId}; return

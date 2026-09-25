@@ -343,7 +343,7 @@ export function buildCascadedRealtimeAssembly(
     if (next !== instructions) { instructions = next; selectedLlmFactory = createLlmFactory() }
     return selectedLlmFactory.open()
   }}
-  const ttsFactory:TtsFactory = local ? {openClient:()=>new BreezeTtsClient(local.tts)} : registry.tts[selection.ttsProvider]({
+  const ttsFactory:TtsFactory = local ? {openClient:()=>new BreezeTtsClient({...local.tts,...(options.telemetry===undefined?{}:{telemetry:options.telemetry})})} : registry.tts[selection.ttsProvider]({
     ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected!.tts.endpoint)!}),
     config: selected!.tts,
     ids,

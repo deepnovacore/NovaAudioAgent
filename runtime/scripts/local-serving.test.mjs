@@ -117,3 +117,68 @@ test('local memory sends the actual schema to its serving backend',async()=>{
  await gateway.complete({model:'local',system:'extract',prompt:'synthetic',jsonSchema:schema})
  assert.deepEqual(body.response_format,{type:'json_schema',json_schema:{name:'response',strict:true,schema}})
 })
+
+test('local tool-enabled speech streams before terminal and rejects a later tool call',async()=>{
+ for(const mixed of [false,true]){
+ let source
+ const body=new ReadableStream({start(c){source=c}})
+ const {createQwenCascadedLlmFactory}=await import('../dist/src/realtime/cascaded/qwen-llm.js')
+ const session=createQwenCascadedLlmFactory({baseUrl:'http://localhost',apiKey:'test',model:'local',instructions:'test',streamTextWithTools:true,fetchImpl:async()=>new Response(body,{headers:{'content-type':'text/event-stream'}})}).open()
+ const received=[]
+ const reading=(async()=>{for await(const e of session.stream({inputs:[],tools:[{name:'dispatch',parameters:{type:'object'}}],signal:AbortSignal.timeout(2000)}))received.push(e)})()
+ const send=(delta,finish_reason)=>source.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({id:'r',choices:[{delta,finish_reason}]})}\n\n`))
+ send({content:'你好。'})
+ await new Promise(r=>setImmediate(r))
+ const early=received.some(e=>e.kind==='text_delta')
+ if(mixed)send({tool_calls:[{index:0,id:'c',function:{name:'dispatch',arguments:'{}'}}]},'tool_calls')
+ else send({},'stop')
+ source.close();await reading;await session.close()
+ assert.equal(early,true,'speech was buffered until terminal')
+ assert.equal(received.at(-1).kind,mixed?'response_failed':'response_completed')
+ assert.ok(!received.some(e=>e.kind==='tool_call'))
+ }
+})
+
+test('local Qwen template receives one initial system message across turns',async()=>{
+ const {createQwenCascadedLlmFactory}=await import('../dist/src/realtime/cascaded/qwen-llm.js')
+ const requests=[]
+ const session=createQwenCascadedLlmFactory({provider:'openai-compatible',baseUrl:'http://localhost',apiKey:'test',model:'local',instructions:'rules',fetchImpl:async(_url,init)=>{requests.push(JSON.parse(init.body));return new Response('data: {"id":"r","choices":[{"delta":{"content":"hello"}}]}\n\ndata: {"id":"r","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',{headers:{'content-type':'text/event-stream'}})}}).open()
+ const run=inputs=>Array.fromAsync(session.stream({inputs,tools:[],signal:AbortSignal.timeout(2000)}))
+ await run([{kind:'user_text',text:'first'}])
+ await run([{kind:'host_context',content:'current host fact'},{kind:'user_text',text:'second'}])
+ await session.close()
+ assert.equal(requests[1].messages.filter(m=>m.role==='system').length,1)
+ assert.match(requests[1].messages[0].content,/current host fact/)
+ assert.deepEqual(requests[1].messages.slice(1).map(m=>m.content),['first','hello','second'])
+})
+
+test('Breeze submits an already chunked clause without another text timer',async()=>{
+ const {BreezeTtsClient}=await import('../dist/src/realtime/cascaded/http-speech.js')
+ let calls=0
+ const session=await new BreezeTtsClient({...profile.tts,apiKey:'',instruction:'clear',fetch:async()=>{calls++;return new Response(new Uint8Array([1,2]),{headers:{'content-type':'audio/pcm','x-sample-rate':'24000','x-sample-format':'s16le'}})}}).open()
+ const audio=Array.fromAsync(session.events())
+ await session.sendText('你好，')
+ await new Promise(r=>setImmediate(r))
+ const immediate=calls
+ await session.finish();await audio;await session.close()
+ assert.equal(immediate,1,'already chunked clause waited for a second text timer')
+})
+
+test('local streaming still delivers a complete tool call without speech',async()=>{
+ const {createQwenCascadedLlmFactory}=await import('../dist/src/realtime/cascaded/qwen-llm.js')
+ const events=[{id:'r',choices:[{delta:{tool_calls:[{index:0,id:'c',function:{name:'lookup',arguments:'{}'}}]}}]},{id:'r',choices:[{delta:{},finish_reason:'tool_calls'}]}]
+ const session=createQwenCascadedLlmFactory({baseUrl:'http://localhost',apiKey:'test',model:'local',instructions:'test',streamTextWithTools:true,fetchImpl:async()=>new Response(events.map(e=>`data: ${JSON.stringify(e)}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}})}).open()
+ const result=await Array.fromAsync(session.stream({inputs:[],tools:[{name:'lookup',parameters:{type:'object'}}],signal:AbortSignal.timeout(2000)}))
+ assert.deepEqual(result.map(e=>e.kind),['response_started','tool_call','response_completed'])
+ await session.close()
+})
+
+test('local background gateways use the independent extraction service',async()=>{
+ const {resolveSupportModelConnection}=await import('../dist/src/config/config.js')
+ const extraction={baseUrl:'http://127.0.0.1:18106/v1',model:'background-4b',apiKey:'local'}
+ const settings=loadSettings({NOVA_AUDIO_AGENT_LOCAL_SERVING:JSON.stringify({...profile,extraction})})
+ assert.equal(settings.model_base_url,extraction.baseUrl)
+ assert.equal(settings.planner_model,extraction.model)
+ assert.equal(resolveSupportModelConnection(settings,profile.llm).baseUrl,extraction.baseUrl)
+ assert.equal(requireSelectedCascadedLlmConfig(settings).config.baseUrl,profile.llm.baseUrl)
+})

@@ -419,10 +419,11 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textC
   resolveMemoryConnection(result.data)
   if (result.data.local_serving) {
     const local=result.data.local_serving
+    const background=local.extraction??local.llm
     if (result.data.memory_connection === 'remote') throw new ConfigurationError('local serving requires local or disabled memory')
-    return {...result.data, model_base_url:local.llm.baseUrl, model_api_key:local.llm.apiKey,
-      fast_model:(local.extraction??local.llm).model, surrogate_model:local.llm.model,
-      planner_model:local.llm.model, compressor_model:local.llm.model, watch_model:local.llm.model,
+    return {...result.data, model_base_url:background.baseUrl, model_api_key:background.apiKey,
+      fast_model:background.model, surrogate_model:background.model,
+      planner_model:background.model, compressor_model:background.model, watch_model:background.model,
       cascade_llm_model:local.llm.model, camera_module_enabled:false, conversation_vision_enabled:false}
   }
   return result.data
@@ -559,7 +560,7 @@ export function resolveSupportModelConnection(
   settings: Settings,
   selectedProvider: {readonly baseUrl: string; readonly apiKey: string},
 ): SupportModelConnection {
-  if (settings.local_serving) return {source:'generic', ...settings.local_serving.llm}
+  if (settings.local_serving) return {source:'generic', ...(settings.local_serving.extraction??settings.local_serving.llm)}
   const genericKey = stripLikePython(settings.model_api_key ?? '')
   return genericKey === ''
     ? Object.freeze({

@@ -12,18 +12,27 @@ endpoints/SSH tunnels. No model-specific SDK enters the conversation protocol.
 
 | Device | Services | Configuration |
 | --- | --- | --- |
-| First 24 GiB GPU | Qwen3.5-4B conversation; Breeze TTS 2 | vLLM 50% GPU memory, 8192 context, one sequence; Breeze partial graph decode |
+| First 24 GiB GPU | Qwen3.5-4B conversation; Breeze TTS 2 | vLLM 50% GPU memory, 8192 context, one sequence; single-request CUDA Graph; Breeze partial graph decode |
 | Second 24 GiB GPU | Whisper large-v3-turbo + independent Qwen3.5-4B extraction | FP16 ASR; extraction port 18106, 4096 context, one sequence, vLLM 50% |
 | CPU | Qwen3-Embedding-0.6B, Nova, SQLite | 1024 dimensions, 4 Torch threads |
 
 These are two separate 24 GiB budgets, not pooled memory. Extraction now uses
 an independent 4B instance on the second card, configured by `extraction` in the
 example profile. Start it with `serve.sh extraction <root> <first-gpu> <second-gpu>`
-and forward loopback port 18106 alongside 18101–18104. It no longer queues on the
-conversation LLM, but shares GPU compute with ASR. CPU embedding stays unchanged.
+and forward loopback port 18106 alongside 18101–18104. Extraction and auxiliary work (Workbench, summaries and planning) use this
+background endpoint. They no longer queue on the conversation LLM, but share GPU
+compute with ASR. CPU embedding stays unchanged.
 No smaller extraction model has been quality-tested; 4096-token extraction context
 is an experiment limit, not acceptance of long memory consolidation requests.
 Local extraction sends JSON Schema constraints to vLLM, including enum values.
+Local conversation text streams even when tools are available; mixed text/tool
+responses fail without dispatching the tool. Qwen3.5 host system context is merged
+into the initial system message to satisfy its serving template.
+Breeze consumes Nova's existing clause boundaries immediately; no second text timer.
+The foreground vLLM launch captures only batch size 1; background inference remains
+eager. run-nova.mjs consumes a bounded synthetic 3k-token warmup before launching
+Nova, because vLLM health alone does not prove first-request latency readiness.
+Use MAX_FINAL_TO_AUDIO_MS=1200 with live-server.mjs for the experimental voice budget.
 
 Endpointing already uses LiveKit native Silero and its semantic turn detector.
 The measured local defaults are minimum speech 100 ms, silence candidate 250 ms,

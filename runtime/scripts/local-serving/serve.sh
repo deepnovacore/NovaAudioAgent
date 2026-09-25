@@ -29,17 +29,19 @@ case "$service" in
     model_gpu=$llm_gpu
     model_port=18101
     model_context=8192
+    model_execution=(--cudagraph-capture-sizes 1)
     if [[ "$service" == extraction ]]; then
       model_gpu=$asr_gpu
       model_port=18106
       model_context=4096
+      model_execution=(--enforce-eager)
     fi
     export CUDA_VISIBLE_DEVICES="$(cuda_ordinal "$model_gpu")"
     verify_gpu "$model_gpu" "$root/env-llm/bin/python"
     exec "$root/env-llm/bin/python" -m vllm.entrypoints.openai.api_server \
       --model "$root/models/llm" --served-model-name Qwen/Qwen3.5-4B \
       --host 127.0.0.1 --port "$model_port" --max-model-len "$model_context" --max-num-seqs 1 \
-      --gpu-memory-utilization 0.50 --enforce-eager --language-model-only \
+      --gpu-memory-utilization 0.50 "${model_execution[@]}" --language-model-only \
       --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 \
       --default-chat-template-kwargs '{"enable_thinking":false}' ;;
   asr)

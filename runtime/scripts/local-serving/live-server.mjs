@@ -46,6 +46,11 @@ try{
  assert.ok(result.events.some(e=>e.type==='caption'&&e.role==='user'&&e.text.includes(process.env.EXPECT_TEXT??'欢迎')),'no user transcript')
  assert.ok(result.events.some(e=>e.type==='caption'&&e.role==='assistant'&&e.final),'no final assistant caption')
  assert.ok(result.events.some(e=>e.type==='client.command_result'&&e.status==='applied'),'no control acknowledgement')
+ const final=result.events.find(e=>e.type==='caption'&&e.role==='user'&&e.final&&e.text.includes(process.env.EXPECT_TEXT??'欢迎'))
+ assert.ok(final,'no final user transcript')
+ result.finalTranscriptToFirstAudioMs=result.firstAudioMs-final.ms
+ assert.ok(result.finalTranscriptToFirstAudioMs>=0,'audio preceded final transcript')
+ if(process.env.MAX_FINAL_TO_AUDIO_MS)assert.ok(result.finalTranscriptToFirstAudioMs<=Number(process.env.MAX_FINAL_TO_AUDIO_MS),`final-to-audio ${result.finalTranscriptToFirstAudioMs} ms exceeds budget`)
  result.passed=true
 }finally{
  clearTimeout(timer);socket.close();await writeFile(`${fixtures}/server-live.json`,JSON.stringify(result,null,2));await writeFile(`${fixtures}/server-reply.pcm`,Buffer.concat(chunks));console.log(JSON.stringify({passed:result.passed??false,audioBytes:result.audioBytes,firstAudioMs:result.firstAudioMs,terminalMs:result.terminalMs,types:[...new Set(result.events.map(e=>e.type))]}))
