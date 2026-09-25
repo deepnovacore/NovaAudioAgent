@@ -2,7 +2,7 @@
 # One foreground process per service; use your normal supervisor for persistence.
 set -euo pipefail
 if [[ $# != 4 ]]; then
-  echo 'Usage: serve.sh <llm|asr|tts|embedding> <experiment-root> <llm-gpu-index> <asr-gpu-index>' >&2
+  echo 'Usage: serve.sh <llm|extraction|asr|tts|embedding> <experiment-root> <llm-gpu-index> <asr-gpu-index>' >&2
   exit 2
 fi
 service=$1
@@ -25,12 +25,20 @@ verify_gpu() {
   "$2" -c 'import sys,torch; actual=str(torch.cuda.get_device_properties(0).uuid); assert actual.removeprefix("GPU-").lower()==sys.argv[1].removeprefix("GPU-").lower(), "CUDA physical GPU mismatch"' "$expected"
 }
 case "$service" in
-  llm)
-    export CUDA_VISIBLE_DEVICES="$(cuda_ordinal "$llm_gpu")"
-    verify_gpu "$llm_gpu" "$root/env-llm/bin/python"
+  llm|extraction)
+    model_gpu=$llm_gpu
+    model_port=18101
+    model_context=8192
+    if [[ "$service" == extraction ]]; then
+      model_gpu=$asr_gpu
+      model_port=18106
+      model_context=4096
+    fi
+    export CUDA_VISIBLE_DEVICES="$(cuda_ordinal "$model_gpu")"
+    verify_gpu "$model_gpu" "$root/env-llm/bin/python"
     exec "$root/env-llm/bin/python" -m vllm.entrypoints.openai.api_server \
       --model "$root/models/llm" --served-model-name Qwen/Qwen3.5-4B \
-      --host 127.0.0.1 --port 18101 --max-model-len 8192 --max-num-seqs 1 \
+      --host 127.0.0.1 --port "$model_port" --max-model-len "$model_context" --max-num-seqs 1 \
       --gpu-memory-utilization 0.50 --enforce-eager --language-model-only \
       --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 \
       --default-chat-template-kwargs '{"enable_thinking":false}' ;;

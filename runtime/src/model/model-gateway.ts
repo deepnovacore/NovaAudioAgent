@@ -216,6 +216,7 @@ export interface OpenAIGatewayOptions {
   readonly metrics?: MetricsSink
   readonly fetch?: typeof globalThis.fetch
   readonly thinkingControl?: 'deepseek' | 'chat-template'
+  readonly structuredOutput?: 'json-schema'
   readonly requestTimeout?: number
   /** Maximum silence between SSE body chunks, in seconds. */
   readonly streamIdleTimeout?: number
@@ -229,6 +230,7 @@ export class OpenAIModelGateway implements ModelGateway {
   readonly #metrics: MetricsSink
   readonly #fetch: typeof globalThis.fetch
   readonly #thinkingControl: 'deepseek' | 'chat-template' | undefined
+  readonly #structuredOutput: 'json-schema' | undefined
   readonly #requestTimeout: number
   readonly #streamIdleTimeout: number
 
@@ -242,6 +244,7 @@ export class OpenAIModelGateway implements ModelGateway {
     this.#metrics = options.metrics ?? new LoggingMetrics()
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#thinkingControl = options.thinkingControl
+    this.#structuredOutput = options.structuredOutput
     this.#requestTimeout = options.requestTimeout ?? 120
     this.#streamIdleTimeout = options.streamIdleTimeout ?? 600
     if (!Number.isFinite(this.#streamIdleTimeout) || this.#streamIdleTimeout <= 0) {
@@ -308,7 +311,8 @@ export class OpenAIModelGateway implements ModelGateway {
     let finishReason: string | null = null
     let errorType: string | null = null
     try {
-      const body = completeRequestBody(request)
+      const body = {...completeRequestBody(request)}
+      if (this.#structuredOutput === 'json-schema' && request.jsonSchema) body.response_format = {type:'json_schema',json_schema:{name:'response',strict:true,schema:request.jsonSchema}}
       const pending = await this.#post(this.#thinkingControl === 'deepseek' && request.reasoning === 'disabled'
         ? {...body, thinking: {type: 'disabled'}} : body, request.signal)
       let raw: unknown

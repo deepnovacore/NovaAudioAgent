@@ -340,10 +340,12 @@ export class LiveKitVolcEndpointing implements EndpointingPort {
     if (current?.phase !== 'active') return
     const silence = requiredMilliseconds(event.silenceDuration)
     current.lastSpeech = Math.min(current.lastSpeech, position - samplesForMilliseconds(silence))
+    const predictionStarted = performance.now()
     const threshold = await this.#predictionThreshold(epoch)
     if (!this.#isCurrent(epoch) || this.#utterance !== current) return
     this.#telemetry?.record('volcengine.endpointing.decision', {
       probability: threshold.probability, threshold: threshold.unlikely, silence_ms: silence,
+      inference_ms: performance.now() - predictionStarted,
       decision: threshold.probability >= threshold.unlikely ? 'commit' : 'extend',
     })
     if (threshold.probability >= threshold.unlikely) this.#commitEnd(position)

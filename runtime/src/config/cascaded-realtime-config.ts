@@ -123,8 +123,8 @@ export function resolveEndpointingConfig(settings: Settings): AutoEndpointingCon
     ...(settings.local_serving?{maxSilenceMs:settings.local_serving.endpointing.maxSilenceMs}:{}),
     vadThreshold: settings.volcengine_vad_threshold,
     vadPreRollMs: settings.volcengine_vad_pre_roll_ms,
-    vadMinSpeechMs: settings.volcengine_vad_min_speech_ms,
-    vadSilenceEndMs: settings.volcengine_vad_silence_end_ms,
+    vadMinSpeechMs: settings.local_serving?.endpointing.minSpeechMs ?? settings.volcengine_vad_min_speech_ms,
+    vadSilenceEndMs: settings.local_serving?.endpointing.minSilenceMs ?? settings.volcengine_vad_silence_end_ms,
     vadSpeechPadMs: settings.volcengine_vad_speech_pad_ms,
     vadMaxUtteranceMs: settings.volcengine_vad_max_utterance_ms,
   })

@@ -11,11 +11,13 @@ import {RealClock} from '../../dist/src/core/clock.js'
 const directory=await mkdtemp(join(tmpdir(),'nova-local-memory-live-'))
 const llm=process.env.LLM_BASE_URL??'http://127.0.0.1:18101/v1'
 const embedding=new DashScopeEmbeddingProvider({baseUrl:process.env.EMBEDDING_BASE_URL??'http://127.0.0.1:18104/v1',apiKey:'local',model:'Qwen/Qwen3-Embedding-0.6B',dims:1024})
-const metrics=[]
-const gateway=new OpenAIModelGateway({baseUrl:llm,apiKey:'local',clock:new RealClock(),thinkingControl:'chat-template',metrics:{record:m=>metrics.push(m)}})
+const metrics=[],responses=[]
+const gateway=new OpenAIModelGateway({baseUrl:llm,apiKey:'local',clock:new RealClock(),thinkingControl:'chat-template',structuredOutput:'json-schema',metrics:{record:m=>metrics.push(m)}})
+const complete=gateway.complete.bind(gateway)
+gateway.complete=async request=>{const response=await complete(request);responses.push({text:response.text,schema:request.jsonSchema});return response}
 const create=()=>new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(join(directory,'ledger.sqlite')),userId:'synthetic-live-acceptance',gateway,model:'Qwen/Qwen3.5-4B',embedding,embeddingFingerprint:'local-embedding-live',extractionFingerprint:'local-extraction-live',conversationProviders:['local-conversation-live'],inputConsent:true,personalMemoryEnabled:true,consolidation:{enabled:false}})
 let memory=create()
-const result={directory,startedAt:new Date().toISOString(),metrics}
+const result={directory,startedAt:new Date().toISOString(),metrics,responses}
 try{
  await memory.open()
  const vectors=await embedding.embed(['我喜欢茉莉花茶。','我偏爱茉莉茶。','量子计算使用量子比特。'])

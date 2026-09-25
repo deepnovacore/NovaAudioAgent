@@ -11,7 +11,7 @@ import {RealClock} from '../../dist/src/core/clock.js'
 const directory=process.argv[2]
 if(!directory)throw Error('Usage: node live-voice.mjs <fixture/output-directory>')
 await mkdir(directory,{recursive:true})
-const profile={llm:{baseUrl:'http://127.0.0.1:18101/v1',model:'Qwen/Qwen3.5-4B'},asr:{endpoint:'http://127.0.0.1:18102/v1/audio/stream'},tts:{endpoint:'http://127.0.0.1:18103/v1/audio/speech'},embedding:{baseUrl:'http://127.0.0.1:18104/v1',model:'Qwen/Qwen3-Embedding-0.6B'}}
+const profile={endpointing:{minSpeechMs:100,minSilenceMs:Number(process.env.ENDPOINT_SILENCE_MS??250),maxSilenceMs:1200},llm:{baseUrl:'http://127.0.0.1:18101/v1',model:'Qwen/Qwen3.5-4B'},asr:{endpoint:'http://127.0.0.1:18102/v1/audio/stream'},tts:{endpoint:'http://127.0.0.1:18103/v1/audio/speech'},embedding:{baseUrl:'http://127.0.0.1:18104/v1',model:'Qwen/Qwen3-Embedding-0.6B'}}
 const settings=loadSettings({NOVA_AUDIO_AGENT_LOCAL_SERVING:JSON.stringify(profile),NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS:process.env.ENDPOINT_SILENCE_MS??'600'})
 const telemetry=[],events=[],audio=[],input={}
 let telemetryStart=performance.now()

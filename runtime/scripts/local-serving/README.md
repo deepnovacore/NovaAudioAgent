@@ -12,15 +12,24 @@ endpoints/SSH tunnels. No model-specific SDK enters the conversation protocol.
 
 | Device | Services | Configuration |
 | --- | --- | --- |
-| First 24 GiB GPU | Qwen3.5-4B conversation + extraction; Breeze TTS 2 | vLLM 50% GPU memory, 8192 context, one sequence; Breeze partial graph decode |
-| Second 24 GiB GPU | Whisper large-v3-turbo | FP16, one utterance at a time |
+| First 24 GiB GPU | Qwen3.5-4B conversation; Breeze TTS 2 | vLLM 50% GPU memory, 8192 context, one sequence; Breeze partial graph decode |
+| Second 24 GiB GPU | Whisper large-v3-turbo + independent Qwen3.5-4B extraction | FP16 ASR; extraction port 18106, 4096 context, one sequence, vLLM 50% |
 | CPU | Qwen3-Embedding-0.6B, Nova, SQLite | 1024 dimensions, 4 Torch threads |
 
-These are two separate 24 GiB budgets, not a pooled 48 GiB allocation. Extraction
-initially shares the 4B service; it has a separate connection field so a smaller
-model can replace it after quality testing. This version does not implement
-foreground-priority scheduling. Memory extraction can delay conversation on the
-shared single-sequence LLM. CPU embedding avoids a fourth GPU model.
+These are two separate 24 GiB budgets, not pooled memory. Extraction now uses
+an independent 4B instance on the second card, configured by `extraction` in the
+example profile. Start it with `serve.sh extraction <root> <first-gpu> <second-gpu>`
+and forward loopback port 18106 alongside 18101–18104. It no longer queues on the
+conversation LLM, but shares GPU compute with ASR. CPU embedding stays unchanged.
+No smaller extraction model has been quality-tested; 4096-token extraction context
+is an experiment limit, not acceptance of long memory consolidation requests.
+Local extraction sends JSON Schema constraints to vLLM, including enum values.
+
+Endpointing already uses LiveKit native Silero and its semantic turn detector.
+The measured local defaults are minimum speech 100 ms, silence candidate 250 ms,
+and semantic extension cap 1200 ms. Threshold remains 0.5. Run
+`BALANCED_ONLY=1 node runtime/scripts/local-serving/live-endpointing.mjs <wav> <output.json>`
+to measure speech, an inserted 800 ms pause, and silence with the real detector.
 
 32 GiB Mac deployment is a later milestone: CUDA serving and these BF16 weights
 are not a demonstrated fit for 32 GiB unified memory. It needs compatible Metal

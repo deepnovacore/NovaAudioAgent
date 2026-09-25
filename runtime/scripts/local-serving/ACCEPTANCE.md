@@ -80,8 +80,7 @@ An independent source review found no remaining important/critical issue after f
 
 Still unverified: real user microphone, speaker enrollment, noisy/multi-speaker
 accuracy, multi-session concurrency, human TTS listening quality, offline firewall
-acceptance and 32 GiB Mac inference. Extraction currently shares the 4B service and
-can contend with foreground requests. No smaller extraction model was quality-tested.
+acceptance and 32 GiB Mac inference. The initial extraction run shared the 4B service; see the newer dedicated-service results below. No smaller extraction model was quality-tested.
 ASR cancellation can leave its bounded GPU inference running. A minor upstream-patch
 cleanup edge remains for optional reference-file deletion errors; Nova's TTS adapter
 only sends text/instruction and does not use reference uploads.
@@ -120,3 +119,51 @@ physical speaker playback is made.
 Launch scripts, patched upstream source, example profile and repeatable test commands
 are included. Both headless servers and the four model services remain running in
 the isolated experiment. No original user memory or audio was used in these tests.
+
+## 2026-09-25: balanced endpointing and dedicated memory service
+
+Actual endpointing is LiveKit native Silero plus semantic turn detection. The old
+600 ms silence candidate plus 1200 ms semantic extension was waiting policy, not
+1.2 seconds of VAD computation. Semantic inference in the new probe took 21–44 ms.
+Threshold 0.6 did not improve this fixture. A 600 ms extension cap split an inserted
+800 ms pause into two turns, so the selected cap remains 1200 ms.
+
+Selected local configuration: minimum speech 100 ms, silence candidate 250 ms,
+activation threshold 0.5. The real detector probe measured 349 ms after acoustic
+end for the original clip and 367 ms for the clip with an 800 ms internal pause;
+both remained one turn. Three seconds of silence produced no turn.
+
+Production voice assembly, real models and real-time prerecorded Chinese input:
+
+| Stage | Observed |
+| --- | ---: |
+| Acoustic onset proxy to first correct partial | 1149 ms |
+| Acoustic end proxy to endpoint | 369 ms |
+| Endpoint to final ASR | 421 ms |
+| LLM first text | 379 ms |
+| LLM first text to first TTS text | 436 ms |
+| TTS request to first audio | 522 ms |
+| Acoustic end proxy to first audio | 2130 ms |
+| TTS delivery RTF | 0.569 |
+
+Full authenticated Nova server replay passed captions, audio framing and simulated
+playback acknowledgements: user final at 7066 ms, first audio at 10635 ms (3569 ms
+after final), terminal at 19490 ms, 921600 PCM bytes. Additional host work remains;
+this is not physical microphone/speaker acceptance or a p95 benchmark.
+
+Memory now uses a separate Qwen3.5-4B vLLM process on the ASR card, port 18106,
+4096 context, one sequence. Measured GPU totals: first card 22100 MiB, second up to
+14809 MiB in this run (21.58 / 14.46 GiB). No third card is used by this stack.
+ASR Chinese, English, mixed-span and silence checks passed with memory serving
+resident; this is a coexistence smoke test, not sustained contention acceptance.
+
+A repeat memory run exposed an invalid `status: active` response. The old gateway
+sent only JSON-object mode despite receiving a schema. Local memory now explicitly
+uses vLLM JSON Schema constraints; cloud defaults retain their existing behavior.
+Two subsequent synthetic extraction, embedding recall, persistence, correction and
+forget checks passed: 8.43 s first constrained request, 3.28 s warm repeat. A smaller
+model, long consolidation inputs and broad extraction accuracy remain untested.
+
+Evidence lives under output/local-serving-20260925: endpointing-ab.json,
+endpointing-balanced.json, balanced-nova/, memory-dedicated-schema*.json and
+asr-memory-concurrent.json. Local focused gateway/endpoint/serving tests: 50 passed.

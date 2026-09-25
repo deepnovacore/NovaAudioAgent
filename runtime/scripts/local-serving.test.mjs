@@ -97,3 +97,23 @@ test('stage metrics distinguish first transcript, endpoint latency and delivery 
  assert.equal(result.firstUsefulTranscriptFromSpeechEventMs,500)
  assert.equal(result.finalTranscriptCount,1)
 })
+
+
+test('local extraction has an independent endpoint and local VAD uses measured defaults',async()=>{
+ const {resolveEndpointingConfig}=await import('../dist/src/config/cascaded-realtime-config.js')
+ const settings=loadSettings({NOVA_AUDIO_AGENT_LOCAL_SERVING:JSON.stringify({...profile,extraction:{baseUrl:'http://127.0.0.1:18106/v1',model:'Qwen/Qwen3.5-4B'}})})
+ assert.equal(requirePersonalMemory(settings).extraction.baseUrl,'http://127.0.0.1:18106/v1')
+ assert.equal(requireSelectedCascadedLlmConfig(settings).config.baseUrl,profile.llm.baseUrl)
+ const config=resolveEndpointingConfig(settings)
+ assert.equal(config.vadMinSpeechMs,100);assert.equal(config.vadSilenceEndMs,250);assert.equal(config.maxSilenceMs,1200)
+})
+
+test('local memory sends the actual schema to its serving backend',async()=>{
+ const {OpenAIModelGateway}=await import('../dist/src/model/model-gateway.js')
+ const {RealClock}=await import('../dist/src/core/clock.js')
+ const schema={type:'object',properties:{status:{enum:['open',null]}},required:['status'],additionalProperties:false}
+ let body
+ const gateway=new OpenAIModelGateway({baseUrl:'http://127.0.0.1:18106/v1',apiKey:'local',clock:new RealClock(),structuredOutput:'json-schema',fetch:async(_url,init)=>{body=JSON.parse(init.body);return Response.json({choices:[{message:{content:'{"status":null}'},finish_reason:'stop'}]})}})
+ await gateway.complete({model:'local',system:'extract',prompt:'synthetic',jsonSchema:schema})
+ assert.deepEqual(body.response_format,{type:'json_schema',json_schema:{name:'response',strict:true,schema}})
+})

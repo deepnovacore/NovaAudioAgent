@@ -1343,7 +1343,7 @@ export function composeRealtime(
   let sharedClient: WorkspaceGraphStoreClient | undefined
   const getClient = () => sharedClient ??= new WorkspaceGraphStoreClient(memoryPath(options.settings.workspace_graph_path.replace(/^~(?=\/)/u, memoryHome())))
   const sharedEmbedding=core.knowledge?.embedding??(local?new DashScopeEmbeddingProvider({baseUrl:local.embedding.baseUrl,apiKey:local.embedding.apiKey,model:local.embedding.model,...(local.embedding.dimensions===undefined?{}:{dims:local.embedding.dimensions})}):undefined)
-  const memoryGateway=local?new OpenAIModelGateway({baseUrl:(local.extraction??local.embedding).baseUrl,apiKey:(local.extraction??local.embedding).apiKey,clock:new RealClock(),...(options.settings.local_serving?{thinkingControl:'chat-template' as const}:{})}):core.gateway
+  const memoryGateway=local?new OpenAIModelGateway({baseUrl:(local.extraction??local.embedding).baseUrl,apiKey:(local.extraction??local.embedding).apiKey,clock:new RealClock(),...(options.settings.local_serving?{thinkingControl:'chat-template' as const,structuredOutput:'json-schema' as const}:{})}):core.gateway
   const useLocalLedger=local!==undefined||(core.knowledge!==undefined&&options.createPersonalMemory===undefined)
   const createPersonalMemory = useLocalLedger ? () => {
     const memory = new SubstrateMemoryResource({client:getClient(),userId:local?.userId??options.settings.memory_user_id,
