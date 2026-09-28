@@ -216,7 +216,7 @@ export function createSettingsController({ api, render, status, notice = () => {
     for (const [field, submitted] of Object.entries(publicPatch(patch))) {
       const path = [...prefix, field]
       const received = isRecord(remote) ? remote[field] : undefined
-      if (field === 'capabilitiesDocument') {
+      if (field === 'capabilitiesDocument' || Array.isArray(submitted)) {
         if (JSON.stringify(received) !== JSON.stringify(submitted)) rejected.push(path)
       } else if (isRecord(submitted)) rejected.push(...publicRejectionPaths(submitted, received, path))
       else if (!Object.is(received, submitted)) rejected.push(path)
@@ -426,6 +426,11 @@ export function createSettingsController({ api, render, status, notice = () => {
     setView,
     snapshot,
     stage,
+    discardFields(fields) {
+      if (inFlight !== null) return
+      for (const [key, draft] of drafts) if (fields.includes(draft.path[0])) drafts.delete(key)
+      renderCurrent()
+    },
     syncView,
   }
 }

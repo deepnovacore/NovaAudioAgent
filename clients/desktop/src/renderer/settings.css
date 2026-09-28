@@ -988,3 +988,9 @@ footer { position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; min-height:
 .icon-button[aria-busy="true"] svg { animation: refresh-icon 1s linear infinite; }
 @keyframes refresh-icon { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .icon-button[aria-busy="true"] svg { animation: none; } }
+
+.skin-layout { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+#orb-skin-preview { width: 116px; height: 116px; border-radius: 50%; flex: 0 0 auto; }
+.skin-controls { display: grid; gap: 8px; flex: 1; min-width: 180px; }
+.skin-controls input { max-width: 100%; }
+#orb-skin-status { min-height: 1.4em; }

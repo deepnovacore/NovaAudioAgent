@@ -73,6 +73,7 @@ async function mountSettingsPanel(initialView, apiOverrides = {}) {
   let push
   runInNewContext(script.replace(/^import[\s\S]*?from '[^']+'\n/gm, ''), {
     t, localizeDocument, createPhonePanel, ...settingsController, ...settingsCategories, ...voiceChoice, createSecretRevisions, frontendUsageText, renderFrontendUsage,
+    createSkinPanel: () => ({render() {}, destroy() {}}),
     createCapabilitiesEditor: () => ({render() {}}),
     createKnowledgePanel: () => ({render() {}}),
     document: {
@@ -80,7 +81,7 @@ async function mountSettingsPanel(initialView, apiOverrides = {}) {
       querySelector: node, querySelectorAll: () => [], getElementById: id => node(`#${id}`),
       createElement: () => ({children: [], append(...items) {this.children.push(...items)}}), addEventListener() {},
     },
-    window: {novaAudioAgentDesktop: {settings: {
+    window: {addEventListener() {}, novaAudioAgentDesktop: {settings: {
       phoneAction: async () => ({state: 'idle'}), get: async () => initialView, onChanged: listener => { push = listener }, ...apiOverrides,
     }}},
   })
@@ -788,7 +789,7 @@ test('the panel omits the connection and microphone block while launch listening
 test('the panel talks to main only through the settings bridge', () => {
   assert.match(script, /window\.novaAudioAgentDesktop\.settings/)
   assert.doesNotMatch(script, /fetch\(|WebSocket|memoryBoard|bootstrap/)
-  assert.doesNotMatch(html, /<script(?![^>]*src="\.\/settings\.mjs")/)
+  assert.doesNotMatch(html, /<script(?![^>]*src="\.\/(?:settings|visor-settings)\.mjs")/)
 })
 
 test('the panel writes secrets forward only and never reads a value back', () => {
@@ -1054,13 +1055,13 @@ test('the sidebar renders one button per category with the first current', () =>
     assert.match(html, new RegExp(`${category.label}</button>`))
   }
   assert.match(html, /id="category-general" data-category="general" aria-current="true">/)
-  assert.equal((html.match(/class="nav-item"/g) || []).length, 8)
-  assert.equal((html.match(/tabindex="-1"/g) || []).length, 7)
+  assert.equal((html.match(/class="nav-item"/g) || []).length, 9)
+  assert.equal((html.match(/tabindex="-1"/g) || []).length, 8)
 })
 
 test('sidebar navigation cycles vertically and passes other keys through', () => {
   const {categoryTabForKey} = settingsCategories
-  assert.equal(categoryTabForKey('general', 'ArrowDown'), 'usage')
+  assert.equal(categoryTabForKey('general', 'ArrowDown'), 'themes')
   assert.equal(categoryTabForKey('general', 'ArrowUp'), 'codex', 'wraps backwards')
   assert.equal(categoryTabForKey('codex', 'ArrowDown'), 'general', 'wraps forwards')
   assert.equal(categoryTabForKey('secrets', 'Home'), 'general')

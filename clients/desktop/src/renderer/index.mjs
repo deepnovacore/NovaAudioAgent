@@ -32,7 +32,7 @@ import {
   RendererSocketRouter,
 } from './camera.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
-import { createOrbVisualSafe } from './orb-visual.mjs'
+import { createSkinVisual } from './orb-skin-visual.mjs'
 import { OrbPaletteHoverController } from './palette-hover.mjs'
 import { ConfirmationCountdown } from './confirmation-countdown.mjs'
 import {
@@ -157,7 +157,7 @@ function getPlaybackLevel() {
 // socket, the drag handle, or the accessibility labels down with it.
 const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
 const highContrastQuery = window.matchMedia('(prefers-contrast: more)')
-const visual = createOrbVisualSafe(document.querySelector('.orb-canvas'), {
+const visual = createSkinVisual(document.querySelector('.orb-canvas'), {
   reducedMotion: reducedMotionQuery.matches,
   highContrast: highContrastQuery.matches,
   palette: 'ember',
@@ -177,8 +177,17 @@ const paletteHover = new OrbPaletteHoverController({
   disabled: reducedMotionQuery.matches || highContrastQuery.matches,
 })
 
+let customSkinActive = false
+function applySkin(settings = {}) {
+  customSkinActive = settings.skinId && settings.skinId !== 'nova'
+  visual.setSkin(settings)
+  paletteHover.reset(settings.palette)
+  syncPaletteAccessibility()
+}
+
 function syncPaletteAccessibility() {
-  paletteHover.setDisabled(reducedMotionQuery.matches || highContrastQuery.matches)
+  visual.setAccessibility({reducedMotion: reducedMotionQuery.matches, highContrast: highContrastQuery.matches})
+  paletteHover.setDisabled(customSkinActive || reducedMotionQuery.matches || highContrastQuery.matches)
 }
 
 reducedMotionQuery.addEventListener('change', syncPaletteAccessibility)
@@ -382,8 +391,11 @@ function render() {
     || axes.cameraSource !== 'local'
     || axes.camera === 'requesting'
   cameraToggle.setAttribute('aria-label', t("视觉设置"))
+  window.novaAudioAgentDesktop?.visor?.report({state:state.name,muted:axes.muted,activated:axes.activated})
   visual.setState(state.name, { codexWorking: axes.codex === 'working' })
 }
+
+window.novaAudioAgentDesktop?.visor?.onRefresh(()=>render())
 
 function confirmationDeadline(seconds) {
   return seconds === null ? null : performance.now() + (seconds * 1_000)
@@ -1207,7 +1219,7 @@ async function boot() {
       : 'stopped'
     // Only the renderer-owned subset reaches the orb; credentials, executable
     // paths, and service endpoints stay in the main process/settings panel.
-    paletteHover.reset(bootstrap.settings?.palette)
+    applySkin(bootstrap.settings)
     if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
     window.novaAudioAgentDesktop.wakeWord.onChanged(applyWakeState)
@@ -1229,7 +1241,7 @@ async function boot() {
     })
     // A narration preference is live host state; do not restart running work.
     window.novaAudioAgentDesktop.settings?.onChanged?.(next => {
-      paletteHover.reset(next.palette)
+      applySkin(next)
       cameraController.setConversationEnabled(next.conversationVisionEnabled === true)
       if (['off', 'milestones', 'all'].includes(next.progressBubbles)) {
         bubbleMode = next.progressBubbles

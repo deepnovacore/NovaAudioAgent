@@ -45,6 +45,9 @@ export function validatePreparedSettings(patch, next) {
       }
       if (key === 'version' || !Object.hasOwn(actual, key)) throw invalidCommit('invalid_settings_patch')
       if (record(value) && record(actual[key])) compare(value, actual[key])
+      else if (Array.isArray(value) && Array.isArray(actual[key])) {
+        if (JSON.stringify(value) !== JSON.stringify(actual[key])) throw invalidCommit('invalid_settings_patch')
+      }
       else if (value !== actual[key] && !(typeof value === 'string' && value.trim() === actual[key])) throw invalidCommit('invalid_settings_patch')
     }
   }

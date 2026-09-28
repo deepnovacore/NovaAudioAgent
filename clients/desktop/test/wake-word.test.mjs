@@ -443,8 +443,8 @@ test('blocked manual hide wakes recovery and tray/shortcut dispatch through hide
   let visible = true, hidden = 0
   const window = {isVisible: () => visible}
   const wakeWord = {wake: () => woke++}
-  new Function('Tray', 'trayImage', 'Menu', 'app', 'mainWindow', 'wakeWord', 'hideOrb', 't', trayBody)(
-    Tray, () => null, {buildFromTemplate: value => value}, {}, window, wakeWord, () => hidden++, value => value,
+  new Function('Tray', 'trayImage', 'Menu', 'app', 'mainWindow', 'wakeWord', 'hideOrb', 't', 'toggleVisor', trayBody)(
+    Tray, () => null, {buildFromTemplate: value => value}, {}, window, wakeWord, () => hidden++, value => value, () => {},
   )
   const shortcut = source.match(/globalShortcut\.register\('CommandOrControl\+Shift\+Space', \(\) => \{([\s\S]*?)\n  \}\)/)[1]
   handlers.push(() => new Function('mainWindow', 'wakeWord', 'hideOrb', shortcut)(window, wakeWord, () => hidden++))

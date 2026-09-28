@@ -1,0 +1,23 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'"><title>Nova Visor</title><link rel="stylesheet" href="./visor.css"></head><body>
+<div id="visor" class="visor">
+<svg id="frame" aria-hidden="true"><g id="frame-left" class="armor left"></g><g id="frame-right" class="armor right"></g><g id="frame-top" class="armor top"></g><g id="frame-bottom" class="armor bottom"></g></svg>
+<header class="module"><span class="eyebrow">PERSONAL INTELLIGENCE SYSTEM</span><h1>NOVA <i>//</i> VISOR</h1><span id="mode-label">FOCUS</span><div class="ruler">· &nbsp; | &nbsp; · &nbsp; | &nbsp; · &nbsp; | &nbsp; ◇ &nbsp; | &nbsp; · &nbsp; | &nbsp; · &nbsp; | &nbsp; ·</div></header>
+<aside class="rail hardware module" aria-label="电脑状态">
+<div class="rail-title">01 <span>SYSTEM TELEMETRY</span></div>
+<section><label>CPU <small>PROCESSOR</small></label><div class="reading" id="cpu">—</div><svg class="graph" viewBox="0 0 180 32"><path id="cpu-graph"/></svg><div class="ticks"></div></section>
+<section><label>RAM <small>MEMORY</small></label><div class="reading" id="ram">—</div><div class="meter"><b id="ram-bar"></b></div><small>含缓存已用 / 总内存</small></section>
+<section><label>SSD <small>VOLUME USED</small></label><div class="reading" id="disk">—</div><div class="meter"><b id="disk-bar"></b></div><small>主目录所在卷</small></section>
+<section><label>BATTERY <small>POWER</small></label><div class="reading" id="battery">—</div><small id="battery-detail">等待系统数据</small></section>
+<div class="rail-footer"><span class="dot"></span><span id="hardware-status">CONNECTING</span></div>
+</aside>
+<aside class="rail intelligence module" aria-label="Nova 状态">
+<div class="rail-title">02 <span>INTELLIGENCE LINK</span></div>
+<section class="ai-heading"><h2>NOVA AI</h2><span class="dot"></span><span id="ai-state">等待连接</span></section>
+<section><label>SESSION <small>REQUESTS</small></label><div class="reading" id="requests">—</div><small>本次客户端启动以来</small></section>
+<section><label>INPUT <small>TOKENS</small></label><div class="reading" id="input">—</div><label class="sub-label">OUTPUT</label><div class="reading" id="output">—</div></section>
+<section><label>EST. COST</label><div class="reading" id="cost">—</div><small id="cost-detail">仅统计接口报告用量</small></section>
+<div class="rail-footer model"><small>ACTIVE MODEL</small><span id="model">—</span><small id="microphone">MIC · —</small></div>
+</aside>
+<div class="core module"><canvas id="core" width="180" height="180"></canvas><div id="core-state">NOVA</div></div>
+<footer class="module"><span>LOCAL TELEMETRY <i>·</i> LIVE DATA</span><span id="clock"></span><span>⌘ / CTRL + SHIFT + J <i>·</i> TOGGLE VISOR</span></footer>
+</div><script type="module" src="./visor-renderer.mjs"></script></body></html>

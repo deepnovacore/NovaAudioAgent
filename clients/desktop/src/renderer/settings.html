@@ -17,6 +17,7 @@
     </header>
     <nav class="settings-nav" id="settings-nav" aria-label="设置分类">
       <button type="button" class="nav-item" id="category-general" data-category="general" aria-current="true">通用</button>
+      <button type="button" class="nav-item" id="category-themes" data-category="themes" aria-current="false" tabindex="-1">主题</button>
       <button type="button" class="nav-item" id="category-usage" data-category="usage" aria-current="false" tabindex="-1">用量</button>
       <button type="button" class="nav-item" id="category-pipeline" data-category="pipeline" aria-current="false" tabindex="-1">语音管线</button>
       <button type="button" class="nav-item" id="category-capabilities" data-category="capabilities" aria-current="false" tabindex="-1">执行器与 MCP</button>
@@ -26,6 +27,36 @@
       <button type="button" class="nav-item" id="category-codex" data-category="codex" aria-current="false" tabindex="-1">编程</button>
     </nav>
     <main>
+      <section class="setting-section" id="visor-section">
+        <h2>Nova Visor · 桌面驾驶舱</h2>
+        <p class="hint">透明框架叠在真实桌面上，仪表区域穿透鼠标，Nova 语音球保持可用。首版支持主显示器。</p>
+        <label><input id="visor-enabled" type="checkbox">启用桌面 HUD</label>
+        <label for="visor-mode">显示模式</label>
+        <select id="visor-mode"><option value="focus">专注 · 低动态</option><option value="showcase">展示 · 完整动画</option></select>
+        <label for="visor-opacity">界面亮度 / 不透明度</label>
+        <input id="visor-opacity" type="range" min="0.3" max="1" step="0.05" value="0.8">
+        <label><input id="visor-motion" type="checkbox">装配动画与核心动态（跟随系统减弱动态效果）</label>
+        <label><input id="visor-hardware" type="checkbox">显示电脑硬件数据</label>
+        <label><input id="visor-ai" type="checkbox">显示 Nova 状态与用量</label>
+        <p class="hint">此处修改即时保存，无需重启。⌘ / Ctrl + Shift + J 展开或收起；也可使用 Nova 托盘菜单。全屏应用建议收起。</p>
+        <p id="visor-settings-status" role="status"></p>
+      </section>
+      <section class="setting-section" id="orb-skin-section">
+        <h2>悬浮球皮肤</h2>
+        <div class="skin-layout">
+          <canvas id="orb-skin-preview" width="116" height="116" role="img" aria-label="所选皮肤静态预览"></canvas>
+          <div class="skin-controls">
+            <label for="orb-skin">当前皮肤</label>
+            <select id="orb-skin"><option value="nova">Nova</option></select>
+            <label for="orb-skin-file">导入皮肤</label>
+            <input id="orb-skin-file" type="file" accept=".json,application/json">
+            <button type="button" id="orb-skin-remove" disabled>移除所选皮肤</button>
+            <button type="button" id="orb-skin-discard">放弃皮肤修改</button>
+          </div>
+        </div>
+        <p class="hint">选择或导入后点击保存，即时应用外观；放弃修改可恢复。支持 Nova JSON 皮肤包。</p>
+        <p id="orb-skin-status" role="status" aria-live="polite"></p>
+      </section>
       <section class="setting-section" id="language-section">
         <h2>语言 / Language</h2>
         <label for="language">语言 / Language</label>
@@ -439,5 +470,6 @@
       <button type="button" id="settings-restart" title="使用已保存的配置重启后台服务">重启</button>
     </footer>
     <script type="module" src="./settings.mjs"></script>
+    <script type="module" src="./visor-settings.mjs"></script>
   </body>
 </html>

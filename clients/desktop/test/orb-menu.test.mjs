@@ -25,6 +25,7 @@ test('orb restart applies saved settings through the shared transaction and repo
       Menu: {buildFromTemplate: value => { rows = value; return {popup() {}} }},
       mainWindow: {}, currentSettings: {}, lifecycleCoordinator: coordinator,
       activeMcpSubmenu: () => [],
+      toggleVisor: () => {},
       applyDesktopSettings: async (patch, restart) => {
         called++
         assert.equal(JSON.stringify(patch), '{"settingsPatch":{}}')

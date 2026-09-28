@@ -75,6 +75,7 @@ async function withTempDirectory(run) {
 test('the default settings are the documented schema', () => {
   assert.deepEqual(DEFAULT_SETTINGS, {
     version: 4,
+    skinId: 'nova', importedSkins: [],
     language: 'zh-CN',
     palette: 'ember',
     proactivity: 'balanced',
@@ -251,6 +252,7 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
 
   assert.deepEqual(normalized, {
     version: 4,
+    skinId: 'nova', importedSkins: [],
     language: 'zh-CN',
     palette: 'graphite',
     proactivity: 'balanced',
@@ -350,6 +352,7 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'embeddingModel',
     'embeddingProvider',
     'generatePlan',
+    'importedSkins',
     'integratedModel',
     'integratedProvider',
     'integratedVoice',
@@ -365,6 +368,7 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'proactivity',
     'progressBubbles',
     'secrets',
+    'skinId',
     'startListeningOnLaunch',
     'version',
     'wakeWordEnabled',
@@ -551,6 +555,7 @@ test('publicSettings never carries the secrets object', () => {
     'embeddingModel',
     'embeddingProvider',
     'generatePlan',
+    'importedSkins',
     'integratedModel',
     'integratedProvider',
     'integratedVoice',
@@ -565,6 +570,7 @@ test('publicSettings never carries the secrets object', () => {
     'plannerModel',
     'proactivity',
     'progressBubbles',
+    'skinId',
     'startListeningOnLaunch',
     'version',
     'wakeWordEnabled',
@@ -580,7 +586,7 @@ test('orb settings expose only renderer-owned appearance and activation fields',
     startListeningOnLaunch: true,
     codexBinaryPath: 'C:\\private\\codex.exe',
     modelBaseUrl: 'https://private.example/v1',
-  }), {conversationVisionEnabled: false, progressBubbles: 'milestones', codingProgressNarration: 'smart', language: 'zh-CN', palette: 'graphite', startListeningOnLaunch: true, wakeWordEnabled: false, autoHideSeconds: 60})
+  }), {conversationVisionEnabled: false, progressBubbles: 'milestones', codingProgressNarration: 'smart', language: 'zh-CN', palette: 'graphite', skinId: 'nova', importedSkins: [], startListeningOnLaunch: true, wakeWordEnabled: false, autoHideSeconds: 60})
 })
 
 test('secretsPresent reports booleans for every key and leaks no ciphertext', () => {

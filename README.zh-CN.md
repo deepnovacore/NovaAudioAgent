@@ -16,6 +16,8 @@
 
 https://github.com/user-attachments/assets/061697f3-fff6-47d6-924b-8a29eef4ab45
 
+> **分支预览 · Nova Visor：** 已增加主显示器透明 HUD 和“主题”设置。[使用说明与架构扩展](docs/VISOR_GUIDE.zh-CN.md) · [验证结果与限制](docs/VISOR_V1.md) · [视觉参考](docs/DESKTOP_VISOR_DEMO.md)。当前为本地 macOS 预览，安装版最终 GUI 验收及跨平台认证尚未完成。
+
 ## News
 
 - **2026-09-24 · 🎉 [v0.2.3 已发布！](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — 首次启动更顺手：只要一个 DashScope API Key 就能开始对话，设置窗口会先测试密钥再保存；搜索、摄像头与记忆在配好对应密钥后自动启用。

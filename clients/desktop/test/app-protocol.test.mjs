@@ -65,6 +65,8 @@ test('renderer graph follows future module re-exports and stylesheet imports wit
     ['/memory-board.html', '<link href="./memory-board.css">'],
     ['/settings.html', '<link href="./settings.css"><script src="./settings.mjs"></script>'],
     ['/setup.html', '<link href="./setup.css"><script src="./setup.mjs"></script>'],
+    ['/visor.html', ''],
+    ['/visor-controls.html', ''],
     ['/index.css', '@import "./theme.css";'],
     ['/index.mjs', "import './camera.mjs'; export { visual } from './orb-visual.mjs'"],
     ['/audio.mjs', 'export const capture = true'],

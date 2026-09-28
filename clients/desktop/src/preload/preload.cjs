@@ -1,6 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
+  visor: Object.freeze({
+    snapshot:()=>ipcRenderer.invoke('nova:visor:get'),
+    configure:patch=>ipcRenderer.invoke('nova:visor:configure',patch),
+    report:value=>ipcRenderer.send('nova:visor:state',value),
+    onRefresh:callback=>{const listener=()=>callback();ipcRenderer.on('nova:visor:refresh',listener);return ()=>ipcRenderer.removeListener('nova:visor:refresh',listener)},
+  }),
   language: process.argv.includes('--nova-language=en') ? 'en' : 'zh-CN',
   wakeWord: Object.freeze({
     sleep: () => ipcRenderer.send('nova:wake-word:sleep'),
