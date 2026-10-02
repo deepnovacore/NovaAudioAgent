@@ -581,6 +581,33 @@ test('a banner decision carries the exact proposal binding to the service', asyn
   ), DesktopProtocolError)
 })
 
+test('AutoGLM approval identity routes clicks and clears with coding disabled or configured', async () => {
+  for (const executor of [null, {executor: 'codex', display_name: 'Codex'}]) {
+    const {bridge, calls, clock} = harness({executor})
+    bridge.markAuthenticated()
+    if (executor !== null) bridge.takeNextFrame()
+    bridge.onExecutorApproval({
+      pending_approval: true, pending_approval_busy: false, pending_approval_id: 'phone-approval',
+      executorIdentity: {executor: 'autoglm', display_name: 'AutoGLM'},
+      kind: 'permissions', local_detail: {kind: 'permissions', scope: 'Tap'},
+      operation_summary: 'Confirm phone action', expires_at: clock.now() + 60, work: null, queued: 0,
+    })
+    const frame = JSON.parse(String(bridge.takeNextFrame())) as Record<string, unknown>
+    assert.equal(frame.executor, 'autoglm')
+    assert.equal(frame.display_name, 'AutoGLM')
+    for (const name of ['codex', 'autoglm']) {
+      await bridge.receive(JSON.stringify({type: 'executor.approval_decision', executor: name,
+        approval_id: 'phone-approval', approved: true}), {authenticated: true})
+    }
+    assert.deepEqual(calls, ['approval:phone-approval:true'])
+    bridge.onExecutorApproval({pending_approval: false, pending_approval_busy: false,
+      kind: null, local_detail: null, operation_summary: null, expires_at: null, work: null, queued: 0})
+    const cleared = JSON.parse(String(bridge.takeNextFrame())) as Record<string, unknown>
+    assert.equal(cleared.executor, 'autoglm')
+    assert.equal(cleared.pending_approval, false)
+  }
+})
+
 test('a Codex approval frame and click use an independent strict bridge path', async () => {
   const {bridge, calls, clock} = harness()
   bridge.markAuthenticated()

@@ -14,6 +14,10 @@ test('MCP probe none permits honest nonreadonly operations but native manifests 
   const external = manifest()
   assert.equal(compileToolSchema([external]).schemas.length, 1)
   assert.throws(() => compileToolSchema([manifest('native')]))
+  const hidden = {...manifest('phone'), model_visibility: 'hidden' as const}
+  const tools = compileToolSchema([hidden], {agentDescriptors: [{name: 'phone', summary: 'Phone controller', ownedChannels: ['phone']}]})
+  assert.ok(tools.hidden.has('phone__write'))
+  assert.ok(tools.bindings.has('dispatch'))
 })
 test('only actual host-owned external server keys are reserved and fail individually', () => {
   const config = {transport: 'stdio', command: 'unused'}

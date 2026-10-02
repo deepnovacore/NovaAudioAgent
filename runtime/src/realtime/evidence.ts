@@ -19,7 +19,7 @@ const GENERIC_SCALAR_KEYS = [
   'direction',
   'elapsed',
 ] as const
-const STRUCTURED_EVIDENCE_CHANNELS = new Set(['ha', 'fast_sim', 'slow_sim', 'autoglm', 'cam'])
+const STRUCTURED_EVIDENCE_CHANNELS = new Set(['ha', 'fast_sim', 'slow_sim', 'autoglm', 'mobile', 'cam'])
 const UNKNOWN_PROSE_KEYS = ['observation', 'summary', 'message', 'error'] as const
 const CODING_PROGRESS_KEYS = new Set(['op', 'phase', 'internal_activity', 'elapsed', 'summary'])
 

@@ -28,6 +28,8 @@ import {
 import {VirtualClock} from '../src/core/clock.js'
 import {ScriptedIdFactory, type IdFactory} from '../src/core/ids.js'
 import {HostApprovalController} from '../src/core/approval.js'
+import {AutoGlmExecutor} from '../src/executors/autoglm.js'
+import type {AgentRuntimeDispatchPort} from '../src/executors/agent-controller.js'
 import {codexAgentDescriptor, CodexAgentController} from '../src/executors/codex/controller.js'
 import {
   CODEX_LIVE_MANIFEST,
@@ -3818,6 +3820,24 @@ function qwenOptions(
   }
 }
 
+test('Qwen assembles the iOS controller with coding disabled and keeps its transport hidden', async () => {
+  const clock = new VirtualClock(0)
+  const approval = new HostApprovalController({clock, idFactory: () => 'phone-approval'})
+  const phone = new AutoGlmExecutor({python: '/usr/bin/python3', sourcePath: '/tmp/upstream', deviceId: 'fixture',
+    deviceType: 'ios', wdaUrl: 'http://127.0.0.1:8100', baseUrl: 'http://127.0.0.1:8000/v1', model: 'fixture',
+    apiKey: 'fixture', maxSteps: 3, budgetMs: 1000, lockRoot: '/tmp/phone-locks'}, approval)
+  const realtime = buildQwenRealtimeAssembly(qwenOptions(settings({DASHSCOPE_API_KEY: 'fixture',
+    EXECUTORS: 'autoglm', CAMERA_MODULE_ENABLED: 'true'}), recordingConnector().connector, {
+    executors: [phone], agentDescriptors: [phone.descriptor], executorApproval: approval,
+    additionalAgentControllers: port => [phone.controller(port)],
+  }))
+  assert.deepEqual(realtime.tools.agent_descriptors.map(value => value.name), ['autoglm', 'vision'])
+  assert.ok(realtime.tools.bindings.has('dispatch'))
+  assert.ok(realtime.tools.bindings.has('confirm'))
+  assert.equal(realtime.tools.hidden.has('autoglm__run'), true)
+  await realtime.stop()
+})
+
 const testCodingAgentControllerFactory: CodingAgentControllerFactory = {
   create: context => new provider1CodexAgentController({
     channel: context.channel,
@@ -3950,7 +3970,7 @@ test('Qwen factory construction does not invoke an unrelated LiveKit agents load
   assert.equal(connector.calls.length, 0)
 })
 
-test('Qwen composition exposes approval only for the exact controller-bearing resource', async () => {
+test('Qwen composition exposes approval only for the exact controller-bearing resource alongside AutoGLM', async () => {
   const connector = recordingConnector()
   const clock = new VirtualClock()
   const confirmationController = new ProjectConfirmationController({
@@ -4003,14 +4023,19 @@ test('Qwen composition exposes approval only for the exact controller-bearing re
     },
     close: () => { closes += 1; return Promise.resolve() },
   }
+  const phone = new AutoGlmExecutor({python: '/usr/bin/python3', sourcePath: '/tmp/upstream', deviceId: 'fixture',
+    deviceType: 'ios', wdaUrl: 'http://127.0.0.1:8100', baseUrl: 'http://127.0.0.1:8000/v1', model: 'fixture',
+    apiKey: 'fixture', maxSteps: 3, budgetMs: 1000, lockRoot: '/tmp/phone-locks'}, approvalController)
   const input = {
     ...qwenOptions(settings({
       MODEL_API_KEY: 'model-key',
-      EXECUTOR: 'codex',
+      EXECUTORS: 'codex,autoglm',
     }), connector.connector),
     codexResource: resource,
     codingAgentControllerFactory: testCodingAgentControllerFactory,
-    agentDescriptors: [provider1codexAgentDescriptor(resource.adapter.manifest.name)],
+    agentDescriptors: [phone.descriptor, provider1codexAgentDescriptor(resource.adapter.manifest.name)],
+    executors: [phone], additionalAgentControllers: (port: AgentRuntimeDispatchPort) => [phone.controller(port)],
+    executorApproval: approvalController,
   }
   const realtime = buildQwenRealtimeAssembly(input)
   assert.equal(realtime.runtime.executors.get('codex'), adapter)
@@ -4706,6 +4731,25 @@ function recordingRegistries(calls: string[]): CascadedProviderRegistries {
     }},
   }
 }
+
+test('cascaded assembles the iOS controller independently from coding', async () => {
+  const clock = new VirtualClock(0)
+  const approval = new HostApprovalController({clock, idFactory: () => 'phone-approval'})
+  const phone = new AutoGlmExecutor({python: '/usr/bin/python3', sourcePath: '/tmp/upstream', deviceId: 'fixture',
+    deviceType: 'ios', wdaUrl: 'http://127.0.0.1:8100', baseUrl: 'http://127.0.0.1:8000/v1', model: 'fixture',
+    apiKey: 'fixture', maxSteps: 3, budgetMs: 1000, lockRoot: '/tmp/phone-locks'}, approval)
+  const realtime = buildCascadedRealtimeAssembly({settings: loadSettings({PIPELINE_MODE: 'cascaded',
+    CASCADE_LLM_PROVIDER: 'qwen', DASHSCOPE_API_KEY: 'fixture', DOUBAO_BIGMODEL_API_KEY: 'fixture',
+    TAVILY_API_KEY: 'fixture', EXECUTORS: 'autoglm', CAMERA_MODULE_ENABLED: 'false'}),
+    clock, executors: [phone], agentDescriptors: [phone.descriptor], executorApproval: approval,
+    additionalAgentControllers: port => [phone.controller(port)],
+  }, recordingRegistries([]))
+  assert.deepEqual(realtime.tools.agent_descriptors.map(value => value.name), ['autoglm'])
+  assert.ok(realtime.tools.bindings.has('dispatch'))
+  assert.ok(realtime.tools.bindings.has('cancel'))
+  assert.equal(realtime.tools.hidden.has('autoglm__run'), true)
+  await realtime.stop()
+})
 
 test('cascaded defaults resolve endpointing, ASR, Qwen LLM, and TTS in order', () => {
   const calls: string[] = []

@@ -74,6 +74,10 @@ video/
 # AutoGLM local environment
 .autoglm-venv/
 
+# Local Midscene diagnostic artifacts; production file logging is disabled.
+midscene_run/
+.mobile-acceptance/
+
 # Playwright MCP browser debugging artifacts.
 .playwright-mcp/
 

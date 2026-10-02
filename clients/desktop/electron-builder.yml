@@ -3,6 +3,7 @@ productName: Nova Audio Agent Desktop
 electronVersion: 43.2.0
 asar: true
 asarUnpack:
+  - '**/node_modules/@nova-audio-agent/runtime/scripts/autoglm-bridge.py'
   - '**/node_modules/sherpa-onnx/**'
 npmRebuild: true
 beforeBuild: scripts/before-build.cjs
@@ -42,6 +43,7 @@ files:
   - '!node_modules/@livekit/av-win32-x64/**/*'
   - '!node_modules/@nova-audio-agent/runtime/**/*'
   - node_modules/@nova-audio-agent/runtime/package.json
+  - node_modules/@nova-audio-agent/runtime/scripts/autoglm-bridge.py
   - node_modules/@nova-audio-agent/runtime/dist/src/**/*.js
 
 # The tray reads these with nativeImage.createFromPath, so they stay outside

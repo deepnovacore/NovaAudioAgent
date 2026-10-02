@@ -121,8 +121,8 @@ export function compileToolSchema(
     }
     seen.add(manifest.name)
     validatePart(manifest.name, 'executor')
-    if (manifest.probe_policy === 'none' && !manifest.name.startsWith('mcp__')) {
-      throw new ToolSchemaError('probe_policy none requires an MCP manifest')
+    if (manifest.probe_policy === 'none' && !manifest.name.startsWith('mcp__') && manifest.model_visibility !== 'hidden') {
+      throw new ToolSchemaError('probe_policy none requires an MCP or hidden manifest')
     }
     if (manifest.probe_policy !== 'none' && !manifest.ops.some(op => op.readonly)) {
       throw new ToolSchemaError(`manifest '${manifest.name}' 至少需要一个 readonly op`)

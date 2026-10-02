@@ -14,6 +14,7 @@ import {MAX_HOST_FACT_CHARS, MAX_TRACKED_TOOL_CALLS, callKey, hostFactIntent} fr
 const APPROVAL_ID_LIMIT = 128
 
 export interface ApprovalOffer {
+  readonly executorIdentity?: ApprovalView['executorIdentity']
   readonly kind: ApprovalKind
   readonly local_detail: ApprovalLocalDetail
   readonly operation_summary: string
@@ -73,6 +74,7 @@ export class HostApprovalController {
       pending_approval: true,
       pending_approval_busy: current.state === 'responding',
       pending_approval_id: current.id,
+      ...(current.offer.executorIdentity === undefined ? {} : {executorIdentity: current.offer.executorIdentity}),
       kind: current.offer.kind,
       local_detail: current.offer.local_detail,
       operation_summary: current.offer.operation_summary,
@@ -550,7 +552,7 @@ export class ApprovalHost {
         kind: 'final',
         host_item_id: this.#port.idFactory(),
         event_id: `approval:${view.pending_approval_id}:requested`,
-        content: approvalFactText(view, view.pending_approval_id, this.#port.displayName()),
+        content: approvalFactText(view, view.pending_approval_id, view.executorIdentity?.display_name ?? this.#port.displayName()),
       }).item
       contextItem.speech_content = `${view.work === null ? this.#port.displayName() : view.work.project}需要你的授权：${view.operation_summary ?? '执行当前操作'}。是否允许？`
       const authority: ExecutorApprovalAuthorityState = {

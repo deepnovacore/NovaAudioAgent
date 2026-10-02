@@ -384,6 +384,9 @@ export class RealtimeService {
       this.#intake = controller.intake
       controllers.unshift(controller)
     }
+    // Assembly factories may create controllers in a different order from the compiled roster.
+    controllers.sort((left, right) => options.tools.agent_descriptors.findIndex(value => value.name === left.descriptor.name)
+      - options.tools.agent_descriptors.findIndex(value => value.name === right.descriptor.name))
     this.#agentRegistry = createAgentControllerRegistry({
       controllers,
       manifests: [...options.runtime.executors.values()].map(adapter => adapter.manifest),
