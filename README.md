@@ -42,6 +42,7 @@ worth it at all** (see the [design article](docs/en/blog/2026-08-proactive-voice
 - **Voice-run workspaces.** Create and switch workspaces and sessions by voice, with your confirmation.
 - **Clarify before acting.** Nova asks about unclear requirements before handing work to the background executor.
 - **Steer while it runs.** Add requirements and constraints by voice while a task is in progress.
+- **More coding agents.** New sessions can also run on OpenCode, CodeBuddy, Pi or DeepSeek Harness over ACP; each session keeps the agent it started with. Live steering stays a Codex feature. See [Coding](docs/en/executors/coding.md).
 - **One window for your day.** Todos, goals, news and delegated tasks sit beside the conversation in the Workbench, grounded in the sources you authorize.
 - **Done means verified.** Each task carries acceptance criteria; Nova checks the evidence before it reports completion, and you can take over at any point.
 

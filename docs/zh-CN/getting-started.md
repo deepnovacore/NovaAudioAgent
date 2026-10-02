@@ -6,6 +6,8 @@ Nova 运行在电脑上，通过语音与你交流，并调用 Codex 完成编�
 
 源码运行需要 Node.js 22.13 或更新版本、npm、Git，以及已安装并登录的 Codex。
 
+如果想改用 OpenCode、CodeBuddy、Pi 或 DeepSeek Harness 处理编码任务，另外安装它并在设置中选择即可，见 [Coding](executors/coding.md#选择执行器)。
+
 原生组件还需要对应平台的构建工具：
 
 - macOS：Xcode Command Line Tools，可运行 `xcode-select --install` 安装。
