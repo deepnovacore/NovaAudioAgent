@@ -1,6 +1,6 @@
 /** One canonical lock per physical device, shared by every phone engine. */
 import {createHash, randomUUID} from 'node:crypto'
-import {access, mkdir, readFile, rename, rm, rmdir, unlink, writeFile} from 'node:fs/promises'
+import {access, mkdir, readFile, rename, rm, rmdir, writeFile} from 'node:fs/promises'
 import {join} from 'node:path'
 
 export interface DeviceLock { readonly path: string; readonly taskId: string }
@@ -46,34 +46,40 @@ async function reclaimable(path: string): Promise<string | null> {
   }
 }
 
+/** `mkdir` is the claim. A lock whose owner is not yet written reads as busy and is never reclaimed. */
+async function create(path: string, taskId: string): Promise<'created' | 'exists' | 'failed'> {
+  try {
+    await mkdir(path, {mode: 0o700})
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EEXIST' ? 'exists' : 'failed'
+  }
+  try {
+    await writeFile(join(path, OWNER), JSON.stringify({taskId, hostPid: process.pid}), {mode: 0o600, flag: 'wx'})
+    return 'created'
+  } catch {
+    await rmdir(path).catch(() => undefined)
+    return 'failed'
+  }
+}
+
 export async function acquireDeviceLock(lockRoot: string, deviceType: string, deviceId: string, taskId: string):
 Promise<{ok: true; lock: DeviceLock} | {ok: false; reason: 'device_busy' | 'device_lock_failed'}> {
   const path = deviceLockPath(lockRoot, deviceType, deviceId)
   for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      await mkdir(path, {mode: 0o700})
-      try {
-        await writeFile(join(path, OWNER), JSON.stringify({taskId, hostPid: process.pid}), {mode: 0o600, flag: 'wx'})
-      } catch {
-        await rmdir(path).catch(() => undefined)
-        return {ok: false, reason: 'device_lock_failed'}
-      }
-      return {ok: true, lock: {path, taskId}}
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return {ok: false, reason: 'device_lock_failed'}
-    }
+    const created = await create(path, taskId)
+    if (created === 'created') return {ok: true, lock: {path, taskId}}
+    if (created === 'failed') return {ok: false, reason: 'device_lock_failed'}
     const stale = await reclaimable(path)
     if (stale === null) return {ok: false, reason: 'device_busy'}
-    // Rename is atomic: of several contenders exactly one moves the stale lock aside.
-    const tombstone = `${path}.stale-${randomUUID()}`
-    try { await rename(path, tombstone) } catch { continue }
-    const moved = await readFile(join(tombstone, OWNER), 'utf8').catch(() => null)
-    if (moved !== stale) {
-      // A contender replaced the stale lock first; hand its live lock back untouched.
-      try { await rename(tombstone, path) } catch { return {ok: false, reason: 'device_lock_failed'} }
-      return {ok: false, reason: 'device_busy'}
+    // One reclaimer at a time; a crash while reclaiming leaves the device held for manual recovery.
+    const mutex = `${path}.reclaim`
+    try { await mkdir(mutex, {mode: 0o700}) } catch { return {ok: false, reason: 'device_busy'} }
+    try {
+      if (await reclaimable(path) !== stale) return {ok: false, reason: 'device_busy'}
+      await rm(path, {recursive: true, force: true})
+    } finally {
+      await rmdir(mutex).catch(() => undefined)
     }
-    await rm(tombstone, {recursive: true, force: true}).catch(() => undefined)
   }
   return {ok: false, reason: 'device_busy'}
 }
@@ -95,13 +101,15 @@ export async function releaseDeviceLock(lock: DeviceLock): Promise<boolean> {
   } catch {
     return false
   }
-  await unlink(join(lock.path, OWNER)).catch(() => undefined)
+  // Move the whole lock aside atomically so a new owner can never be created inside a half-removed lock.
+  const tombstone = `${lock.path}.released-${randomUUID()}`
   try {
-    await rmdir(lock.path)
-    return true
+    await rename(lock.path, tombstone)
   } catch {
     return false
   }
+  await rm(tombstone, {recursive: true, force: true}).catch(() => undefined)
+  return true
 }
 
 function record(value: unknown): Record<string, unknown> {
