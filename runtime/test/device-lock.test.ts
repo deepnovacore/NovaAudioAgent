@@ -41,7 +41,7 @@ test('quarantine and recorded processes survive the owning run, and release only
   const first = await acquireDeviceLock(dir, 'android', 'serial', 'first')
   assert.ok(first.ok)
   await recordDeviceProcess(first.lock, DEAD_PID)
-  assert.equal(JSON.parse(await readFile(join(first.lock.path, 'owner.json'), 'utf8')).devicePid, DEAD_PID)
+  assert.equal((JSON.parse(await readFile(join(first.lock.path, 'owner.json'), 'utf8')) as Record<string, unknown>).devicePid, DEAD_PID)
   await quarantineDeviceLock(first.lock, 'cleanup_unknown')
   assert.equal(await releaseDeviceLock({path: first.lock.path, taskId: 'someone-else'}), false)
   assert.equal((await readdir(dir)).length, 1)
@@ -54,6 +54,6 @@ test('concurrent contenders for one stale lock produce exactly one owner', async
   assert.equal(results.filter(result => result.ok).length, 1)
   const winner = results.find(result => result.ok)!
   assert.ok(winner.ok)
-  assert.equal(JSON.parse(await readFile(join(winner.lock.path, 'owner.json'), 'utf8')).taskId, winner.lock.taskId)
+  assert.equal((JSON.parse(await readFile(join(winner.lock.path, 'owner.json'), 'utf8')) as Record<string, unknown>).taskId, winner.lock.taskId)
   assert.deepEqual((await readdir(dir)).filter(name => name.includes('.stale-')), [])
 })
