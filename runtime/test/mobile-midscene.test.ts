@@ -22,6 +22,7 @@ const fs=require('node:fs'),path=require('node:path'),root=${JSON.stringify(root
 const args=process.argv.slice(2);if(args[0]!=='-s'||args[1]!=='test-phone')process.exit(2);
 const c=args.slice(2).join(' '),state=Number(fs.readFileSync(path.join(root,'state'),'utf8'));
 if(c==='get-state'){if(${JSON.stringify(scenario)}==='disconnect'&&state>0)process.exit(1);console.log('device');}
+else if(c==='shell getprop ro.serialno')console.log('HW-1');
 else if(c==='shell dumpsys window')console.log('mCurrentFocus=Window{0 u0 '+fs.readFileSync(path.join(root,'focus'),'utf8')+'}');
 else if(c==='exec-out screencap -p')process.stdout.write(fs.readFileSync(path.join(root,state+'.png')));
 else if(c==='shell input keyevent 3'||c==='shell input tap 100 150'){fs.writeFileSync(path.join(root,'state'),String(state+1));if(${JSON.stringify(scenario)}==='unknown_write')process.exit(1);if(${JSON.stringify(scenario)}==='window_transition')fs.writeFileSync(path.join(root,'focus'),'com.example.app/.Other');}

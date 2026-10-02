@@ -24,6 +24,23 @@ TOTAL_LIMIT = 1048576
 WRITES = {"Launch", "Tap", "Type", "Type_Name", "Swipe", "Back", "Home", "Double Tap", "Long Press"}
 
 
+
+ANDROID_READS = (
+    ("get-state",),
+    ("exec-out", "screencap", "-p"),
+    ("shell", "dumpsys", "window"),
+    ("shell", "dumpsys", "input_method"),
+    ("shell", "settings", "get"),
+    ("shell", "ime", "list"),
+    ("shell", "getprop"),
+    ("shell", "wm", "size"),
+)
+
+
+def android_read_only(command):
+    return isinstance(command, list) and all(isinstance(part, str) for part in command) and any(
+        tuple(command[:len(prefix)]) == prefix for prefix in ANDROID_READS)
+
 class Stop(BaseException):
     # Upstream catches Exception and converts some failures to successful finish.
     def __init__(self, code):
@@ -208,6 +225,8 @@ class Bridge:
 
         def checked_run(args, **kwargs):
             require(isinstance(args, list) and args[:3] == ["adb", "-s", serial], "action_failed")
+            # Mirrors iOS checked_request: only fixed observations run outside an approved write.
+            require(android_read_only(args[3:]) or self.approved, "action_failed")
             kwargs["check"] = True
             kwargs["timeout"] = min(kwargs.get("timeout", 10), self.remaining())
             try:

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import {randomUUID, createHash} from 'node:crypto'
-import {mkdtemp, mkdir, readdir, rm, stat} from 'node:fs/promises'
+import {randomUUID} from 'node:crypto'
+import {mkdtemp, mkdir, readdir, rm, stat, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {setTimeout as delay} from 'node:timers/promises'
@@ -10,6 +10,7 @@ import {RealClock} from '../src/core/clock.js'
 import type {ExecutorDispatchContext} from '../src/core/causal-runtime.js'
 import type {AgentRuntimeDispatchPort} from '../src/executors/agent-controller.js'
 import {MobileExecutor, loadMobileConfig} from '../src/executors/mobile.js'
+import {deviceLockPath} from '../src/executors/device-lock.js'
 import type {runMobileIos} from '../src/executors/mobile-ios.js'
 
 const env = {MOBILE_DEVICE_ID: 'test-device', MOBILE_DEVICE_TYPE: 'ios-simulator',
@@ -146,7 +147,7 @@ test('mobile holds legacy device lock until cancellation cleanup actually settle
   let cancelled = false
   const cancel = controller.cancel(user()).then(() => { cancelled = true })
   await delay(10)
-  const lock = join(h.config.lockRoot, createHash('sha256').update(`${h.config.deviceType}:${h.config.deviceId}`).digest('hex'))
+  const lock = deviceLockPath(h.config.lockRoot, h.config.deviceType, h.config.deviceId)
   assert.equal((await stat(lock)).isDirectory(), true)
   assert.equal(cancelled, false)
   assert.equal((await controller.dispatch(user())).code, 'busy')
@@ -181,7 +182,7 @@ test('mobile deadline aborts pending approval and cannot become late success', a
 test('mobile respects legacy lock and sanitizes runner errors', async t => {
   let called = false
   const h = await setup(t, () => { called = true; return Promise.reject(new Error('SECRET https://private.example')) })
-  const lock = join(h.config.lockRoot, createHash('sha256').update(`${h.config.deviceType}:${h.config.deviceId}`).digest('hex'))
+  const lock = deviceLockPath(h.config.lockRoot, h.config.deviceType, h.config.deviceId)
   await mkdir(lock)
   const first = await reserve(h.executor)
   const busy = await h.executor.dispatch('run', first.request, h.context)
@@ -219,7 +220,7 @@ for (const cancelRequested of [false, true]) test(`mobile quarantines uncertain 
   assert.equal(result.content.effects, 'unknown')
   assert.equal(result.content.verified, false)
   if (cancelRequested) assert.equal(result.content.cancel_requested, true)
-  const lock = join(h.config.lockRoot, createHash('sha256').update(`${h.config.deviceType}:${h.config.deviceId}`).digest('hex'))
+  const lock = deviceLockPath(h.config.lockRoot, h.config.deviceType, h.config.deviceId)
   assert.equal((await stat(lock)).isDirectory(), true)
   let ran = false
   const contender = new MobileExecutor(h.config, h.approvals, () => { ran = true; return Promise.resolve({code: 'model_finished', steps: 0}) })
@@ -251,3 +252,40 @@ test('mobile rejects forged requests and releases a superseded launch reservatio
   assert.equal(config.deviceType, 'android');
   assert.equal(config.deviceId, 'test-device');
  });
+
+test('a Simulator lock is shared across the ios and ios-simulator spellings', async t => {
+  const h = await setup(t, (_config, _instruction, options) => options.approve('Home', {}).then(
+    accepted => ({code: accepted ? 'model_finished' : 'declined', steps: accepted ? 1 : 0})))
+  const request = await reserve(h.executor)
+  const running = h.executor.dispatch('run', request.request, h.context)
+  const approvalId = await pending(h.approvals)
+  const alias = new MobileExecutor({...h.config, deviceType: 'ios'}, h.approvals,
+    () => Promise.resolve({code: 'model_finished', steps: 0}))
+  t.after(() => alias.close())
+  assert.equal((await alias.dispatch('run', (await reserve(alias)).request, h.context)).content.code, 'device_busy')
+  h.approvals.acceptDecision({approvalId, decision: 'decline'})
+  assert.equal((await running).content.code, 'declined')
+})
+
+test('a lock owned by a dead host is reclaimed and a live one is not', async t => {
+  const h = await setup(t, () => Promise.resolve({code: 'model_finished', steps: 0}))
+  const lock = deviceLockPath(h.config.lockRoot, h.config.deviceType, h.config.deviceId)
+  await mkdir(lock, {mode: 0o700})
+  await writeFile(join(lock, 'owner.json'), JSON.stringify({taskId: 'dead', hostPid: 2147483646}))
+  const afterCrash = await reserve(h.executor)
+  assert.equal((await h.executor.dispatch('run', afterCrash.request, h.context)).content.code, 'model_finished')
+  await mkdir(lock, {mode: 0o700})
+  await writeFile(join(lock, 'owner.json'), JSON.stringify({taskId: 'live', hostPid: process.pid}))
+  const held = await reserve(h.executor)
+  assert.equal((await h.executor.dispatch('run', held.request, h.context)).content.code, 'device_busy')
+  await rm(lock, {recursive: true, force: true})
+})
+
+test('a lock without a readable owner file is never reclaimed', async t => {
+  const h = await setup(t, () => Promise.resolve({code: 'model_finished', steps: 0}))
+  const lock = deviceLockPath(h.config.lockRoot, h.config.deviceType, h.config.deviceId)
+  await mkdir(lock, {mode: 0o700})
+  const request = await reserve(h.executor)
+  assert.equal((await h.executor.dispatch('run', request.request, h.context)).content.code, 'device_busy')
+  await rm(lock, {recursive: true, force: true})
+})

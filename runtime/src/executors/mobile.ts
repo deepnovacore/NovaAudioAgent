@@ -1,5 +1,5 @@
-import {createHash, randomUUID} from 'node:crypto'
-import {mkdir, rmdir, unlink, writeFile} from 'node:fs/promises'
+import {randomUUID} from 'node:crypto'
+import {mkdir} from 'node:fs/promises'
 import {homedir} from 'node:os'
 import {join} from 'node:path'
 import {z} from 'zod'
@@ -7,6 +7,7 @@ import {executorManifestSchema} from '../core/ports.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../core/causal-runtime.js'
 import type {HostApprovalController} from '../core/approval.js'
 import type {AgentController, AgentRuntimeDispatchPort} from './agent-controller.js'
+import {acquireDeviceLock, releaseDeviceLock} from './device-lock.js'
 import type {MobileIosConfig, runMobileIos} from './mobile-ios.js'
 
 const instructionSchema = z.string().trim().min(1).max(4000)
@@ -153,16 +154,13 @@ export class MobileExecutor implements ExecutorAdapter {
     const deadline = AbortSignal.timeout(budgetMs)
     const signal = AbortSignal.any([cancelled, deadline])
     await mkdir(this.config.lockRoot, {recursive: true, mode: 0o700})
-    const lock = join(this.config.lockRoot, createHash('sha256').update(`${this.config.deviceType}:${this.config.deviceId}`).digest('hex'))
-    try { await mkdir(lock, {mode: 0o700}) } catch (error) {
-      return handoff((error as NodeJS.ErrnoException).code === 'EEXIST' ? 'device_busy' : 'device_lock_failed', 'refused')
-    }
+    const acquired = await acquireDeviceLock(this.config.lockRoot, this.config.deviceType, this.config.deviceId, taskId)
+    if (!acquired.ok) return handoff(acquired.reason, 'refused')
     const approval = this.approvals.forWork({work_id: taskId, project: this.config.deviceType === 'android' ? 'Android' : 'iOS', title: '手机任务'})
     const observed: Record<string, string | number> = {}
     let activity = 0
     let quarantined = false
     try {
-      await writeFile(join(lock, 'owner.json'), JSON.stringify({taskId, hostPid: process.pid}), {mode: 0o600, flag: 'wx'})
       let result: ExecutorHandoff
       try {
         signal.throwIfAborted()
@@ -206,10 +204,7 @@ export class MobileExecutor implements ExecutorAdapter {
       // Do not race the runner against abort: even cancellation retains ownership through cleanup.
       approval.invalidate('mobile_finished')
       // A timed-out device write can outlive the host request; retain quarantine for manual recovery.
-      if (!quarantined) {
-        await unlink(join(lock, 'owner.json')).catch(() => undefined)
-        await rmdir(lock)
-      }
+      if (!quarantined) await releaseDeviceLock(acquired.lock)
     }
   }
 }

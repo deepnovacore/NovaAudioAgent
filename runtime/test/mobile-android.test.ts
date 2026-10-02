@@ -22,7 +22,9 @@ if(mode==='permission'&&c.startsWith('shell input')){process.stderr.write('Secur
 if(mode==='unknown'&&c.startsWith('shell input'))process.exit(1);
 if(mode==='broadcast_failure'&&c.startsWith('shell am broadcast')){process.stderr.write('SecurityException');process.exit(1);}
 if(mode==='disconnect'&&c==='get-state')process.exit(1);
+if(mode==='stderr_error'&&c.startsWith('shell input')){process.stderr.write('Error: injection may have partially applied');process.exit(0);}
 if(c==='get-state') console.log('device');
+else if(c==='shell getprop ro.serialno') console.log(mode==='swapped'?'OTHER-HW':'HW-1');
 else if(c==='shell dumpsys window') console.log('mCurrentFocus=Window{0 u0 com.example.app/.Main}\\ntype=statusBars frame=[0,0][1,1] visible=true\\ntype=navigationBars frame=[0,2][1,3] visible=true');
 else if(c==='exec-out screencap -p') process.stdout.write(Buffer.from('${png}','base64'));
 else if(c==='shell settings get secure default_input_method') console.log('com.example.ime/.IME');
@@ -49,15 +51,29 @@ else if(c.startsWith('shell am broadcast')) console.log('Broadcast completed: re
     ['unknown', 'Tap', {x:0,y:0}, 'cleanup_unknown'],
     ['broadcast_failure', 'Type', {text:'奶茶'}, 'needs_user_action'],
     ['disconnect', 'Home', {}, 'action_failed'],
+    ['stderr_error', 'Tap', {x:0,y:0}, 'cleanup_unknown'],
+    ['swapped', 'Tap', {x:0,y:0}, 'invalid_configuration'],
   ] as const) {
     await writeFile(join(root,'mode'),mode)
+    const issued = (await readFile(log,'utf8')).trim().split('\n').length
     await assert.rejects(device.perform(action,params),{message})
+    if (mode === 'swapped') {
+      const attempted = (await readFile(log,'utf8')).trim().split('\n').slice(issued).map(line => JSON.parse(line) as string[])
+      assert.equal(attempted.some(args => args[3] === 'input'), false, 'a different handset behind the serial must not receive the write')
+    }
     if (mode === 'broadcast_failure') {
       const last = (await readFile(log,'utf8')).trim().split('\n').at(-1)!
       assert.deepEqual(JSON.parse(last),['-s','test-phone','shell','ime','set','com.example.ime/.IME'])
     }
   }
   await rm(join(root,'mode'))
+  // The binary is fixed at bind time; a later PATH entry cannot intercept approved writes.
+  const decoy = await mkdtemp(join(tmpdir(), 'nova-adb-decoy-'))
+  t.after(() => rm(decoy, {recursive: true, force: true}))
+  await writeFile(join(decoy, 'adb'), `#!/bin/sh\ntouch ${JSON.stringify(join(decoy, 'used'))}\n`, {mode: 0o700})
+  process.env.PATH = `${decoy}:${root}:${previousPath}`
+  await device.perform('Home', {})
+  await assert.rejects(readFile(join(decoy, 'used')), {code: 'ENOENT'})
   controller.abort()
   const before = await readFile(log, 'utf8')
   await assert.rejects(device.perform('Home', {}), {message: 'cancelled'})

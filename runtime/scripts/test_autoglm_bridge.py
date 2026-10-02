@@ -91,6 +91,45 @@ class BridgeTests(unittest.TestCase):
                     code, calls, _ = self.gate(action, **kwargs)
                     self.assertEqual((code, calls), (expected, []))
 
+    def test_android_adb_writes_require_approval(self):
+        bridge = b.Bridge(b.Protocol(io.BytesIO(), io.BytesIO()), start())
+        ran = []
+        def fake_run(args, **kwargs):
+            ran.append(args)
+            if args == ["adb", "devices"]:
+                return SimpleNamespace(stdout="List of devices attached\nserial\tdevice\n")
+            return SimpleNamespace(stdout=b"", returncode=0)
+        upstream = SimpleNamespace(get_device_factory=lambda: SimpleNamespace(), PhoneAgent=lambda *a, **k: SimpleNamespace(),
+            AgentConfig=lambda **k: None)
+        adb = SimpleNamespace(screenshot=SimpleNamespace(Screenshot=None))
+        root = SimpleNamespace(agent=upstream, model=SimpleNamespace(ModelConfig=lambda **k: None), adb=adb)
+        modules = {"phone_agent": root, "phone_agent.agent": upstream, "phone_agent.model": root.model,
+            "phone_agent.adb": adb, "phone_agent.adb.screenshot": adb.screenshot}
+        original = subprocess.run
+        try:
+            with patch.dict(sys.modules, modules):
+                subprocess.run = fake_run
+                bridge.android("key")
+                checked = subprocess.run
+        finally:
+            subprocess.run = original
+        self.assertIsNot(checked, fake_run)
+        for read in (["shell", "dumpsys", "window"], ["exec-out", "screencap", "-p"], ["get-state"]):
+            with self.subTest(read=read):
+                checked(["adb", "-s", "serial", *read])
+        for write in (["shell", "input", "tap", "1", "2"], ["shell", "am", "start", "-n", "x/y"], ["shell", "ime", "set", "k/.I"]):
+            with self.subTest(write=write):
+                before = len(ran)
+                with self.assertRaises(b.Stop) as stopped:
+                    checked(["adb", "-s", "serial", *write])
+                self.assertEqual((stopped.exception.code, len(ran)), ("action_failed", before))
+                bridge.approved = True
+                try:
+                    checked(["adb", "-s", "serial", *write])
+                finally:
+                    bridge.approved = False
+                self.assertEqual(ran[-1], ["adb", "-s", "serial", *write])
+
     def test_unsupported_actions(self):
         for name, code in [("Take_over", "needs_user_action"), ("Interact", "needs_user_action"), ("Note", "action_failed"), ("Call_API", "action_failed"), ("Unknown", "action_failed")]:
             result, calls, _ = self.gate(dict(_metadata="do", action=name))

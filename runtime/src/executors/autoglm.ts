@@ -1,13 +1,14 @@
 /** Optional, supervised phone executor. Device identity and credentials stay host-owned. */
 import {spawn} from 'node:child_process'
-import {createHash, randomUUID} from 'node:crypto'
-import {access, mkdir, realpath, rmdir, unlink, writeFile} from 'node:fs/promises'
+import {randomUUID} from 'node:crypto'
+import {access, mkdir, realpath} from 'node:fs/promises'
 import {homedir} from 'node:os'
 import {isAbsolute, join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {setTimeout as delay} from 'node:timers/promises'
 import {z} from 'zod'
 import {executorManifestSchema} from '../core/ports.js'
+import {acquireDeviceLock, releaseDeviceLock} from './device-lock.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../core/causal-runtime.js'
 import type {HostApprovalController, ApprovalPort} from '../core/approval.js'
 import type {AgentController, AgentRuntimeDispatchPort} from './agent-controller.js'
@@ -191,18 +192,14 @@ export class AutoGlmExecutor implements ExecutorAdapter {
     const sourcePath = await realpath(config.sourcePath)
     await access(this.bridgePath)
     await mkdir(config.lockRoot, {recursive: true, mode: 0o700})
-    const lock = join(config.lockRoot, createHash('sha256').update(`${config.deviceType}:${config.deviceId}`).digest('hex'))
-    try { await mkdir(lock, {mode: 0o700}) } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return handoff('device_busy', 'refused')
-      return handoff('device_lock_failed', 'refused')
-    }
+    const acquired = await acquireDeviceLock(config.lockRoot, config.deviceType, config.deviceId, taskId)
+    if (!acquired.ok) return handoff(acquired.reason, 'refused')
     // ponytail: crash leaves a quarantine directory; manual recovery after checking the device/processes.
     let treeGone = true
     const approval = this.approvals.forWork({work_id: taskId, project: config.deviceType === 'android' ? 'Android' : 'iOS', title: 'AutoGLM 手机任务'})
     let result = handoff('bridge_eof', 'unknown')
     const observation: Record<string, string | number> = {}
     try {
-      await writeFile(join(lock, 'owner.json'), JSON.stringify({taskId, hostPid: process.pid}), {mode: 0o600, flag: 'wx'})
       if (signal.aborted) return handoff(cancelled.aborted ? 'cancelled' : 'timeout', cancelled.aborted ? 'cancelled' : 'unknown')
       const child = spawn(python, [this.bridgePath], {shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
         env: {PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: homedir(), LANG: 'en_US.UTF-8', PYTHONUNBUFFERED: '1',
@@ -259,7 +256,7 @@ export class AutoGlmExecutor implements ExecutorAdapter {
       return {...result, content: {...result.content, ...observation}}
     } finally {
       approval.invalidate('autoglm_finished')
-      if (treeGone) { await unlink(join(lock, 'owner.json')).catch(() => undefined); await rmdir(lock) }
+      if (treeGone) await releaseDeviceLock(acquired.lock)
     }
   }
 

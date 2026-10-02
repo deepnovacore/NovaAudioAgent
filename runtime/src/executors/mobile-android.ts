@@ -1,35 +1,66 @@
 /** Fixed ADB operations. No model-provided shell, intents, or automatic device selection. */
 import {execFile} from 'node:child_process'
+import {constants} from 'node:fs'
+import {access, realpath} from 'node:fs/promises'
+import {delimiter, isAbsolute, join} from 'node:path'
 import {promisify} from 'node:util'
 import {setTimeout as delay} from 'node:timers/promises'
 
 const exec = promisify(execFile)
 const keyboard = 'com.android.adbkeyboard/.AdbIME'
+const refusal = /INJECT_EVENTS|SecurityException|Permission Denial/u
+const failureText = /Error:|Exception occurred/u
+
+/** Resolve once at bind time so a later PATH change cannot swap the binary that receives approved writes. */
+async function resolveAdb(): Promise<string> {
+  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+    if (!isAbsolute(directory)) continue
+    try {
+      const candidate = join(directory, 'adb')
+      await access(candidate, constants.X_OK)
+      return await realpath(candidate)
+    } catch { /* Try the next PATH entry. */ }
+  }
+  throw new Error('invalid_configuration')
+}
+
 export async function createAndroidDevice(serial: string, signal: AbortSignal) {
   if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(serial)) throw new Error('invalid_configuration')
+  const adb = await resolveAdb()
   const command = async (args: string[], write = false): Promise<Buffer> => {
     if (!write && signal.aborted) throw new Error('cancelled')
+    let result: {stdout: Buffer; stderr: Buffer}
     try {
-      const result = await exec('adb', ['-s', serial, ...args], {encoding: 'buffer', timeout: 10_000,
+      result = await exec(adb, ['-s', serial, ...args], {encoding: 'buffer', timeout: 10_000,
         maxBuffer: 32 * 1024 * 1024, ...(write ? {} : {signal})})
-      if (/INJECT_EVENTS|SecurityException|Permission Denial/u.test(result.stderr.toString())) throw new Error('needs_user_action')
-      if (/Error:|Exception occurred/u.test(result.stderr.toString())) throw new Error('action_failed')
-      return result.stdout
     } catch (error) {
-      const failure = error as {stderr?: Buffer; message?: string}
-      if (/INJECT_EVENTS|SecurityException|Permission Denial/u.test(failure.stderr?.toString() ?? '') || failure.message === 'needs_user_action') throw new Error('needs_user_action')
-      if (failure.message === 'action_failed') throw error
+      const failure = error as {stderr?: Buffer}
+      if (refusal.test(failure.stderr?.toString() ?? '')) throw new Error('needs_user_action')
       // A disconnected adb client cannot establish whether the remote write completed.
       if (write) throw new Error('cleanup_unknown')
       throw new Error(signal.aborted ? 'cancelled' : 'action_failed')
     }
+    const stderr = result.stderr.toString()
+    if (refusal.test(stderr) || failureText.test(stderr)) {
+      // adb exited 0, so the device may have applied the write despite the error text.
+      if (write) throw new Error('cleanup_unknown')
+      throw new Error(refusal.test(stderr) ? 'needs_user_action' : 'action_failed')
+    }
+    return result.stdout
   }
 
   const text = async (args: string[], write = false) => (await command(args, write)).toString().trim()
-  const verify = async () => {
-    if (await text(['get-state']) !== 'device') throw new Error('invalid_configuration')
+  const hardwareId = async () => {
+    const id = await text(['shell', 'getprop', 'ro.serialno']) || await text(['shell', 'getprop', 'ro.boot.serialno'])
+    if (!/^[\x21-\x7e]{1,128}$/u.test(id)) throw new Error('invalid_configuration')
+    return id
   }
-  await verify()
+  if (await text(['get-state']) !== 'device') throw new Error('invalid_configuration')
+  // The transport serial can be reassigned (e.g. emulator ports); writes stay bound to the hardware seen at bind.
+  const boundHardware = await hardwareId()
+  const verify = async () => {
+    if (await text(['get-state']) !== 'device' || await hardwareId() !== boundHardware) throw new Error('invalid_configuration')
+  }
   const foreground = async () => {
     const windows = await text(['shell', 'dumpsys', 'window'])
     const focused = windows.split('\n').find(line => line.includes('mCurrentFocus=')) ?? ''
