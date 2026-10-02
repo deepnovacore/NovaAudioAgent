@@ -38,6 +38,8 @@ export async function applySettingsTransaction({
   restartBackend,
   publishStatus,
   needsBackendRestart = () => true,
+  /** Settings delivered to the running backend without a restart (e.g. the coding default). */
+  applyLive = async () => {},
   deferRestart = false,
   rollback = async () => {},
   complete = async () => {},
@@ -66,12 +68,12 @@ export async function applySettingsTransaction({
     const rejectedSecrets = rejectedSecretNames(written)
     publishCommitted(written)
     if (!needsBackendRestart()) {
-      try { await complete() } catch { return failed('failed', rejectedSecrets) }
+      try { await applyLive(); await complete() } catch { return failed('failed', rejectedSecrets) }
       publishStatus('applied')
       return result(true, 'applied', rejectedSecrets)
     }
     if (deferRestart) {
-      try { await complete() } catch { return failed('failed', rejectedSecrets) }
+      try { await applyLive(); await complete() } catch { return failed('failed', rejectedSecrets) }
       publishStatus('pending_restart')
       return result(true, 'pending_restart', rejectedSecrets)
     }

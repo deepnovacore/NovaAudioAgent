@@ -107,6 +107,18 @@ const heartbeatValue = document.querySelector('#heartbeat-value')
 const codexModeInputs = [...document.querySelectorAll('input[name="codexBinaryMode"]')]
 const codexBinaryPath = document.querySelector('#codexBinaryPath')
 const codexStatus = document.querySelector('#codex-status')
+const codingProvider = document.querySelector('#coding-provider')
+const codingPermissionNote = document.querySelector('#coding-permission-note')
+const codingAcpSettings = document.querySelector('#coding-acp-settings')
+const codingBinaryPath = document.querySelector('#coding-binary-path')
+const codingConfigPath = document.querySelector('#coding-config-path')
+// [title, native config label or '', setup guidance]; Codex keeps its own discovery controls.
+const CODING_GUIDANCE = {
+  opencode: ['OpenCode', '配置文件', '安装 opencode-ai，并用 OpenCode 自己的登录或配置文件设置模型与凭据。'],
+  codebuddy: ['CodeBuddy', '', '安装 @tencent-ai/codebuddy-code，并在 CodeBuddy 命令行中完成登录或密钥配置。'],
+  pi: ['Pi', '配置目录', '安装 Pi 与 pi-acp，并在 Pi 自己的配置中设置模型与登录。Pi 不支持逐项审批，询问模式下任务会被拒绝。'],
+  deepseek: ['DeepSeek Harness', '配置目录', '安装 @deepseek-ai/dsh，并在其配置中设置凭据；也可以使用服务配置里的 DeepSeek API Key。'],
+}
 const yoloWarning = document.querySelector('#codex-yolo-warning')
 const codexManualSettings = document.querySelector('#codex-manual-settings')
 const codexRescan = document.querySelector('#codex-rescan')
@@ -244,7 +256,7 @@ function keyUsage(view) {
       : view.pipelineMode === 'integrated' && view.integratedProvider === 'stepfun'
         ? t("仅本地记忆嵌入需要") : t("当前未使用"),
     stepfunApiKey: view.pipelineMode === 'integrated' && view.integratedProvider === 'stepfun' ? t("必需") : t("当前未使用"),
-    deepseekApiKey: view.pipelineMode === 'cascaded' && view.cascadedLlmProvider === 'deepseek' ? t("必需") : t("当前未使用"),
+    deepseekApiKey: view.pipelineMode === 'cascaded' && view.cascadedLlmProvider === 'deepseek' ? t("必需") : view.codingBackend === 'deepseek' ? t("编程执行器可使用") : t("当前未使用"),
     arkApiKey: view.pipelineMode === 'cascaded'
       && view.cascadedLlmProvider === 'ark' ? t("必需") : t("当前未使用"),
     doubaoBigmodelApiKey: view.pipelineMode === 'cascaded' ? t("必需") : t("当前未使用"),
@@ -265,6 +277,32 @@ function renderPreset(select, customInput, value, presets) {
   select.value = choice.selected
   customInput.hidden = choice.selected !== CUSTOM_VOICE_VALUE
   if (choice.selected === CUSTOM_VOICE_VALUE) customInput.value = choice.custom
+}
+
+function renderCodingBackend(view) {
+  const backendId = Object.hasOwn(CODING_GUIDANCE, view.codingBackend) ? view.codingBackend : 'codex'
+  codingProvider.value = backendId
+  const acp = backendId !== 'codex'
+  codingAcpSettings.hidden = !acp
+  codexStatus.hidden = acp
+  document.querySelector('#codex-discovery').hidden = acp
+  codingPermissionNote.textContent = backendId === 'pi'
+    ? t("Pi 不支持逐项审批：询问模式下任务会被拒绝，不会自动改为 YOLO。")
+    : acp ? t("审批由所选执行器在任务开始时协商；不支持当前审批模式时任务会被拒绝。") : ''
+  if (!acp) return
+  const [title, configLabel, guidance] = CODING_GUIDANCE[backendId]
+  document.querySelector('#coding-backend-title').textContent = t("{0} 配置", title)
+  document.querySelector('#coding-backend-guidance').textContent = t(guidance)
+  document.querySelector('#coding-config-field').hidden = !configLabel
+  document.querySelector('#coding-config-label').textContent = configLabel ? t(configLabel) : ''
+  codingBinaryPath.value = view.codingBackendPaths?.[backendId]?.binaryPath ?? ''
+  codingConfigPath.value = view.codingBackendPaths?.[backendId]?.configPath ?? ''
+  const status = view.codingBackends?.[backendId]
+  document.querySelector('#coding-backend-status').textContent = [
+    status?.binary === 'available' ? t("已找到 ACP 可执行文件") : status?.binary === 'missing' ? t("未找到 ACP 可执行文件，请安装或指定路径") : t("可执行文件待检测"),
+    status?.configuration === 'missing' ? t("配置路径不可用") : codingConfigPath.value ? t("使用指定的配置来源") : t("使用默认配置"),
+    t("登录与 ACP 能力尚未验证，会在任务开始时检查。"),
+  ].join(t("；"))
 }
 
 function renderCodexStatus(view) {
@@ -421,6 +459,7 @@ function render(view, drafts, state) {
   heartbeat.value = String(view.codexHeartbeatSeconds)
   heartbeatValue.textContent = t("{0} 秒", view.codexHeartbeatSeconds)
   for (const input of codexModeInputs) input.checked = input.value === view.codexBinaryMode
+  renderCodingBackend(view)
   const codexVisibility = codexModeVisibility(view.codexBinaryMode)
   codexManualSettings.hidden = codexVisibility.manualConfigurationHidden
   codexRescan.hidden = codexVisibility.rescanHidden
@@ -554,6 +593,9 @@ for (const event of ['pointerdown', 'keydown']) {
 bindStage(codingProgressNarrationInput, 'change', () => ({codingProgressNarration: codingProgressNarrationInput.value}))
 for (const input of proactivityInputs) bindStage(input, 'change', () => ({proactivity: input.value}))
 for (const input of pipelineModeInputs) bindStage(input, 'change', () => ({pipelineMode: input.value}))
+bindStage(codingProvider, 'change', () => ({codingBackend: codingProvider.value}))
+bindStage(codingBinaryPath, 'input', () => ({codingBackendPaths: {[codingProvider.value]: {binaryPath: codingBinaryPath.value}}}))
+bindStage(codingConfigPath, 'input', () => ({codingBackendPaths: {[codingProvider.value]: {configPath: codingConfigPath.value}}}))
 for (const input of codexApprovalModeInputs) {
   bindStage(input, 'change', () => ({codexApprovalMode: input.value}))
 }

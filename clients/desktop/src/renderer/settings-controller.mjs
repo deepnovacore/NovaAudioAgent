@@ -59,6 +59,7 @@ const SECRET_KEY_NAMES = [
 const SECRET_KEYS = new Set(SECRET_KEY_NAMES)
 const MAIN_LIVE_VIEW_FIELDS = [
   'codexStatus',
+  'codingBackends',
   'frontendUsage',
   'startup',
   'backendStatus',

@@ -1455,3 +1455,25 @@ test('secret category tabs preserve unsaved keys and support keyboard navigation
   assert.equal(panel.node('#secret-tab-connections').tabIndex, -1)
   assert.equal(panel.node('#dashscopeApiKey').value, 'unsaved-fixture')
 })
+
+test('coding selector stages the new-session default, shows ACP fields, and Pi warns without escalating permission', async () => {
+  const sent = []
+  const panel = await mountSettingsPanel(publicView({codingBackend: 'codex', codexApprovalMode: 'ask'}), {
+    set: async patch => { sent.push(structuredClone(patch)); return publicView({codingBackend: 'pi', codexApprovalMode: 'ask', saved: true, restarted: false}) },
+  })
+  assert.equal(panel.node('#coding-acp-settings').hidden, true)
+  assert.equal(panel.node('#codex-status').hidden, false)
+  panel.node('#coding-provider').value = 'pi'
+  panel.node('#coding-provider').listeners.change()
+  assert.match(panel.node('#coding-permission-note').textContent, /不支持逐项审批/u)
+  await panel.click('#settings-save')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(sent[0].settingsPatch.codingBackend, 'pi')
+  assert.equal(Object.hasOwn(sent[0].settingsPatch, 'codexApprovalMode'), false)
+  assert.equal(panel.node('#coding-acp-settings').hidden, false)
+  assert.equal(panel.node('#coding-config-field').hidden, false)
+  assert.equal(panel.node('#coding-config-label').textContent, '配置目录')
+  assert.equal(panel.node('#codex-status').hidden, true)
+  assert.equal(panel.node('#codex-discovery').hidden, true)
+})
+

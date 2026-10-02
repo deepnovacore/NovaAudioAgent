@@ -2,6 +2,10 @@ import {t} from './locale.mjs'
 import {EXECUTOR_TASKS, EXECUTOR_TASK_ACTION_RESULT} from './wire-frame-types.mjs'
 import {parseProgressFrame, validProjectLabel} from './bubbles.mjs'
 
+const BACKEND_NAMES = Object.freeze({codex: 'Codex', opencode: 'OpenCode', codebuddy: 'CodeBuddy', pi: 'Pi', deepseek: 'DeepSeek Harness'})
+/** The bound coding backend, shown only when the host names one (non-Codex sessions). */
+export const taskBackendLabel = task => task.backend_id === undefined ? null : BACKEND_NAMES[task.backend_id] ?? null
+
 const RUNNING = new Set(['started', 'working'])
 const AUTO_HIDE = new Set(['completed', 'cancelled'])
 const PHASES = new Set([...RUNNING, ...AUTO_HIDE, 'failed', 'refused', 'unknown'])
@@ -14,7 +18,7 @@ export function parseTaskSnapshot(frame) {
     || new TextEncoder().encode(JSON.stringify(frame)).length > 16384) return null
   const ids = new Set()
   for (const task of frame.tasks) {
-    if (!task || !validProjectLabel(task.project) || !validProjectLabel(task.title) || !PHASES.has(task.phase)
+    if (!task || (task.backend_id !== undefined && !Object.hasOwn(BACKEND_NAMES, task.backend_id)) || !validProjectLabel(task.project) || !validProjectLabel(task.title) || !PHASES.has(task.phase)
       || !parseProgressFrame({type: 'executor.progress', delegate_id: task.work_id, executor: task.executor,
         phase: task.phase, summary: task.summary, ts: task.ts, level: 'detail'}) || ids.has(task.work_id)) return null
     ids.add(task.work_id)
@@ -162,7 +166,8 @@ export function mountTaskBanner({container, send, reserveArea, onChange = () => 
       card.dataset.phase = task.phase
       const set = (selector, text) => { const node = card.querySelector(selector); node.textContent = text; node.title = text }
       set('[data-title]', task.title)
-      set('[data-project]', task.project)
+      const backend = taskBackendLabel(task)
+      set('[data-project]', backend === null ? task.project : `${task.project} · ${backend}`)
       set('[data-summary]', task.summary)
       set('[data-status]', !view.connected ? t("连接已断开") : task.cancelling ? t("正在停止") : STATUS[task.phase])
       set('[data-error]', task.error)

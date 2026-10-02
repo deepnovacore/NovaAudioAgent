@@ -1,6 +1,7 @@
 import { createServer } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
+import {codingProfileRegistry} from './coding-settings.mjs'
 
 const MAX_READINESS_BYTES = 4096
 const TOKEN_PATTERN = /^[a-f0-9]{32}$/
@@ -224,6 +225,8 @@ export function backendLaunchSpec({
     BACKEND: backend,
     CODEX_WORKSPACE: effectiveWorkspace,
     EXECUTOR: 'codex',
+    CODING_BACKEND: settings?.codingBackend ?? 'codex',
+    CODING_PROFILES: JSON.stringify(codingProfileRegistry(settings)),
     PROACTIVITY_PRESET: proactivity,
     CODING_PROGRESS_NARRATION: settings?.codingProgressNarration ?? 'smart',
     CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),

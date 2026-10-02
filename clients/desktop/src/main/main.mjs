@@ -6,6 +6,7 @@ import {updateTrayUnread, resetTrayUnreadForBackend} from './tray-unread.mjs'
 import {createFeishuSetupOwner} from './feishu-setup.mjs'
 import {setLanguage, currentLanguage, preferredLanguage, t} from '../renderer/locale.mjs'
 import {createBackendControl, classifyBackendFailure, configWarnings, startupErrors, createBackendDiagnosticCollector, createBackendSupervisor} from './backend-supervisor.mjs'
+import {codingBackendStatus} from './coding-settings.mjs'
 import {createLifecycleCoordinator, canonicalInstalledExecutable, canonicalInstalledInvocation, inspectCodexVersion, prepareDesktopStartup, reportStartupFailure, startupFailureCode} from './desktop-startup.mjs'
 import {FeishuConnector, VISION_MODELS} from '@nova-audio-agent/runtime/desktop'
 import {configureDesktopIdentity} from './desktop-identity.mjs'
@@ -355,6 +356,7 @@ function settingsView() {
     capabilities: {...capabilities, document: undefined, revision: undefined, diskGeneration: settingsGeneration, runtime: runtimeCapabilities},
     ...publicSettings(currentSettings),
     codexStatus,
+    codingBackends: codingBackendStatus(currentSettings, process.env),
     frontendUsage: frontendUsage.snapshot(),
     visionModels: VISION_MODELS,
     backendStatus: backendStatus.state,
@@ -504,6 +506,21 @@ async function rollbackSettings(refresh = true) {
   currentSettings = restored
   settingsRecoveryAvailable = true
   if (refresh) await refreshDesktopConfiguration()
+}
+
+/** Deliver the new-session coding default to the running backend; running work keeps its backend. */
+async function applyLiveCodingBackend(backend) {
+  if (!backendControl || runtimeCapabilities?.modules?.coding?.enabled === false) return
+  const reply = await backendControl.request('coding.default.set', {backend})
+  if (reply?.backend !== backend) throw new Error('coding default update failed')
+}
+
+async function rollbackLiveSettings(previousSettings) {
+  // A live default change never replaced capability files or stopped work, even if delivery failed.
+  if (previousSettings.codingBackend !== currentSettings.codingBackend) await applyLiveCodingBackend(previousSettings.codingBackend)
+  await saveSettings(settingsFile(), previousSettings)
+  currentSettings = previousSettings
+  await completeSettings()
 }
 
 async function completeSettings() {
@@ -768,10 +785,14 @@ async function applyDesktopSettings(payload, restart = false) {
   const previousSettings = currentSettings
   const recoveryPending = settingsRecoveryAvailable
   let capabilitiesChanged = false
+  const changesRequireRestart = () => restart || recoveryPending || capabilitiesChanged
+    || JSON.stringify(backendSettings(previousSettings)) !== JSON.stringify(backendSettings(currentSettings))
   const applied = await applySettingsTransaction({
     deferRestart: !restart,
-    needsBackendRestart: () => restart || pendingRestart || recoveryPending || capabilitiesChanged || JSON.stringify(backendSettings(previousSettings))
-      !== JSON.stringify(backendSettings(currentSettings)),
+    needsBackendRestart: () => pendingRestart || changesRequireRestart(),
+    applyLive: async () => {
+      if (previousSettings.codingBackend !== currentSettings.codingBackend) await applyLiveCodingBackend(currentSettings.codingBackend)
+    },
     coordinator: lifecycleCoordinator,
     patch: payload,
     write: async value => {
@@ -797,7 +818,7 @@ async function applyDesktopSettings(payload, restart = false) {
       }
     },
     publishCommitted: publishCommittedSettings,
-    rollback: rollbackSettings,
+    rollback: () => changesRequireRestart() ? rollbackSettings() : rollbackLiveSettings(previousSettings),
     complete: completeSettings,
     prepareConfiguration: async () => {
       try {

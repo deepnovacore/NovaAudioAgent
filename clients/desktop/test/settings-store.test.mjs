@@ -84,6 +84,9 @@ test('the default settings are the documented schema', () => {
     palette: 'ember',
     proactivity: 'balanced',
     codingProgressNarration: 'smart',
+    codingBackend: 'codex',
+    codingBackendPaths: DEFAULT_SETTINGS.codingBackendPaths,
+    codingBackendProfiles: {},
     codexHeartbeatSeconds: 30,
     codexBinaryMode: 'auto',
     codexBinaryPath: '',
@@ -265,6 +268,9 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     palette: 'graphite',
     proactivity: 'balanced',
     codingProgressNarration: 'smart',
+    codingBackend: 'codex',
+    codingBackendPaths: DEFAULT_SETTINGS.codingBackendPaths,
+    codingBackendProfiles: {},
     codexHeartbeatSeconds: 45,
     codexBinaryMode: 'auto',
     codexBinaryPath: '',
@@ -357,6 +363,9 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'codexHeartbeatSeconds',
     'codexManagedRoot',
     'codexWorkspace',
+    'codingBackend',
+    'codingBackendPaths',
+    'codingBackendProfiles',
     'codingProgressNarration',
     'conversationVisionEnabled',
     'embeddingModel',
@@ -562,6 +571,8 @@ test('publicSettings never carries the secrets object', () => {
     'codexHeartbeatSeconds',
     'codexManagedRoot',
     'codexWorkspace',
+    'codingBackend',
+    'codingBackendPaths',
     'codingProgressNarration',
     'conversationVisionEnabled',
     'embeddingModel',
@@ -1293,3 +1304,32 @@ test('presentation writes preserve secrets without opening the keychain and rema
   assert.equal(current.lastPresentation, 'workbench')
   assert.deepEqual(current.secrets, original)
 })
+
+test('coding default persists independently of backend restart settings and refuses unknown backends', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'coding-settings-'))
+  try {
+    const file = join(directory, 'settings.json')
+    for (const codingBackend of ['codex', 'opencode', 'codebuddy', 'pi', 'deepseek']) {
+      await saveSettings(file, {...DEFAULT_SETTINGS, codingBackend})
+      assert.equal(publicSettings(await loadSettings(file)).codingBackend, codingBackend)
+      assert.deepEqual(backendSettings({...DEFAULT_SETTINGS, codingBackend}), backendSettings(DEFAULT_SETTINGS))
+    }
+    assert.equal(normalizeSettings({codingBackend: 'claude'}).codingBackend, 'codex')
+  } finally { await rm(directory, {recursive: true, force: true}) }
+})
+
+test('coding path changes retain immutable old sources and public settings hide the registry', () => {
+  const first = applySettingsUpdate(DEFAULT_SETTINGS, {codingBackendPaths: {opencode: {binaryPath: '/opt/opencode', configPath: '/config/first.json'}}}, fakeCodec())
+  const [firstId] = Object.keys(first.codingBackendProfiles)
+  assert.match(firstId, /^opencode:[a-f0-9]{64}$/u)
+  const second = applySettingsUpdate(first, {codingBackendPaths: {opencode: {configPath: '/config/second.json'}}}, fakeCodec())
+  assert.equal(Object.keys(second.codingBackendProfiles).length, 2)
+  assert.deepEqual(second.codingBackendProfiles[firstId], {backendId: 'opencode', binaryPath: '/opt/opencode', configPath: '/config/first.json'})
+  assert.equal(second.codingBackendPaths.opencode.binaryPath, '/opt/opencode')
+  assert.equal(Object.hasOwn(publicSettings(second), 'codingBackendProfiles'), false)
+  const malicious = applySettingsUpdate(second, {codingBackendProfiles: {}, codingBackendPaths: {pi: {binaryPath: 'pi-acp; rm -rf /'}}}, fakeCodec())
+  assert.deepEqual(malicious.codingBackendProfiles, second.codingBackendProfiles)
+  assert.equal(malicious.codingBackendPaths.pi.binaryPath, '')
+  assert.equal(Object.hasOwn(first.codingBackendPaths, 'codex'), false)
+})
+

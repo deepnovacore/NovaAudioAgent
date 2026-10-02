@@ -38,6 +38,17 @@ function harness(overrides = {}) {
   }
 }
 
+test('default-only settings await a structured live apply without backend restart, and roll back failed delivery', async () => {
+  const {calls, options} = harness({needsBackendRestart: () => false,
+    applyLive: async () => calls.push('hot_apply')})
+  assert.equal((await applySettingsTransaction(options)).restarted, false)
+  assert.deepEqual(calls, ['write', 'publish_committed', 'hot_apply'])
+  calls.length = 0
+  const failed = await applySettingsTransaction({...options, applyLive: async () => { throw new Error('offline') }})
+  assert.equal(failed.saved, false)
+  assert.deepEqual(calls, ['write', 'publish_committed', 'rollback', 'publish_committed'])
+})
+
 test('settings transaction durably writes, refreshes, and awaits exactly one restart', async () => {
   const {calls, statuses, options} = harness()
   assert.deepEqual(await applySettingsTransaction(options), {

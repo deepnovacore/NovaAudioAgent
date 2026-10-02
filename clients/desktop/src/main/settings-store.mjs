@@ -3,6 +3,8 @@ import {preferredLanguage} from '../renderer/locale.mjs'
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import {isAbsolute, resolve} from 'node:path'
+import {CODING_BACKENDS, normalizeCodingPaths, normalizeCodingProfiles, codingProfileRegistry} from './coding-settings.mjs'
+export {CODING_BACKENDS} from './coding-settings.mjs'
 
 // `normalizeSettings` always rebuilds and stamps the latest shape, so an older file
 // keeps its provider choices while gaining packaged-desktop configuration.
@@ -47,6 +49,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   palette: 'ember',
   proactivity: 'balanced',
   codingProgressNarration: 'smart',
+  codingBackend: 'codex',
+  codingBackendPaths: Object.freeze(normalizeCodingPaths()),
+  codingBackendProfiles: Object.freeze({}),
   codexHeartbeatSeconds: 30,
   codexBinaryMode: 'auto',
   codexBinaryPath: '',
@@ -262,6 +267,9 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
     lastPresentation: pick(source.lastPresentation, fallback.lastPresentation, DEFAULT_SETTINGS.lastPresentation, value => ['orb', 'workbench'].includes(value) ? value : null),
     palette: pick(source.palette, fallback.palette, DEFAULT_SETTINGS.palette, validPalette),
     codingProgressNarration: pick(source.codingProgressNarration, fallback.codingProgressNarration, DEFAULT_SETTINGS.codingProgressNarration, value => value === 'smart' || value === 'continuous' ? value : null),
+    codingBackend: pick(source.codingBackend, fallback.codingBackend, DEFAULT_SETTINGS.codingBackend, value => CODING_BACKENDS.includes(value) ? value : null),
+    codingBackendPaths: normalizeCodingPaths(source.codingBackendPaths, fallback.codingBackendPaths),
+    codingBackendProfiles: normalizeCodingProfiles(source.codingBackendProfiles ?? fallback.codingBackendProfiles),
     proactivity: pick(source.proactivity, fallback.proactivity, DEFAULT_SETTINGS.proactivity, validProactivity),
     codexHeartbeatSeconds: pick(source.codexHeartbeatSeconds, fallback.codexHeartbeatSeconds, DEFAULT_SETTINGS.codexHeartbeatSeconds, validHeartbeat),
     codexBinaryMode: pick(source.codexBinaryMode, fallback.codexBinaryMode, DEFAULT_SETTINGS.codexBinaryMode, validCodexBinaryMode),
@@ -325,7 +333,7 @@ export function startupPresentation(settings, argv = []) {
 }
 
 export function backendSettings(settings) {
-  const {startupView, lastPresentation, palette, wakeWordEnabled, autoHideSeconds, codingProgressNarration, phoneConnectionEnabled, phoneServerPort, phoneServerTokenFile, phoneServerUrl, ...backend} = normalizeSettings(settings)
+  const {startupView, lastPresentation, palette, wakeWordEnabled, autoHideSeconds, codingProgressNarration, codingBackend, phoneConnectionEnabled, phoneServerPort, phoneServerTokenFile, phoneServerUrl, ...backend} = normalizeSettings(settings)
   return backend
 }
 
@@ -340,6 +348,8 @@ export function publicSettings(settings) {
     palette: normalized.palette,
     proactivity: normalized.proactivity,
     codingProgressNarration: normalized.codingProgressNarration,
+    codingBackend: normalized.codingBackend,
+    codingBackendPaths: normalized.codingBackendPaths,
     codexHeartbeatSeconds: normalized.codexHeartbeatSeconds,
     codexBinaryMode: normalized.codexBinaryMode,
     codexBinaryPath: normalized.codexBinaryPath,
@@ -529,6 +539,8 @@ export function applySettingsUpdate(current, patch, codec) {
   const stored = normalizeSettings(current)
   const source = isRecord(patch) ? patch : {}
   const next = normalizeSettings({...source, version: stored.version}, stored)
+  // Profiles are main-owned history: a renderer patch can add the current paths but never rewrite old ones.
+  next.codingBackendProfiles = codingProfileRegistry({...next, codingBackendProfiles: stored.codingBackendProfiles}).profiles
   const { secrets, rejected } = updatedSecrets(
     stored.secrets,
     source.secrets,
