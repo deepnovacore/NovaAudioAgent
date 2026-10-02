@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import {readFile} from 'node:fs/promises'
 import {startupFailureCode, reportStartupFailure} from '../src/main/desktop-startup.mjs'
 import {classifyBackendFailure, createBackendSupervisor, createBackendDiagnosticCollector} from '../src/main/backend-supervisor.mjs'
+import {codingBackendStatus} from '../src/main/coding-settings.mjs'
 const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
 test('settings public projection never opens the keychain or capability files', () => {
@@ -14,7 +15,9 @@ test('settings public projection never opens the keychain or capability files', 
     readCapabilityDocument:touched, resolveSecretConfiguration:()=>({secretsPresent:{},secretSources:{}}),process:{env:{}},developmentEnv:{},
     secretsPresent:()=>({}), publicSettings:()=>({}), codexStatus:{},frontendUsage:{snapshot:()=>({})},VISION_MODELS:[],backendStatus:{state:'stopped'},
     settingsApplyStatus:'idle',settingsRecoveryAvailable:false,managedWorkspacesView:()=>({}),microphoneStatus:'unknown',wakeWord:null,desktopConfig:null,
-    hasPlaintextSecret:()=>false,keyringAvailable:null,startup:{stage:'configuration',code:null}})
+    hasPlaintextSecret:()=>false,keyringAvailable:null,startup:{stage:'configuration',code:null},
+    // Executable presence only: never reads the keychain, credentials or capability files.
+    codingBackendStatus})
   vm.runInContext(body, context)
   assert.equal(context.settingsView().keyringAvailable, null)
 })
