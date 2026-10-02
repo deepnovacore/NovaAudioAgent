@@ -457,10 +457,7 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
 
   start(): Promise<void> {
     if (this.#startOperation !== null) return this.#startOperation
-    this.#startOperation = this.#startFresh().catch(async error => {
-      try { await this.close() } catch { /* Preserve startup failure. */ }
-      throw error
-    })
+    this.#startOperation = this.#startFresh()
     return this.#startOperation
   }
 
@@ -513,9 +510,10 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
     this.onPrewarmReady(false)
     this.invalidateApprovals('shutdown')
     try {
-      try { await this.#startupTransport.close('shutdown') }
-      finally { await this.adapter.close() }
+      await this.#startupTransport.close('shutdown')
+      await this.adapter.close()
     } finally {
+      // Approvals scoped to Codex work end with it even when shutdown fails; a borrowed controller stays open.
       this.invalidateApprovals('shutdown')
       this.#unsubscribeApproval?.()
     }

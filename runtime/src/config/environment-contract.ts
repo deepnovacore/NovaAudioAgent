@@ -143,6 +143,7 @@ const rows: readonly Row[] = [
   ['DEV_START_MUTED', 'host_private', false, false, 'never', null, 'Start the unpackaged desktop with microphone muted.', '未打包桌面以闭麦状态启动。'],
   ['RELEASE_CAMERA_SMOKE', 'host_private', false, false, 'never', null, 'Packaged release camera capability sentinel.', '安装包发布相机能力哨兵。'],
   ['RELEASE_SMOKE', 'host_private', false, false, 'never', null, 'Authenticated packaged lifecycle smoke mode.', '安装包认证生命周期冒烟模式。'],
+  ['DEVELOPER_DIR', 'host_private', false, false, 'never', null, 'Host Xcode developer directory used when binding an iOS Simulator.', '绑定 iOS 模拟器时使用的宿主 Xcode 开发者目录。'],
   ['CODEX_HOME', 'host_private', false, false, 'never', null, 'Host Codex credential home.', '主机 Codex 凭据目录。'],
   ['HOME', 'host_private', false, false, 'never', null, 'Host home directory.', '主机用户目录。'],
   ['MOBILE_ENGINE', 'mobile', false, true, 'never', 'midscene', 'Phone execution engine; currently midscene only.', '手机执行引擎；当前仅支持 midscene。'],
