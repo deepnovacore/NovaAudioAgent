@@ -40,6 +40,12 @@ lines.on('line', line => {
   }
   assert.deepEqual(message, {version: 1, type: 'decision', taskId: start.taskId, requestId: 'action-1', decision: message.decision})
   assert.ok(['accept', 'decline'].includes(message.decision))
+  if (message.decision === 'accept' && start.instruction.startsWith('inflight')) {
+    // The approved write has started on the device but has not been acknowledged.
+    send({type: 'progress', step: 1, phase: 'action'})
+    if (start.instruction === 'inflight-fail') send({type: 'terminal', code: 'action_failed', steps: 1})
+    return
+  }
   if (message.decision === 'accept') {
     record({executed: true})
     send({type: 'progress', step: 1, phase: 'action_returned', lastAction: 'Tap'})

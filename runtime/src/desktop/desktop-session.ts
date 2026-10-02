@@ -683,7 +683,14 @@ export class DesktopSocketBridge {
       case 'executor_approval_decision': {
         const approvalId = command.payload.approval_id
         // A decision names its executor; one that names another executor is not ours to relay.
-        if (typeof approvalId !== 'string' || command.payload.executor !== this.#approvalExecutor?.executor) return
+        // Conversation-owned coding approvals keep the fixed executor even after a phone approval was shown,
+        // but a decision naming the coding executor never answers the phone approval on the main surface.
+        const executor = command.payload.executor
+        const shown = this.#approvalView
+        const answersOther = shown?.pending_approval === true && shown.pending_approval_id === approvalId
+          && shown.executorIdentity !== undefined && shown.executorIdentity.executor !== executor
+        if (typeof approvalId !== 'string' || answersOther
+          || (executor !== this.#approvalExecutor?.executor && executor !== this.#executor?.executor)) return
         const target=typeof command.payload.conversation_id==='string'?this.#conversationService?.(command.payload.conversation_id):this.#service
         if(!target)return
         target.executorApprovalDecision(approvalId, command.payload.approved === true, command.payload.scope === 'session' ? 'session' : undefined)

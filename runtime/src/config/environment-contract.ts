@@ -147,7 +147,7 @@ const rows: readonly Row[] = [
   ['CODEX_HOME', 'host_private', false, false, 'never', null, 'Host Codex credential home.', '主机 Codex 凭据目录。'],
   ['HOME', 'host_private', false, false, 'never', null, 'Host home directory.', '主机用户目录。'],
   ['MOBILE_ENGINE', 'mobile', false, true, 'never', 'midscene', 'Phone execution engine; currently midscene only.', '手机执行引擎；当前仅支持 midscene。'],
-  ['MOBILE_DEVICE_TYPE', 'mobile', false, true, 'never', 'ios', 'Phone platform: android, ios or ios-simulator; native execution supports Android ADB and iOS Simulator.', '手机平台：android、ios 或 ios-simulator；原生执行支持 Android ADB 和 iOS 模拟器。'],
+  ['MOBILE_DEVICE_TYPE', 'mobile', false, true, 'never', 'ios-simulator', 'Phone platform: android, ios or ios-simulator; native execution supports Android ADB and iOS Simulator.', '手机平台：android、ios 或 ios-simulator；原生执行支持 Android ADB 和 iOS 模拟器。'],
   ['MOBILE_DEVICE_ID', 'mobile', false, true, 'when_selected', null, 'Exact iOS device or Simulator UDID, or Android ADB serial.', '明确的 iOS 设备或模拟器 UDID，或 Android ADB 序列号。'],
   ['MOBILE_WDA_URL', 'mobile', false, true, 'never', 'http://127.0.0.1:8100', 'WebDriverAgent endpoint for the configured iOS device.', '配置的 iOS 设备 WebDriverAgent 地址。'],
   ['MOBILE_BASE_URL', 'mobile', false, true, 'when_selected', null, 'Phone model endpoint receiving screenshots.', '接收手机截图的模型服务地址。'],

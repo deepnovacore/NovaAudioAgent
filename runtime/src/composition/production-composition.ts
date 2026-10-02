@@ -29,6 +29,7 @@ import {selectDesktopCameraSource} from '../desktop/desktop-camera-source.js'
 import {ChromiumFrameSource} from '../executors/chromium-frame-source.js'
 import {RealClock} from '../core/clock.js'
 import {HostApprovalController} from '../core/approval.js'
+import {MAX_CONCURRENT_WORK} from '../core/work-tools.js'
 import {buildProductionRealtimeAssembly, type BuildProductionRealtimeAssemblyOptions} from './cascaded-realtime-assembly.js'
 import {createRealtimeTelemetry} from '../realtime/telemetry.js'
 import type {ApprovalView as ExecutorApprovalView} from '../core/approval-port.js'
@@ -80,8 +81,10 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     vision: settings.conversation_vision_enabled,
   })
   let publishExecutorApproval: (view: ExecutorApprovalView) => void = () => undefined
-  const sharedApproval = settings.executors.some(name => name === 'autoglm' || name === 'mobile')
-    ? new HostApprovalController({clock, idFactory: () => randomUUID()}) : undefined
+  const phoneNames = settings.executors.filter(name => name === 'autoglm' || name === 'mobile')
+  // Each phone executor runs one task at a time, so it adds one approval slot instead of taking Codex's.
+  const sharedApproval = phoneNames.length > 0
+    ? new HostApprovalController({clock, idFactory: () => randomUUID(), capacity: MAX_CONCURRENT_WORK + phoneNames.length}) : undefined
   let closeSharedApproval = () => { /* No shared resource when phone executors are disabled. */ }
   if (sharedApproval !== undefined) {
     const unsubscribe = sharedApproval.observe(view => publishExecutorApproval(view))

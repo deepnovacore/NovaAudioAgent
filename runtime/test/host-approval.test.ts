@@ -92,3 +92,22 @@ test('foreground stops holding new offers but preserves unseen background entrie
  assert.equal(host.view.held,undefined)
  host.invalidate('cleanup');await b
 })
+
+test('a shared controller admits one extra head per phone executor without shrinking the coding cap', async () => {
+  const clock = new VirtualClock(0)
+  let n = 0
+  const offer: ApprovalOffer = {kind: 'permissions', local_detail: {kind: 'permissions', scope: 'x'}, operation_summary: 'x'}
+  for (const [capacity, admitted] of [[undefined, 3], [4, 4]] as const) {
+    const controller = new HostApprovalController({clock, idFactory: () => `id-${++n}`, ...(capacity === undefined ? {} : {capacity})})
+    const signal = new AbortController().signal
+    const results = Array.from({length: 5}, (_, i) => controller.forWork({work_id: `w${i}`, project: 'p', title: 't'}).offer(offer, signal))
+    await Promise.resolve()
+    let declined = 0
+    for (const result of results) {
+      const settled = await Promise.race([result, new Promise<'pending'>(resolve => setImmediate(() => resolve('pending')))])
+      if (settled !== 'pending' && settled?.decision === 'decline') declined++
+    }
+    assert.equal(5 - declined, admitted)
+    for (let i = 0; i < 5; i++) controller.forWork({work_id: `w${i}`, project: 'p', title: 't'}).invalidate('test')
+  }
+})

@@ -310,3 +310,31 @@ test('AutoGLM device lock excludes a second executor and is reusable after cance
   assert.equal((await second.dispatch('run', retry.request, freshContext)).outcome, 'unknown')
   assert.deepEqual(await readdir(h.config.lockRoot), [])
 })
+
+for (const scenario of ['inflight-wait', 'inflight-fail'] as const) {
+  test(`AutoGLM ${scenario}: an unacknowledged approved write is unconfirmed and quarantines the device`, async t => {
+    const h = await setup(t)
+    const run = await reserve(h.executor, scenario)
+    const active = h.executor.dispatch('run', run.request, h.context)
+    const approvalId = await pending(h.approvals)
+    const before = h.progress.length
+    h.approvals.acceptDecision({approvalId, decision: 'accept'})
+    if (scenario === 'inflight-wait') {
+      for (let i = 0; i < 200 && h.progress.length === before; i++) await delay(10)
+      assert.ok(h.progress.length > before, 'bridge reported the write in flight')
+      h.abort.abort()
+    }
+    const result = await active
+    const content = result.content as Record<string, unknown>
+    assert.equal(result.outcome, 'unknown')
+    assert.equal(content.code, 'cleanup_unknown')
+    assert.equal(content.cleanup_required, true)
+    if (scenario === 'inflight-wait') assert.equal(content.cancel_requested, true)
+    assert.equal((await readdir(h.config.lockRoot)).length, 1, 'quarantine keeps the device lock')
+    const contender = new AutoGlmExecutor(h.config, h.approvals, fixture)
+    t.after(() => contender.close())
+    const retry = await reserve(contender, 'accept')
+    const blocked = await contender.dispatch('run', retry.request, {...h.context, signal: new AbortController().signal})
+    assert.equal((blocked.content as Record<string, unknown>).code, 'device_busy')
+  })
+}

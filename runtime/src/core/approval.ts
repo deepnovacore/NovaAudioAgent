@@ -41,6 +41,8 @@ export interface HostApprovalControllerOptions {
   readonly clock: Clock
   readonly idFactory: () => string
   readonly onDiagnostic?: (code: string) => void
+  /** Shared controllers admit one extra head per non-coding executor; coding alone keeps MAX_CONCURRENT_WORK. */
+  readonly capacity?: number
 }
 
 /** What a transport needs from the approval FIFO; `forWork` binds it to one running work. */
@@ -55,6 +57,7 @@ export class HostApprovalController {
   readonly #decision: PendingDecision<'approval', PendingApproval>
   readonly #idFactory: () => string
   readonly #onDiagnostic: ((code: string) => void) | undefined
+  readonly #capacity: number
   readonly #observers: ((view: ApprovalView) => void)[] = []
   readonly #holds = new Set<'project' | 'background'>()
   #current: PendingApproval | null = null
@@ -65,6 +68,7 @@ export class HostApprovalController {
     this.#decision = new PendingDecision(options.clock)
     this.#idFactory = options.idFactory
     this.#onDiagnostic = options.onDiagnostic
+    this.#capacity = options.capacity ?? MAX_CONCURRENT_WORK
   }
 
   get view(): ApprovalView {
@@ -156,7 +160,7 @@ export class HostApprovalController {
     // transport ever legitimately pipelines approvals.
     const pending = this.#current === null ? this.#queue : [this.#current, ...this.#queue]
     if (
-      pending.length >= MAX_CONCURRENT_WORK
+      pending.length >= this.#capacity
       || (work !== null && pending.some(entry => entry.work?.work_id === work.work_id))
     ) return Object.freeze({decision: 'decline'})
     const id = validateApprovalId(this.#idFactory())

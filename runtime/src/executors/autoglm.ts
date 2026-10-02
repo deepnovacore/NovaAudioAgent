@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url'
 import {setTimeout as delay} from 'node:timers/promises'
 import {z} from 'zod'
 import {executorManifestSchema} from '../core/ports.js'
-import {acquireDeviceLock, releaseDeviceLock} from './device-lock.js'
+import {acquireDeviceLock, quarantineDeviceLock, recordDeviceProcess, releaseDeviceLock} from './device-lock.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../core/causal-runtime.js'
 import type {HostApprovalController, ApprovalPort} from '../core/approval.js'
 import type {AgentController, AgentRuntimeDispatchPort} from './agent-controller.js'
@@ -199,6 +199,8 @@ export class AutoGlmExecutor implements ExecutorAdapter {
     const approval = this.approvals.forWork({work_id: taskId, project: config.deviceType === 'android' ? 'Android' : 'iOS', title: 'AutoGLM 手机任务'})
     let result = handoff('bridge_eof', 'unknown')
     const observation: Record<string, string | number> = {}
+    // An approved write the bridge started but never acknowledged has an unconfirmed device effect.
+    const flight = {write: false}
     try {
       if (signal.aborted) return handoff(cancelled.aborted ? 'cancelled' : 'timeout', cancelled.aborted ? 'cancelled' : 'unknown')
       const child = spawn(python, [this.bridgePath], {shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
@@ -206,6 +208,7 @@ export class AutoGlmExecutor implements ExecutorAdapter {
           ...(config.deviceType === 'ios-simulator' && process.env.DEVELOPER_DIR ? {DEVELOPER_DIR: process.env.DEVELOPER_DIR} : {}),
           PYTHONDONTWRITEBYTECODE: '1', AUTOGLM_API_KEY: config.apiKey, AUTOGLM_SOURCE_PATH: sourcePath}})
       treeGone = child.pid === undefined
+      if (child.pid !== undefined) await recordDeviceProcess(acquired.lock, child.pid).catch(() => undefined)
       let waitingForApproval = false, exited = false
       child.once('exit', () => {
         exited = true
@@ -229,7 +232,7 @@ export class AutoGlmExecutor implements ExecutorAdapter {
             maxSteps: config.maxSteps, budgetMs: Math.floor(budgetMs), baseUrl: config.baseUrl, model: config.model})}\n`)
           result = await this.#read(child.stdout, async value => {
             await new Promise<void>((resolve, reject) => child.stdin.write(`${JSON.stringify(value)}\n`, error => error ? reject(error) : resolve()))
-          }, taskId, context, signal, approval, observation, waiting => {
+          }, taskId, context, signal, approval, observation, flight, waiting => {
             waitingForApproval = waiting
             if (waiting && exited) processStop.abort()
           })
@@ -250,19 +253,23 @@ export class AutoGlmExecutor implements ExecutorAdapter {
         }
         child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy()
       }
-      if (!treeGone) return handoff('cleanup_unknown', 'unknown', observation)
+      if (!treeGone || flight.write) {
+        const unknown = handoff('cleanup_unknown', 'unknown', observation)
+        return {...unknown, content: {...unknown.content, cleanup_required: true, ...(cancelled.aborted ? {cancel_requested: true} : {})}}
+      }
       if (cancelled.aborted) return handoff('cancelled', 'cancelled', observation)
       if (deadlineSignal.aborted) return handoff('timeout', 'unknown', observation)
       return {...result, content: {...result.content, ...observation}}
     } finally {
       approval.invalidate('autoglm_finished')
-      if (treeGone) await releaseDeviceLock(acquired.lock)
+      if (treeGone && !flight.write) await releaseDeviceLock(acquired.lock)
+      else await quarantineDeviceLock(acquired.lock, 'cleanup_unknown')
     }
   }
 
   async #read(output: AsyncIterable<Buffer>, send: (value: unknown) => Promise<void>, taskId: string,
     context: ExecutorDispatchContext, signal: AbortSignal, approval: ApprovalPort,
-    observation: Record<string, string | number>,
+    observation: Record<string, string | number>, flight: {write: boolean},
     waiting: (value: boolean) => void): Promise<ExecutorHandoff> {
     let buffer = Buffer.alloc(0), total = 0, ready = false, step = 0
     const seen = new Set<string>()
@@ -294,7 +301,9 @@ export class AutoGlmExecutor implements ExecutorAdapter {
         if (message.step < step || message.step > this.config.maxSteps) throw new Error('invalid_step')
         step = message.step
         if (message.type === 'progress') {
+          if (message.phase === 'action') flight.write = true
           if (message.phase === 'action_returned') {
+            flight.write = false
             observation.last_returned_step = step
             if (message.lastAction !== undefined) observation.last_action = message.lastAction
           }

@@ -608,6 +608,25 @@ test('AutoGLM approval identity routes clicks and clears with coding disabled or
   }
 })
 
+test('after a phone approval resolves, a conversation-owned Codex approval click is still relayed', async () => {
+  const {bridge, calls, clock} = harness({executor: {executor: 'codex', display_name: 'Codex'}})
+  bridge.markAuthenticated()
+  bridge.takeNextFrame()
+  bridge.onExecutorApproval({
+    pending_approval: true, pending_approval_busy: false, pending_approval_id: 'phone-approval',
+    executorIdentity: {executor: 'mobile', display_name: '手机助手'},
+    kind: 'permissions', local_detail: {kind: 'permissions', scope: 'Tap'},
+    operation_summary: 'Confirm phone action', expires_at: clock.now() + 60, work: null, queued: 0,
+  })
+  bridge.takeNextFrame()
+  bridge.onExecutorApproval({pending_approval: false, pending_approval_busy: false,
+    kind: null, local_detail: null, operation_summary: null, expires_at: null, work: null, queued: 0})
+  bridge.takeNextFrame()
+  await bridge.receive(JSON.stringify({type: 'executor.approval_decision', executor: 'codex',
+    approval_id: 'conversation-approval', approved: true}), {authenticated: true})
+  assert.deepEqual(calls, ['approval:conversation-approval:true'])
+})
+
 test('a Codex approval frame and click use an independent strict bridge path', async () => {
   const {bridge, calls, clock} = harness()
   bridge.markAuthenticated()

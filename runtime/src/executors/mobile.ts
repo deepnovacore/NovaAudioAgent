@@ -7,7 +7,7 @@ import {executorManifestSchema} from '../core/ports.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../core/causal-runtime.js'
 import type {HostApprovalController} from '../core/approval.js'
 import type {AgentController, AgentRuntimeDispatchPort} from './agent-controller.js'
-import {acquireDeviceLock, releaseDeviceLock} from './device-lock.js'
+import {acquireDeviceLock, quarantineDeviceLock, releaseDeviceLock} from './device-lock.js'
 import type {MobileIosConfig, runMobileIos} from './mobile-ios.js'
 
 const instructionSchema = z.string().trim().min(1).max(4000)
@@ -44,7 +44,7 @@ export function loadMobileConfig(env: NodeJS.ProcessEnv): MobileIosConfig {
     return value
   }
   if (required('ENGINE', 'midscene') !== 'midscene') throw new Error('invalid_mobile_engine')
-  const deviceType = required('DEVICE_TYPE', 'ios')
+  const deviceType = required('DEVICE_TYPE', 'ios-simulator')
   if (deviceType !== 'ios' && deviceType !== 'ios-simulator' && deviceType !== 'android') throw new Error('invalid_mobile_device_type')
   const deviceId = required('DEVICE_ID', undefined, 128)
   if (!/^[A-Za-z0-9_.:\-]+$/u.test(deviceId)) throw new Error('invalid_mobile_device')
@@ -204,7 +204,8 @@ export class MobileExecutor implements ExecutorAdapter {
       // Do not race the runner against abort: even cancellation retains ownership through cleanup.
       approval.invalidate('mobile_finished')
       // A timed-out device write can outlive the host request; retain quarantine for manual recovery.
-      if (!quarantined) await releaseDeviceLock(acquired.lock)
+      if (quarantined) await quarantineDeviceLock(acquired.lock, 'cleanup_unknown')
+      else await releaseDeviceLock(acquired.lock)
     }
   }
 }
