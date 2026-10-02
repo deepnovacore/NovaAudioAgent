@@ -30,7 +30,7 @@ Set only what you need to change. Keep credentials out of Git.
 | `INTEGRATED_PROVIDER` | qwen | Integrated realtime provider. |
 | `CASCADE_LLM_PROVIDER` | deepseek | Cascaded LLM provider. |
 | `CASCADE_LLM_MODEL` | provider default | Cascaded LLM model override. |
-| `CODEX_APPROVAL_MODE` | ask | Codex approval mode. |
+| `CODEX_APPROVAL_MODE` | ask | Coding approval mode for Codex and ACP backends; Pi refuses ask. |
 | `CAPABILITIES_CONFIG` | ~/.nova-audio-agent/capabilities.json | Capabilities registry path. |
 | `MEMORY_CONNECTION` | local | Memory connection: disabled, local, or remote. |
 | `MEMORY_PROVIDER` | None | Local engine: voicemem (default; unified ledger) or explicit mem0. Remote engines are service-owned. |

@@ -9,7 +9,7 @@ import {
   type CodexLiveSchemaProbe,
   type ProjectConnectionBinding,
   type RunInput,
-  type SafePreflightReport,
+  type CodingPreflightReport,
   type SteerInput,
   type SteerTransportResult,
   type TransportDeadline,
@@ -52,6 +52,11 @@ import {
   resolveCodexLaunchProfile,
   type CodexLaunchProfile,
 } from './launch-profile.js'
+import {CodexTransportError} from './app-server-transport.js'
+import {CODING_BACKEND_IDS, isAcpBackend, type AcpBackendId, type CodingBackendId} from '../../config/coding-backends.js'
+import {CODEX_PROFILE_ID} from '../../config/coding-profiles.js'
+import type {ProjectBackendBinding} from './adapter-project.js'
+import type {AcpProjectBinding} from '../acp/transport.js'
 
 export type CodexAssemblyMode = 'live' | 'project'
 export type CodexApprovalPolicy = 'never' | 'on-request'
@@ -142,11 +147,11 @@ class CredentialHomeOwningTransport implements CodexAppServerTransport {
     readonly codexHome: HostCodexHome,
   ) {}
 
-  preflight(deadline: TransportDeadline): Promise<SafePreflightReport> {
+  preflight(deadline: TransportDeadline): Promise<CodingPreflightReport> {
     return this.inner.preflight(deadline)
   }
 
-  prewarmConnection(deadline: TransportDeadline): Promise<SafePreflightReport | null> {
+  prewarmConnection(deadline: TransportDeadline): Promise<CodingPreflightReport | null> {
     if (!this.inner.prewarmConnection) throw new CodexHostConfigurationError('codex_host_unavailable')
     return this.inner.prewarmConnection(deadline)
   }
@@ -156,7 +161,7 @@ class CredentialHomeOwningTransport implements CodexAppServerTransport {
     this.inner.bindProject(binding)
   }
 
-  prewarm(deadline: TransportDeadline): Promise<SafePreflightReport | null> {
+  prewarm(deadline: TransportDeadline): Promise<CodingPreflightReport | null> {
     return this.inner.prewarm(deadline)
   }
 
@@ -203,11 +208,28 @@ export interface CodexAssemblyResource extends CodingExecutorResource {
   readonly projectView: PublicProjectView | null
   readonly approvalPolicy: CodexApprovalPolicy
   readonly approvalController: HostApprovalController | null
+  /** New sessions only; running and existing sessions keep their bound backend. */
+  updateDefaultBackend?(backend: CodingBackendId): void
   start(): Promise<void>
   close(): Promise<void>
 }
 
+/**
+ * Non-Codex backends routed through the same single coding executor. Codex sessions keep the
+ * app-server transport; every other session gets an ACP transport built from its own binding.
+ */
+export interface CodingBackendRouting {
+  readonly initialBackend: CodingBackendId
+  /** Current default profile identity for new sessions on an ACP backend. */
+  readonly defaultProfile: (backend: AcpBackendId) => string
+  readonly displayName: (backend: AcpBackendId) => string
+  readonly create: (binding: AcpProjectBinding) => CodexAppServerTransport
+}
+
+const LEGACY_CODEX_BINDING: ProjectBackendBinding = Object.freeze({backend_id: 'codex', backend_profile_id: CODEX_PROFILE_ID})
+
 export interface CreateCodexAssemblyResourceOptions {
+  readonly backends?: CodingBackendRouting
   readonly sharedApprovalController?: HostApprovalController
   readonly managedMcp?: ManagedCodexMcp
   readonly config: ResolvedCodexHostConfig
@@ -273,7 +295,8 @@ async function createProjectResource(
   }
   const ownsApproval = options.sharedApprovalController === undefined
   const approvalScopes = new Map<string, {port: ApprovalPort; resolution: ApprovalResolution | null}>()
-  const scopedApproval = (work: ApprovalWork): ApprovalPort | null => {
+  const scopedApproval = (work: ApprovalWork, identity: {readonly executor: string; readonly display_name: string}
+    = {executor: 'codex', display_name: 'Codex'}): ApprovalPort | null => {
     if (approvalController === null) return null
     const port = approvalController.forWork(work)
     const scoped: ApprovalPort = {
@@ -282,7 +305,7 @@ async function createProjectResource(
         // A duplicate offer must not replace the active request's cleanup ownership.
         if (!approvalScopes.has(work.work_id)) approvalScopes.set(work.work_id, entry)
         try {
-          const resolution = await port.offer({...offer, executorIdentity: {executor: 'codex', display_name: 'Codex'}}, signal)
+          const resolution = await port.offer({...offer, executorIdentity: identity}, signal)
           entry.resolution = resolution
           if (resolution === null && approvalScopes.get(work.work_id) === entry) approvalScopes.delete(work.work_id)
           return resolution
@@ -317,6 +340,11 @@ async function createProjectResource(
   const warmHome = options.config.prewarm && options.config.localCodexHome
     ? hostPersistentHomeFromConfig(options.config.localCodexHome, [options.config.localCodexHome]) : null
   let warmReady = false
+  const routing = options.backends
+  let defaultBackend: CodingBackendId = routing?.initialBackend ?? 'codex'
+  const defaultBinding = (): ProjectBackendBinding => defaultBackend === 'codex' || routing === undefined || !isAcpBackend(defaultBackend)
+    ? LEGACY_CODEX_BINDING
+    : {backend_id: defaultBackend, backend_profile_id: routing.defaultProfile(defaultBackend)}
   let store: ProjectStore | null = null
   let startupTransport: CodexAppServerTransport | null = null
   try {
@@ -361,12 +389,28 @@ async function createProjectResource(
       ...(options.config.localCodexHome === undefined ? {} : {localCodexHome: options.config.localCodexHome}),
       confirmation,
       ...(approvalController === null ? {} : {codexApproval: approvalController}),
+      defaultBackend: defaultBinding,
       transportFactory: {
         create: binding => {
+          if (binding.backend_id !== 'codex') {
+            const backendId = binding.backend_id
+            // A session bound to a backend this host cannot route stays recorded and retryable.
+            if (routing === undefined || !isAcpBackend(backendId)) throw new CodexTransportError('resume_unavailable')
+            const acpApproval = scopedApproval(binding.work, {executor: 'codex', display_name: routing.displayName(backendId)})
+            try {
+              return routing.create({backendId, profileId: binding.backend_profile_id, workspace: binding.workspace,
+                resumeSessionId: binding.resumeThreadId, approvalController: acpApproval})
+            } catch (error) {
+              acpApproval?.invalidate('transport_creation_failed')
+              throw error
+            }
+          }
+          const codexHome = binding.codexHome
+          if (codexHome === null) throw new CodexHostConfigurationError('codex_host_unavailable')
           const approval = scopedApproval(binding.work)
           try {
             if (warmReady && warmHome !== null && startupTransport?.bindProject
-              && hostCodexHomeValue(binding.codexHome).path === hostCodexHomeValue(warmHome).path) {
+              && hostCodexHomeValue(codexHome).path === hostCodexHomeValue(warmHome).path) {
               warmReady = false
               startupTransport.bindProject({workspace: binding.workspace, resumeThreadId: binding.resumeThreadId,
                 approvalController: approval})
@@ -380,7 +424,7 @@ async function createProjectResource(
               binary: options.config.binary,
               binaryPrefixArgs: options.config.binaryPrefixArgs,
               workspace: binding.workspace,
-              codexHome: binding.codexHome,
+              codexHome,
               credential: options.config.credential,
               resumeThreadId: binding.resumeThreadId,
               workingInterval: options.config.workingInterval,
@@ -411,6 +455,10 @@ async function createProjectResource(
       warmHome !== null,
       () => { warmReady = false;try { options.onDiagnostic?.('project_prewarm_failed') } catch { /* advisory */ } },
       ready => { warmReady = ready },
+      backend => {
+        if (!CODING_BACKEND_IDS.includes(backend) || (backend !== 'codex' && routing === undefined)) throw new Error('invalid_coding_backend')
+        defaultBackend = backend
+      },
     )
   } catch (error) {
     invalidateApprovals('resource_creation_failed')
@@ -446,6 +494,7 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
     readonly prewarmConnection = false,
     readonly onPrewarmFailure: () => void = () => undefined,
     readonly onPrewarmReady: (ready: boolean) => void = () => undefined,
+    readonly setDefaultBackend: (backend: CodingBackendId) => void = () => { throw new Error('invalid_coding_backend') },
   ) {
     this.#startupTransport = startupTransport
     this.#unsubscribeApproval = unsubscribeApproval
@@ -453,6 +502,10 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
 
   get projectView(): PublicProjectView {
     return this.adapter.publicProjectView(this.adapter.confirmationController.pending)
+  }
+
+  updateDefaultBackend(backend: CodingBackendId): void {
+    this.setDefaultBackend(backend)
   }
 
   start(): Promise<void> {

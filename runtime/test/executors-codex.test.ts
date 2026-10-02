@@ -139,6 +139,65 @@ const COMPLETE_OUTCOME: TransportOutcome = Object.freeze({
   completion: {status: 'completed' as const, final_text: 'done', internal_activity: 1},
 })
 
+test('ACP handshake preflight runs without inventing Codex sandbox certification', async () => {
+  const transport = new ScriptedTransport()
+  const report = {protocol: 'acp', version: '1.3.0', backend: 'opencode', connected: true}
+  transport.preflightValue = report
+  transport.outcome = {...COMPLETE_OUTCOME, process: {exit_code: null, stop: 'terminate'}}
+  const adapter = new CodexLiveAdapter(transport)
+  try {
+    const result = await adapter.dispatch('run', {work_order: 'do work'}, context())
+    assert.equal(result.outcome, 'ok')
+    assert.deepEqual(result.content.preflight, report)
+    assert.equal(Object.hasOwn(result.content.preflight as object, 'network'), false)
+    assert.equal(Object.hasOwn(result.content.preflight as object, 'mount'), false)
+    assert.deepEqual(result.content.process, {started: true, exit_code: null, stop: 'terminate'})
+    assert.equal(adapter.status.exit_code, null)
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('ACP terminal without observed process teardown remains uncertain', async () => {
+  const transport = new ScriptedTransport()
+  transport.preflightValue = {protocol: 'acp', version: '1', backend: 'opencode', connected: true}
+  const adapter = new CodexLiveAdapter(transport)
+  try {
+    const result = await adapter.dispatch('run', {work_order: 'do work'}, context())
+    assert.equal(result.outcome, 'unknown')
+    assert.equal(result.content.code, 'invalid_worker_result')
+  } finally { await adapter.close() }
+})
+
+test('ACP crash remains uncertain while status reports the observed process exit', async () => {
+  const transport = new ScriptedTransport()
+  transport.preflightValue = {protocol: 'acp', version: '1', backend: 'opencode', connected: true}
+  transport.outcome = {classification: 'uncertain', code: 'transport_lost', turnStartWritten: true,
+    completion: null, process: {exit_code: 3, stop: 'none'}}
+  const adapter = new CodexLiveAdapter(transport)
+  try {
+    const result = await adapter.dispatch('run', {work_order: 'do work'}, context())
+    assert.equal(result.outcome, 'unknown')
+    assert.equal(adapter.status.process_running, false)
+    assert.equal(adapter.status.process_exited, true)
+    assert.equal(adapter.status.exit_code, 3)
+    assert.equal(adapter.status.terminal, null)
+  } finally { await adapter.close() }
+})
+
+test('an incomplete ACP handshake cannot authorize a run', async () => {
+  const transport = new ScriptedTransport()
+  transport.preflightValue = {protocol: 'acp', version: '1.3.0', backend: 'opencode', connected: false}
+  const adapter = new CodexLiveAdapter(transport)
+  try {
+    const result = await adapter.dispatch('run', {work_order: 'do work'}, context())
+    assert.equal(result.outcome, 'failed')
+    assert.equal(transport.calls.includes('run'), false)
+  } finally {
+    await adapter.close()
+  }
+})
+
 function markTurnStartWritten(observer: TransportObserver): void {
   const extended = observer as TransportObserver & {onTurnStartWritten?: () => void}
   extended.onTurnStartWritten?.()

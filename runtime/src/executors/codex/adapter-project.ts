@@ -10,11 +10,12 @@ import {realpath} from 'node:fs/promises'
 import {readLocalCodexSessions, localRolloutAvailable} from './local-sessions.js'
 import {hostPersistentHomeFromConfig, hostWorkspaceFromConfig} from '../../projects/host-paths.js'
 import {hostWorkspacePath} from '../../projects/host-paths.js'
-import {MAX_PROJECT_SESSION_TITLE, normalizeProjectSessionTitle} from '../../projects/project-state.js'
+import {MAX_PROJECT_SESSION_TITLE, normalizeProjectSessionTitle, type SessionBackendBinding} from '../../projects/project-state.js'
+import type {CodingBackendId} from '../../config/coding-backends.js'
 import type {
   CodexAppServerTransport,
   RunInput,
-  SafePreflightReport,
+  CodingPreflightReport,
   SteerInput,
   SteerTransportResult,
   TransportDeadline,
@@ -89,11 +90,16 @@ function sameSessionTitle(stored: string, catalogTitle: string): boolean {
   } catch { return false }
 }
 
-export interface ProjectTransportBinding {
+/** The backend a session is bound to; never re-read from the current default after binding. */
+export type ProjectBackendBinding = Omit<SessionBackendBinding, 'backend_session_id'>
+
+export interface ProjectTransportBinding extends ProjectBackendBinding {
   readonly preserveHome?: boolean
 
   readonly workspace: HostWorkspace
-  readonly codexHome: HostCodexHome
+  /** Codex only; ACP backends own their native configuration and get no Codex home. */
+  readonly codexHome: HostCodexHome | null
+  /** The bound backend's own session id (`codex_thread_id` for Codex). */
   readonly resumeThreadId: string | null
   /** The work this child serves; the factory scopes the shared approval FIFO to it. */
   readonly work: ApprovalWork
@@ -132,7 +138,11 @@ export interface ProjectCodexAdapterOptions {
   readonly transportFactory: ProjectTransportFactory
   readonly codexApproval?: HostApprovalController
   readonly onProjectView?: ProjectViewObserver
+  /** Backend for new sessions, read when a session is created; defaults to legacy Codex. */
+  readonly defaultBackend?: () => ProjectBackendBinding
 }
+
+const LEGACY_CODEX_BACKEND: ProjectBackendBinding = Object.freeze({backend_id: 'codex', backend_profile_id: 'codex:legacy'})
 
 type ProjectViewObserver = (view: PublicProjectView) => void | Promise<void>
 type ProjectContextObserver = (context: PublicProjectContext) => void | Promise<void>
@@ -147,6 +157,7 @@ interface ConfirmedDelegateBinding {
 export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   readonly manifest
   readonly #localCodexHome: string | undefined
+  readonly #defaultBackend: () => ProjectBackendBinding
   #localSessionIds = new Set<string>()
   #catalogHealthy = false
   #catalogTimer: ReturnType<typeof setInterval> | null = null
@@ -214,6 +225,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       ? CODEX_PROJECT_MANIFEST
       : CODEX_PROJECT_APPROVAL_MANIFEST
     this.#resourceKeys=managedMcpResources(options.managedMcp)
+    this.#defaultBackend = options.defaultBackend ?? (() => LEGACY_CODEX_BACKEND)
     this.#localCodexHome = options.localCodexHome
     this.#store = options.store
     this.#confirmation = options.confirmation
@@ -313,7 +325,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       const base = {workspace_id: workspace.workspace_id, project: workspace.display_name, executor: 'codex' as const, directory: workspace.canonical_path, ...(holder === undefined ? {} : {running: holder})}
       targets.push({...base, session_id: null, title: workspace.display_name})
       for (const session of snapshot.sessions.filter(item => item.workspace_id === workspace.workspace_id
-        && item.state === 'ready' && item.codex_thread_id !== null
+        && item.state === 'ready' && item.backend_session_id !== null
         && (!item.executor_home || item.origin === 'nova' || (this.#catalogHealthy && this.#localSessionIds.has(item.session_id))))
         .sort((a, b) => b.last_used_at - a.last_used_at).slice(0, 20)) {
         if (await this.#rolloutAvailable(session)) targets.push({...base, session_id: session.session_id, title: session.display_title, last_active: session.last_used_at})
@@ -336,11 +348,17 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     const base = {workspace_id: workspace.workspace_id, project: workspace.display_name, executor: 'codex' as const}
     if (selection.session_id === null) return {...base, session_id: null, title: workspace.display_name}
     const session = snapshot.sessions.find(item => item.workspace_id === workspace.workspace_id && item.session_id === selection.session_id)
-    if (session?.state !== 'ready' || session.codex_thread_id === null
+    if (session?.state !== 'ready' || session.backend_session_id === null
       || !await this.#externalSessionAvailable(workspace, session) || !await this.#rolloutAvailable(session)) {
       throw new ProjectResolutionError('unknown_session', {reason: 'target_unavailable'})
     }
     return {...base, session_id: session.session_id, title: session.display_title}
+  }
+
+  async codingBackendFor(sessionId: string | null): Promise<CodingBackendId> {
+    if (sessionId === null) return this.#defaultBackend().backend_id
+    const session = (await this.#store.snapshot()).sessions.find(item => item.session_id === sessionId)
+    return session?.backend_id ?? this.#defaultBackend().backend_id
   }
 
   async activeCommittedWorkspace(): Promise<WorkspaceRecord | null> {
@@ -377,7 +395,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       if (slot !== undefined) {
         throw new ProjectResolutionError('busy_project', {
           project: workspace.display_name, work_id: slot.work.work_id, title: slot.work.title,
-          options: ['steer', 'cancel'],
+          // Steering is offered only where the bound backend supports it (Codex app-server).
+          options: slot.work.backend_id === undefined || slot.work.backend_id === 'codex' ? ['steer', 'cancel'] : ['cancel'],
         })
       }
       if (this.#slots.size >= MAX_CONCURRENT_WORK) {
@@ -459,10 +478,11 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     return false
   }
 
-  #runningIn(project: string): readonly Pick<RunningWork, 'work_id' | 'title'>[] {
+  #runningIn(project: string): readonly Pick<RunningWork, 'work_id' | 'title' | 'backend_id'>[] {
     return [...this.#slots.values()]
       .filter(slot => slot.work.project === project)
-      .map(slot => ({work_id: slot.work.work_id, title: slot.work.title}))
+      .map(slot => ({work_id: slot.work.work_id, title: slot.work.title,
+        ...(slot.work.backend_id === undefined ? {} : {backend_id: slot.work.backend_id})}))
   }
 
   async #resolveProject(project: string | null): Promise<WorkspaceRecord> {
@@ -496,7 +516,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       if (error instanceof ProjectStateError && error.code === 'session_not_found') return null
       throw error
     }
-    return session.state === 'ready' && session.codex_thread_id !== null && await this.#rolloutAvailable(session) ? session : null
+    return session.state === 'ready' && session.backend_session_id !== null && await this.#rolloutAvailable(session) ? session : null
   }
 
   /** Exact resume authority cannot depend on the discovery catalog's UI page limit. */
@@ -896,7 +916,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     if (
       session?.session_id !== operation.session_id
       || session.state !== 'ready'
-      || session.codex_thread_id === null
+      || session.backend_session_id === null
     ) throw new ProjectStateError('session_unavailable')
     await this.#store.revalidateWorkspace(workspace.workspace_id)
   }
@@ -986,13 +1006,18 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       await this.#refreshLocalSessions()
       if (!await this.#externalSessionAvailable(workspace, resumed)) return failureHandoff('resume_unavailable', 'run')
     }
-    let codexHome: HostCodexHome
+    // A resumed session keeps its persisted binding; only a new session reads the current default.
+    const backend: ProjectBackendBinding = resumed === null
+      ? Object.freeze({...this.#defaultBackend()})
+      : {backend_id: resumed.backend_id, backend_profile_id: resumed.backend_profile_id}
+    const codex = backend.backend_id === 'codex'
+    let codexHome: HostCodexHome | null = null
     let canonicalHome: string | undefined
     try {
-      const executorHome = resumed === null ? this.#localCodexHome : resumed.executor_home
+      const executorHome = !codex ? undefined : resumed === null ? this.#localCodexHome : resumed.executor_home
       canonicalHome = executorHome === undefined ? undefined : await realpath(executorHome)
       if (resumed?.executor_home && canonicalHome !== resumed.executor_home) return failureHandoff('resume_unavailable', 'run')
-      codexHome = canonicalHome === undefined
+      if (codex) codexHome = canonicalHome === undefined
         ? await this.#store.persistentHome(workspace.workspace_id, {create: resumed === null})
         : hostPersistentHomeFromConfig(canonicalHome, [canonicalHome])
     } catch (error) {
@@ -1002,7 +1027,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     let inner: CodexAppServerTransport
     try {
       if (session === null) {
-        const begun = await this.#store.beginSessionForRun(workspace.workspace_id, title, canonicalHome)
+        const begun = await this.#store.beginSessionForRun(workspace.workspace_id, title, canonicalHome, backend)
         session = begun.session
         startRollback = begun.rollback
       }
@@ -1015,7 +1040,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
         const prepared = await this.#store.prepareSessionResumeForRun(
           workspace.workspace_id,
           resumed.session_id,
-          resumed.codex_thread_id ?? '',
+          resumed.backend_session_id ?? '',
         )
         approvedWorkspace = prepared.workspace
         resumeRollback = prepared.rollback
@@ -1023,12 +1048,14 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       // The provider-facing active view must observe the exact session binding before any
       // transport can run against it. This also keeps a resumed session from inheriting the
       // prior display title during the process-construction window.
+      if (backend.backend_id !== 'codex') slot.work = {...slot.work, backend_id: backend.backend_id}
       await this.#refreshProjectContextBarrier()
       inner = this.#transportFactory.create(Object.freeze({
         workspace: approvedWorkspace,
         codexHome,
+        ...backend,
         preserveHome: true,
-        resumeThreadId: resumed?.codex_thread_id ?? null,
+        resumeThreadId: resumed?.backend_session_id ?? null,
         work: slot.work,
       }))
     } catch (error) {
@@ -1060,8 +1087,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       onThreadReady: threadId => {
         if (reportedThreadId !== null && reportedThreadId !== threadId) bindingMismatch = true
         reportedThreadId ??= threadId
-        if (resumed?.codex_thread_id !== undefined && resumed.codex_thread_id !== null) {
-          if (threadId !== resumed.codex_thread_id) bindingMismatch = true
+        if (resumed?.backend_session_id !== undefined && resumed.backend_session_id !== null) {
+          if (threadId !== resumed.backend_session_id) bindingMismatch = true
         }
       },
       // Codex may rename the thread; mirror it into the running work and the session title
@@ -1131,7 +1158,9 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
         await this.#store.rollbackSessionResume(resumeRollback,{wait:true}).catch(()=>false)
       } else if (
         bindingMismatch
-        || disposition.value?.code === 'resume_unavailable'
+        // A missing app-server thread is final. An ACP refusal (e.g. -32002) may follow a backend
+        // upgrade, login or config change, so the session stays ready for an explicit retry.
+        || (disposition.value?.code === 'resume_unavailable' && session.backend_id === 'codex')
       ) {
         await this.#store.markSessionUnavailable(
           session.session_id,
@@ -1226,11 +1255,11 @@ class ThreadObservingTransport implements CodexAppServerTransport {
     readonly observation: ThreadObservation,
   ) {}
 
-  preflight(deadline: TransportDeadline): Promise<SafePreflightReport> {
+  preflight(deadline: TransportDeadline): Promise<CodingPreflightReport> {
     return this.inner.preflight(deadline)
   }
 
-  prewarm(deadline: TransportDeadline): Promise<SafePreflightReport | null> {
+  prewarm(deadline: TransportDeadline): Promise<CodingPreflightReport | null> {
     return this.inner.prewarm(deadline)
   }
 
@@ -1264,7 +1293,7 @@ class ThreadObservingTransport implements CodexAppServerTransport {
 }
 
 const NULL_TRANSPORT: CodexAppServerTransport = Object.freeze({
-  preflight: (): Promise<SafePreflightReport> => Promise.reject(new Error('project transport absent')),
+  preflight: (): Promise<CodingPreflightReport> => Promise.reject(new Error('project transport absent')),
   prewarm: (): Promise<null> => Promise.resolve(null),
   run: (): Promise<TransportOutcome> => Promise.reject(new Error('project transport absent')),
   steer: (): Promise<SteerTransportResult> => Promise.resolve({code: 'no_active_turn', written: false}),

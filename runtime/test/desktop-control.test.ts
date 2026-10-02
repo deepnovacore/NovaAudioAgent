@@ -11,6 +11,20 @@ class Parent extends EventEmitter {
   readonly sent: unknown[] = []
   postMessage(message: unknown): void {this.sent.push(message)}
 }
+test('coding default host update accepts only exact backend frames and waits for update before ack', async () => {
+  const parentPort = new Parent(), stop = new AbortController(), updates: string[] = []
+  const control = installDesktopControl({parentPort, signal: stop.signal, status: () => undefined,
+    updateCodingBackend: backend => { updates.push(backend) }})
+  try {
+    for (const params of [{backend: 'pi'}, {backend: 'claude'}, {backend: 'codex', full: true}, null, ['pi']]) {
+      parentPort.emit('message', {data: {type: 'nova.control.request', id: String(parentPort.sent.length), method: 'coding.default.set', params}})
+      await new Promise(resolve => setImmediate(resolve))
+    }
+    assert.deepEqual(updates, ['pi'])
+    assert.deepEqual(parentPort.sent[0], {type: 'nova.control.reply', id: '0', result: {backend: 'pi'}})
+    for (const reply of parentPort.sent.slice(1)) assert.equal((reply as {error: string}).error, 'unavailable')
+  } finally { control.dispose(); stop.abort() }
+})
 test('real final compilation failure preserves exact N/B over private startup status without a resource', async () => {
   const parentPort = new Parent(), stop = new AbortController()
   let status: DesktopCapabilityState | undefined

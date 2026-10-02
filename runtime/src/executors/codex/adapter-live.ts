@@ -1,6 +1,6 @@
 import type {
   CodexAppServerTransport,
-  SafePreflightReport,
+  CodingPreflightReport,
   SteerTransportResult,
 } from './app-server-transport.js'
 import {
@@ -273,8 +273,10 @@ export class CodexLiveAdapter implements ExecutorAdapter {
   }
 }
 
-function completePreflight(value: SafePreflightReport): Readonly<Record<string, unknown>> | null {
+function completePreflight(value: CodingPreflightReport): Readonly<Record<string, unknown>> | null {
   const admitted = sanitizeCodexPreflightReport(value)
+  // An ACP handshake certifies a connection only; it is never upgraded to a sandbox claim.
+  if (admitted?.protocol === 'acp') return admitted
   if (
     admitted === null
     || typeof admitted.version !== 'string'
@@ -295,6 +297,7 @@ function validateSteerResult(value: unknown): SteerTransportResult | null {
     }
     if (
       snapshot.code !== 'accepted'
+      && snapshot.code !== 'unsupported'
       && snapshot.code !== 'no_active_turn'
       && snapshot.code !== 'stale_turn'
       && snapshot.code !== 'server_rejected'
@@ -303,6 +306,7 @@ function validateSteerResult(value: unknown): SteerTransportResult | null {
     if (typeof snapshot.written !== 'boolean') return null
     if (
       (snapshot.code === 'accepted' && !snapshot.written)
+      || (snapshot.code === 'unsupported' && snapshot.written)
       || (snapshot.code === 'no_active_turn' && snapshot.written)
       || (snapshot.code === 'stale_turn' && snapshot.written)
       || (snapshot.code === 'server_rejected' && !snapshot.written)
@@ -316,7 +320,7 @@ function validateSteerResult(value: unknown): SteerTransportResult | null {
 
 function steerHandoff(
   outcome: ExecutorHandoff['outcome'],
-  code: 'accepted' | 'no_active_turn' | 'stale_turn' | 'server_rejected' | 'transport_lost',
+  code: SteerTransportResult['code'],
 ): ExecutorHandoff {
   return {
     outcome,

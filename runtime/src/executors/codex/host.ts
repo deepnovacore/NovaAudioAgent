@@ -16,3 +16,6 @@ export * from './host-config.js'
 export * from './production-host.js'
 
 export {prepareManagedCodexMcp, type ManagedCodexMcp} from './managed-mcp.js'
+export {loadWindowsGuardianFactoryFromResources} from './windows-guardian.js'
+/** ACP routing for non-Codex sessions, loaded through this same lazy host entry. */
+export {createAcpBackendRouting} from '../acp/transport.js'

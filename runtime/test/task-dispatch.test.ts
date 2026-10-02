@@ -186,7 +186,7 @@ test('real scoped task executor survives conversation clear, targeted input and 
   assert.equal(admission.accepted,true)
   await until(()=>value.factory.transports[0]?.workOrders.length===1)
   assert.equal(value.factory.bindings[0]?.resumeThreadId,'thread-existing')
-  const originalHome=hostCodexHomeValue(value.factory.bindings[0].codexHome).path
+  const originalHome=hostCodexHomeValue(value.factory.bindings[0].codexHome!).path
   assert.ok(intakePort)
   const legacy={origin_ref:task.origin_ref} as IntakeSession
   assert.equal((await intakePort.steer(legacy,'alpha','Nova addition'))?.accepted,true)
@@ -214,7 +214,7 @@ test('real scoped task executor survives conversation clear, targeted input and 
   const resumed=await settleWithin('idle task input resumes existing session',host.command({type:'personal.command',request_id:'resume-input',method:'tasks.input',params:{...fence,control_revision:1,session_id:session.session_id,text:'Continue with the same scope'}},{client_id:'client'})) as {ok:boolean}
   assert.equal(resumed.ok,true)
   assert.equal(value.factory.bindings[1]?.resumeThreadId,'thread-existing')
-  assert.equal(hostCodexHomeValue(value.factory.bindings[1].codexHome).path,originalHome)
+  assert.equal(hostCodexHomeValue(value.factory.bindings[1].codexHome!).path,originalHome)
   const cleared=await host.command({type:'personal.command',request_id:'clear',method:'conversations.clear',params:{id:'chat:main',expected_generation:0}}) as {ok:boolean}
   assert.equal(cleared.ok,true)
   assert.equal(value.adapter.running().length,1,'clear must not abort the real project adapter')
@@ -227,7 +227,7 @@ test('real scoped task executor survives conversation clear, targeted input and 
   assert.equal(publicItem.session_id,session.session_id);assert.equal(publicItem.thread_id,'thread-existing')
   assert.ok(host.tasks.get(task.id).work_ids.includes(publicItem.work_id));assert.equal(page.data.capabilities.detail,'public-events');assert.ok(notifications>0);unsubscribe()
 
-  assert.equal(hostCodexHomeValue(value.factory.bindings[1].codexHome).path,originalHome)
+  assert.equal(hostCodexHomeValue(value.factory.bindings[1].codexHome!).path,originalHome)
   const cancelled=await host.command({type:'personal.command',request_id:'stop',method:'tasks.cancel',params:{...fence,control_revision:1}},{client_id:'client'}) as {ok:boolean}
   assert.equal(cancelled.ok,true)
   await until(()=>value.adapter.running().length===0)

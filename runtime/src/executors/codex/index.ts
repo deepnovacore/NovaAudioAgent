@@ -23,6 +23,7 @@ export {
   type CodexTransportCode,
   type RunInput,
   type SafePreflightReport,
+  type CodingPreflightReport,
   type SteerInput,
   type SteerTransportResult,
   type TransportDeadline,

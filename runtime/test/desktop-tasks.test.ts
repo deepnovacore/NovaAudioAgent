@@ -18,6 +18,17 @@ test('tasks retain terminal facts, reject stale updates, and enrich exact roster
   tasks.progress({...progress, executor: 'monitor', delegate_id: 'm'})
   assert.equal(tasks.has('m', 'monitor'), false)
 })
+test('tasks carry the bound coding backend from the roster and keep it through later progress', () => {
+  const tasks = new DesktopTasks('coding')
+  const progress = {type: 'executor.progress' as const, executor: 'coding', delegate_id: 'a', phase: 'working' as const, summary: '最新发现', level: 'detail' as const, ts: 5}
+  tasks.progress(progress)
+  tasks.project({workspace_display_name: 'P', roster: [{name: 'P', running: [{work_id: 'a', title: 'A', backend_id: 'opencode'}]}]} as never)
+  tasks.progress({...progress, ts: 6, phase: 'completed'})
+  assert.equal(tasks.snapshot().tasks[0]?.backend_id, 'opencode')
+  assert.equal(tasks.snapshot().tasks[0]?.executor, 'coding')
+  assert.equal(executorTasksSchema.safeParse(tasks.snapshot()).success, true)
+  assert.equal(executorTasksSchema.safeParse({...tasks.snapshot(), tasks: [{...tasks.snapshot().tasks[0], backend_id: 'claude'}]}).success, false)
+})
 test('task controls reject renderer paths and invalid IDs', () => {
   const action = {type: 'executor.task_action', request_id: 'r', work_id: 'a', executor: 'coding', action: 'open'}
   assert.equal(taskActionSchema.safeParse(action).success, true)

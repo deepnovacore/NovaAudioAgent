@@ -43,6 +43,7 @@ import {
   ProjectCodexAdapter,
   type ProjectTransportBinding,
   type ProjectTransportFactory,
+  type ProjectCodexAdapterOptions,
 } from '../../../src/executors/codex/adapter-project.js'
 import type {JsonValue} from '../../../src/core/events.js'
 import {bindHostExecutorCapability} from '../../../src/executors/host-executor-capability.js'
@@ -400,6 +401,7 @@ export interface Fixture {
 }
 
 export async function fixture(options: {
+  readonly defaultBackend?: ProjectCodexAdapterOptions['defaultBackend']
   readonly managedMcp?: ManagedCodexMcp
   readonly localCodexHome?: string
   readonly preexistingSession?: boolean
@@ -440,6 +442,7 @@ export async function fixture(options: {
   const factory = new RecordingProjectTransportFactory()
   const adapter = new ProjectCodexAdapter({
     ...(options.managedMcp?{managedMcp:options.managedMcp}:{}),
+    ...(options.defaultBackend === undefined ? {} : {defaultBackend: options.defaultBackend}),
     ...(options.localCodexHome ? {localCodexHome: options.localCodexHome} : {}),
     store: options.decorateStore?.(store) ?? store,
     confirmation,
