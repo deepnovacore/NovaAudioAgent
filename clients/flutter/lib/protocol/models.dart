@@ -32,8 +32,9 @@ final class Ready {
     required this.aoqChat,
     required this.aoqRuntime,
     this.pipeline,
+    this.personal = false,
   });
   final String instance, connection;
   final String? pipeline;
-  final bool editableInput, aoqChat, aoqRuntime;
+  final bool editableInput, aoqChat, aoqRuntime, personal;
 }

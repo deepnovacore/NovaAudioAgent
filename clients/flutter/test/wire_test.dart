@@ -26,7 +26,7 @@ void main() {
   final vectors =
       jsonDecode(
             File(
-              '../../fixtures/client-protocol/v1/vectors.json',
+              '../../tests/fixtures/client-protocol/v1/vectors.json',
             ).readAsStringSync(),
           )
           as List;

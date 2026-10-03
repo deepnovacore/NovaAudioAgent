@@ -27,5 +27,5 @@ dependencies {
     testImplementation("org.json:json:20250107")
 }
 tasks.withType<Test>().configureEach {
-    systemProperty("nova.fixtures", rootProject.file("../../../fixtures/client-protocol/v1/vectors.json").absolutePath)
+    systemProperty("nova.fixtures", rootProject.file("../../../tests/fixtures/client-protocol/v1/vectors.json").absolutePath)
 }

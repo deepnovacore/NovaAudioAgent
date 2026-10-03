@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../protocol/wire.dart';
+import '../personal/snapshot_cache.dart';
 
 final class Credential {
   Credential(this.server, this.token, {this.expiresAt}) {
@@ -73,5 +74,24 @@ final class SecureCredentialStore implements CredentialStore {
   }
 
   @override
-  Future<void> clear() => _storage.delete(key: _key);
+  Future<void> clear() async {
+    final raw = await _storage.read(key: _key);
+    Credential? credential;
+    try {
+      if (raw != null) {
+        credential = Credential.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+      }
+    } on FormatException {
+      /* malformed credential has no usable cache scope */
+    } on TypeError {
+      /* malformed credential has no usable cache scope */
+    }
+    if (credential != null) {
+      await SnapshotCache(
+        '${credential.server}#${credential.token}',
+        storage: _storage,
+      ).clear();
+    }
+    await _storage.delete(key: _key);
+  }
 }

@@ -6,6 +6,8 @@ import 'package:nova_audio/nova_audio.dart';
 import '../protocol/wire.dart';
 import '../protocol/request_id.dart';
 import 'recovery.dart';
+import '../personal/personal_store.dart';
+import '../personal/snapshot_cache.dart';
 import 'package:nova_audio/aoq_port.dart';
 import '../protocol/aoq_bridge.dart';
 import 'transport.dart';
@@ -17,6 +19,8 @@ final class Session extends ChangeNotifier {
     this.openTransport = SocketTransport.open,
     int Function()? clock,
   }) {
+    personal = PersonalStore(send: (frame) => command(frame) != null);
+    personal.addListener(_personalChanged);
     final watch = Stopwatch()..start();
     nowMs = clock ?? () => watch.elapsedMilliseconds;
     _audioSubscription = audio.events.listen(
@@ -26,6 +30,21 @@ final class Session extends ChangeNotifier {
       },
     );
   }
+  late final PersonalStore personal;
+  SnapshotCache? _cache;
+  String? _cacheScope;
+  Object? _cachedSnapshot;
+  String? inputInstance;
+  bool credentialRevoked = false;
+  String? _voiceConversation;
+  int _voiceRevision = 0;
+  Future<void> _captureTail = Future<void>.value();
+  Future<void> _serializeCapture(Future<void> Function() action) {
+    final operation = _captureTail.then((_) => action());
+    _captureTail = operation.catchError((Object _) {});
+    return operation;
+  }
+
   final AudioPort audio;
   final Future<bool> Function() requestMicrophone;
   final Future<TransportPort> Function(Uri) openTransport;
@@ -60,6 +79,15 @@ final class Session extends ChangeNotifier {
   bool get editableInput => ready?.editableInput ?? false;
   String? get connection => ready?.connection;
 
+  void _personalChanged() {
+    final snapshot = personal.snapshot;
+    if (snapshot != null && !identical(snapshot, _cachedSnapshot)) {
+      _cachedSnapshot = snapshot;
+      unawaited(_cache?.write(snapshot).catchError((Object _) {}));
+    }
+    _notify();
+  }
+
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -73,6 +101,26 @@ final class Session extends ChangeNotifier {
       _notify();
       return;
     }
+    final scope = '$endpoint#$token';
+    if (_cacheScope != scope) {
+      unawaited(_cache?.clear().catchError((Object _) {}));
+      _cacheScope = scope;
+      personal.clear();
+      _cache = SnapshotCache('$endpoint#$token');
+      unawaited(
+        _cache!.read().then<void>(
+          (cached) {
+            if (!_disposed && _cacheScope == scope && cached != null) {
+              personal.restore(cached);
+            }
+          },
+          onError: (Object _) {
+            /* storage unavailable: online still works */
+          },
+        ),
+      );
+    }
+    credentialRevoked = false;
     _token = token;
     _recovery = Recovery();
     _requested = true;
@@ -122,6 +170,7 @@ final class Session extends ChangeNotifier {
               'type': 'hello',
               'token': _token,
               'protocol_version': 1,
+              'capabilities': ['personal'],
               'language': language == 'zh' ? 'zh-CN' : language,
               'media': {
                 'transports': [
@@ -162,6 +211,8 @@ final class Session extends ChangeNotifier {
         connected = true;
         connecting = false;
         status = 'Connected';
+        personal.setConnected(ready!.personal, instance: ready!.instance);
+        _publishPresentation();
         _notify();
         return;
       }
@@ -179,8 +230,19 @@ final class Session extends ChangeNotifier {
       if (message is! String) throw const FormatException('Unsupported frame');
       final value = Wire.json(
         Uint8List.fromList(utf8.encode(message)),
-        limit: ready!.aoqRuntime ? 131072 : 16384,
+        limit: ready!.personal
+            ? 1048576
+            : ready!.aoqRuntime
+            ? 131072
+            : 16384,
       );
+      if (value['type'] == 'desktop.capabilities') {
+        inputInstance = value['input_instance_id'] as String?;
+      }
+      if (ready!.personal &&
+          ['personal.state', 'personal.result'].contains(value['type'])) {
+        personal.receive(value);
+      }
       switch (value['type']) {
         case 'aoq.credentials':
           if (!ready!.aoqChat ||
@@ -193,7 +255,7 @@ final class Session extends ChangeNotifier {
             throw const FormatException('Stale AOQ credentials');
           }
           _aoqRequest = null;
-          await audio.stop();
+          await _serializeCapture(audio.stop);
           if (id != generation || !voiceStarting || !foreground) return;
           await (audio as AoqPort).startAoq(
             value,
@@ -253,7 +315,13 @@ final class Session extends ChangeNotifier {
           'type': 'client.command',
           'request_id': id,
           'connection_id': connection,
-          'payload': payload,
+          'payload': {
+            ...payload,
+            if (ready!.personal && payload['type'] == 'input.text') ...{
+              'request_id': id,
+              if (inputInstance != null) 'input_instance_id': inputInstance,
+            },
+          },
         }),
       ),
     );
@@ -320,18 +388,26 @@ final class Session extends ChangeNotifier {
       return false;
     }
     try {
-      await audio.startRelay(
-        generation: id,
-        capture: capture,
-        threshold: speechThreshold,
-      );
+      await _serializeCapture(() async {
+        if (id != generation ||
+            captureRevision != _captureRevision ||
+            !connected ||
+            !foreground) {
+          return;
+        }
+        await audio.startRelay(
+          generation: id,
+          capture: capture,
+          threshold: speechThreshold,
+        );
+      });
       return id == generation &&
           captureRevision == _captureRevision &&
           connected &&
           foreground;
     } catch (e) {
-      if (id == generation) {
-        await audio.stop();
+      if (id == generation && captureRevision == _captureRevision) {
+        await _serializeCapture(audio.stop);
         status = 'Audio startup failed: $e';
         _notify();
       }
@@ -342,6 +418,7 @@ final class Session extends ChangeNotifier {
   Future<void> startVoice() async {
     if (!connected || voice || voiceStarting || !foreground) return;
     voiceStarting = true;
+    final voiceRevision = ++_voiceRevision;
     _notify();
     final id = generation;
     if (ready?.aoqChat == true) {
@@ -359,7 +436,7 @@ final class Session extends ChangeNotifier {
         _notify();
         return;
       }
-      await audio.stop();
+      await _serializeCapture(audio.stop);
       if (id != generation ||
           revision != _captureRevision ||
           !connected ||
@@ -383,9 +460,46 @@ final class Session extends ChangeNotifier {
       _notify();
       return;
     }
-    if (editableInput) command({'type': 'input.audio'});
-    final started = await startCapture(capture: true);
-    if (id != generation) return;
+    if (ready!.personal) {
+      final conversation = personal.snapshot?.selectedId;
+      if (conversation == null) {
+        voiceStarting = false;
+        _notify();
+        return;
+      }
+      _voiceConversation = conversation;
+      try {
+        await personal.command('conversations.voice', {
+          'id': conversation,
+          'enabled': true,
+        });
+        if (id != generation ||
+            voiceRevision != _voiceRevision ||
+            !foreground ||
+            !voiceStarting) {
+          return;
+        }
+        command({'type': 'input.audio', 'conversation_id': conversation});
+      } catch (error) {
+        if (id != generation || voiceRevision != _voiceRevision) return;
+        status = error.toString();
+        await stopCapture();
+        return;
+      }
+    } else if (editableInput) {
+      command({'type': 'input.audio'});
+    }
+    bool started = false;
+    try {
+      started = await startCapture(capture: true);
+    } catch (error) {
+      if (id == generation) status = 'Audio startup failed: $error';
+    }
+    if (id != generation || voiceRevision != _voiceRevision) return;
+    if (!started) {
+      await stopCapture();
+      return;
+    }
     voiceStarting = false;
     voice = started;
     muted = false;
@@ -396,9 +510,27 @@ final class Session extends ChangeNotifier {
 
   Future<void> stopCapture() async {
     _captureRevision++;
+    _voiceRevision++;
     voice = false;
     voiceStarting = false;
-    await audio.stop();
+    final conversation = _voiceConversation;
+    _voiceConversation = null;
+    inputLevel = 0;
+    _notify();
+    final release = conversation != null && personal.connected
+        ? personal
+              .command('conversations.voice', {
+                'id': conversation,
+                'enabled': false,
+              })
+              .then<void>((_) {}, onError: (Object _) {})
+        : Future<void>.value();
+    try {
+      await _serializeCapture(audio.stop);
+    } catch (_) {
+      status = 'Audio stop failed';
+    }
+    await release;
     inputLevel = 0;
     _notify();
   }
@@ -488,8 +620,12 @@ final class Session extends ChangeNotifier {
 
   Future<void> _reset() async {
     _captureRevision++;
+    _voiceRevision++;
     generation++;
     connected = false;
+    personal.setConnected(false);
+    inputInstance = null;
+    _voiceConversation = null;
     connecting = false;
     ready = null;
     _aoqRequest = null;
@@ -511,7 +647,7 @@ final class Session extends ChangeNotifier {
     if (!_resets.isClosed) _resets.add(null);
     unawaited(subscription?.cancel());
     if (transport != null) unawaited(transport.close().catchError((_) {}));
-    await audio.disconnect();
+    await _serializeCapture(audio.disconnect);
   }
 
   Future<void> _fail(int id, int code, String reason) async {
@@ -519,6 +655,11 @@ final class Session extends ChangeNotifier {
     final resetGeneration = generation + 1;
     await _reset();
     if (generation != resetGeneration || _disposed) return;
+    if (code == 4003) {
+      credentialRevoked = true;
+      await forgetPersonal().catchError((Object _) {});
+      if (generation != resetGeneration || _disposed) return;
+    }
     if ([4003, 4006, 4009].contains(code)) {
       _requested = false;
       status = {
@@ -554,6 +695,37 @@ final class Session extends ChangeNotifier {
     _notify();
   }
 
+  Future<void> forgetPersonal({String? cacheScope}) async {
+    final cache = _cache, oldScope = _cacheScope;
+    _cache = null;
+    _cacheScope = null;
+    _cachedSnapshot = null;
+    personal.clear();
+    await cache?.clear();
+    if (cacheScope != null && cacheScope != oldScope) {
+      await SnapshotCache(cacheScope).clear();
+    }
+  }
+
+  void _publishPresentation() {
+    if (personal.connected) {
+      unawaited(
+        personal
+            .command('presentation.set', {
+              'mode': foreground ? 'workbench' : 'background',
+            })
+            .then<void>((_) {}, onError: (Object _) {}),
+      );
+    }
+  }
+
+  Future<void> inactive() async {
+    foreground = false;
+    _publishPresentation();
+    _notify();
+    await stopCapture();
+  }
+
   Future<void> background() async {
     foreground = false;
     await end();
@@ -561,6 +733,7 @@ final class Session extends ChangeNotifier {
 
   void resumeForeground() {
     foreground = true;
+    _publishPresentation();
     _notify();
   }
 
@@ -569,6 +742,8 @@ final class Session extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     unawaited(end());
+    personal.removeListener(_personalChanged);
+    personal.dispose();
     unawaited(_audioSubscription.cancel());
     unawaited(_host.close());
     unawaited(_resets.close());

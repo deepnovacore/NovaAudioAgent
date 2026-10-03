@@ -7,7 +7,7 @@ void main() {
   ) async {
     app.main();
     await tester.pump();
-    expect(find.text('Nova'), findsOneWidget);
+    expect(find.text('Nova'), findsNWidgets(2));
     expect(find.text('Not connected'), findsOneWidget);
   });
 }

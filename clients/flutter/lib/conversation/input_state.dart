@@ -9,12 +9,18 @@ final class InputState extends ChangeNotifier {
     required this.stop,
     required this.allowed,
     this.prepareDictation,
+    this.conversationId,
+    this.semanticReceipts,
   });
   final String? Function(Map<String, dynamic>) command;
   final Future<bool> Function(bool) start;
   final Future<bool> Function(bool Function())? prepareDictation;
   final Future<void> Function() stop;
   final bool Function() allowed;
+  final String? Function()? conversationId;
+  final bool Function()? semanticReceipts;
+  String? _dictationConversation;
+  bool _semanticText = false;
   String draft = '', notice = '';
   bool sending = false,
       holding = false,
@@ -40,7 +46,13 @@ final class InputState extends ChangeNotifier {
       _notify();
       return;
     }
-    final id = command({'type': 'input.text', 'text': text});
+    _semanticText = semanticReceipts?.call() ?? false;
+    final conversation = conversationId?.call();
+    final id = command({
+      'type': 'input.text',
+      'text': text,
+      'conversation_id': ?conversation,
+    });
     if (id == null) {
       sending = false;
       _notify();
@@ -65,6 +77,7 @@ final class InputState extends ChangeNotifier {
     holding = true;
     final id = requestId();
     _dictation = id;
+    _dictationConversation = conversationId?.call();
     _base = draft;
     notice = '';
     _notify();
@@ -74,6 +87,8 @@ final class InputState extends ChangeNotifier {
         'type': 'input.dictation',
         'id': id,
         'action': 'start',
+        if (_dictationConversation != null)
+          'conversation_id': _dictationConversation,
       });
       if (request == null) return false;
       _dictationCommands.add(request);
@@ -114,6 +129,8 @@ final class InputState extends ChangeNotifier {
       'type': 'input.dictation',
       'id': id,
       'action': 'finish',
+      if (_dictationConversation != null)
+        'conversation_id': _dictationConversation,
     });
     if (request != null) _dictationCommands.add(request);
     _dictationTimer = Timer(const Duration(seconds: 35), () {
@@ -132,7 +149,13 @@ final class InputState extends ChangeNotifier {
     _dictationTimer?.cancel();
     _dictationCommands.clear();
     if (id != null) {
-      command({'type': 'input.dictation', 'id': id, 'action': 'cancel'});
+      command({
+        'type': 'input.dictation',
+        'id': id,
+        'action': 'cancel',
+        if (_dictationConversation != null)
+          'conversation_id': _dictationConversation,
+      });
     }
     if (active) await stop();
     _notify();
@@ -151,13 +174,27 @@ final class InputState extends ChangeNotifier {
       }
       unawaited(cancelDictation());
     }
+    if (_semanticText &&
+        value['type'] == 'input.text_result' &&
+        value['request_id'] == _request) {
+      _textTimer?.cancel();
+      _request = null;
+      sending = false;
+      if (value['ok'] == true) {
+        if (draft.trim() == _sent) draft = '';
+      } else {
+        notice = 'Message not accepted. Draft preserved.';
+      }
+    }
     if (value['type'] == 'client.command_result') {
       final id = value['request_id'];
       if (_dictationCommands.remove(id) && value['status'] != 'applied') {
         unawaited(cancelDictation());
         notice = 'Host rejected transcription';
       }
-      if (_request != null && _request == id) {
+      if (_request != null &&
+          _request == id &&
+          (!_semanticText || value['status'] != 'applied')) {
         _textTimer?.cancel();
         _request = null;
         sending = false;
@@ -172,6 +209,9 @@ final class InputState extends ChangeNotifier {
   }
 
   void reset() {
+    if (sending) {
+      notice = 'Connection lost. Check conversation before sending again.';
+    }
     _dictation = null;
     holding = recording = transcribing = sending = false;
     _request = null;

@@ -62,4 +62,12 @@ void main() {
     state.receive({'type': 'input.transcription', 'id': id, 'text': 'late'});
     expect(state.draft, 'original');
   });
+  test('dictation stays bound to its starting conversation', () async {
+    var selected='a'; final commands=<Map<String,dynamic>>[];
+    final input=InputState(command:(v){commands.add(v);return 'request';},start:(_)async=>true,stop:()async{},allowed:()=>true,conversationId:()=>selected);
+    addTearDown(input.dispose);
+    await input.beginDictation(); selected='b'; await input.finishDictation();
+    expect(commands.where((v)=>v['type']=='input.dictation').map((v)=>v['conversation_id']),everyElement('a'));
+  });
+
 }

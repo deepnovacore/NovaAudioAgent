@@ -196,6 +196,7 @@ abstract final class Wire {
       editableInput:
           pipeline == 'cascaded' &&
           capabilities.containsAll(['text_input', 'dictation']),
+      personal: capabilities.contains('personal'),
       aoqChat: aoqChat,
       aoqRuntime: aoqRuntime,
     );

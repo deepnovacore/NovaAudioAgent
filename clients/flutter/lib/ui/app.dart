@@ -11,6 +11,7 @@ import 'settings_sheet.dart';
 import 'strings.dart';
 import 'voice_orb.dart';
 import 'assistant_text.dart';
+import 'workbench_page.dart';
 
 const ink = Color.fromRGBO(9, 14, 20, 1),
     mint = Color.fromRGBO(148, 235, 217, 1);
@@ -34,12 +35,305 @@ class NovaApp extends StatelessWidget {
       ),
       useMaterial3: true,
     ),
-    home: ConversationScreen(
+    home: _WorkbenchShell(
       session: session,
       store: store,
       preferences: preferences,
     ),
   );
+}
+
+class _WorkbenchShell extends StatefulWidget {
+  const _WorkbenchShell({this.session, this.store, this.preferences});
+  final Session? session;
+  final CredentialStore? store;
+  final Preferences? preferences;
+  @override
+  State<_WorkbenchShell> createState() => _WorkbenchShellState();
+}
+
+class _WorkbenchShellState extends State<_WorkbenchShell> {
+  late final Session session;
+  final conversation = GlobalKey<_ConversationScreenState>();
+  int tab = 0;
+  bool _sheet = false;
+  final _shown = <String>{};
+  StreamSubscription<void>? _resets;
+  @override
+  void initState() {
+    super.initState();
+    final audio = ChannelAudio();
+    session =
+        widget.session ??
+        Session(audio: audio, requestMicrophone: audio.requestMicrophone);
+    session.addListener(_changed);
+    _resets = session.resets.listen((_) {
+      _shown.clear();
+    });
+  }
+
+  void _changed() {
+    if (!mounted) return;
+    setState(() {});
+    final snapshot = session.personal.snapshot;
+    final pending = [
+      ...?(snapshot?.rows('pending_approvals')),
+      ...?(snapshot?.rows('pending_confirmations')),
+    ];
+    _shown.retainAll(
+      pending
+          .map((r) => r['approval_id'] ?? r['proposal_id'])
+          .whereType<String>(),
+    );
+    if (_sheet || !session.connected || !session.foreground) return;
+    for (final row in pending) {
+      final id = (row['approval_id'] ?? row['proposal_id']) as String?;
+      if (id == null ||
+          _shown.contains(id) ||
+          row['queued'] == true ||
+          row['busy'] == true) {
+        continue;
+      }
+      _shown.add(id);
+      _sheet = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) {
+          _sheet = false;
+          return;
+        }
+        final confirm = row['proposal_id'] != null;
+        final conversationId = row['conversation_id'];
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !session.foreground || !_sheet) return;
+          unawaited(
+            session.personal
+                .command('presentation.seen', {
+                  if (confirm) 'proposal_id': id else 'approval_id': id,
+                  'conversation_id': ?conversationId,
+                })
+                .catchError((Object _) => null),
+          );
+        });
+        final decisionPending = ValueNotifier(false);
+        bool closing = false;
+        await showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          useSafeArea: true,
+          builder: (sheetContext) => ListenableBuilder(
+            listenable: Listenable.merge([
+              session,
+              decisionPending,
+              if (conversation.currentState != null)
+                conversation.currentState!._model,
+            ]),
+            builder: (context, _) {
+              final rows =
+                  session.personal.snapshot?.rows(
+                    confirm ? 'pending_confirmations' : 'pending_approvals',
+                  ) ??
+                  [];
+              final current = rows
+                  .where((r) => (r['approval_id'] ?? r['proposal_id']) == id)
+                  .firstOrNull;
+              if (current == null && !closing) {
+                closing = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (sheetContext.mounted) Navigator.pop(sheetContext);
+                });
+              }
+              final model = conversation.currentState?._model;
+              final card = model?.approvals.cards
+                  .where((c) => c.id == id)
+                  .firstOrNull;
+              final decisions = conversationId != null
+                  ? ['decline', 'accept']
+                  : (card?.decisions ?? <String>[]);
+              final enabled =
+                  !decisionPending.value &&
+                  session.connected &&
+                  current != null &&
+                  current['queued'] != true &&
+                  current['busy'] != true &&
+                  (conversationId != null ||
+                      (card != null &&
+                          card.actionable(DateTime.now()) &&
+                          !model!.approvals.submitted.contains(id)));
+              Future<void> decide(String decision) async {
+                final allow = decision != 'decline';
+                if (decisionPending.value) return;
+                decisionPending.value = true;
+                try {
+                  if (conversationId != null) {
+                    await session.personal.command(
+                      confirm
+                          ? 'conversations.confirm'
+                          : 'conversations.approve',
+                      {
+                        'id': conversationId,
+                        if (confirm) 'proposal_id': id else 'approval_id': id,
+                        if (confirm) 'confirmed': allow else 'approved': allow,
+                      },
+                    );
+                  } else {
+                    if (card == null || model?.decide(card, decision) != true) {
+                      throw StateError(
+                        'Approval could not be sent. Check connection and retry.',
+                      );
+                    }
+                  }
+                  if (sheetContext.mounted && !closing) {
+                    closing = true;
+                    Navigator.pop(sheetContext);
+                  }
+                } catch (error) {
+                  if (sheetContext.mounted) {
+                    decisionPending.value = false;
+                    ScaffoldMessenger.of(
+                      sheetContext,
+                    ).showSnackBar(SnackBar(content: Text(error.toString())));
+                  }
+                }
+              }
+
+              return Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Needs your confirmation',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 12),
+                    SelectableText('${row['summary'] ?? ''}'),
+                    if (conversationId != null)
+                      Text('Conversation: $conversationId'),
+                    if (!enabled) const Text('Waiting for host update'),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 12,
+                      children: [
+                        for (final decision in decisions)
+                          FilledButton(
+                            onPressed: enabled ? () => decide(decision) : null,
+                            child: Text(
+                              decision == 'decline'
+                                  ? 'Decline'
+                                  : decision == 'acceptForSession'
+                                  ? 'Approve for session'
+                                  : 'Approve',
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+        decisionPending.dispose();
+        _sheet = false;
+        if (mounted) _changed();
+      });
+      break;
+    }
+  }
+
+  @override
+  void dispose() {
+    session.removeListener(_changed);
+    _resets?.cancel();
+    if (widget.session == null) session.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final unread =
+        session.personal.snapshot?.object('conversations')['unread_count']
+            as int? ??
+        0;
+    return Scaffold(
+      body: Column(
+        children: [
+          if ((session.personal.snapshot?.rows('pending_approvals').length ??
+                      0) +
+                  (session.personal.snapshot
+                          ?.rows('pending_confirmations')
+                          .length ??
+                      0) >
+              0)
+            SafeArea(
+              bottom: false,
+              child: TextButton.icon(
+                onPressed: () {
+                  _shown.clear();
+                  _changed();
+                },
+                icon: const Icon(Icons.pending_actions),
+                label: const Text('Pending confirmations'),
+              ),
+            ),
+          Expanded(
+            child: IndexedStack(
+              index: tab,
+              children: [
+                ConversationScreen(
+                  key: conversation,
+                  session: session,
+                  store: widget.store,
+                  preferences: widget.preferences,
+                  active: tab == 0,
+                ),
+                for (final page in [1, 2, 3])
+                  SafeArea(
+                    child: tab == page
+                        ? WorkbenchPage(
+                            key: ValueKey(page),
+                            store: session.personal,
+                            page: page,
+                            onOpenConversation: () => setState(() => tab = 0),
+                            onSettings: () =>
+                                conversation.currentState?._settings(),
+                          )
+                        : const SizedBox(),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (index) => setState(() => tab = index),
+        destinations: [
+          NavigationDestination(
+            icon: Badge(
+              isLabelVisible: unread > 0,
+              label: Text('$unread'),
+              child: const Icon(Icons.chat_bubble_outline),
+            ),
+            label: 'Nova',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.today_outlined),
+            label: 'Today',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.checklist),
+            label: 'Plan',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            label: 'Me',
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class ConversationScreen extends StatefulWidget {
@@ -48,7 +342,9 @@ class ConversationScreen extends StatefulWidget {
     this.session,
     this.store,
     this.preferences,
+    this.active = true,
   });
+  final bool active;
   final Session? session;
   final CredentialStore? store;
   final Preferences? preferences;
@@ -70,6 +366,7 @@ class _ConversationScreenState extends State<ConversationScreen>
   bool _textMode = false, _dictationMode = false;
   String? _error;
   int _revision = 0;
+  final _readMessages = <String>{};
   String t(String text) => tr(_session.language, text);
   @override
   void initState() {
@@ -86,6 +383,7 @@ class _ConversationScreenState extends State<ConversationScreen>
     }
     _store = widget.store ?? SecureCredentialStore();
     _model = ConversationController(_session)..addListener(_changed);
+    _scroll.addListener(_markVisibleRead);
     _draft.addListener(() {
       _model.input.draft = _draft.text;
       if (mounted) setState(() {});
@@ -110,13 +408,69 @@ class _ConversationScreenState extends State<ConversationScreen>
       );
       _session.mediaPreference = preferences.media;
       setState(() {});
+      if (credential != null && !credential.expired && _session.foreground) {
+        await _session.connect(credential.server, credential.token);
+      }
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
     }
   }
 
+  @override
+  void didUpdateWidget(covariant ConversationScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _markVisibleRead());
+    }
+  }
+
+  void _markVisibleRead() {
+    if (!mounted ||
+        !widget.active ||
+        !_session.foreground ||
+        !_session.connected ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        !_scroll.hasClients ||
+        _scroll.position.extentAfter > 24) {
+      return;
+    }
+    final snapshot = _session.personal.snapshot,
+        data = snapshot?.object('conversations');
+    final selected = snapshot?.selectedId;
+    final items = data?['items'] as List? ?? [];
+    final item = items
+        .whereType<Map>()
+        .where((r) => r['id'] == selected)
+        .firstOrNull;
+    if ((item?['unread_count'] as int? ?? 0) == 0) return;
+    final rows = data?['messages'] as List? ?? [];
+    final last = rows
+        .whereType<Map>()
+        .where((r) => r['conversation_id'] == selected)
+        .lastOrNull;
+    final id = last?['id'] as String?;
+    if (id == null || !_readMessages.add(id)) return;
+    _session.personal
+        .command('conversations.read', {
+          'id': selected,
+          'through_message_id': id,
+        })
+        .catchError((Object _) {
+          _readMessages.remove(id);
+          return null;
+        });
+  }
+
   void _changed() {
     if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _markVisibleRead());
+    if (_session.credentialRevoked && _credential != null) {
+      _credential = null;
+      unawaited(_store.clear());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_settings());
+      });
+    }
     if (_draft.text != _model.input.draft) {
       _draft.value = TextEditingValue(
         text: _model.input.draft,
@@ -150,14 +504,17 @@ class _ConversationScreenState extends State<ConversationScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _session.resumeForeground();
+      if (_credential != null &&
+          !_session.connected &&
+          !_session.credentialRevoked) {
+        unawaited(_connect());
+      }
     } else if (state == AppLifecycleState.paused) {
       _revision++;
       unawaited(_session.background());
     } else if (state == AppLifecycleState.inactive) {
       unawaited(_model.input.cancelDictation());
-      if (_session.voice || _session.voiceStarting) {
-        unawaited(_session.stopCapture());
-      }
+      unawaited(_session.inactive());
     }
   }
 
@@ -187,18 +544,30 @@ class _ConversationScreenState extends State<ConversationScreen>
           save: (credential) async {
             final revision = ++_revision;
             await _session.end();
-            await _store.write(credential);
-            if (!mounted || revision != _revision || !_session.foreground) {
-              return;
+            final previous = _credential;
+            if (previous != null &&
+                (previous.server != credential.server ||
+                    previous.token != credential.token)) {
+              await _session.forgetPersonal(
+                cacheScope: '${previous.server}#${previous.token}',
+              );
             }
+            await _store.write(credential);
+            if (!mounted || revision != _revision) return;
             _credential = credential;
             _model.transcript.clear();
+            if (!_session.foreground) return;
             await _session.connect(credential.server, credential.token);
           },
           forget: () async {
             ++_revision;
             await _session.end();
             await _store.clear();
+            await _session.forgetPersonal(
+              cacheScope: _credential == null
+                  ? null
+                  : '${_credential!.server}#${_credential!.token}',
+            );
             _credential = null;
             _model.transcript.clear();
           },
@@ -321,6 +690,92 @@ class _ConversationScreenState extends State<ConversationScreen>
                       ),
               ),
             ),
+            if (_session.personal.snapshot != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButton<String>(
+                        isExpanded: true,
+                        value: _session.personal.snapshot!.selectedId,
+                        items: [
+                          for (final row
+                              in _session.personal.snapshot!.object(
+                                        'conversations',
+                                      )['items']
+                                      as List? ??
+                                  [])
+                            DropdownMenuItem(
+                              value: row['id'] as String,
+                              child: Text(
+                                '${row['title']} (${row['unread_count'] ?? 0})',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged:
+                            _session.connected &&
+                                !input.busy &&
+                                !_session.voice &&
+                                !_session.voiceStarting
+                            ? (id) {
+                                if (id != null) {
+                                  unawaited(
+                                    _session.personal
+                                        .command('conversations.select', {
+                                          'id': id,
+                                        })
+                                        .catchError((Object error) {
+                                          if (mounted) {
+                                            setState(
+                                              () => _error = error.toString(),
+                                            );
+                                          }
+                                          return null;
+                                        }),
+                                  );
+                                }
+                              }
+                            : null,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'New conversation',
+                      onPressed: _session.connected
+                          ? () => _session.personal
+                                .command('conversations.create')
+                                .catchError((Object error) {
+                                  if (mounted) {
+                                    setState(() => _error = error.toString());
+                                  }
+                                  return null;
+                                })
+                          : null,
+                      icon: const Icon(Icons.add),
+                    ),
+                    IconButton(
+                      tooltip: 'Reminders',
+                      onPressed: () => showModalBottomSheet<void>(
+                        context: context,
+                        isScrollControlled: true,
+                        useSafeArea: true,
+                        builder: (sheetContext) => FractionallySizedBox(
+                          heightFactor: .85,
+                          child: WorkbenchPage(
+                            store: _session.personal,
+                            page: 0,
+                            onOpenConversation: () =>
+                                Navigator.pop(sheetContext),
+                            onSettings: () => _settings(),
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.notifications_outlined),
+                    ),
+                  ],
+                ),
+              ),
             Expanded(
               child: Stack(
                 children: [
@@ -655,7 +1110,11 @@ class _ConversationScreenState extends State<ConversationScreen>
                           ),
                         ),
                         FilledButton(
-                          onPressed: _session.end,
+                          onPressed:
+                              _session.ready?.personal == true &&
+                                  _session.ready?.aoqChat != true
+                              ? _session.stopCapture
+                              : _session.end,
                           style: FilledButton.styleFrom(
                             backgroundColor: const Color(0xffc2474c),
                           ),

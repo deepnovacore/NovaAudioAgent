@@ -20,6 +20,19 @@ String handshake() => jsonEncode({
   },
 });
 void main() {
+  test('personal capability requests state and accepts large compact snapshots', () async {
+    final transport=FakeTransport();
+    final session=Session(audio:FakeAudio(),requestMicrophone:() async=>true,openTransport:(_) async=>transport);
+    addTearDown(session.dispose);
+    await session.connect(Uri.parse('wss://example.com/client/v1'),'a'*32);
+    expect(jsonDecode(transport.sent.first as String)['capabilities'],contains('personal'));
+    final value=jsonDecode(handshake()) as Map<String,dynamic>;
+    (value['capabilities'] as List).add('personal');
+    await session.receive(jsonEncode(value),session.generation);
+    await session.receive(jsonEncode({'type':'personal.state','revision':7,'life':{'profile':{'about':'a'*20000}}}),session.generation);
+    expect(session.connected,true);
+    expect(session.personal.snapshot!.revision,7);
+  });
   Future<void> ready(Session s) async {
     await s.connect(Uri.parse('wss://example.com/client/v1'), 'a' * 32);
     await s.receive(handshake(), s.generation);
