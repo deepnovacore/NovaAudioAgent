@@ -76,3 +76,40 @@ on 2026-09-21. The public build took 89.7 seconds; its Runner.debug.dylib links
 verifies compilation/packaging, not installation, live calls or acoustic AEC.
 The final public Android nine-scene run passed after the approval presentation
 fix; its production-entry APK was rebuilt successfully afterward.
+
+## v0.3.0 workbench checkpoint (2026-10-04)
+
+M1–M4 implementation and automated acceptance are recorded in
+[workbench-progress.md](workbench-progress.md). Independent code reviews were
+performed after M1, after M4 and before preparing this report. Automated checks
+are not physical, model or acoustic acceptance.
+
+- Full npm suite: 4549 passed, 11 existing skips. Final bounded runtime regressions
+  after review: 70 passed, 1 existing skip.
+- Flutter analyzer clean; 80 tests passed, 1 opt-in socket test skipped in the
+  default run. The opt-in real-WebSocket synthetic test passed separately.
+- Four phone-size cached-workbench golden scenes passed comparison and visual
+  inspection. Android debug APK/native checks and iOS simulator debug build passed.
+- Final `tool/validate_mobile.sh` rerun passed, including unsigned iOS
+  device-target debug compilation. This does not validate signing or installation.
+- iPhone signing team/installation and both physical phones are deferred at the
+  user's request. No current physical results are inferred from older checkpoints.
+
+| Physical scenario | Xiaomi | iPhone |
+| --- | --- | --- |
+| QR pair, restart reconnect, device revocation returns to pairing | pending | pending |
+| Bidirectional todo create/complete within one second | pending | pending |
+| Concurrent edit version conflict | pending | pending |
+| Idea-to-goal linkage on both devices | pending | pending |
+| Reminder badge/read counts and execute/later/ignore | pending | pending |
+| Text and dictation reach the selected conversation | pending | pending |
+| Delegated task approval and completion handoff card | pending | pending |
+| Offline cache, Mac restart, reconnect without duplicate writes | pending | pending |
+| Live voice smoke, including first microphone permission | pending | pending |
+
+Run the two phones sequentially: a second concurrent phone receives 4009.
+Use the Mac built-in shared endpoint over Tailscale. An explicitly configured
+external phone server owns separate state and is not local-workbench sync.
+Public-history audit found no new company pilot integration, but an old deleted
+public document still has a real tailnet address in reachable history; see the
+progress record. That legacy history was not rewritten.

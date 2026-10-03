@@ -46,3 +46,25 @@ because Java/Gradle did not honor TMPDIR alone and previously filled local temp.
 The iOS 18.5 system dyld cache finished generating (~2.6 GB); with it available,
 the public full simulator build passed in 27 seconds. Moving this root-owned
 cache to the external disk still requires the user's administrator command.
+
+## Workbench build recovery (2026-10-04)
+
+On this machine the SDKs and acceptance Xcode are on `$NOVA_EXT`,
+not their default locations. Source
+`$NOVA_EXT/Environments/nova-flutter.sh` before
+validation. Other machines must configure equivalent paths themselves.
+
+After a reboot the pre-existing runtime symlinks may point to unmounted images.
+The iOS 18.5 images were restored read-only with:
+
+```sh
+hdiutil attach -readonly -nobrowse $NOVA_EXT/SDKs/ios-runtime-downloads/runtime/AssetData/044-89849-100.dmg
+hdiutil attach -readonly -nobrowse '/Volumes/iOS 18.5 Simulator Bundle/Restore/044-89417-100.dmg'
+```
+
+The app and nova_audio already require iOS 17.0. When runtimes were unavailable,
+Flutter temporarily generated a Swift package with its 13.0 fallback; a fresh
+build after Xcode could read build settings restored the correct target without
+changing the project. `NOVA_AOQ_SIMULATOR=1 flutter build ios --simulator --debug`
+then passed. No signing identity, system Xcode selection or device settings were
+changed. Device signing and physical acceptance remain separate steps.
