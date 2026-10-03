@@ -1,3 +1,4 @@
+import type {CodingBackendId} from '../config/coding-backends.js'
 import type {TaskDispatchContext} from '../core/task-tools.js'
 /**
  * Port between the host and whichever executor carries the `coding` role.
@@ -32,6 +33,8 @@ export interface IntakeTarget {
 export interface RunningWork {
   /** The delegate id of the run. */
   readonly work_id: string
+  /** Set for non-Codex backends so surfaces can name the agent actually running the work. */
+  readonly backend_id?: CodingBackendId
   readonly project: string
   readonly title: string
 }
@@ -43,7 +46,7 @@ export interface RosterEntry {
   readonly name: string
   readonly last_used_at: number
   readonly last_session_title: string | null
-  readonly running: readonly Pick<RunningWork, 'work_id' | 'title'>[]
+  readonly running: readonly Pick<RunningWork, 'work_id' | 'title' | 'backend_id'>[]
 }
 
 /** What `assess` decided about where an objective goes; `project` is a verbatim roster name (or the new name for `create`). */
@@ -139,6 +142,8 @@ export interface ProjectExecutorAdapter extends ExecutorAdapter, AgentExecutor {
   commitConfirmed(operation: ConfirmedProjectOperation, dispatch: ProjectRuntimeDispatch, confirmation?: ProjectConfirmationController): Promise<ProjectCommitResult>
   publicProjectView(pendingConfirmation: boolean): PublicProjectView
   publicProjectContext(pendingConfirmation: boolean): PublicProjectContext
+  /** Backend a resumed session is bound to, or the current default for a new session. */
+  codingBackendFor?(sessionId: string | null): Promise<CodingBackendId>
   close(): Promise<void>
 }
 

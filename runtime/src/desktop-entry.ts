@@ -8,6 +8,7 @@ import {describeStartupError} from './desktop/startup-error.js'
 import {announceReadiness} from './desktop.js'
 import {buildProductionComposition} from './composition/production-composition.js'
 import {renamedEnvironmentWarnings} from './config/config.js'
+import type {CodingBackendId} from './config/coding-backends.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource & {postMessage(message: unknown): void}}
 
@@ -26,7 +27,12 @@ let knowledgeHandle: ((method: string, params: unknown) => Promise<unknown>) | u
 let feishuHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
 let personalSettingsHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
 let clearConversation: (() => Promise<void>) | undefined
+let updateCodingBackend: ((backend: CodingBackendId) => void) | undefined
 const control = installDesktopControl({...(parentPort === undefined ? {} : {parentPort}), signal: stop.signal,
+  updateCodingBackend: backend => {
+    if (updateCodingBackend === undefined) throw new Error('coding_unavailable')
+    updateCodingBackend(backend)
+  },
   status: () => capabilityView(), handle: async (method, params) => {
     if (method.startsWith('feishu.')) return feishuHandle?.(method, params)
     if (PERSONAL_SETTINGS_METHODS.includes(method)) return personalSettingsHandle?.(method, params)
@@ -68,6 +74,7 @@ const exitCode = await runDesktopEntryWithStopSources({
   construct: async ownership => {
     const composition = await buildProductionComposition({token, stop, ownership, onDiagnostic, onUsage: control.publishUsage,
       onKnowledge: knowledge => { knowledgeHandle = (method, params) => knowledge.service.handle(method, params) },
+      onCoding: coding => { if (coding.updateDefaultBackend) updateCodingBackend = backend => coding.updateDefaultBackend!(backend) },
     })
     capabilityView = () => ({...composition.realtime.capabilityStatus, state: 'running'})
     clearConversation = () => composition.realtime.clearConversation()

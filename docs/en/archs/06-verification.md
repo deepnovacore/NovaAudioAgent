@@ -13,4 +13,6 @@ Run builds one at a time because they share generated runtime output. For an exe
 
 Node.js and TypeScript are the only product runtime. Codex is app-server-only; JSONL is fixture-parser-only.
 
+OpenCode, CodeBuddy, Pi and DeepSeek Harness sessions use ACP. Automated tests drive the ACP transport against a scripted agent process; acceptance of each real agent is a separate live check: `node runtime/scripts/live/acp-backends.mjs <backend>` after `npm run build`.
+
 Provider checks are opt-in live smoke tests: `npm run test:live --workspace @nova-audio-agent/runtime`. They use your configured credentials and may incur service charges; the normal test suite does not establish microphone, speaker or live provider acceptance.

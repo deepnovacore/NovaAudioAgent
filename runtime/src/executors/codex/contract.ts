@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto'
 import type {ExecutorProgress} from '../../core/causal-runtime.js'
 import type {JsonValue} from '../../core/events.js'
 import {snapshotJsonRecord} from './safe-json.js'
+import {sanitizeAcpPreflightReport} from '../acp/preflight.js'
 import {validProgressSummary} from '../../core/events.js'
 import {hasOtherCategory as hasPinnedOtherCategory} from '../../text/unicode-tables.js'
 import {normalizeNfcPinned} from '../../text/unicode-normalize.js'
@@ -362,6 +363,8 @@ function sanitizeCodexPreflightReportChecked(
   value: unknown,
 ): Readonly<Record<string, unknown>> | null {
   if (!isPlainObject(value)) return null
+  // An ACP handshake has its own exact shape and never borrows the sandbox fields below.
+  if (Object.hasOwn(value, 'protocol')) return sanitizeAcpPreflightReport(value)
   const result: Record<string, unknown> = {}
   if (Object.hasOwn(value, 'version')) {
     if (typeof value.version !== 'string' || !CODEX_VERSION.test(value.version)) return null

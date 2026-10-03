@@ -5,6 +5,7 @@ import {DEFAULT_FRONTBRAIN_TOOL_BUDGET} from '../config/capability-registry.js'
 import type {CapabilityStatus} from '../config/capability-registry.js'
 import type {DesktopStopParentSource} from './desktop-session.js'
 import {reportUsage, type UsageReport} from '../realtime/usage.js'
+import {CODING_BACKEND_IDS, type CodingBackendId} from '../config/coding-backends.js'
 
 type ParentPort = DesktopStopParentSource & {postMessage(message: unknown): void}
 export interface DesktopCapabilityState extends Partial<CapabilityStatus> {
@@ -21,6 +22,8 @@ export function installDesktopControl(options: {
   readonly signal: AbortSignal
   readonly status: () => DesktopCapabilityState | undefined
   readonly handle?: (method: string, params: unknown) => Promise<unknown>
+  /** Changes the default for new coding sessions only; it never touches running work. */
+  readonly updateCodingBackend?: (backend: CodingBackendId) => void
 }): {publish(): void; publishUsage: (report: UsageReport) => void; dispose(): void} {
   const port = options.parentPort
   let disposed = false
@@ -45,7 +48,17 @@ export function installDesktopControl(options: {
     pending += 1
     void (async () => {
       try {
-        const result = method === 'capabilities.status' ? options.status() : await options.handle?.(method, value.params)
+        let result: unknown
+        if (method === 'coding.default.set') {
+          const params = value.params as {backend?: unknown} | null
+          if (params === null || typeof params !== 'object' || Array.isArray(params)
+            || Object.keys(params).length !== 1 || !Object.hasOwn(params, 'backend')
+            || !CODING_BACKEND_IDS.includes(params.backend as CodingBackendId) || options.updateCodingBackend === undefined) {
+            throw new Error('invalid_coding_backend')
+          }
+          options.updateCodingBackend(params.backend as CodingBackendId)
+          result = {backend: params.backend}
+        } else result = method === 'capabilities.status' ? options.status() : await options.handle?.(method, value.params)
         if (!disposed) port?.postMessage({type: 'nova.control.reply', id, ...(result === undefined ? {error: 'unavailable'} : {result})})
       } catch {
         if (!disposed) port?.postMessage({type: 'nova.control.reply', id, error: 'unavailable'})

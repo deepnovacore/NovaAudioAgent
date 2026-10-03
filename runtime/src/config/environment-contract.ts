@@ -61,7 +61,7 @@ const rows: readonly Row[] = [
   ['PROACTIVITY_PRESET', 'core', false, true, 'never', 'balanced', 'Proactivity preset.', '主动性预设。'],
   ['SUGGESTION_COOLDOWN', 'core', false, true, 'never', 'preset', 'Suggestion cooldown override in seconds.', '建议冷却秒数覆盖。'],
   ['FRESH_WINDOW', 'core', false, true, 'never', 'preset', 'Fresh-context window override in seconds.', '新鲜上下文窗口秒数覆盖。'],
-  ['CODEX_APPROVAL_MODE', 'codex', false, true, 'never', 'ask', 'Codex approval mode.', 'Codex 审批模式。'],
+  ['CODEX_APPROVAL_MODE', 'codex', false, true, 'never', 'ask', 'Coding approval mode for Codex and ACP backends; Pi refuses ask.', '编程审批模式，适用于 Codex 与 ACP 执行器；Pi 不接受询问模式。'],
   ['CLARIFICATION_DEPTH', 'core', false, true, 'never', 'balanced', 'Maximum clarification depth for intake.', '意图理解的最大澄清深度。'],
   ['PLAN_READBACK', 'core', false, true, 'never', 'summary', 'Plan readback mode.', '规划回读模式。'],
   ['GENERATE_PLAN', 'core', false, true, 'never', 'true', 'Generate a plan before execution.', '执行前生成计划。'],
@@ -167,6 +167,12 @@ const rows: readonly Row[] = [
   ['AUTOGLM_API_KEY', 'autoglm', true, true, 'when_selected', null, 'Phone model credential.', '手机操作模型凭据。'],
   ['AUTOGLM_MAX_STEPS', 'autoglm', false, true, 'never', '30', 'Supervised phone task step limit (1-100).', '受监督手机任务步骤上限（1-100）。'],
   ['AUTOGLM_TIMEOUT_SECONDS', 'autoglm', false, true, 'never', '600', 'Phone task deadline (1-1800 seconds).', '手机任务截止时间（1-1800 秒）。'],
+  ['CODING_BACKEND', 'core', false, true, 'never', 'codex', 'Backend for new coding sessions: codex, opencode, codebuddy, pi or deepseek. Existing sessions keep theirs.', '新编程会话使用的执行器：codex、opencode、codebuddy、pi 或 deepseek；已有会话保持原执行器。'],
+  ['CODING_PROFILES', 'host_private', false, false, 'never', null, 'Desktop-supplied registry of immutable ACP configuration-source profiles.', '桌面端提供的不可变 ACP 配置来源档案。'],
+  ['OPENCODE_ACP_BIN', 'core', false, true, 'never', 'opencode on PATH', 'Absolute path to the OpenCode executable used for ACP.', '用于 ACP 的 OpenCode 可执行文件绝对路径。'],
+  ['CODEBUDDY_ACP_BIN', 'core', false, true, 'never', 'codebuddy on PATH', 'Absolute path to the CodeBuddy executable used for ACP.', '用于 ACP 的 CodeBuddy 可执行文件绝对路径。'],
+  ['PI_ACP_BIN', 'core', false, true, 'never', 'pi-acp on PATH', 'Absolute path to the pi-acp adapter executable.', 'pi-acp 适配器可执行文件绝对路径。'],
+  ['DEEPSEEK_ACP_BIN', 'core', false, true, 'never', 'dsh on PATH', 'Absolute path to the DeepSeek Harness (dsh) executable used for ACP.', '用于 ACP 的 DeepSeek Harness（dsh）可执行文件绝对路径。'],
   ['CODING_MODULE_ENABLED', 'codex', false, true, 'never', 'true', 'Enable the coding module; the desktop turns it off when no Codex CLI is available.', '启用编程模块；桌面端在找不到 Codex CLI 时自动关闭。'],
 ] as const
 

@@ -235,3 +235,16 @@ test('workbench actions address retained work without reviving expired orb rows 
  assert.equal(banner.state().selected.work_id,'b');assert.equal(banner.action('open','missing'),false)
  banner.dispose()
 })
+
+test('task backend label names only a bound non-Codex backend and leaves cancellation unchanged', () => {
+  const {banner, sent} = harness()
+  const resumed = {...task('a'), executor: 'codex', backend_id: 'opencode'}
+  assert.equal(banner.receive(frame([resumed])), true)
+  assert.equal(module.taskBackendLabel(banner.state().selected), 'OpenCode')
+  assert.equal(module.taskBackendLabel(task('legacy')), null)
+  banner.action('cancel')
+  assert.equal(sent[0].executor, 'codex')
+  assert.equal(sent[0].work_id, 'a')
+  assert.equal(banner.receive(frame([{...resumed, backend_id: '/private/config'}], 2)), false)
+})
+

@@ -6,6 +6,8 @@ Nova runs on your computer, talks with you by voice, and uses Codex to carry out
 
 To run from source, install Node.js 22.13 or later, npm, Git, and Codex. Sign in to Codex before starting Nova.
 
+To use OpenCode, CodeBuddy, Pi or DeepSeek Harness for coding instead, install it as well and pick it in Settings; see [Coding](executors/coding.md#choosing-an-agent).
+
 Native components also need a platform toolchain:
 
 - macOS: Xcode Command Line Tools (`xcode-select --install`).

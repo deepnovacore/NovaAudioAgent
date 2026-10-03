@@ -1,3 +1,4 @@
+import {codingBackendStatus} from '../src/main/coding-settings.mjs'
 import {tmpdir} from 'node:os'
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -55,7 +56,7 @@ test('actual main turns Coding off instead of blocking on an unfinished manual C
 })
 test('actual settings view never decrypts while projecting startup and panel state', () => {
   let decrypts = 0
-  const context = vm.createContext({createManagedPhoneService: () => ({}), VISION_MODELS: {}, resolveSecretConfiguration, developmentEnv: {}, frontendUsage: {snapshot: () => ({})}, wakeWord: null, settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
+  const context = vm.createContext({codingBackendStatus, createManagedPhoneService: () => ({}), VISION_MODELS: {}, resolveSecretConfiguration, developmentEnv: {}, frontendUsage: {snapshot: () => ({})}, wakeWord: null, settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
     readCapabilityDocument: () => ({version: 1}), decryptSecretsForSpawn: () => {decrypts++; return {}},
     readCapabilityEditor: () => ({document: {version: 1}, revision: 'test-revision', problems: []}), capabilityEnvironment: () => ({}), capabilityPath, statSync, capabilityDocumentRevision: () => 'fixed',
     runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),

@@ -99,7 +99,8 @@
           </div>
           <div class="executor-card">
             <div id="coding-executor-toggle"></div>
-            <div class="field"><label for="coding-provider">执行器</label><select id="coding-provider" disabled><option value="codex">Codex</option></select><button type="button" id="coding-executor-configure">配置…</button></div>
+            <div class="field"><label for="coding-provider">新会话默认执行器</label><select id="coding-provider"><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="codebuddy">CodeBuddy</option><option value="pi">Pi</option><option value="deepseek">DeepSeek Harness</option></select><button type="button" id="coding-executor-configure">配置…</button></div>
+            <p class="hint">保存后即用于新会话；已有会话继续使用原执行器，语音和进行中的任务不受影响。</p>
           </div>
         </div>
         <div class="capability-group" id="mcp-section">
@@ -143,6 +144,7 @@
       </section>
       <section class="setting-section" id="codex-approval-section">
         <h2>权限</h2>
+        <p id="coding-permission-note" class="hint"></p>
         <fieldset id="codex-approval-mode" class="segmented segmented-approval">
           <legend>Coding 执行器审批模式</legend>
           <label class="choice">
@@ -452,8 +454,16 @@
           <span class="summary-chevron" aria-hidden="true"></span>
         </summary>
         <div class="codex-content">
+          <div id="coding-acp-settings" hidden>
+            <h3 id="coding-backend-title"></h3>
+            <p id="coding-backend-status" class="connection-status" role="status"></p>
+            <p id="coding-backend-guidance" class="hint"></p>
+            <div class="field"><label for="coding-binary-path">ACP 可执行文件</label><input id="coding-binary-path" type="text" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="留空则从 PATH 查找；也可填写绝对路径"></div>
+            <div id="coding-config-field" class="field"><label id="coding-config-label" for="coding-config-path"></label><input id="coding-config-path" type="text" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="留空则使用该工具的默认位置"></div>
+            <p class="hint">路径修改在保存并重启后用于新会话；已有会话保留原来的配置来源。登录与密钥由各工具自己的配置管理。</p>
+          </div>
           <p id="codex-status" class="connection-status" aria-live="polite">正在检查 Codex…</p>
-          <div class="codex-discovery"><fieldset class="segmented compact-segmented">
+          <div id="codex-discovery" class="codex-discovery"><fieldset class="segmented compact-segmented">
             <legend>Codex CLI</legend>
             <label class="choice">
               <input type="radio" name="codexBinaryMode" value="auto">

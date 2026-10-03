@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto'
 import {constants, realpathSync} from 'node:fs'
 import {open, realpath, type FileHandle} from 'node:fs/promises'
 import {basename, join} from 'node:path'
+import {CODING_BACKEND_IDS} from '../config/coding-backends.js'
 import {stripLikePython} from '../text/python-text.js'
 import {
   hostHomeValue,
@@ -46,6 +47,7 @@ import {
   type ProjectSnapshot,
   type PublicProjectContext,
   type PublicProjectView,
+  type SessionBackendBinding,
   type SessionResumeRollback,
   type SessionStartRollback,
   type WorkspaceRecord,
@@ -1065,7 +1067,7 @@ export class ProjectStore {
       }
       if (
         session.state !== 'ready'
-        || session.codex_thread_id !== expectedThread
+        || session.backend_session_id !== expectedThread
       ) throw new ProjectStateError('session_unavailable')
       const previousActiveWorkspaceId = state.activeWorkspaceId
       const previousActiveSessionId = workspace.active_session_id
@@ -1152,7 +1154,9 @@ export class ProjectStore {
     const title = normalizeProjectSessionTitle([...input.title].slice(0, MAX_PROJECT_SESSION_TITLE).join(''))
     return await this.#files.transaction(state => {
       if (!state.workspaces.has(workspaceId)) throw new ProjectStateError('workspace_not_found')
-      const existing = [...state.sessions.values()].find(session => session.codex_thread_id === threadId && session.executor_home === home)
+      const existing = [...state.sessions.values()].find(session => session.backend_id === 'codex'
+        && session.backend_profile_id === 'codex:legacy'
+        && session.backend_session_id === threadId && session.executor_home === home)
       if (existing && existing.workspace_id !== workspaceId) throw new ProjectStateError('session_state_conflict')
       if (existing?.origin === 'nova') return [existing, false]
       // Evict like every other insert path: a full workspace must not freeze out newer discoveries.
@@ -1163,6 +1167,7 @@ export class ProjectStore {
       const session: ProjectSessionRecord = Object.freeze({
         session_id: existing?.session_id ?? this.#newUniqueId(state), workspace_id: workspaceId,
         executor_home: home, origin: 'external', codex_thread_id: threadId, state: 'ready',
+        backend_id: 'codex', backend_profile_id: 'codex:legacy', backend_session_id: threadId,
         display_title: normalized.display, normalized_title: normalized.normalized,
         created_at: existing?.created_at ?? input.updatedAt,
         last_used_at: Math.max(existing?.last_used_at ?? 0, input.updatedAt),
@@ -1179,7 +1184,15 @@ export class ProjectStore {
   }
 
   /** The host derives `displayTitle` from the work order (spec 08 Titles); there is no default title. */
-  async beginSessionForRun(workspaceId: string, displayTitle: string, executorHome?: string): Promise<BegunSession> {
+  async beginSessionForRun(
+    workspaceId: string, displayTitle: string, executorHome?: string,
+    binding: Omit<SessionBackendBinding, 'backend_session_id'> = {backend_id: 'codex', backend_profile_id: 'codex:legacy'},
+  ): Promise<BegunSession> {
+    const {backend_id: backendId, backend_profile_id: profileId} = binding
+    if (!CODING_BACKEND_IDS.includes(backendId) || typeof profileId !== 'string'
+      || !/^[a-zA-Z0-9][a-zA-Z0-9:_./-]{0,255}$/u.test(profileId)) {
+      throw new ProjectStateError('state_corrupt')
+    }
     const home = executorHome === undefined ? undefined : hostHomeValue(hostPersistentHomeFromConfig(executorHome, [executorHome])).path
     const supplied = normalizeProjectSessionTitle(displayTitle)
     return await this.#files.transaction(state => {
@@ -1200,6 +1213,9 @@ export class ProjectStore {
         display_title: normalized.display,
         normalized_title: normalized.normalized,
         codex_thread_id: null,
+        backend_id: backendId,
+        backend_profile_id: profileId,
+        backend_session_id: null,
         state: 'starting',
         created_at: stamp,
         last_used_at: stamp,
@@ -1249,7 +1265,7 @@ export class ProjectStore {
   ): Promise<boolean> {
     return await this.#files.transaction(state => {
       const session = state.sessions.get(sessionId)
-      if (session?.state !== 'starting' || session.codex_thread_id !== null) {
+      if (session?.state !== 'starting' || session.backend_session_id !== null) {
         return [false, false]
       }
       state.sessions.delete(sessionId)
@@ -1275,7 +1291,7 @@ export class ProjectStore {
       if (
         session?.workspace_id !== rollback.workspaceId
         || session.state !== 'starting'
-        || session.codex_thread_id !== null
+        || session.backend_session_id !== null
       ) {
         return [false, false]
       }
@@ -1324,12 +1340,13 @@ export class ProjectStore {
     return await this.#files.transaction(state => {
       const session = state.sessions.get(sessionId)
       if (session === undefined) throw new ProjectStateError('session_not_found')
-      if (session.state !== 'starting' || session.codex_thread_id !== null) {
+      if (session.state !== 'starting' || session.backend_session_id !== null) {
         throw new ProjectStateError('session_state_conflict')
       }
-      if (session.origin === 'nova' && session.executor_home !== undefined) {
+      if (session.origin === 'nova') {
         const duplicates = [...state.sessions.values()].filter(other => other.session_id !== sessionId
-          && other.executor_home === session.executor_home && other.codex_thread_id === cleanThreadId)
+          && other.backend_id === session.backend_id && other.backend_profile_id === session.backend_profile_id
+          && other.executor_home === session.executor_home && other.backend_session_id === cleanThreadId)
         if (duplicates.some(other => other.workspace_id !== session.workspace_id || other.origin === 'nova')) {
           throw new ProjectStateError('session_state_conflict')
         }
@@ -1344,7 +1361,8 @@ export class ProjectStore {
       }
       const ready: ProjectSessionRecord = Object.freeze({
         ...session,
-        codex_thread_id: cleanThreadId,
+        codex_thread_id: session.backend_id === 'codex' ? cleanThreadId : null,
+        backend_session_id: cleanThreadId,
         state: 'ready',
         last_used_at: this.#stamp(),
       })
@@ -1386,7 +1404,7 @@ export class ProjectStore {
       if (session?.workspace_id !== workspaceId) {
         throw new ProjectStateError('session_workspace_mismatch')
       }
-      if (session.state !== 'ready' || session.codex_thread_id === null) {
+      if (session.state !== 'ready' || session.backend_session_id === null) {
         throw new ProjectStateError('session_unavailable')
       }
       const stamp = this.#stamp()

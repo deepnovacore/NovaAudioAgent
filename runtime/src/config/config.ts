@@ -1,4 +1,5 @@
 import {parseCapabilityRegistry, type CapabilityRegistry} from './capability-registry.js'
+import {CODING_BACKEND_IDS} from './coding-backends.js'
 import { z } from 'zod'
 import { stripLikePython } from '../text/python-text.js'
 import {supportsVision} from '../model/vision-capability.js'
@@ -90,6 +91,8 @@ export const settingsSchema = z.object({
   qwen_guard_history_pairs: qwenGuardHistoryPairsSchema.default(4),
   executor: executorNameSchema.nullable().default(null),
   executors: z.array(executorNameSchema),
+  /** Backend for new coding sessions; existing sessions keep their bound backend. */
+  coding_backend: z.enum(CODING_BACKEND_IDS).default('codex'),
   codex_workspace: z.string().nullable().default(null),
   codex_bin: z.string().default('codex'),
   codex_prefix_args: z.array(z.string().min(1).max(32_768)).max(1).default([]),
@@ -269,6 +272,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textC
   const supportDefault = (value: string | undefined): string | undefined =>
     value ?? (stepfunSupport ? STEPFUN_SUPPORT_MODEL : undefined)
   const candidate = {
+    coding_backend: optionalString(environment.CODING_BACKEND),
     model_base_url: optionalString(environment.MODEL_BASE_URL),
     model_api_key: optionalSecret(environment.MODEL_API_KEY),
     openrouter_api_key: optionalSecret(environment.OPENROUTER_API_KEY),

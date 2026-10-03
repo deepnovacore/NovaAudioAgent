@@ -1,5 +1,6 @@
 import {basename, isAbsolute} from 'node:path'
 import {z} from 'zod'
+import {CODING_BACKEND_IDS, type CodingBackendId} from '../config/coding-backends.js'
 import {compareCodePoints, type CanonicalJsonPath} from '../text/canonical-json.js'
 import {pythonFloat} from '../text/python-number.js'
 import {isPythonSpace, isWellFormed, stripLikePython} from '../text/python-text.js'
@@ -9,7 +10,7 @@ import {isLetterCategory, isNumberCategory, isOtherCategory} from '../text/unico
 import {type HostWorkspace} from './host-paths.js'
 import {type ProjectFileIdentity} from './project-root-file.js'
 
-export const PROJECT_STATE_VERSION = 1
+export const PROJECT_STATE_VERSION = 2
 export const MAX_PROJECT_WORKSPACES = 100
 export const MAX_PROJECT_SESSIONS_PER_WORKSPACE = 200
 export const MAX_PROJECT_SESSIONS_TOTAL = 1000
@@ -73,7 +74,13 @@ export interface WorkspaceRecord {
   readonly last_used_at: number
 }
 
-export interface ProjectSessionRecord {
+export interface SessionBackendBinding {
+  readonly backend_id: CodingBackendId
+  readonly backend_profile_id: string
+  readonly backend_session_id: string | null
+}
+
+export interface ProjectSessionRecord extends SessionBackendBinding {
   /** Persisted independently of workspace cwd; older explicit-home records are external. */
   readonly executor_home?: string
   readonly origin?: 'nova' | 'external'
@@ -102,7 +109,7 @@ export interface BegunSession {
 }
 
 export interface ProjectSnapshot {
-  readonly version: 1
+  readonly version: 2
   readonly state_revision: number
   readonly active_binding_revision: number
   readonly active_workspace_id: string | null
@@ -157,7 +164,7 @@ export interface ManagedReplacementInput {
 export interface PublicRosterEntry {
   readonly name: string
   readonly last_used_at: number
-  readonly running: readonly {readonly work_id: string; readonly title: string}[]
+  readonly running: readonly {readonly work_id: string; readonly title: string; readonly backend_id?: CodingBackendId}[]
 }
 
 export interface PublicProjectView {
@@ -605,6 +612,9 @@ const persistedSession = z.object({
   display_title: z.unknown().nonoptional(),
   normalized_title: z.string(),
   codex_thread_id: z.unknown().nonoptional(),
+  backend_id: z.enum(CODING_BACKEND_IDS).optional(),
+  backend_profile_id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9:_./-]{0,255}$/u).optional(),
+  backend_session_id: z.unknown().optional(),
   state: z.enum(['starting', 'ready', 'unavailable']),
   created_at: z.number(),
   last_used_at: z.number(),
@@ -615,7 +625,12 @@ const persistedSession = z.object({
   const title = normalizeProjectSessionTitle(raw.display_title)
   if (raw.normalized_title !== title.normalized) throw new ProjectStateError('state_corrupt')
   const threadId = raw.codex_thread_id === null ? null : validateThreadId(raw.codex_thread_id)
-  if ((raw.state === 'ready' && threadId === null) || (raw.state === 'starting' && threadId !== null)) {
+  const backend = raw.backend_id ?? 'codex'
+  const sessionId = raw.backend_id === undefined ? threadId
+    : raw.backend_session_id === null ? null : validateThreadId(raw.backend_session_id)
+  if ((backend === 'codex' ? threadId !== sessionId : threadId !== null)
+    || ((raw.origin ?? (raw.executor_home === undefined ? 'nova' : 'external')) === 'external' && backend !== 'codex')
+    || (raw.state === 'ready' && sessionId === null) || (raw.state === 'starting' && sessionId !== null)) {
     throw new ProjectStateError('state_corrupt')
   }
   const {origin, executor_home: executorHome, ...record} = raw
@@ -625,12 +640,15 @@ const persistedSession = z.object({
     ...(origin === undefined && executorHome === undefined ? {} : {origin: origin ?? 'external'}),
     display_title: title.display,
     codex_thread_id: threadId,
+    backend_id: backend,
+    backend_profile_id: raw.backend_profile_id ?? 'codex:legacy',
+    backend_session_id: sessionId,
   })
 })
 
 export function decodeState(value: unknown): MutableProjectState {
   const root = persistedState.parse(value)
-  if (root.version !== PROJECT_STATE_VERSION) throw new ProjectStateError('state_version_unsupported')
+  if (root.version !== 1 && root.version !== PROJECT_STATE_VERSION) throw new ProjectStateError('state_version_unsupported')
   const rawWorkspaces = persistedObject.parse(root.workspaces)
   const rawSessions = persistedObject.parse(root.sessions)
   if (Object.keys(rawWorkspaces).length > MAX_PROJECT_WORKSPACES
@@ -639,7 +657,13 @@ export function decodeState(value: unknown): MutableProjectState {
   state.stateRevision = Object.hasOwn(root, 'state_revision') ? stateRevision(root.state_revision) : 0
   state.activeBindingRevision = Object.hasOwn(root, 'active_binding_revision') ? stateRevision(root.active_binding_revision) : 0
   for (const [key, raw] of Object.entries(rawWorkspaces)) state.workspaces.set(key, persistedWorkspace.parse(raw))
-  for (const [key, raw] of Object.entries(rawSessions)) state.sessions.set(key, persistedSession.parse(raw))
+  for (const [key, raw] of Object.entries(rawSessions)) {
+    const record = persistedObject.parse(raw)
+    const bindingKeys = ['backend_id', 'backend_profile_id', 'backend_session_id']
+    if (root.version === 1 ? bindingKeys.some(field => Object.hasOwn(record, field))
+      : bindingKeys.some(field => !Object.hasOwn(record, field))) throw new ProjectStateError('state_corrupt')
+    state.sessions.set(key, persistedSession.parse(raw))
+  }
   const active = root.active_workspace_id
   if (active !== null && typeof active !== 'string') throw new ProjectStateError('state_corrupt')
   state.activeWorkspaceId = active

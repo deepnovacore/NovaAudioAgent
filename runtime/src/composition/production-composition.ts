@@ -18,6 +18,7 @@ import {prepareKnowledge} from '../knowledge/assembly.js'
 /** Shared production graph for the Electron child and the headless remote service. */
 import {randomUUID} from 'node:crypto'
 import {loadCapabilityRegistry} from '../config/capability-registry.js'
+import type {CodingBackendId} from '../config/coding-backends.js'
 import {prepareExternalMcp} from '../executors/mcp.js'
 import {loadSettings, requireBlockingCredentials, requireIntegratedRealtime, withoutUncredentialedModules} from '../config/config.js'
 import {requireSelectedCascadedLlmConfig, requireSelectedCascadedRealtimeConfig} from '../config/cascaded-realtime-config.js'
@@ -35,7 +36,9 @@ import {createRealtimeTelemetry} from '../realtime/telemetry.js'
 import type {ApprovalView as ExecutorApprovalView} from '../core/approval-port.js'
 import {buildIntegratedRealtimeAssembly, type IntegratedProviderRegistry} from './cascaded-realtime-assembly.js'
 
-export async function buildProductionComposition({token, stop, ownership, onDiagnostic, remote = false, createServer, integratedProviders, onKnowledge, onUsage, environment = process.env}: {
+export async function buildProductionComposition({token, stop, ownership, onDiagnostic, remote = false, createServer, integratedProviders, onKnowledge, onCoding, onUsage, environment = process.env}: {
+  /** Receives the live coding resource so the desktop host can change the new-session default. */
+  readonly onCoding?: (coding: {updateDefaultBackend?(backend: CodingBackendId): void}) => void
   readonly onUsage?: UsageReporter
   readonly token: string
   readonly stop: AbortController
@@ -105,34 +108,42 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   const codexResource = !capabilities.modules.coding.enabled || !settings.executors.includes('codex')
     ? null
     : await (async () => {
-      const {createCodexAssemblyResource, createProductionCodexHost, resolveCodexHostConfig, prepareManagedCodexMcp} = await import('../executors/codex/host.js')
+      const {createCodexAssemblyResource, createProductionCodexHost, resolveCodexHostConfig, prepareManagedCodexMcp,
+        createAcpBackendRouting, loadWindowsGuardianFactoryFromResources} = await import('../executors/codex/host.js')
       const sourceResourcesPath = environment.CODEX_RESOURCES_PATH
       const codexHost = createProductionCodexHost(settings, {
         ...(sourceResourcesPath === undefined ? {} : {resourcesPath: sourceResourcesPath}),
         onDiagnostic: code => onDiagnostic(`[runtime-diagnostic] ${code}`),
       })
       const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
-      return codexConfig === null
-        ? null
-        : await createCodexAssemblyResource({
-            managedMcp: prepareManagedCodexMcp(capabilities, knowledge?.codexEntries),
-            config: codexConfig,
-            composition: 'realtime',
-            ...(sharedApproval === undefined ? {} : {sharedApprovalController: sharedApproval}),
-            transportFactory: codexHost.transportFactory,
-            clock,
-            idFactory: () => randomUUID().replaceAll('-', ''),
-            onDiagnostic: code => {
-              telemetry.record('executor.diagnostic', {code})
-              onDiagnostic(code)
-            },
-            codexApprovalBroker: {
-              publish: view => { publishExecutorApproval(view) },
-            },
-            ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
-          })
+      if (codexConfig === null) return null
+      const resourcesPath = sourceResourcesPath ?? (process as NodeJS.Process & {resourcesPath?: string}).resourcesPath
+      const acpProcessFactory = process.platform === 'win32' && resourcesPath !== undefined
+        ? loadWindowsGuardianFactoryFromResources({resourcesPath, platform: process.platform, arch: process.arch}) ?? undefined : undefined
+      return await createCodexAssemblyResource({
+        backends: createAcpBackendRouting({initialBackend: settings.coding_backend, environment, capabilities,
+          ...(knowledge === undefined ? {} : {knowledgeEntries: knowledge.codexEntries}),
+          approvalMode: settings.codex_approval_mode,
+          ...(acpProcessFactory === undefined ? {} : {processFactory: acpProcessFactory})}),
+        managedMcp: prepareManagedCodexMcp(capabilities, knowledge?.codexEntries),
+        config: codexConfig,
+        composition: 'realtime',
+        ...(sharedApproval === undefined ? {} : {sharedApprovalController: sharedApproval}),
+        transportFactory: codexHost.transportFactory,
+        clock,
+        idFactory: () => randomUUID().replaceAll('-', ''),
+        onDiagnostic: code => {
+          telemetry.record('executor.diagnostic', {code})
+          onDiagnostic(code)
+        },
+        codexApprovalBroker: {
+          publish: view => { publishExecutorApproval(view) },
+        },
+        ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
+      })
     })()
   const releaseCodex = codexResource === null ? undefined : ownership.own(() => codexResource.close())
+  if (codexResource !== null) onCoding?.(codexResource)
   const conversationOwner:{host?:PersonalAgentHost}={}
   const camera = remote ? null : selectDesktopCameraSource(environment)
   let playbackEpoch=0

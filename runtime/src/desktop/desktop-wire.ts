@@ -13,6 +13,7 @@
  * nothing.
  */
 
+import {CODING_BACKEND_IDS, type CodingBackendId} from '../config/coding-backends.js'
 import type { PlaybackCompletion, PlaybackFrame } from '../realtime/playback.js'
 import {codePointLengthLikePython, stripLikePython} from '../text/python-text.js'
 import type { CaptionFrame } from '../realtime/session-state.js'
@@ -72,7 +73,7 @@ export interface PublicProjectView {
   readonly roster?: readonly {
     readonly name: string
     readonly last_used_at: number
-    readonly running: readonly {readonly work_id: string; readonly title: string}[]
+    readonly running: readonly {readonly work_id: string; readonly title: string; readonly backend_id?: CodingBackendId}[]
   }[]
   readonly pending_confirmation: boolean
   readonly pending_confirmation_busy: boolean
@@ -298,8 +299,9 @@ export function projectStateMessage(view: PublicProjectView): string {
   const roster: NonNullable<PublicProjectView['roster']> = view.roster ?? []
   const validName = (value: unknown): boolean =>
     typeof value === 'string' && value !== '' && codePointLengthLikePython(value) <= 120
-  const validWork = (work: {readonly work_id: string; readonly title: string}): boolean =>
+  const validWork = (work: {readonly work_id: string; readonly title: string; readonly backend_id?: CodingBackendId}): boolean =>
     typeof work.work_id === 'string' && work.work_id !== '' && validName(work.title)
+    && (work.backend_id === undefined || CODING_BACKEND_IDS.includes(work.backend_id))
   // `Array.isArray` alone would narrow the typed arrays to `any[]`; this guard keeps the element types.
   const isList = (value: unknown): value is readonly unknown[] => Array.isArray(value)
   if (!isList(roster) || roster.length > 10 || !roster.every(entry =>
@@ -341,7 +343,7 @@ export function projectStateMessage(view: PublicProjectView): string {
     roster: roster.map(entry => ({
       name: entry.name,
       last_used_at: entry.last_used_at,
-      running: entry.running.map(work => ({work_id: work.work_id, title: work.title})),
+      running: entry.running.map(work => ({work_id: work.work_id, title: work.title, ...(work.backend_id === undefined ? {} : {backend_id: work.backend_id})})),
     })),
     pending_confirmation: view.pending_confirmation,
     pending_confirmation_busy: view.pending_confirmation_busy,

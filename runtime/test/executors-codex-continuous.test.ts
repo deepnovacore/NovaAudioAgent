@@ -497,6 +497,7 @@ test('live steer is available only for a bound turn and maps written uncertainty
     return await release.promise
   }
   transport.steerResults.push(
+    {code: 'unsupported', written: false},
     {code: 'accepted', written: true},
     {code: 'server_rejected', written: true},
     {code: 'transport_lost', written: false},
@@ -519,16 +520,17 @@ test('live steer is available only for a bound turn and maps written uncertainty
   entered.resolve()
   await entered.promise
   const results = []
-  for (const instruction of [' one ', 'two', 'three', 'four']) {
+  for (const instruction of ['unsupported', ' one ', 'two', 'three', 'four']) {
     results.push(await adapter.dispatch('steer', {instruction}, context('steer', {})))
   }
   assert.deepEqual(results.map(result => [result.outcome, result.trust, result.content.code]), [
+    ['failed', 'trusted_system', 'unsupported'],
     ['ok', 'trusted_system', 'accepted'],
     ['failed', 'trusted_system', 'server_rejected'],
     ['failed', 'trusted_system', 'transport_lost'],
     ['unknown', 'trusted_system', 'transport_lost'],
   ])
-  assert.deepEqual(transport.instructions, ['one', 'two', 'three', 'four'])
+  assert.deepEqual(transport.instructions, ['unsupported', 'one', 'two', 'three', 'four'])
   assert.equal(JSON.stringify(results).includes('one'), false)
 
   release.resolve(COMPLETE_OUTCOME)

@@ -51,6 +51,7 @@ MAX_STDOUT,
 import { snapshotJsonRecord } from './safe-json.js'
 import { AppServerTurnProjection,type TurnCompletion } from './turn-projection.js'
 import { admitCodexVersion } from './version.js'
+import type { AcpPreflightReport } from '../acp/preflight.js'
 
 export const CODEX_PREFLIGHT_LIMIT_MS = 20_000
 export const CODEX_INTERRUPT_GRACE_MS = 2_000
@@ -132,6 +133,9 @@ export interface SafePreflightReport extends Readonly<Record<string, unknown>> {
   readonly network: 'blocked'
 }
 
+/** Either the Codex sandbox certification or an ACP handshake, which certifies no sandbox. */
+export type CodingPreflightReport = SafePreflightReport | AcpPreflightReport
+
 export interface RunInput { readonly workOrder: string; readonly threadName?: string }
 export interface SteerInput { readonly instruction: string }
 
@@ -146,6 +150,8 @@ export interface TransportObserver {
 }
 
 export interface TransportOutcome {
+  /** Observed root-process exit after joined teardown; ACP completion requires it. */
+  readonly process?: {readonly exit_code: number | null; readonly stop: 'none' | 'terminate' | 'kill'}
   readonly diagnostic?: ExecutorDiagnostic
   readonly classification: 'completed' | 'refused' | 'uncertain'
   readonly code: CodexTransportCode
@@ -154,7 +160,8 @@ export interface TransportOutcome {
 }
 
 export interface SteerTransportResult {
-  readonly code: 'accepted' | 'no_active_turn' | 'stale_turn' | 'server_rejected' | 'transport_lost'
+  /** `unsupported`: the bound backend has no verified mid-turn steering; nothing was written. */
+  readonly code: 'accepted' | 'no_active_turn' | 'stale_turn' | 'server_rejected' | 'transport_lost' | 'unsupported'
   readonly written: boolean
 }
 
@@ -166,10 +173,10 @@ export interface ProjectConnectionBinding {
 
 export interface CodexAppServerTransport {
   /** Warm the connection only; project authority is supplied after confirmation. */
-  prewarmConnection?(deadline: TransportDeadline): Promise<SafePreflightReport | null>
+  prewarmConnection?(deadline: TransportDeadline): Promise<CodingPreflightReport | null>
   bindProject?(binding: ProjectConnectionBinding): void
-  preflight(deadline: TransportDeadline): Promise<SafePreflightReport>
-  prewarm(deadline: TransportDeadline): Promise<SafePreflightReport | null>
+  preflight(deadline: TransportDeadline): Promise<CodingPreflightReport>
+  prewarm(deadline: TransportDeadline): Promise<CodingPreflightReport | null>
   run(
     input: RunInput,
     observer: TransportObserver,

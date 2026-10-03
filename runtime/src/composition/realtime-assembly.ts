@@ -22,7 +22,7 @@ import type {MemoryInspectionQuery} from '../memory/personal-memory-inspection.j
 import type {UsageReporter} from '../realtime/usage.js'
 import type {ApprovalController} from '../core/approval-port.js'
 import type {AgentController, AgentRuntimeDispatchPort} from '../executors/agent-controller.js'
-import {capabilityStatus, type CapabilityStatus} from '../config/capability-registry.js'
+import {capabilityStatus, mcpBackendAuthorized, type CapabilityStatus} from '../config/capability-registry.js'
 import {recentDispatchSources} from '../realtime/history.js'
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly, type AssemblyOptions } from './assembly.js'
@@ -1039,9 +1039,15 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     ...(agentControllers.length === 0 ? {} : {agentControllers}),
     ...(options.intake === undefined || projectAdapter === undefined ? {} : {intake: {
       ...options.intake,
-      ...(core.knowledge === undefined ? {} : {attachEvidence: ((order, workspace, signal) => attachKnowledgeReferences(
-        core.knowledge!.service, order.objective, workspace, Object.hasOwn(core.knowledge!.codexEntries, 'nova_knowledge'), signal,
-      )) satisfies NonNullable<IntakeOptions['attachEvidence']>}),
+      ...(core.knowledge === undefined ? {} : {attachEvidence: (async (order, workspace, signal, target) => {
+        // Locator-only references are useful only to a backend that holds the knowledge MCP grant;
+        // any other backend (including a resumed session's bound one) receives bounded excerpts.
+        const entry = core.knowledge!.codexEntries.nova_knowledge
+        const backend = await projectAdapter.codingBackendFor?.(target?.action === 'resume' ? target.session_id : null)
+          .catch(() => undefined) ?? 'codex'
+        const granted = entry !== undefined && mcpBackendAuthorized(entry, backend)
+        return attachKnowledgeReferences(core.knowledge!.service, order.objective, workspace, granted, signal)
+      }) satisfies NonNullable<IntakeOptions['attachEvidence']>}),
       roster: () => projectAdapter.roster(),
       running: () => projectAdapter.running().filter(work=>options.sharedPersonal===undefined||core.runtime.inFlightDelegate(work.work_id)!==undefined),
       ...(options.codingTarget ? {boundTarget: () => ({workspace_id: options.codingTarget!.target?.workspace_id ?? null, revision: options.codingTarget!.revision})} : {}),

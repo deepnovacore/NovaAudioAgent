@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto'
+import {createHash, randomUUID} from 'node:crypto'
 import {addAbortListener} from 'node:events'
 import {constants, lstatSync, realpathSync, type Stats} from 'node:fs'
 import {open, type FileHandle} from 'node:fs/promises'
@@ -39,6 +39,7 @@ import {
 } from './project-state.js'
 
 export const PROJECT_STATE_FILE = 'codex-projects-v1.json'
+export const PROJECT_PRE_ACP_BACKUP_FILE = 'codex-projects-v1.pre-acp.json'
 export const PROJECT_TRANSACTION_LOCK_FILE = 'codex-projects-v1.lock'
 export const PROJECT_OWNER_LOCK_FILE = 'codex-projects-v1.owner.lock'
 export const PROJECT_MAINTENANCE_JOURNAL_FILE = 'managed-workspace-maintenance-v1.json'
@@ -847,10 +848,12 @@ export class ProjectStoreFiles {
         throw new ProjectStateError('state_corrupt')
       }
       const state = decodeState(parsed)
-      let recovered = false
+      const legacy = (parsed as {version: number}).version === 1
+      if (legacy) await this.#backupLegacyState(buffer.subarray(0, bytesRead))
+      let recovered = legacy
       if (recoverStarting) {
         for (const [sessionId, session] of state.sessions) {
-          if (session.state === 'starting' && session.codex_thread_id === null) {
+          if (session.state === 'starting' && session.backend_session_id === null) {
             state.sessions.set(sessionId, Object.freeze({...session, state: 'unavailable'}))
             recovered = true
           }
@@ -991,8 +994,53 @@ export class ProjectStoreFiles {
       throw new ProjectStateError('state_corrupt')
     }
     if (raw.byteLength > MAX_PROJECT_STATE_BYTES) throw new ProjectStateError('state_too_large')
+    await this.#writeStateBytes(raw, PROJECT_STATE_FILE, markCommitted)
+  }
+
+  /** Keep the old filename so older clients refuse version 2 rather than create a split store. */
+  async #backupLegacyState(raw: Buffer): Promise<void> {
+    if (await this.#backupAt(raw, PROJECT_PRE_ACP_BACKUP_FILE) === 'match') return
+    // A downgrade can leave a different v1 file under the first backup; never overwrite it, keep both.
+    const digest = createHash('sha256').update(raw).digest('hex').slice(0, 16)
+    const sibling = PROJECT_PRE_ACP_BACKUP_FILE.replace(/\.json$/u, `.${digest}.json`)
+    if (await this.#backupAt(raw, sibling) !== 'match') throw new ProjectStateError('state_corrupt')
+  }
+
+  async #backupAt(raw: Buffer, file: string): Promise<'match' | 'differs'> {
     const root = this.requireStateRootHandle()
-    const tempName = `.${PROJECT_STATE_FILE}.${randomUUID()}.tmp`
+    const entry = this.lookupAt(root, file, 'state_permissions')
+    if (entry.status === 'missing') {
+      await this.#writeStateBytes(raw, file, () => undefined)
+    } else if (entry.status !== 'ok') throw new ProjectStateError('state_permissions')
+    const backup = await openValidatedRegularFile(
+      join(this.#stateRoot, file),
+      (this.#platform === 'win32' ? constants.O_RDWR : constants.O_RDONLY)
+        | nonblockFlag() | noFollowFlag(), null, this.#platform,
+    )
+    try {
+      await this.revalidateStateRoot()
+      this.requireMatchesAt(root, file, backup, 'state_permissions')
+      if ((await backup.stat()).size !== raw.length) return 'differs'
+      const copy = Buffer.alloc(raw.length)
+      let offset = 0
+      while (offset < copy.length) {
+        const read = await backup.read(copy, offset, copy.length - offset, offset)
+        if (read.bytesRead === 0) throw new ProjectStateError('state_corrupt')
+        offset += read.bytesRead
+      }
+      if (!copy.equals(raw)) return 'differs'
+      this.requireMatchesAt(root, file, backup, 'state_permissions')
+      // A previous attempt may have stopped after rename but before directory fsync.
+      await backup.sync()
+      if (this.#platform !== 'win32') await root.sync()
+      this.#publishDurability(this.#platform === 'win32' ? 'windows_metadata_commit' : 'dir_fsync')
+      return 'match'
+    } finally { await backup.close() }
+  }
+
+  async #writeStateBytes(raw: Buffer, name: string, markCommitted: () => void): Promise<void> {
+    const root = this.requireStateRootHandle()
+    const tempName = `.${name}.${randomUUID()}.tmp`
     requireProjectBasename(tempName, 'state_write_failed')
     const temp = join(this.#stateRoot, tempName)
     let file: FileHandle | null = null
@@ -1027,11 +1075,11 @@ export class ProjectStoreFiles {
         || tempIdentity === null
         || !sameFileIdentity(beforeRename.identity, tempIdentity)
       ) throw new ProjectStateError('state_permissions')
-      this.#renameAt(root, tempName, PROJECT_STATE_FILE)
+      this.#renameAt(root, tempName, name)
       markCommitted()
       this.#publishDurability('atomic_replace')
       await this.revalidateStateRoot()
-      const replaced = this.lookupAt(root, PROJECT_STATE_FILE, 'state_permissions')
+      const replaced = this.lookupAt(root, name, 'state_permissions')
       if (
         replaced.status !== 'ok'
         || tempIdentity === null

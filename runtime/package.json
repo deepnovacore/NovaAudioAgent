@@ -53,6 +53,7 @@
     "test:win:platform": "npm run build && node scripts/test-windows.mjs --platform-only"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0",
     "@livekit/agents": "1.6.4",
     "@livekit/local-inference": "0.2.7",
     "@livekit/rtc-node": "0.13.33",

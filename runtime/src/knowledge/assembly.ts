@@ -39,12 +39,17 @@ export async function prepareKnowledge(
     await service.open()
     signal?.throwIfAborted()
     await adapter.connect()
-    if (capabilities.modules.knowledge.exposeToCodex && capabilities.modules.coding.enabled) http = await startKnowledgeMcpHttpServer(service)
+    const grants = capabilities.modules.knowledge
+    if ((grants.exposeToCodex || Object.values(grants.exposeToBackends ?? {}).some(Boolean))
+      && capabilities.modules.coding.enabled) http = await startKnowledgeMcpHttpServer(service)
     signal?.throwIfAborted()
     const tool = {enabled: true, timeoutMs: 8000, maxResultBytes: 32768, maxCallsPerTurn: 2}
+    // One loopback entry; Codex reads `exposeTo.codex`, ACP backends read their own grant.
     const codexEntries: Record<string, McpServerConfig> = http === undefined ? {} : {nova_knowledge: {
       enabled: true, transport: 'streamable-http', url: http.url, headers: {authorization: `Bearer ${http.token}`},
-      exposeTo: {frontbrain: false, codex: true}, tools: {recall: {...tool}, get_chunk: {...tool}},
+      exposeTo: {frontbrain: false, codex: grants.exposeToCodex,
+        ...(grants.exposeToBackends === undefined ? {} : {backends: grants.exposeToBackends})},
+      tools: {recall: {...tool}, get_chunk: {...tool}},
     }}
     return {service, embedding, adapter, capabilities, codexEntries, close}
   } catch {

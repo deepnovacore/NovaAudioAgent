@@ -90,7 +90,7 @@ export interface IntakeOptions {
   readonly record: (session: Readonly<IntakeSession>, kind: string, data: Readonly<Record<string, JsonValue>>) => void
   readonly diagnostic: (code: string) => void
   /** Host-only retrieval; model output never supplies evidence or resolvable locators. */
-  readonly attachEvidence?: (order: WorkOrder, workspace: string | null, signal: AbortSignal) => Promise<Pick<WorkOrder, 'references' | 'evidence_excerpts'>>
+  readonly attachEvidence?: (order: WorkOrder, workspace: string | null, signal: AbortSignal, target?: IntakeTarget | null) => Promise<Pick<WorkOrder, 'references' | 'evidence_excerpts'>>
 }
 
 /** Events and confirmed-host results only; lifecycle decisions stay with the coding controller. */
@@ -638,7 +638,7 @@ export class IntakeController {
         stage = 'evidence'
         const evidenceStarted = this.#clock.now()
         const evidence = this.#options.attachEvidence === undefined ? undefined
-          : await raceDeadline(this.#options.attachEvidence(order, current.workspace, abort.signal), this.#clock, 30, abort.signal,
+          : await raceDeadline(this.#options.attachEvidence(order, current.workspace, abort.signal, current.target), this.#clock, 30, abort.signal,
             () => new DOMException('evidence deadline', 'TimeoutError'))
         if (this.#current(snapshot.intake_id, snapshot.revision) !== current || abort.signal.aborted) return
         this.#options.record(current, 'intake.timing', {stage: 'evidence', elapsed_ms: Math.round((this.#clock.now() - evidenceStarted) * 1000)})

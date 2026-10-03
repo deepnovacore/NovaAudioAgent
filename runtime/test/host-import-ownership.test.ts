@@ -89,6 +89,8 @@ test('actual desktop entry passes prepared external and knowledge MCP into the c
   const host = `export {prepareManagedCodexMcp} from ${JSON.stringify(managedModule)};
     export function createProductionCodexHost() { return {catalog: {}, transportFactory: {}, projectHost: null}; }
     export function resolveCodexHostConfig() { return {}; }
+    export function createAcpBackendRouting() { return {}; }
+    export function loadWindowsGuardianFactoryFromResources() { return null; }
     export function createCodexAssemblyResource({managedMcp}) {
       if (JSON.stringify(managedMcp.servers.docs.enabled_tools) !== '["look-up.raw"]') throw new Error('missing managed allowlist');
       if (Object.keys(managedMcp.servers).sort().join() !== 'docs,nova_knowledge') throw new Error('missing knowledge or host server leak');

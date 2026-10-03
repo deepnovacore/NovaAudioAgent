@@ -114,6 +114,7 @@ interface RunDeadline {
 }
 
 interface ValidatedOutcome {
+  readonly process?: TransportOutcome['process']
   readonly diagnostic?: ExecutorDiagnostic
   readonly classification: 'completed' | 'refused' | 'uncertain'
   readonly code: CodexTransportCode
@@ -333,7 +334,7 @@ export class CodexAdapterCore {
       }
       const written = sideEffectSeen
       const evidence = admitted?.classification === 'completed'
-        ? createCompletionEvidence(admitted)
+        ? createCompletionEvidence(admitted, preflight.protocol === 'acp')
         : null
       this.#settle(
         sequence,
@@ -408,7 +409,8 @@ export class CodexAdapterCore {
       && outcome.turnStartWritten
       && outcome.completion?.status === 'completed'
       && outcome.completion.final_text !== null
-    if (completed) {
+    // An ACP transport reports the observed root-process exit even for failed or uncertain runs.
+    if (completed || outcome?.process !== undefined) {
       this.#status = freezeStatus({
         state: 'exited',
         run_sequence: sequence,
@@ -417,8 +419,8 @@ export class CodexAdapterCore {
         elapsed: Math.max(0, now - startedAt),
         process_running: false,
         process_exited: true,
-        terminal: 'completed',
-        exit_code: 0,
+        terminal: completed ? 'completed' : outcome?.completion?.status ?? null,
+        exit_code: outcome?.process === undefined ? 0 : outcome.process.exit_code,
         preflight: preflightPassed ? 'passed' : 'failed',
         prewarm: this.#status.prewarm,
       })
@@ -604,6 +606,7 @@ export function readWrittenBoundary(
 
 function requirePreflight(value: unknown): Readonly<Record<string, unknown>> {
   const admitted = sanitizeCodexPreflightReport(value)
+  if (admitted?.protocol === 'acp') return admitted
   if (
     admitted === null
     || typeof admitted.version !== 'string'
@@ -618,8 +621,17 @@ function requirePreflight(value: unknown): Readonly<Record<string, unknown>> {
 function validateOutcome(value: unknown): ValidatedOutcome | null {
   try {
     const snapshot = snapshotJsonRecord(value)
-    if (!sameKeys(snapshot, ['classification', 'code', 'turnStartWritten', 'completion'])
-      && !sameKeys(snapshot, ['classification', 'code', 'turnStartWritten', 'completion', 'diagnostic'])) return null
+    const required = ['classification', 'code', 'turnStartWritten', 'completion']
+    if (required.some(key => !Object.hasOwn(snapshot, key))
+      || Object.keys(snapshot).some(key => ![...required, 'diagnostic', 'process'].includes(key))) return null
+    let process: TransportOutcome['process']
+    if (Object.hasOwn(snapshot, 'process')) {
+      const observed = snapshotJsonRecord(snapshot.process)
+      if (!sameKeys(observed, ['exit_code', 'stop'])
+        || (observed.exit_code !== null && (typeof observed.exit_code !== 'number' || !Number.isSafeInteger(observed.exit_code)))
+        || (observed.stop !== 'none' && observed.stop !== 'terminate' && observed.stop !== 'kill')) return null
+      process = Object.freeze({exit_code: observed.exit_code, stop: observed.stop})
+    }
     const parsedDiagnostic = executorDiagnosticSchema.safeParse(snapshot.diagnostic)
     const diagnostic = parsedDiagnostic.success ? parsedDiagnostic.data : undefined
     if (
@@ -678,6 +690,7 @@ function validateOutcome(value: unknown): ValidatedOutcome | null {
     ) return null
     return Object.freeze({
       ...(diagnostic === undefined ? {} : {diagnostic}),
+      ...(process === undefined ? {} : {process}),
       classification: snapshot.classification,
       code: snapshot.code as CodexTransportCode,
       turnStartWritten: snapshot.turnStartWritten,
@@ -688,17 +701,21 @@ function validateOutcome(value: unknown): ValidatedOutcome | null {
   }
 }
 
-function createCompletionEvidence(outcome: ValidatedOutcome): Readonly<Record<string, unknown>> | null {
+function createCompletionEvidence(outcome: ValidatedOutcome, acp = false): Readonly<Record<string, unknown>> | null {
   const completion = outcome.completion
   if (
-    outcome.classification !== 'completed'
+    // ACP completion is evidence only after the backend process teardown was observed.
+    (acp && outcome.process === undefined)
+    || outcome.classification !== 'completed'
     || outcome.code !== 'completed'
     || !outcome.turnStartWritten
     || completion?.status !== 'completed'
     || completion.final_text === null
   ) return null
   const count = completion.internal_activity
-  const text = completion.final_text
+  const characters = [...completion.final_text]
+  // The app-server projection already bounds final text; ACP output is bounded here.
+  const text = acp ? characters.slice(0, 4000).join('') : completion.final_text
   const evidence = {
     events: [
       {type: 'thread.started'},
@@ -713,12 +730,12 @@ function createCompletionEvidence(outcome: ValidatedOutcome): Readonly<Record<st
       transport_closed: true,
       unknown_event_count: 0,
     },
-    process: {started: true, exit_code: 0, stop: 'none'},
+    process: {started: true, ...(outcome.process ?? {exit_code: 0, stop: 'none'})},
     result: {final_message: {
       text,
-      original_chars: [...text].length,
-      truncated: false,
-      sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+      original_chars: characters.length,
+      truncated: characters.length > [...text].length,
+      sha256: createHash('sha256').update(completion.final_text, 'utf8').digest('hex'),
     }},
   }
   return sanitizeCodexEvidence(evidence)

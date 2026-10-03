@@ -30,7 +30,7 @@ DASHSCOPE_API_KEY=你的百炼密钥
 | `INTEGRATED_PROVIDER` | qwen | 集成实时提供方。 |
 | `CASCADE_LLM_PROVIDER` | deepseek | 级联 LLM 提供方。 |
 | `CASCADE_LLM_MODEL` | provider default | 级联 LLM 模型覆盖。 |
-| `CODEX_APPROVAL_MODE` | ask | Codex 审批模式。 |
+| `CODEX_APPROVAL_MODE` | ask | 编程审批模式，适用于 Codex 与 ACP 执行器；Pi 不接受询问模式。 |
 | `CAPABILITIES_CONFIG` | ~/.nova-audio-agent/capabilities.json | 能力注册表路径。 |
 | `MEMORY_CONNECTION` | local | 记忆连接：disabled、local 或 remote。 |
 | `MEMORY_PROVIDER` | 无 | 本地引擎：voicemem（默认，统一账本）或显式选择 mem0。远程引擎由服务端选择。 |
