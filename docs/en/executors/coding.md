@@ -39,8 +39,11 @@ What each agent supports today:
 | Resume a session | Yes | When the agent offers it | When the agent offers it | When the agent offers it | When the agent offers it |
 | Add requirements while running | Yes | No | No | No | No |
 | Cancel | Yes | Yes | Yes | Yes | Yes |
-| Per-action approval in Ask mode | Yes | Yes | Yes | No (Ask mode refuses the task) | Yes |
+| Per-action approval in Ask mode | Yes | For actions the agent asks about | For actions the agent asks about | No (Ask mode refuses the task) | For actions the agent asks about |
+| Ask-mode sandbox (workspace-only files, no network) | Yes | No | No | No | No |
 | MCP tools you grant | Yes | Yes | Yes | No (a granted tool refuses the task) | Yes |
+
+Ask mode means something narrower for ACP agents than for Codex. For Codex, Nova itself confines the agent to the workspace without network access and also asks you before each command or file change that needs approval. For an ACP agent, Nova can only answer the permission requests the agent chooses to send. Nova does not sandbox the agent's files or network, and the agent's own permission settings decide which actions it asks about. A rule in the agent's own config that allows an action without asking applies as usual; DeepSeek Harness is launched without a permission option, so it follows its own defaults. When you need Codex's confinement, use Codex, or run the ACP agent in a workspace and account you are willing to let it change.
 
 For an ACP agent, adding requirements mid-task is reported as unsupported. Nova never fakes it by cancelling and starting a new task. If an agent cannot find a session it is asked to resume, the session stays in your list so you can retry after fixing the agent's login or configuration.
 

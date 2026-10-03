@@ -154,6 +154,15 @@ test('current Node Codex transport claim remains exact', async () => {
   assert.match(gettingStarted, /Codex is app-server-only; JSONL is\s+fixture-parser-only/iu)
 })
 
+test('coding docs state that ACP ask mode is not sandboxed', async () => {
+  for (const [file, row] of [
+    ['docs/en/executors/coding.md', /\| Ask-mode sandbox \(workspace-only files, no network\) \| Yes \| No \| No \| No \| No \|/u],
+    ['docs/zh-CN/executors/coding.md', /\| 询问模式沙箱（仅限工作区文件、不联网） \| 支持 \| 不支持 \| 不支持 \| 不支持 \| 不支持 \|/u],
+  ] as const) {
+    assert.match(await readFile(resolve(repositoryRoot, file), 'utf8'), row, file)
+  }
+})
+
 test('ACP coding backend claims stay scoped to the non-Codex agents in both languages', async () => {
   const read = (file: string): Promise<string> => readFile(resolve(repositoryRoot, file), 'utf8')
   assert.match(await read('docs/en/archs/06-verification.md'), /OpenCode, CodeBuddy, Pi and DeepSeek Harness sessions use ACP\./u)
