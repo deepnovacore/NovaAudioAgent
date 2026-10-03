@@ -8,6 +8,7 @@ import type {CapabilityRegistry, McpServerConfig} from '../../config/capability-
 import {parseCodingProfiles, runtimeCodingProfiles, type RuntimeCodingProfile} from '../../config/coding-profiles.js'
 import type {CodingBackendRouting} from '../codex/factory.js'
 import {hostWorkspacePath, type HostWorkspace} from '../../projects/host-paths.js'
+import {validateThreadId} from '../../projects/project-state.js'
 import {normalizeNfcPinned} from '../../text/unicode-normalize.js'
 import {hasOtherCategory} from '../../text/unicode-tables.js'
 import {isPythonSpace} from '../../text/python-text.js'
@@ -197,7 +198,7 @@ export class AcpTransport implements CodexAppServerTransport {
       const params = {cwd: this.#cwd, mcpServers: [...(this.#options.mcpServers ?? [])]}
       let sessionUpdates: acp.SessionNotification[] = []
       if (this.#resume !== null) {
-        if (!this.#resume.trim() || this.#resume.length > 1024) throw new CodexTransportError('resume_unavailable')
+        try { validateThreadId(this.#resume) } catch { throw new CodexTransportError('resume_unavailable') }
         const capabilities = this.#initialized?.agentCapabilities
         this.#session = this.#resume
         try {
@@ -214,7 +215,8 @@ export class AcpTransport implements CodexAppServerTransport {
         this.#pendingSessionUpdates = []
         try {
           const created = await this.#bounded<acp.NewSessionResponse>(connection.agent.request<acp.NewSessionResponse, acp.NewSessionRequest>('session/new', params), deadline)
-          if (!created.sessionId?.trim() || created.sessionId.length > 1024) throw new CodexTransportError('server_rejected')
+          // Validate with the store's rule before any prompt is written, so a session the store would refuse never runs.
+          try { validateThreadId(created.sessionId) } catch { throw new CodexTransportError('server_rejected') }
           if (this.#pendingSessionUpdates.some(update => update.sessionId !== created.sessionId)) throw new CodexTransportError('unexpected_server_request')
           this.#session = created.sessionId
           sessionUpdates = this.#pendingSessionUpdates
@@ -311,11 +313,18 @@ export class AcpTransport implements CodexAppServerTransport {
       if (options.some(option => option.kind === 'allow_once')) allowed.push('accept')
       allowed.push('decline')
       const tool = params.toolCall
+      const input = tool.rawInput === undefined ? null : this.#safeText(JSON.stringify(tool.rawInput))
+      const locations = tool.locations ? this.#safeText(JSON.stringify(tool.locations)) : null
+      // Do not hide an unreviewed tail behind truncation: an oversized request is refused, never shortened.
+      if ((input?.length ?? 0) > 2500 || (locations?.length ?? 0) > 1000) {
+        const reject = options.find(option => option.kind === 'reject_once')
+        return reject ? {outcome: {outcome: 'selected', optionId: reject.optionId}} : cancelled
+      }
       const scope = [
         this.#safeText(tool.title ?? 'Agent operation').slice(0, 200),
         ...(tool.kind ? [`Kind: ${tool.kind}`] : []),
-        ...(tool.rawInput === undefined ? [] : [`Input: ${this.#safeText(JSON.stringify(tool.rawInput)).slice(0, 2500)}`]),
-        ...(tool.locations ? [`Locations: ${this.#safeText(JSON.stringify(tool.locations)).slice(0, 1000)}`] : []),
+        ...(input === null ? [] : [`Input: ${input}`]),
+        ...(locations === null ? [] : [`Locations: ${locations}`]),
       ].join('\n')
       const resolution = await this.#approval.offer({kind: 'permissions',
         local_detail: {kind: 'permissions', scope},

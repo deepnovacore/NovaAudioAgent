@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto'
+import {createHash, randomUUID} from 'node:crypto'
 import {addAbortListener} from 'node:events'
 import {constants, lstatSync, realpathSync, type Stats} from 'node:fs'
 import {open, type FileHandle} from 'node:fs/promises'
@@ -999,20 +999,28 @@ export class ProjectStoreFiles {
 
   /** Keep the old filename so older clients refuse version 2 rather than create a split store. */
   async #backupLegacyState(raw: Buffer): Promise<void> {
+    if (await this.#backupAt(raw, PROJECT_PRE_ACP_BACKUP_FILE) === 'match') return
+    // A downgrade can leave a different v1 file under the first backup; never overwrite it, keep both.
+    const digest = createHash('sha256').update(raw).digest('hex').slice(0, 16)
+    const sibling = PROJECT_PRE_ACP_BACKUP_FILE.replace(/\.json$/u, `.${digest}.json`)
+    if (await this.#backupAt(raw, sibling) !== 'match') throw new ProjectStateError('state_corrupt')
+  }
+
+  async #backupAt(raw: Buffer, file: string): Promise<'match' | 'differs'> {
     const root = this.requireStateRootHandle()
-    const entry = this.lookupAt(root, PROJECT_PRE_ACP_BACKUP_FILE, 'state_permissions')
+    const entry = this.lookupAt(root, file, 'state_permissions')
     if (entry.status === 'missing') {
-      await this.#writeStateBytes(raw, PROJECT_PRE_ACP_BACKUP_FILE, () => undefined)
+      await this.#writeStateBytes(raw, file, () => undefined)
     } else if (entry.status !== 'ok') throw new ProjectStateError('state_permissions')
     const backup = await openValidatedRegularFile(
-      join(this.#stateRoot, PROJECT_PRE_ACP_BACKUP_FILE),
+      join(this.#stateRoot, file),
       (this.#platform === 'win32' ? constants.O_RDWR : constants.O_RDONLY)
         | nonblockFlag() | noFollowFlag(), null, this.#platform,
     )
     try {
       await this.revalidateStateRoot()
-      this.requireMatchesAt(root, PROJECT_PRE_ACP_BACKUP_FILE, backup, 'state_permissions')
-      if ((await backup.stat()).size !== raw.length) throw new ProjectStateError('state_corrupt')
+      this.requireMatchesAt(root, file, backup, 'state_permissions')
+      if ((await backup.stat()).size !== raw.length) return 'differs'
       const copy = Buffer.alloc(raw.length)
       let offset = 0
       while (offset < copy.length) {
@@ -1020,12 +1028,13 @@ export class ProjectStoreFiles {
         if (read.bytesRead === 0) throw new ProjectStateError('state_corrupt')
         offset += read.bytesRead
       }
-      if (!copy.equals(raw)) throw new ProjectStateError('state_corrupt')
-      this.requireMatchesAt(root, PROJECT_PRE_ACP_BACKUP_FILE, backup, 'state_permissions')
+      if (!copy.equals(raw)) return 'differs'
+      this.requireMatchesAt(root, file, backup, 'state_permissions')
       // A previous attempt may have stopped after rename but before directory fsync.
       await backup.sync()
       if (this.#platform !== 'win32') await root.sync()
       this.#publishDurability(this.#platform === 'win32' ? 'windows_metadata_commit' : 'dir_fsync')
+      return 'match'
     } finally { await backup.close() }
   }
 

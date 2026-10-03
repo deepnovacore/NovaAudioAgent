@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {readFile, writeFile, lstat, realpath} from 'node:fs/promises'
+import {readFile, readdir, writeFile, lstat, realpath} from 'node:fs/promises'
 import {join} from 'node:path'
 import {projectStoreFixture, DescriptorRelativeRootFileAuthority} from './project-store-fixture.js'
 import {decodeState} from '../src/projects/project-state.js'
@@ -111,5 +111,43 @@ test('v1 Codex migration keeps identity and verifies a private byte-exact recove
     assert.deepEqual(await readFile(backup), bytes)
     assert.equal((await lstat(backup)).mode & 0o777, 0o600)
     assert.equal((JSON.parse(await readFile(path, 'utf8')) as {version: number}).version, 2)
+  } finally { await fixture.close(store) }
+})
+
+test('re-upgrading after a downgrade keeps the first backup and adds a verified sibling', async () => {
+  const fixture = await projectStoreFixture('nova-backend-reupgrade-')
+  let store = await fixture.open()
+  const path = join(fixture.stateRoot, 'codex-projects-v1.json')
+  const asV1 = async () => {
+    const value = JSON.parse(await readFile(path, 'utf8')) as {version: number; sessions: Record<string, Record<string, unknown>>}
+    value.version = 1
+    for (const row of Object.values(value.sessions)) {
+      delete row.backend_id
+      delete row.backend_profile_id
+      delete row.backend_session_id
+    }
+    return Buffer.from(JSON.stringify(value))
+  }
+  try {
+    const workspace = await store.createManaged('legacy')
+    const first = await store.beginSession(workspace.workspace_id, 'first')
+    await store.markSessionReady(first.session_id, 'thread-a')
+    await store.close()
+    const original = await asV1()
+    await writeFile(path, original, {mode: 0o600})
+    store = await fixture.open()
+    const second = await store.beginSession(workspace.workspace_id, 'second')
+    await store.markSessionReady(second.session_id, 'thread-b')
+    await store.close()
+    // An older client used the restored v1 file and changed it before the user upgraded again.
+    const downgraded = await asV1()
+    await writeFile(path, downgraded, {mode: 0o600})
+    store = await fixture.open()
+    assert.equal((await store.snapshot()).sessions.length, 2)
+    const backup = join(fixture.stateRoot, 'codex-projects-v1.pre-acp.json')
+    assert.deepEqual(await readFile(backup), original, 'the first backup is never overwritten')
+    const siblings = (await readdir(fixture.stateRoot)).filter(name => /^codex-projects-v1\.pre-acp\.[0-9a-f]{16}\.json$/u.test(name))
+    assert.equal(siblings.length, 1)
+    assert.deepEqual(await readFile(join(fixture.stateRoot, siblings[0]!)), downgraded)
   } finally { await fixture.close(store) }
 })
