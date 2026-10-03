@@ -34,7 +34,7 @@ import { PersonalStore, acquirePersonalLock, initialState, type PersonalState } 
 import {TaskService,taskInputSchema,taskFenceSchema,type TaskRecord,type TaskFence,type TaskActor} from './tasks.js';
 import {canonicalJson} from '../text/canonical-json.js';
 /** Supplied only by an authenticated transport, never command params. */
-export interface PersonalCommandContext {client_id:string;can_takeover?:boolean}
+export interface PersonalCommandContext {client_id:string;can_takeover?:boolean;presentation_mode?:'background'|'workbench'|'orb'}
 export interface Evidence {
     subject_key: string;
     source: FeedItem['source'];
@@ -815,10 +815,10 @@ export class PersonalAgentHost {
                 if(client&&q.mode!=='workbench'){returned=await this.tasks.returnClientTasks(receiptId,client);for(const task of returned)void this.wakeTask(task.id);}
             }catch(error){
                 if(error instanceof Error&&error.message==='request_conflict')throw error;
-                if(q.mode==='background')await this.#setPresentation('background');
+                if(q.mode==='background')await this.#setPresentation(context?.presentation_mode??'background');
                 return {type:'personal.result',request_id:command.request_id,ok:false,error:q.mode==='workbench'?'presentation_sync_failed':'handback_pending'};
             }
-            await this.#setPresentation(q.mode);data={mode:q.mode,returned_task_ids:returned.map(task=>task.id),task_control_revisions:Object.fromEntries(returned.map(task=>[task.id,task.control_revision]))};
+            await this.#setPresentation(context?.presentation_mode??q.mode);data={mode:q.mode,returned_task_ids:returned.map(task=>task.id),task_control_revisions:Object.fromEntries(returned.map(task=>[task.id,task.control_revision]))};
         }
         else if(command.method==='presentation.seen'){const q=z.object({approval_id:z.string().min(1).max(128).optional(),conversation_id:z.string().min(1).max(128).optional(),proposal_id:z.string().min(1).max(128).optional()}).strict().parse(p);if(!this.#presentationMode)throw Error('presentation_unavailable');await this.#setPresentation(this.#presentationMode,q);data={mode:this.#presentationMode}}
         else if(command.method==='conversations.confirm'){if(!client)throw Error('unauthenticated');const q=z.object({id:z.string().min(1).max(128),proposal_id:z.string().min(1).max(128),confirmed:z.boolean()}).strict().parse(p);if(!this.#pendingDecisions().pending_confirmations.some(item=>item.proposal_id===q.proposal_id&&item.conversation_id===q.id))throw Error('confirmation_not_owned');if(!this.#conversationPool)throw Error('conversation_runtime_unavailable');await this.#conversationPool.confirm(q.id,q.proposal_id,q.confirmed);data={accepted:true}}

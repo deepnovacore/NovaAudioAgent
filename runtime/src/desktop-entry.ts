@@ -25,9 +25,11 @@ let capabilityView: (() => DesktopCapabilityState | undefined) = () => undefined
 let knowledgeHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
 let feishuHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
 let personalSettingsHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
+let phoneHandle: ((method:string,params:unknown)=>Promise<unknown>) | undefined
 let clearConversation: (() => Promise<void>) | undefined
 const control = installDesktopControl({...(parentPort === undefined ? {} : {parentPort}), signal: stop.signal,
   status: () => capabilityView(), handle: async (method, params) => {
+    if (['phone.start','phone.stop','phone.status'].includes(method)) return phoneHandle?.(method,params)
     if (method.startsWith('feishu.')) return feishuHandle?.(method, params)
     if (PERSONAL_SETTINGS_METHODS.includes(method)) return personalSettingsHandle?.(method, params)
     if (method !== 'conversation.clear') return knowledgeHandle?.(method, params)
@@ -69,6 +71,7 @@ const exitCode = await runDesktopEntryWithStopSources({
     const composition = await buildProductionComposition({token, stop, ownership, onDiagnostic, onUsage: control.publishUsage,
       onKnowledge: knowledge => { knowledgeHandle = (method, params) => knowledge.service.handle(method, params) },
     })
+    phoneHandle = composition.phoneControl
     capabilityView = () => ({...composition.realtime.capabilityStatus, state: 'running'})
     clearConversation = () => composition.realtime.clearConversation()
     feishuHandle = (method, params) => handleFeishuSettings(input => composition.realtime.personalAgent.command(input), method, params)

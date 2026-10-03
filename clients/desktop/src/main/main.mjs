@@ -11,7 +11,7 @@ import {FeishuConnector, VISION_MODELS} from '@nova-audio-agent/runtime/desktop'
 import {configureDesktopIdentity} from './desktop-identity.mjs'
 import {createFrontendUsage} from './frontend-usage.mjs'
 import {createKnowledgeActions} from './knowledge-actions.mjs'
-import {createManagedPhoneService, phoneNetwork, requestPhonePairing, renderPhoneQr} from './phone-connection.mjs'
+import {phoneNetwork, requestPhonePairing, renderPhoneQr} from './phone-connection.mjs'
 import {activeMcpMenuRows} from './orb-menu.mjs'
 import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, capabilityDocumentRevision, invalidCommit} from './capabilities-settings.mjs'
 import {parseCapabilityRegistry} from '@nova-audio-agent/runtime/desktop'
@@ -654,34 +654,39 @@ const phoneRoot = () => resolve(app.getPath('userData'), 'phone')
 let phoneConfig, phonePayload, phoneImage, phoneEpoch = 0
 let phoneIssuedDevices = new Set()
 let phoneQueue = Promise.resolve()
-const managedPhone = createManagedPhoneService({
-  shutdown: child => shutdownBackend(child),
-  launch: async () => {
-    if (!configurationReady) throw classifyBackendFailure('configuration_required')
-    const entry = nodeRuntimeEntry({isPackaged: app.isPackaged, appPath: app.getAppPath(), packageRoot})
-    const {initializeServerToken, loadServerConfig} = await import(pathToFileURL(resolve(dirname(entry), 'server/server-config.js')).href)
-    await mkdir(phoneRoot(), {recursive: true, mode: 0o700})
-    const tokenFile = resolve(phoneRoot(), 'host.token')
-    try { initializeServerToken(tokenFile) } catch (error) { if (error.code !== 'EEXIST') throw error }
-    const environment = {SERVER_PORT: '19876', SERVER_TOKEN_FILE: tokenFile}
-    phoneConfig = loadServerConfig(environment)
-    const spec = backendLaunchSpec({
-      newsLanguage: preferredLanguage(app.getPreferredSystemLanguages()),backend: 'node', nodeEntry: entry,
-      nodeResourcesPath: app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'build'),
-      workspace: desktopConfig?.workspace || process.cwd(), token: phoneConfig.token,
-      readyEndpoint: '127.0.0.1:1', parentEnv: process.env, settings: currentSettings,
-      decryptedSecrets: await accessCredentials(() => decryptSecretsForSpawn(currentSettings, secretCodec)), resolvedConfig: desktopConfig,
-      capabilitiesDocument: readCapabilityDocument(currentSettings, process.env)})
-    if (app.isQuitting || !currentSettings.phoneConnectionEnabled) throw new Error('service_unavailable')
-    return utilityProcess.fork(resolve(dirname(entry), 'desktop/phone-desktop-entry.js'), [], {
-      cwd: desktopConfig?.workspace || process.cwd(), stdio: 'pipe', serviceName: 'Nova iPhone Service',
-      env: {...spec.env, ...environment, SERVER_MEDIA_MODE: 'relay',
-        BLACKBOARD_PATH: resolve(phoneRoot(), 'blackboard.sqlite'),
-        BLACKBOARD_OWNER_ID: 'phone',
-        CODEX_PROJECT_STATE_ROOT: resolve(phoneRoot(), 'projects')},
+let phoneBackend, phoneOperation = Promise.resolve()
+const managedPhone = {
+  get running() { return !!backend && !!phoneBackend && phoneBackend === backendControl },
+  start() {
+    const operation = phoneOperation.then(async () => {
+      if (this.running) return
+      if (!configurationReady || !backendControl) throw classifyBackendFailure('configuration_required')
+      const owner = backendControl
+      const entry = nodeRuntimeEntry({isPackaged: app.isPackaged, appPath: app.getAppPath(), packageRoot})
+      const {initializeServerToken, loadServerConfig} = await import(pathToFileURL(resolve(dirname(entry), 'server/server-config.js')).href)
+      await mkdir(phoneRoot(), {recursive: true, mode: 0o700})
+      const tokenFile = resolve(phoneRoot(), 'host.token')
+      try { initializeServerToken(tokenFile) } catch (error) { if (error.code !== 'EEXIST') throw error }
+      const config = loadServerConfig({SERVER_PORT:'19876',SERVER_TOKEN_FILE:tokenFile})
+      if (app.isQuitting || !currentSettings.phoneConnectionEnabled) throw new Error('service_unavailable')
+      const result = await owner.request('phone.start', {port:config.port,tokenFile}, {timeoutMs:30000})
+      if (!result?.running || owner !== backendControl) throw new Error('service_unavailable')
+      phoneConfig = config
+      phoneBackend = owner
     })
+    phoneOperation = operation.catch(() => {})
+    return operation
   },
-})
+  stop() {
+    const operation = phoneOperation.then(async () => {
+      const owner = phoneBackend
+      phoneBackend = undefined
+      if (owner) await owner.request('phone.stop', {}, {timeoutMs:10000}).catch(() => {})
+    })
+    phoneOperation = operation.catch(() => {})
+    return operation
+  },
+}
 
 async function cancelPhonePairing(invalidate = true) {
   if (invalidate) phoneEpoch++
@@ -1202,6 +1207,7 @@ async function launchBackend(smokeChannel, onExit) {
     })
     ;[ready] = await Promise.all([waitForBackendReadiness(spawnedBackend, listener.readiness, diagnostic),acceptanceProof])
     if(acceptance)appendAcceptanceCounts('runtime_gate_verified',{verified:1})
+    if (!acceptance && process.platform === 'darwin' && currentSettings.phoneConnectionEnabled && !currentSettings.phoneServerTokenFile) void managedPhone.start().catch(() => {})
   } finally {
     listener.close()
   }

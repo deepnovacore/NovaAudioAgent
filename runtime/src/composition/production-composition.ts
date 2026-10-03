@@ -1,3 +1,6 @@
+import {ClientServer} from '../server/client-server.js'
+import {ClientPairing} from '../server/client-pairing.js'
+import {loadServerConfig} from '../server/server-config.js'
 import {acceptanceCapabilityRegistry} from '../desktop/workbench-acceptance.js'
 import type {ProjectExecutorAdapter} from '../executors/coding-executor.js'
 import {MacMailClient} from '../connectors/macos/mail.js'
@@ -209,8 +212,8 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     ...(knowledge?{knowledge}:{}),...(codexResource?{codexResource}:{}),onDiagnostic,
     host,memory:()=>composition.realtime.personalMemory,nextPlaybackGeneration,
     onExecutorProgress:(progress,result)=>composition.desktop.bridge.onExecutorProgress(progress,result),
-    onAudioFrame:frame=>composition.desktop.bridge.onAudioFrame(frame),onAudioClear:(id,epoch)=>composition.desktop.bridge.onAudioClear(id,epoch),onAudioAlert:(id,epoch)=>composition.desktop.bridge.onAudioAlert(id,epoch),onAudioTerminal:(id,epoch)=>composition.desktop.bridge.onAudioTerminal(id,epoch),
-  }),frame=>composition.desktop.bridge.onPersonalFrame(frame))
+    onAudioFrame:frame=>composition.audioBridge()?.onAudioFrame(frame),onAudioClear:(id,epoch)=>composition.audioBridge()?.onAudioClear(id,epoch),onAudioAlert:(id,epoch)=>composition.audioBridge()?.onAudioAlert(id,epoch),onAudioTerminal:(id,epoch)=>composition.audioBridge()?.onAudioTerminal(id,epoch),
+  }),frame=>composition.publishPersonal(frame))
   host.setConnectors(new ComposioConnector({...(process.platform==='darwin'&&environment.CODEX_RESOURCES_PATH?{local:new MacCalendarClient(environment.CODEX_RESOURCES_PATH),mail:new MacMailClient(environment.CODEX_RESOURCES_PATH)}:{}),memory:()=>{const memory=composition.realtime.personalMemory;return memory instanceof SubstrateMemoryResource?memory:undefined},client:environment.COMPOSIO_API_KEY?new ComposioClient(environment.COMPOSIO_API_KEY):null,onChange:()=>{void host.connectionChanged()}}))
   const feishu = new FeishuConnector({
     executable: environment.FEISHU_CLI_PATH ?? 'lark-cli',
@@ -259,8 +262,36 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   ownership.own(() => {clearInterval(deliveryTimer);unsubscribeFeishu()})
   ownership.own(() => composition.desktop.server.close())
   publishExecutorApproval = view => { if(view.work&&host.workConversation(view.work.work_id))return;composition.desktop.bridge.onExecutorApproval(view) }
+  let phone: ReturnType<typeof composition.createPhone> | undefined
+  let phoneQueue: Promise<unknown> = Promise.resolve()
+  const closePhone = async () => { const endpoint=phone;phone=undefined;await endpoint?.server.close() }
+  ownership.own(closePhone)
+  stop.signal.addEventListener('abort',()=>{void phoneQueue.then(closePhone).catch(()=>{})},{once:true})
+  const phoneControl = (method:string, params:unknown):Promise<unknown> => {
+    const operation=phoneQueue.then(async()=>{
+      if(process.platform!=='darwin'||remote)throw Error('unsupported')
+      if(method==='phone.start'){
+        const input=z.object({port:z.number().int().min(1).max(65535),tokenFile:z.string().min(1)}).strict().parse(params)
+        if(stop.signal.aborted)throw Error('stopped')
+        if(!phone){
+          const config=loadServerConfig({SERVER_PORT:String(input.port),SERVER_TOKEN_FILE:input.tokenFile})
+          const media=remoteClientMedia(settings)
+          const endpoint=composition.createPhone({token:config.token,createServer:serverOptions=>new ClientServer({...serverOptions,sharedWorkbench:true,prepareLegacyVoice:composition.prepareLegacyPhoneVoice,media,pairing:new ClientPairing(config.token,input.tokenFile+'.devices.json'),port:config.port})})
+          try{await endpoint.server.start();phone=endpoint}catch(error){await endpoint.server.close();throw error}
+        }
+      }else{
+        z.object({}).strict().parse(params)
+        if(method==='phone.stop')await closePhone()
+        else if(method!=='phone.status')throw Error('unavailable')
+      }
+      return {running:phone!==undefined}
+    })
+    phoneQueue=operation.catch(()=>{})
+    return operation
+  }
   return {
     ...composition,
-    closeAuxiliary: () => telemetry.close(),
+    phoneControl,
+    closeAuxiliary: async () => {await phoneQueue;await closePhone();telemetry.close()},
   }
 }

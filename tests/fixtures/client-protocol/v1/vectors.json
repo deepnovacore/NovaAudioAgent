@@ -8,6 +8,29 @@
       "generation_epoch": 1,
       "sequence": 0,
       "pcm_hex": "0000ff7f0080"
+    },
+    "personal_protocol": {
+      "hello": {
+        "type": "hello",
+        "protocol_version": 1,
+        "capabilities": [
+          "personal"
+        ]
+      },
+      "ready_capability": "personal",
+      "max_personal_json_bytes": 1048576,
+      "coalesce_ms": 250,
+      "reload": {
+        "type": "personal.state",
+        "revision": 9,
+        "reload_required": true
+      },
+      "result_reload": {
+        "type": "personal.result",
+        "request_id": "mutate-1",
+        "ok": true,
+        "reload_required": true
+      }
     }
   },
   {
