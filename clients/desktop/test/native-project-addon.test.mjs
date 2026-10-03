@@ -3,6 +3,7 @@ import {mkdir, mkdtemp} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join, resolve} from 'node:path'
 import {spawnSync} from 'node:child_process'
+import {createRequire} from 'node:module'
 import test from 'node:test'
 
 import {buildProjectNativeAddon} from '../scripts/build-project-native.mjs'
@@ -21,9 +22,7 @@ test('project native addon builds for and passes behavior under the packaged Ele
     platform: process.platform,
     arch: process.arch,
   })
-  const electronPath = process.platform === 'win32'
-    ? resolve(packageRoot, 'node_modules/electron/dist/electron.exe')
-    : resolve(packageRoot, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron')
+  const electronPath = createRequire(import.meta.url)('electron')
   const result = spawnSync(electronPath, [
     resolve(import.meta.dirname, 'fixtures/project-native-addon-behavior.cjs'),
     addonPath,

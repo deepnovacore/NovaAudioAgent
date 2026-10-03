@@ -139,7 +139,7 @@ export function createRealtimeTelemetry(
   environment: Readonly<Record<string, string | undefined>>,
   options: {readonly clock: Clock; readonly homeDirectory?: string},
 ): RealtimeTelemetry {
-  const configuredValue = environment.NOVA_AUDIO_AGENT_REALTIME_TELEMETRY
+  const configuredValue = environment.REALTIME_TELEMETRY
   const configured = configuredValue?.trim() ?? DEFAULT_REALTIME_TELEMETRY_PATH
   if (configuredValue !== undefined && configured === '') {
     return new NullTelemetry({clock: options.clock})

@@ -8,6 +8,7 @@ import {KnowledgeService} from './service.js'
 import {KnowledgeMcpAdapter, startKnowledgeMcpHttpServer} from './mcp.js'
 
 export interface PreparedKnowledge {
+  readonly embedding:DashScopeEmbeddingProvider
   readonly service: KnowledgeService
   readonly adapter: KnowledgeMcpAdapter
   readonly capabilities: CapabilityRegistry
@@ -25,7 +26,9 @@ export async function prepareKnowledge(
     apiKey: resolveModelApiKey(settings) ?? '', model: settings.embedding_model})
   const configured = settings.knowledge_path
   const path = resolve(configured.startsWith('~/') ? resolve(homedir(), configured.slice(2)) : configured)
-  const service = new KnowledgeService({store: new KnowledgeStoreClient({path}), embedding})
+  // Whole-computer sources share this store with manually added knowledge.
+  // The generic 100-source default would make every later scan import fail.
+  const service = new KnowledgeService({store: new KnowledgeStoreClient({path,maxSources:2000}), embedding, requireEvidenceLedger: true})
   const adapter = new KnowledgeMcpAdapter(service)
   let http: Awaited<ReturnType<typeof startKnowledgeMcpHttpServer>> | undefined
   let closing: Promise<void> | undefined
@@ -43,7 +46,7 @@ export async function prepareKnowledge(
       enabled: true, transport: 'streamable-http', url: http.url, headers: {authorization: `Bearer ${http.token}`},
       exposeTo: {frontbrain: false, codex: true}, tools: {recall: {...tool}, get_chunk: {...tool}},
     }}
-    return {service, adapter, capabilities, codexEntries, close}
+    return {service, embedding, adapter, capabilities, codexEntries, close}
   } catch {
     await close()
     throw new Error('knowledge_startup_failed')

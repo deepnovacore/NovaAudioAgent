@@ -63,6 +63,7 @@ export interface ResolvedCodexHostConfig {
   readonly credential: CodexCredentialProfile
   readonly prewarm: boolean
   readonly workingInterval: number
+  readonly eagerProgress: boolean
   readonly codexApprovalMode: 'ask' | 'yolo'
   readonly stateRoot: HostProjectRoot
   readonly managedRoot: HostManagedProjectRoot
@@ -141,6 +142,7 @@ export function resolveCodexHostConfig(
     credential,
     prewarm: settings.codex_prewarm,
     workingInterval: settings.codex_working_interval,
+    eagerProgress: settings.proactivity_preset === 'eager',
     codexApprovalMode: settings.codex_approval_mode,
     stateRoot,
     managedRoot,

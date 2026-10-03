@@ -11,7 +11,7 @@
  * authority. **Epoch** scopes provider-allocated identity: a reconnect starts a new one, and an id
  * from the old session must never satisfy a check in the new one.
  *
- * Every guard here is pinned by a scenario in `fixtures/realtime/session/v1/`, exported from the
+ * Every guard here is pinned by a scenario in `tests/fixtures/realtime/session/v1/`, exported from the
  * Python oracle. When changing one, delete it and confirm a named scenario goes red; a guard no
  * scenario distinguishes is either dead or a hole in the fixture set.
  */
@@ -44,6 +44,8 @@ import {
 
 /** A host response the session asked for and could not deliver. */
 export class RealtimeDeliveryError extends Error {}
+/** The response request may have reached the provider before its acknowledgement failed. */
+export class ResponseRequestUncertainError extends RealtimeDeliveryError {}
 
 /** What a fence took away from the host, so the caller can put it back in the queue. */
 export interface FenceInterruption {
@@ -112,6 +114,8 @@ export class RealtimeSession {
   #userResponseSequence = 0
   #fenceNextResponse = false
   #fenceInterruption: FenceInterruption | null = null
+  #providerReplacementRevision = 0
+  #replacementEpoch: number | null | undefined
   #providerResponseId: string | null = null
   #hostPreemptResponseId: string | null = null
   #hostPreemptPending = false
@@ -272,6 +276,10 @@ export class RealtimeSession {
     return items !== undefined && items.length > 0 && items.every(item => item.kind === 'tool_output')
   }
 
+  responseHostItemIds(responseId: string): readonly string[] {
+    return (this.#responseItems.get(this.#turnKey(responseId)) ?? []).map(item => item.host_item_id)
+  }
+
   responseEventIds(responseId: string): readonly string[] {
     return (this.#responseItems.get(this.#turnKey(responseId)) ?? []).map(item => item.event_id)
   }
@@ -384,7 +392,10 @@ export class RealtimeSession {
    * A response that never happened has its host event answer withdrawn, because it must be
    * answerable again -- whereas one that completed stays answered, since the user heard it.
    */
-  async reconnect(options: {readonly tools: readonly Record<string, unknown>[]}): Promise<void> {
+  async reconnect(options: {
+    readonly tools: readonly Record<string, unknown>[]
+    readonly withProviderTransition?: (work: () => Promise<void>) => Promise<void>
+  }): Promise<void> {
     this.#preemptiveAlertHandoffGeneration = null
     const interruptedResponseIds: string[] = []
     const generation = this.#playback.fenceCurrent()
@@ -409,8 +420,12 @@ export class RealtimeSession {
     this.#floor = new Floor()
     this.#userHoldSince = null
 
-    const identity = await this.#replaceProviderSession(options.tools)
-    this.#state.beginEpoch(identity.epoch)
+    const replace = async (): Promise<void> => {
+      const identity = await this.#replaceProviderSession(options.tools)
+      this.#state.beginEpoch(identity.epoch)
+    }
+    if (options.withProviderTransition === undefined) await replace()
+    else await options.withProviderTransition(replace)
     await this.#injectRecoveryItem(null)
     this.#state.advanceSnapshot()
   }
@@ -557,26 +572,17 @@ export class RealtimeSession {
     return outcome
   }
 
-  /** @deprecated Compatibility alias for callers still using the legacy environment terminology. */
-  reconnectForGuard(options: {
-    readonly tools: readonly Record<string, unknown>[]
-    readonly oldGeneration: PlaybackGeneration
-    readonly confirmationTimeout?: number | null
-    readonly history?: readonly RecoveryTurn[]
-    readonly historyMode?: 'none' | 'packed'
-  }): Promise<'none' | 'empty' | 'packed' | 'degraded' | 'uncertain'> {
-    if (options.historyMode !== undefined && options.historyMode !== 'none' && options.historyMode !== 'packed') {
-      return Promise.reject(new TypeError(`unknown Guard history recovery arm: ${String(options.historyMode)}`))
-    }
-    return this.reconnectForPreemptiveAlert(options)
-  }
-
   async #replaceProviderSession(
     tools: readonly Record<string, unknown>[],
   ): Promise<{readonly epoch: number}> {
-    if (this.#provider.reconnect !== undefined) return this.#provider.reconnect(tools)
-    await this.#provider.close()
-    return this.#provider.connect({tools})
+    this.#providerReplacementRevision++
+    this.#replacementEpoch = null
+    const identity = this.#provider.reconnect !== undefined
+      ? await this.#provider.reconnect(tools)
+      : await (async () => { await this.#provider.close(); return this.#provider.connect({tools}) })()
+    // Keep delivery fenced until the caller publishes this identity into the host state.
+    this.#replacementEpoch = identity.epoch
+    return identity
   }
 
   /** The fields that belong to one provider session and none other. */
@@ -822,6 +828,11 @@ export class RealtimeSession {
     item: HostContextItem,
     options: {readonly confirmationTimeout: number | null; readonly asUserActivation: boolean},
   ): Promise<boolean> {
+    if (this.#replacementEpoch !== undefined && this.#replacementEpoch !== this.sessionEpoch) {
+      throw new RealtimeDeliveryError('provider session replacement is pending')
+    }
+    const replacementRevision = this.#providerReplacementRevision
+    const epoch = this.sessionEpoch
     if (this.#state.injectedEventEpoch(item.event_id) !== undefined) return false
     let identity: {
       readonly session_epoch: number
@@ -845,6 +856,11 @@ export class RealtimeSession {
       if (cause instanceof ItemDeliveryUncertainError) throw cause
       throw new RealtimeDeliveryError(`host item injection failed: ${String(cause)}`)
     }
+    // Late acknowledgements from an abandoned provider are transient delivery failures,
+    // not malformed identities in the new session. Never publish them into its ledger.
+    if (replacementRevision !== this.#providerReplacementRevision || epoch !== this.sessionEpoch) {
+      throw new RealtimeDeliveryError('provider session changed during host item injection')
+    }
     if (
       identity.session_epoch !== this.sessionEpoch
       || identity.host_item_id !== item.host_item_id
@@ -864,7 +880,7 @@ export class RealtimeSession {
       await this.#provider.createResponse(intent)
     } catch (cause) {
       this.#state.discardPendingResponse(pending)
-      throw new RealtimeDeliveryError(`response request failed: ${String(cause)}`)
+      throw new ResponseRequestUncertainError(`response request failed: ${String(cause)}`)
     }
     for (const eventId of eventIds) this.#state.markEventResponded(eventId)
     this.#state.pruneHostEventLedgers(eventIds)
@@ -1557,11 +1573,6 @@ export class RealtimeSession {
     this.#floor = this.#floor.onSpeakEnd(generation.utterance_id)
     this.#state.advanceSnapshot()
     return true
-  }
-
-  /** @deprecated Compatibility alias for callers still using the legacy environment terminology. */
-  alertGuardHandoff(generation: PlaybackGeneration): boolean {
-    return this.alertPreemptiveAlertHandoff(generation)
   }
 
   /**

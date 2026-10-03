@@ -40,6 +40,8 @@ export function browserWindowOptions(preload, launchId, { opaque = false } = {})
     minWidth: DORMANT_ORB_WINDOW_SIZE.width,
     minHeight: DORMANT_ORB_WINDOW_SIZE.height,
     frame: false,
+    // Let an unfocused macOS orb receive both clicks of a double-click.
+    acceptFirstMouse: true,
     // Compositors without a working transparent-visuals path (opted into via
     // NOVA_ORB_OPAQUE) get a solid plate instead of a broken/black surface.
     transparent: !opaque,
@@ -106,6 +108,16 @@ export function settingsWindowOptions(preload, launchId) {
   })
 }
 
+export function setupWindowOptions(preload, launchId) {
+  return panelWindowOptions(preload, launchId, {
+    width: 720,
+    height: 640,
+    minWidth: 520,
+    minHeight: 520,
+    title: t("开始使用 Nova"),
+  })
+}
+
 export function createBootstrapAccess(bootstrap, renderer) {
   if (!bootstrap || !renderer) throw new Error('desktop bootstrap unavailable')
   return requester => {
@@ -146,12 +158,14 @@ export function allowsOrbMediaRequest({
     && [...unique].every(type => type === 'audio' || type === 'video')
 }
 
-export function configureWindowSecurity(window) {
+export function configureWindowSecurity(window, recordingRenderer = () => null) {
   const renderer = window.webContents
   renderer.setWindowOpenHandler(() => ({ action: 'deny' }))
   renderer.on('will-navigate', (event, url) => {
     if (!allowRendererNavigation(url)) event.preventDefault()
   })
+  const recordingAudio = (contents, permission, origin, type) => Boolean(contents) && contents === recordingRenderer()
+    && permission === 'media' && (origin === '' || isExactOrbOrigin(origin)) && type === 'audio'
   const electronSession = renderer.session
   electronSession.setPermissionCheckHandler((contents, permission, origin, details) => (
     allowsOrbMediaCheck({
@@ -160,7 +174,7 @@ export function configureWindowSecurity(window) {
       permission,
       origin,
       mediaType: details?.mediaType,
-    })
+    }) || recordingAudio(contents, permission, origin, details?.mediaType)
   ))
   electronSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     callback(allowsOrbMediaRequest({
@@ -169,7 +183,7 @@ export function configureWindowSecurity(window) {
       permission,
       origin: details?.securityOrigin,
       mediaTypes: details?.mediaTypes,
-    }))
+    }) || (details?.mediaTypes?.length === 1 && recordingAudio(contents, permission, details.securityOrigin, details.mediaTypes[0])))
   })
 }
 
@@ -208,13 +222,37 @@ export async function resolveMicrophonePermission({ platform, systemPreferences 
 const API_KEY_PAGES = new Set(['https://bailian.console.aliyun.com/?apiKey=1&tab=model',
   'https://platform.openai.com/api-keys',
   'https://platform.deepseek.com/api_keys',
+  'https://platform.stepfun.com/interface-key',
   'https://console.volcengine.com/ark/apiKey',
   'https://console.volcengine.com/speech/new/setting/apikeys',
-  'https://app.tavily.com/'])
+  'https://app.tavily.com/',
+  'https://openrouter.ai/settings/keys'])
 
 export function apiKeyWindowOpenHandler(openExternal) {
   return ({url}) => {
     if (API_KEY_PAGES.has(url)) void openExternal(url).catch(() => {})
     return {action: 'deny'}
   }
+}
+
+export function feishuVerificationUrl(value) {
+  if (typeof value !== 'string' || value.length > 4096) throw new Error('授权链接无效')
+  const url = new URL(value)
+  if (url.protocol !== 'https:' || url.username || url.password || url.port ||
+      !['feishu.cn', 'larksuite.com'].some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`))) throw new Error('授权链接无效')
+  return url.href
+}
+
+export function connectorAuthorizationUrl(value) {
+  if (typeof value !== 'string' || value.length > 4096) throw new Error('authorization request rejected')
+  const url = new URL(value)
+  if (url.origin !== 'https://connect.composio.dev' || url.username || url.password || !url.pathname.startsWith('/link/')) throw new Error('authorization request rejected')
+  return url.href
+}
+
+export function newsArticleUrl(value) {
+ if(typeof value!=='string'||value.length>4096)throw new Error('资讯链接无效')
+ const url=new URL(value)
+ if(!['https:','http:'].includes(url.protocol)||url.username||url.password||url.hostname==='localhost'||url.hostname.endsWith('.local')||url.hostname.includes(':')||/^\d+(?:\.\d+){3}$/u.test(url.hostname))throw new Error('资讯链接无效')
+ return url.href
 }

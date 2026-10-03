@@ -5,12 +5,14 @@ import {t} from './locale.mjs'
 // text that additive attributes would disturb.
 export const SETTINGS_CATEGORIES = Object.freeze([
   Object.freeze({id: 'general', label: t("通用"), sections: Object.freeze([
-    'language-section', 'wake-word-section', 'notifications-section',
+    'language-section', 'startup-view-section', 'wake-word-section', 'notifications-section',
     'intent-section', 'proactivity-section',
   ])}),
   Object.freeze({id: 'usage', label: t("用量"), sections: Object.freeze(['frontend-usage-section'])}),
   Object.freeze({id: 'pipeline', label: t("语音管线"), sections: Object.freeze(['pipeline'])}),
   Object.freeze({id: 'capabilities', label: t("执行器与 MCP"), sections: Object.freeze(['capabilities-section'])}),
+  Object.freeze({id: 'im', label: t("IM 渠道"), sections: Object.freeze(['im-section'])}),
+  Object.freeze({id: 'connections', label: t("连接与权限"), sections: Object.freeze(['connections-section'])}),
   Object.freeze({id: 'knowledge', label: t("知识库"), sections: Object.freeze(['knowledge-section'])}),
   Object.freeze({id: 'secrets', label: t("API 密钥"), sections: Object.freeze(['secrets'])}),
   Object.freeze({id: 'phone', label: t("连接 iPhone"), sections: Object.freeze(['phone-connection-section'])}),
@@ -34,7 +36,7 @@ export function categorySectionIds() {
 
 /**
  * Roving-focus mapping for the vertical sidebar. Deliberately separate from
- * channel-tabs.mjs's boardTabForKey, which is horizontal and fixed at
+ * the removed channel-tabs board, which was horizontal and fixed at
  * two tabs; null means the key is not a navigation key and must pass through.
  */
 export function categoryTabForKey(activeCategory, key) {

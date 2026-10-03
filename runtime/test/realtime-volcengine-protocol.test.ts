@@ -27,7 +27,7 @@ import {
 } from '../src/realtime/volcengine/protocol.js'
 import { TextChunker } from '../src/realtime/volcengine/tts.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/volcengine/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/realtime/volcengine/v1')
 const fixture = JSON.parse(readFileSync(resolve(fixtureRoot, 'protocol.json'), 'utf8')) as Fixture
 const expected = JSON.parse(
   readFileSync(resolve(fixtureRoot, 'protocol-expected.json'), 'utf8'),
@@ -55,20 +55,20 @@ const settingEnvironment: Readonly<Record<string, string>> = {
   ark_api_key: 'ARK_API_KEY',
   doubao_asr_api_key: 'DOUBAO_ASR_API_KEY',
   doubao_bigmodel_api_key: 'DOUBAO_BIGMODEL_API_KEY',
-  volcengine_ark_base_url: 'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL',
-  doubao_asr_endpoint: 'NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT',
-  doubao_asr_resource_id: 'NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID',
-  doubao_asr_chunk_ms: 'NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS',
-  doubao_tts_endpoint: 'NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT',
-  doubao_tts_resource_id: 'NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID',
-  doubao_tts_voice: 'NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE',
-  doubao_tts_output_sample_rate: 'NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE',
-  volcengine_vad_threshold: 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD',
-  volcengine_vad_pre_roll_ms: 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS',
-  volcengine_vad_min_speech_ms: 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS',
-  volcengine_vad_silence_end_ms: 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS',
-  volcengine_vad_speech_pad_ms: 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS',
-  volcengine_vad_max_utterance_ms: 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS',
+  volcengine_ark_base_url: 'VOLCENGINE_ARK_BASE_URL',
+  doubao_asr_endpoint: 'DOUBAO_ASR_ENDPOINT',
+  doubao_asr_resource_id: 'DOUBAO_ASR_RESOURCE_ID',
+  doubao_asr_chunk_ms: 'DOUBAO_ASR_CHUNK_MS',
+  doubao_tts_endpoint: 'DOUBAO_TTS_ENDPOINT',
+  doubao_tts_resource_id: 'DOUBAO_TTS_RESOURCE_ID',
+  doubao_tts_voice: 'DOUBAO_TTS_VOICE',
+  doubao_tts_output_sample_rate: 'DOUBAO_TTS_OUTPUT_SAMPLE_RATE',
+  volcengine_vad_threshold: 'VOLCENGINE_VAD_THRESHOLD',
+  volcengine_vad_pre_roll_ms: 'VOLCENGINE_VAD_PRE_ROLL_MS',
+  volcengine_vad_min_speech_ms: 'VOLCENGINE_VAD_MIN_SPEECH_MS',
+  volcengine_vad_silence_end_ms: 'VOLCENGINE_VAD_SILENCE_END_MS',
+  volcengine_vad_speech_pad_ms: 'VOLCENGINE_VAD_SPEECH_PAD_MS',
+  volcengine_vad_max_utterance_ms: 'VOLCENGINE_VAD_MAX_UTTERANCE_MS',
 }
 const keyValues: Readonly<Record<string, string>> = {
   ark: 'fixture-ark-key', asr_dedicated: 'fixture-asr-key', tts_fallback: 'fixture-tts-key',
@@ -78,8 +78,8 @@ const secretFields = new Set(['ark_api_key', 'doubao_asr_api_key', 'doubao_bigmo
 
 function environmentFor(raw: Record<string, unknown>): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
-    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
-    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+    PIPELINE_MODE: 'cascaded',
+    CASCADE_LLM_PROVIDER: 'ark',
   }
   for (const [field, rawValue] of Object.entries(raw)) {
     const variable = settingEnvironment[field]
@@ -138,8 +138,8 @@ function safeConfig(case_: FixtureCase): unknown {
         ok: false,
         error: 'ValidationError',
         fields: error.message.slice('invalid configuration: '.length).split(', ')
-          .map(field => field.startsWith('NOVA_AUDIO_AGENT_')
-            ? field.slice('NOVA_AUDIO_AGENT_'.length)
+          .map(field => field.startsWith('')
+            ? field.slice(''.length)
             : field),
       }
     }

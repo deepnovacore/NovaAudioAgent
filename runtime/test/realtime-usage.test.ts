@@ -29,7 +29,7 @@ test('production cascade forwards usage independently from semantic events with 
   const {buildCascadedRealtimeAssembly, cascadedProviderRegistries} = await import('../src/composition/cascaded-realtime-assembly.js')
   const {loadSettings} = await import('../src/config/config.js')
   const reports: UsageReport[] = []
-  const settings = loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled', NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded', DASHSCOPE_API_KEY: 'test', DOUBAO_ASR_API_KEY: 'test', DOUBAO_BIGMODEL_API_KEY: 'test', TAVILY_API_KEY: 'test'})
+  const settings = loadSettings({MEMORY_CONNECTION: 'disabled', PIPELINE_MODE: 'cascaded', DASHSCOPE_API_KEY: 'test', DOUBAO_ASR_API_KEY: 'test', DOUBAO_BIGMODEL_API_KEY: 'test', TAVILY_API_KEY: 'test'})
   buildCascadedRealtimeAssembly({settings, onUsage: value => reports.push(value)}, {
     ...cascadedProviderRegistries,
     asr: {volcengine: input => {

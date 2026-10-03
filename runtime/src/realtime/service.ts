@@ -1,3 +1,6 @@
+import {TaskExecutionRejected} from '../personal-agent/task-loop.js'
+import type {TaskDispatchContext} from '../core/task-tools.js'
+import {taskGrantService} from '../personal-agent/tasks.js'
 import type {PromptLanguage} from './prompt-language.js'
 export type { AgentControllerFactory,DelegateLike,DeliverySnapshot,ExecutorManifestLike,RealtimeServiceOptions,ServiceProvider,ServiceRuntime } from './service-ports.js'
 export { formatSeconds } from './service-state.js'
@@ -52,13 +55,10 @@ MAX_TRACKED_TOOL_CALLS,
 PROJECT_EXPIRY_STEP_TIMEOUT_S,
 callKey,
 hostFactIntent,
-type ContinuationBatch,
 type ExecutorState,
 type PreemptiveAlertHistoryRecovery,
 type QueuedHostResponse,
-type SemanticAcknowledgement,
 type ToolCallAcceptanceSnapshot,
-type ToolCallState,
 type UrgentHostResponseOwner
 } from './service-state.js'
 import {
@@ -144,6 +144,15 @@ export class RealtimeService {
 
   playbackDone(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean { return this.#host.playbackDone(utteranceId, generationEpoch, playedMs) }
 
+  taskRoutes():readonly string[]{return this.#agentRegistry.descriptors.map(item=>item.name)}
+  taskTurnOrigin():string|undefined{return this.#intakeUser?.origin_ref}
+  async dispatchTask(grant:TaskDispatchContext,instruction:string){
+    let tasks;try{tasks=taskGrantService(grant);tasks.validateContinuation(grant)}catch{throw new TaskExecutionRejected('task_continuation_stale')}const task=tasks.get(grant.fence.task_id)
+    const controller=task.execution_route?this.#agentRegistry.controllers.get(task.execution_route):undefined
+    if(!controller)throw new TaskExecutionRejected('task_executor_unavailable')
+    return controller.dispatch({taskContext:grant,continuationGrant:grant,instruction,originalUserText:task.original_goal??task.goal,origin_ref:grant.origin_ref,sessionEpoch:this.session.sessionEpoch,acceptedUserInputRevision:0,stillWanted:grant.stillWanted})
+  }
+
   queueHostItem(
     intent: HostResponseIntent,
     options: HostItemOptions = {},
@@ -178,6 +187,7 @@ export class RealtimeService {
   readonly #idFactory: () => string
   readonly #onProviderTerminal: (generation: PlaybackGeneration) => void
   readonly #onExecutorState: (state: ExecutorState) => void
+  readonly #captionScope = randomUUID()
   readonly #onCaption: ((frame: CaptionFrame) => void) | undefined
   readonly #onUserTranscriptAccepted: RealtimeServiceOptions['onUserTranscriptAccepted']
   readonly #telemetry: RealtimeTelemetry | undefined
@@ -215,17 +225,19 @@ export class RealtimeService {
   #awaitingUserOrigin = false
   #userOriginPreexistingResponseId: string | null = null
 
+  readonly #onProviderEvent: ((event:RealtimeProviderEvent)=>void)|undefined
   constructor(options: RealtimeServiceOptions) {
+    this.#onProviderEvent=options.onProviderEvent
     // Preserve config capture order when custom controller factories invoke intake callbacks.
     let commitProjectOperation: RealtimeServiceOptions['commitProjectOperation'] = undefined
     let onProjectView: RealtimeServiceOptions['onProjectView'] = undefined
     let projectViewProvider: RealtimeServiceOptions['projectViewProvider'] = undefined
     let projectExpiryStepTimeoutMs: number | undefined = undefined
-    const recovery = options.preemptiveAlertHistoryRecovery ?? options.guardHistoryRecovery ?? 'none'
+    const recovery = options.preemptiveAlertHistoryRecovery ?? 'none'
     if (recovery !== 'none' && recovery !== 'packed') {
       throw new TypeError('unknown preemptive-alert history recovery arm')
     }
-    const pairs = options.preemptiveAlertHistoryPairs ?? options.guardHistoryPairs ?? 4
+    const pairs = options.preemptiveAlertHistoryPairs ?? 4
     // 1, 2, or 4 rather than any positive number: these are the arms the recovery experiment has,
     // and an unlisted value would silently be a fifth arm nobody measured.
     if (pairs !== 1 && pairs !== 2 && pairs !== 4) {
@@ -253,9 +265,7 @@ export class RealtimeService {
     this.#onDiagnostic = options.onDiagnostic ?? ((line: string): void => {
       console.log(line)
     })
-    this.#controlledPreemptiveAlertReconnect = options.controlledPreemptiveAlertReconnect
-      ?? options.controlledGuardReconnect
-      ?? false
+    this.#controlledPreemptiveAlertReconnect = options.controlledPreemptiveAlertReconnect ?? false
     this.#preemptiveAlertHistoryRecovery = recovery
     this.#preemptiveAlertHistoryPairs = pairs
     const projectConfirmation = options.projectConfirmation
@@ -285,7 +295,9 @@ export class RealtimeService {
         this.#deliveryReady.set()
       },
       prepare: intake => {
-        return this.#confirmation.prepareIntake(intake)
+        const proposal=this.#confirmation.prepareIntake(intake)
+        options.onIntakePrepared?.(intake,proposal)
+        return proposal
       },
     }
     this.#approvalHost = new ApprovalHost({
@@ -375,6 +387,7 @@ export class RealtimeService {
       throw new TypeError('agent controller registry does not match compiled tool descriptors')
     }
     this.#continuations = new ToolContinuations({
+      ...(options.taskHost ? {taskHost:options.taskHost} : {}),
       session: this.session, host: this.#host, runtime: this.#runtime,
       bridge: this.#bridge, tools: this.#tools, intake: this.#intake, approvalHost: this.#approvalHost,
       coding: this.#coding, telemetry: this.#telemetry, idFactory: this.#idFactory,
@@ -416,9 +429,10 @@ export class RealtimeService {
       this.#approvalHost.syncExecutorApproval(view)
     }) ?? null
     if (options.executorApproval !== undefined) this.#approvalHost.syncExecutorApproval(options.executorApproval.view)
-  
+
     this.#projection = new ProviderProjection({
       session: this.session, runtime: this.#runtime, clock: this.#clock, coding: this.#coding,
+      ...(options.taskHost ? {taskOwnsWork: (workId: string) => options.taskHost!.tasks.list().some(task => task.work_ids.includes(workId))} : {}),
       codingProgressNarration: this.#codingProgressNarration,
       generatePlan: options.intake?.settings.generate_plan !== false, telemetry: this.#telemetry,
       idFactory: this.#idFactory,
@@ -644,6 +658,10 @@ export class RealtimeService {
   #discardedInputEpoch = -1
 
   /** Replace only the provider session; host work remains owned by the existing graph. */
+  detachTaskConversation():void{
+    this.#conversationClearRevision++
+    this.#intakeUser=null
+  }
   discardInputAudio(): Promise<void> {
     // A phone-owned provider may still be awaiting its first successful SDK handshake.
     if (!this.#connected) return Promise.resolve()
@@ -663,6 +681,8 @@ export class RealtimeService {
     void ready.catch(() => undefined)
     return ready
   }
+
+  get inputCapabilities(): readonly string[] { return [...(this.#provider.submitText ? ['text_input'] : []), ...(this.#provider.transcribeDraft ? ['dictation'] : [])] }
 
   async transcribeDraft(pcm: Uint8Array, signal: AbortSignal): Promise<string> {
     if (!this.#provider.transcribeDraft) throw new Error('dictation unavailable')
@@ -854,7 +874,11 @@ export class RealtimeService {
         this.#confirmation.invalidateProjectConfirmation('provider_replaced')
         this.#approvalHost.invalidateExecutorApproval('provider_replaced')
         this.#host.beginReconnect(oldEpoch)
-        await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
+        // Provider identity and session epoch must advance before queued host delivery resumes.
+        await this.session.reconnect({
+          tools: structuredClone(this.#providerSchemas),
+          withProviderTransition: work => this.#host.withDeliveryLock(work),
+        })
         // Only if nothing cleared it while we were awaiting. A user who started speaking during the
         // reconnect has already activated the new session, so demanding an activation would be wrong.
         this.#host.finishReconnect(oldEpoch)
@@ -920,6 +944,7 @@ export class RealtimeService {
         received = true
         try {
           await this.handleEvent(event)
+          this.#onProviderEvent?.(event)
         } catch (cause) {
           if (cause instanceof ItemDeliveryUncertainError) {
             await this.#recoverUncertainDelivery(cause)
@@ -1156,7 +1181,10 @@ export class RealtimeService {
         event,
         event.kind === 'user_transcript_final' ? {accepted} : undefined,
       )
-      if (caption !== null) this.#onCaption(caption)
+      if (caption !== null) {
+        const sourceId='item_id' in event?event.item_id:'response_id' in event?event.response_id:null
+        this.#onCaption({...caption,...(typeof sourceId==='string'?{turn_id:`${this.#captionScope}:${event.session_epoch}:${caption.role}:${sourceId}`}:{})})
+      }
     }
 
     if (event.kind === 'user_speech_started' && accepted) {
@@ -1255,7 +1283,7 @@ export class RealtimeService {
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
         if (event.session_epoch <= this.#discardedInputEpoch) return
         this.#notifyAcceptedUserTranscript({
-          text: event.text, originRef, sessionEpoch: event.session_epoch, itemId: event.item_id, userInputRevision: inputRevision,
+          text: event.text, originRef, sessionEpoch: event.session_epoch, itemId: event.item_id, userInputRevision: inputRevision, ...(event.input_kind==='text'?{confirmed:true}:{}),
         })
         this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
         this.#intakeUser = {text: event.text, origin_ref: originRef, epoch: event.session_epoch, inputRevision, localOnsetRevision}
@@ -1331,6 +1359,7 @@ export class RealtimeService {
   }
 
   #notifyAcceptedUserTranscript(turn: {
+    readonly confirmed?: boolean
     readonly text: string
     readonly originRef: string
     readonly sessionEpoch: number
@@ -1517,7 +1546,7 @@ export class RealtimeService {
    * that should not happen.
    *
    * `#reconnectLock` before `#deliveryLock`, never the reverse: that order is fixed across this layer,
-   * and this is the one method that holds both.
+   * and every replacement path that holds both follows this order.
    *
    * Seven conditions have to hold before the permit is spent. Together they say: this rejection is
    * about *this* preemption, in the current session, for a turn that is still trying to cancel and has
@@ -1674,11 +1703,6 @@ export class RealtimeService {
     return this.#userOrigins.boundResponses
   }
 
-  /** The runtime's delegate lookups, for a projection test that needs one to be in flight. */
-  get sessionForTest(): RealtimeSession {
-    return this.session
-  }
-
   /** How many responses hold a user turn as their evidence. */
   get boundOriginCountForTest(): number {
     return this.#userOrigins.boundResponseCount
@@ -1702,62 +1726,21 @@ export class RealtimeService {
     }
   }
 
-  /** @deprecated Compatibility view for legacy configuration assertions. */
-  get guardConfiguration(): {
-    readonly controlledReconnect: boolean
-    readonly historyRecovery: PreemptiveAlertHistoryRecovery
-    readonly historyPairs: number
-  } {
-    return this.preemptiveAlertConfiguration
-  }
-
   /** Existing test compatibility views; production owners communicate through semantic methods. */
   get internals(): {
     readonly reconnectLock: Mutex
-    readonly requeueHostItem: (queued: QueuedHostResponse) => void
-    readonly nextUrgentDeliveryToken: () => number
-    readonly nextPreemptiveAlertToken: () => number
     readonly bridge: RealtimeRuntimeBridge
     readonly tools: CompiledTools
     readonly runtime: ServiceRuntime
     readonly idFactory: () => string
-    readonly toolCalls: ReadonlyMap<string, ToolCallState>
-    readonly overflowToolCalls: ReadonlyMap<string, ToolCallState>
-    readonly continuationBatches: ReadonlyMap<string, ContinuationBatch>
-    readonly continuationFifo: readonly string[]
-    readonly semanticAcknowledgements: ReadonlyMap<string, SemanticAcknowledgement>
-    readonly audioStarted: ReadonlySet<string>
-    readonly onProviderTerminal: (generation: PlaybackGeneration) => void
-    readonly onExecutorState: (state: ExecutorState) => void
-    readonly clearCaptions: () => void
     readonly setExecutorState: (state: ExecutorState) => void
   } {
     return {
       reconnectLock: this.#reconnectLock,
-      requeueHostItem: (queued: QueuedHostResponse) => {
-        this.#host.requeueHostItem(queued)
-      },
-      nextUrgentDeliveryToken: () => {
-        return this.#host.nextUrgentDeliveryToken()
-      },
-      nextPreemptiveAlertToken: () => {
-        return this.#host.nextPreemptiveAlertToken()
-      },
       bridge: this.#bridge,
       tools: this.#tools,
       runtime: this.#runtime,
       idFactory: this.#idFactory,
-      toolCalls: this.#continuations.callsForTest(),
-      overflowToolCalls: this.#continuations.overflowCallsForTest(),
-      continuationBatches: this.#continuations.batchesForTest(),
-      continuationFifo: this.#continuations.continuationOrderForTest(),
-      semanticAcknowledgements: this.#host.acknowledgementsForTest(),
-      audioStarted: this.#audioStarted,
-      onProviderTerminal: this.#onProviderTerminal,
-      onExecutorState: this.#onExecutorState,
-      clearCaptions: () => {
-        this.#clearCaptions()
-      },
       setExecutorState: (state: ExecutorState) => {
         this.#projection.setExecutorStateForTest(state)
       },

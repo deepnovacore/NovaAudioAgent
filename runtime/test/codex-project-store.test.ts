@@ -33,6 +33,7 @@ import {test} from 'node:test'
 import {VirtualClock, type Clock} from '../src/core/clock.js'
 import {
   ProjectStore,
+  MAX_PROJECT_WORKSPACES,
   PROJECT_MAINTENANCE_JOURNAL_FILE,
   ProjectStateError,
   hostManagedProjectRootForTest,
@@ -2911,7 +2912,7 @@ test('an owner-controlled 0750 managed root is accepted while group-writable roo
 
 test('strict v1 decode rejects key, type, cap, reference, and normalized-identity mutations', async () => {
   const fixture = JSON.parse(await readFile(
-    join(import.meta.dirname, '../../../fixtures/runtime/codex-project-state-v1.json'),
+    join(import.meta.dirname, '../../../tests/fixtures/runtime/codex-project-state-v1.json'),
     'utf8',
   )) as {readonly input_utf8_base64: string}
   const valid = JSON.parse(Buffer.from(fixture.input_utf8_base64, 'base64').toString('utf8')) as {
@@ -2950,7 +2951,7 @@ test('strict v1 decode rejects key, type, cap, reference, and normalized-identit
   const tooManyWorkspaces = clone()
   tooManyWorkspaces.active_workspace_id = null
   tooManyWorkspaces.sessions = {}
-  tooManyWorkspaces.workspaces = Object.fromEntries(Array.from({length: 101}, (_unused, index) => {
+  tooManyWorkspaces.workspaces = Object.fromEntries(Array.from({length: MAX_PROJECT_WORKSPACES + 1}, (_unused, index) => {
     const id = `workspace-${String(index).padStart(4, '0')}`
     return [id, {
       ...valid.workspaces['workspace-0001'],
@@ -4106,7 +4107,7 @@ test('thread identity uses Python code-point bounds and exact returned text', as
 
 test('live recovery reads Python v1 bytes and writes byte-identical Python canonical JSON', async () => {
   const fixture = JSON.parse(await readFile(
-    join(import.meta.dirname, '../../../fixtures/runtime/codex-project-state-v1.json'),
+    join(import.meta.dirname, '../../../tests/fixtures/runtime/codex-project-state-v1.json'),
     'utf8',
   )) as {readonly input_utf8_base64: string; readonly recovered_utf8_base64: string}
   const storeFixture = await projectStoreFixture('nova-codex-project-python-bytes-')

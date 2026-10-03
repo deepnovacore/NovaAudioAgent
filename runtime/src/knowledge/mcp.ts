@@ -91,7 +91,7 @@ function plain(value: unknown): value is Record<string, unknown> {
 }
 
 function safeHit(value: unknown, textLimit = MAX_TEXT_POINTS): KnowledgeRecallHit | null {
-  if (!plain(value) || Object.keys(value).length !== 6) return null
+  if (!plain(value) || (Object.keys(value).length !== 6 && !(Object.keys(value).length === 7 && typeof value.evidence_id === 'string'))) return null
   const locator = safeLocator(value.locator)
   const source_id = safeLocator(value.source_id)
   const title = safeOutputText(value.title, MAX_METADATA_POINTS)

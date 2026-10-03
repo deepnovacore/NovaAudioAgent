@@ -1,3 +1,4 @@
+import type {UnifiedRetrieval} from '../memory/retrieval.js'
 /**
  * Translate admitted realtime tool proposals into existing Runtime dispatch.
  *
@@ -117,6 +118,8 @@ export function requiresSynchronousResult(
 
 export class RealtimeRuntimeBridge {
   readonly #runtime: BridgeRuntime
+  readonly #retrieval:UnifiedRetrieval|undefined
+  readonly #conversationConsumer:string
   readonly #personalMemory: PersonalMemoryRecallPort | undefined
   readonly #tools: CompiledTools
   readonly #idFactory: () => string
@@ -133,6 +136,8 @@ export class RealtimeRuntimeBridge {
 
   constructor(options: {
     readonly runtime: BridgeRuntime
+    readonly retrieval?:UnifiedRetrieval
+    readonly conversationConsumer?:string
     readonly personalMemory?: PersonalMemoryRecallPort
     readonly tools: CompiledTools
     readonly idFactory: () => string
@@ -141,6 +146,8 @@ export class RealtimeRuntimeBridge {
   }) {
     this.#runtime = options.runtime
     this.#personalMemory = options.personalMemory
+    this.#retrieval=options.retrieval
+    this.#conversationConsumer=options.conversationConsumer??''
     this.#tools = options.tools
     this.#idFactory = options.idFactory
     this.#queryDigestKey = options.queryDigestKey ?? randomBytes(32)
@@ -187,6 +194,7 @@ export class RealtimeRuntimeBridge {
     if (binding.kind === 'query') {
       await this.#runtime.flushMemory?.(true)
       if (!currentUserTurn(options.userTurn)) return this.#refused(call, 'superseded')
+      if (binding.logical_name === 'memory.evidence') return this.#refused(call, 'async_tool')
       return this.#acceptMemoryRecall(call, originRef)
     }
     if (
@@ -283,8 +291,21 @@ export class RealtimeRuntimeBridge {
     if (binding === undefined) return this.#refused(call, 'unknown_tool')
     if (this.#tools.hidden.has(call.name)) return this.#refused(call, 'hidden_executor')
     if (binding.kind !== 'query') return this.#refused(call, 'unsupported_tool')
+    if (binding.logical_name === 'memory.evidence') {
+      const schema = this.#wireParams(call.name)
+      const origin = options.originRef ?? this.#latestUserOriginRef
+      if (!schema || !validParams(call.arguments, schema) || typeof call.arguments.evidence_id !== 'string' || call.arguments.evidence_id.includes('\0')) return this.#refused(call, 'invalid_params')
+      if (!origin || !trustedUserOrigin(this.#runtime.memory, origin)) return this.#refused(call, 'missing_origin_ref')
+      const result = this.#retrieval ? await this.#retrieval.evidence(call.arguments.evidence_id, {...options,consumer:this.#conversationConsumer}) : {state: 'unavailable', evidence: null}
+      return this.#inlineToolResult(call, JSON.stringify(result), result.state, {})
+    }
     const request = this.#memoryRecallRequest(call, options.originRef ?? null)
     if (!request.ok) return request.acceptance
+    if (request.source === 'session') return this.#acceptMemoryRecall(call, options.originRef ?? null)
+    if (this.#retrieval) {
+      const result = await this.#retrieval.recall(request.query, {consumer:this.#conversationConsumer,scope: request.scope, limit: 8, ...(options.signal ? {signal: options.signal} : {})})
+      return this.#inlineToolResult(call, JSON.stringify(result), result.state, {hit_count: result.entries.length + result.snippets.length, degraded: result.degraded})
+    }
     if (request.source !== 'personal') return this.#refused(call, 'unsupported_tool')
 
     const startedAt = this.#runtime.clock.now()
@@ -326,7 +347,7 @@ export class RealtimeRuntimeBridge {
   #acceptMemoryRecall(call: ToolCallReady, originRef: string | null): ToolAcceptance {
     const request = this.#memoryRecallRequest(call, originRef)
     if (!request.ok) return request.acceptance
-    if (request.source === 'personal') return this.#refused(call, 'async_tool')
+    if (request.source !== 'session') return this.#refused(call, 'async_tool')
     const {query,scope,originRef: resolvedOriginRef} = request
     const startedAt = this.#runtime.clock.now()
     const digest = createHmac('sha256', this.#queryDigestKey).update(query, 'utf8').digest('hex')
@@ -417,7 +438,7 @@ export class RealtimeRuntimeBridge {
     }
     const query = call.arguments.query
     const scope = call.arguments.scope
-    const source = call.arguments.source ?? 'session'
+    const source = call.arguments.source ?? (this.#retrieval ? 'personal' : 'session')
     if (
       typeof query !== 'string'
       || query.includes('\0')

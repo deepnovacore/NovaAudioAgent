@@ -6,7 +6,7 @@ on:
       release_version:
         description: Application version to validate
         required: true
-        default: 0.1.1
+        default: 0.3.0-preview.1
         type: string
       candidate_scope:
         description: Full release evidence or a Windows-only repair run
@@ -37,6 +37,11 @@ jobs:
             target_id: win32-x64
             package_script: package:win
             artifact_name: candidate-win32-x64
+          - os: ubuntu-22.04
+            platform: linux
+            target_id: linux-x64
+            package_script: package:linux
+            artifact_name: candidate-linux-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -60,14 +65,28 @@ jobs:
         if: inputs.candidate_scope == 'full'
       - run: npm run test:runtime
         if: inputs.candidate_scope == 'full' && runner.os != 'Windows'
-      - run: npm run test:runtime:win
+      # Full runtime regression runs on macOS/Linux; Windows keeps platform
+      # coverage plus the desktop/native/installer acceptance below.
+      - run: npm run test:runtime:win:platform
         if: runner.os == 'Windows'
+      - name: Install Linux desktop test dependencies
+        if: matrix.platform == 'linux' && inputs.candidate_scope == 'full'
+        run: sudo apt-get update && sudo apt-get install -y xvfb libasound2 libgtk-3-0 libnss3 libgbm1 libsecret-1-0
+      - name: Select Linux C++20 compiler
+        if: matrix.platform == 'linux' && inputs.candidate_scope == 'full'
+        run: |
+          sudo apt-get install -y g++-12
+          echo "CXX=g++-12" >> "$GITHUB_ENV"
+          # V8 150 combines deprecated and GNU visibility attributes in an order GCC rejects.
+          echo "CXXFLAGS=-UV8_DEPRECATION_WARNINGS" >> "$GITHUB_ENV"
       # npm may restore the Electron package without its platform binary from
       # cache. The pinned install script is idempotent and closes that gap.
       - run: node clients/desktop/node_modules/electron/install.js
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run test:desktop
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
+      - run: npm run test:server-cli
+        if: inputs.candidate_scope == 'full'
       - run: npm run test:cli
         if: inputs.candidate_scope == 'full'
       - name: Build unsigned candidate bytes
@@ -75,7 +94,7 @@ jobs:
         run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/desktop
       - name: Verify installed application and backend
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
-        run: npm run verify:release --workspace @nova-audio-agent/desktop -- --unsigned
+        run: ${{ matrix.platform == 'linux' && 'xvfb-run -a' || '' }} npm run verify:release --workspace @nova-audio-agent/desktop -- --unsigned
       - name: Archive macOS application with native tools
         if: matrix.platform == 'darwin' && inputs.candidate_scope == 'full'
         shell: bash
@@ -97,6 +116,18 @@ jobs:
       - name: Verify Windows installer
         if: matrix.platform == 'win32'
         run: npm run verify:release --workspace @nova-audio-agent/desktop -- --unsigned --artifact "${{ github.workspace }}/candidate/nova-audio-agent-${{ inputs.release_version }}-windows-x64.exe"
+      - name: Archive Linux desktop and headless packages
+        if: matrix.platform == 'linux' && inputs.candidate_scope == 'full'
+        run: |
+          mkdir -p candidate
+          cp clients/desktop/dist/*.AppImage candidate/nova-audio-agent-${{ inputs.release_version }}-linux-x64.AppImage
+          cp clients/desktop/dist/*.deb candidate/nova-audio-agent-${{ inputs.release_version }}-linux-x64.deb
+          node scripts/pack-server.mjs candidate
+          npm install --prefix server-smoke ./candidate/nova-audio-agent-server-${{ inputs.release_version }}.tgz
+          server-smoke/node_modules/.bin/novaaudio-server --help
+          node scripts/verify-server-package.mjs server-smoke/node_modules/.bin/novaaudio-server
+          xvfb-run -a npm run verify:release --workspace @nova-audio-agent/desktop -- --unsigned --artifact "${{ github.workspace }}/candidate/nova-audio-agent-${{ inputs.release_version }}-linux-x64.AppImage"
+          xvfb-run -a npm run verify:release --workspace @nova-audio-agent/desktop -- --unsigned --artifact "${{ github.workspace }}/candidate/nova-audio-agent-${{ inputs.release_version }}-linux-x64.deb"
       - name: Write CLI download checksums
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         shell: bash
@@ -105,6 +136,16 @@ jobs:
           for artifact in *; do
             if command -v sha256sum >/dev/null; then sha256sum "$artifact" > "$artifact.sha256"; else shasum -a 256 "$artifact" > "$artifact.sha256"; fi
           done
+      - name: Verify npm CLI installation and candidate launch
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          mkdir -p candidate-cli
+          npm pack ./cli --pack-destination candidate-cli
+          npm install --prefix cli-smoke --ignore-scripts ./candidate-cli/nova-audio-agent-${{ inputs.release_version }}.tgz
+          ${{ matrix.platform == 'linux' && 'xvfb-run -a' || '' }} node scripts/verify-npm-desktop.mjs cli-smoke/node_modules/nova-audio-agent candidate
       - uses: actions/upload-artifact@v4
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         with:

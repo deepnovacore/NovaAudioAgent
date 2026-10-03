@@ -5,6 +5,8 @@ import type {
   KnowledgeJob,
   KnowledgeRecallHit,
   KnowledgeSource,
+  KnowledgeIndexChunk,
+  KnowledgeUnembedded,
   ReplaceKnowledgeSourceInput,
 } from './types.js'
 
@@ -61,6 +63,7 @@ interface Pending<Result> {
 }
 
 export class KnowledgeStoreClient {
+  readonly maxSources: number
   readonly #worker: KnowledgeStoreWorker
   readonly #pending = new Map<number, Pending<unknown>>()
   #nextRequestId = 1
@@ -75,6 +78,7 @@ export class KnowledgeStoreClient {
   #rejectClosing: ((error: KnowledgeStoreClientError) => void) | undefined
 
   constructor(options: KnowledgeStoreClientOptions) {
+    this.maxSources=options.maxSources??100
     const workerUrl = new URL('./store-worker.js', import.meta.url)
     const workerOptions: WorkerOptions = {workerData: {path: options.path, maxSources: options.maxSources, forceLexical: options.forceLexical}}
     this.#worker = new Worker(workerUrl, workerOptions)
@@ -109,9 +113,17 @@ export class KnowledgeStoreClient {
 
   listSources(): Promise<readonly KnowledgeSource[]> { return this.#request('list_sources', {}) }
 
+  listChunks(sourceId: string, offset = 0): Promise<readonly KnowledgeIndexChunk[]> { return this.#request('list_chunks', {source_id: sourceId, offset}) }
+
+  async linkEvidence(links: readonly {chunk_id: string; content_digest: string; evidence_id: string}[]): Promise<void> {
+    await this.#request('link_evidence', {links})
+  }
+
   async replaceSource(input: ReplaceKnowledgeSourceInput): Promise<void> {
     await this.#request('replace_source', {input})
   }
+
+  async purgeEvidence(ids: readonly string[]): Promise<void> { await this.#request('purge_evidence', {ids: [...ids]}) }
 
   async removeSource(id: string): Promise<void> { await this.#request('remove_source', {id}) }
 
@@ -125,6 +137,16 @@ export class KnowledgeStoreClient {
   }
 
   getChunk(locator: string): Promise<KnowledgeChunkResult> { return this.#request('get_chunk', {locator}) }
+
+  unembeddedSources(providerId: string, dims: number): Promise<readonly string[]> { return this.#request('unembedded_sources', {provider_id: providerId, dims}) }
+
+  unembeddedChunks(sourceId: string, providerId: string, dims: number): Promise<KnowledgeUnembedded> {
+    return this.#request('unembedded_chunks', {source_id: sourceId, provider_id: providerId, dims})
+  }
+
+  setVectors(input: {source_id: string; fingerprint: string; provider_id: string; dims: number; vectors: readonly {chunk_id: string; content_digest: string; vector: readonly number[]}[]}): Promise<number> {
+    return this.#request('set_vectors', {input})
+  }
 
   async recordJob(input: KnowledgeJob): Promise<void> { await this.#request('record_job', {input}) }
 

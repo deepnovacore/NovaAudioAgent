@@ -8,7 +8,7 @@ import { handoffPolicySchema } from '../src/core/memory.js'
 import { executorManifestSchema } from '../src/core/ports.js'
 import { ToolSchemaError, compileToolSchema } from '../src/core/tool-schema.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/tools/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/tools/v1')
 
 function loadJson<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(fixtureRoot, name), 'utf8')) as T
@@ -69,7 +69,7 @@ test('compiled tool schemas preserve the frozen contract with the native persona
 
     // The frozen fixtures remain historical evidence. Only the documented native recall
     // description/source extension is projected away; all other schema fields still compare.
-    const legacySchemas = structuredClone(compiled.schemas)
+    const legacySchemas = structuredClone(compiled.schemas).filter(schema => record(record(schema).function).name !== 'memory__evidence')
     for (const schema of legacySchemas) {
       const fn = record(record(schema).function)
       if (fn.name !== 'memory__recall') continue
@@ -87,9 +87,9 @@ test('compiled tool schemas preserve the frozen contract with the native persona
       `${scenario.id} schemas: ${scenario.covers}`,
     )
     // Binding order is the provider tool order, so it is contract, not incidental.
-    assert.deepEqual([...compiled.bindings.keys()], [...expected.binding_order], scenario.id)
+    assert.deepEqual([...compiled.bindings.keys()].filter(name => name !== 'memory__evidence'), [...expected.binding_order], scenario.id)
     assert.equal(
-      canonicalJson(Object.fromEntries(compiled.bindings)),
+      canonicalJson(Object.fromEntries([...compiled.bindings].filter(([name]) => name !== 'memory__evidence'))),
       canonicalJson(expected.bindings),
       `${scenario.id} bindings`,
     )
@@ -108,13 +108,14 @@ test('the golden is not vacuous', () => {
   assert.match(rendered, /slow_sim__set_light/u)
 })
 
-test('memory recall requires an explicit bounded source choice', () => {
+test('memory recall defaults to unified personal projection and preserves explicit session source', () => {
   const recall = record(record(compileToolSchema([], {includeMemoryRecall: true}).schemas[0]).function)
   const parameters = record(recall.parameters)
   const source = record(record(parameters.properties).source)
   assert.deepEqual(source.enum, ['session', 'personal'])
-  assert.equal(source.default, undefined)
-  assert.deepEqual(parameters.required, ['query', 'scope', 'source'])
+  assert.equal(source.default, 'personal')
+  assert.deepEqual(compileToolSchema([], {includeMemoryRecall: true}).bindings.get('memory__evidence')?.kind, 'query')
+  assert.deepEqual(parameters.required, ['query', 'scope'])
   assert.equal(parameters.additionalProperties, false)
   assert.equal('user' in record(parameters.properties), false)
   assert.equal('path' in record(parameters.properties), false)

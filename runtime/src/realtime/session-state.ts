@@ -40,10 +40,10 @@ export const providerTurnPhaseSchema = z.enum([
 ])
 export type ProviderTurnPhase = z.infer<typeof providerTurnPhaseSchema>
 
-export type ContinuationRequestResult = 'requested' | 'retryable' | 'rejected'
 
 /** A speculative display-only caption: revisable, never persisted. */
 export interface CaptionFrame extends Partial<HostWorkSource> {
+  readonly turn_id?: string
   readonly role: 'user' | 'assistant'
   readonly text: string
   readonly final: boolean

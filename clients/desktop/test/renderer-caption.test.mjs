@@ -34,7 +34,7 @@ test('renderer stops the guard tone before replacement PCM and local onset', asy
   const toneStop = source.indexOf('alertTone.stop()', handler)
   const decode = source.indexOf('decodeAudioFrame', handler)
   assert.ok(handler >= 0 && toneStop > handler && decode > toneStop)
-  assert.match(source, /if \(verdict\) \{\n    alertTone\.stop\(\)\n    send\(/)
+  assert.match(source, /if \(verdict\) \{\n    alertTone\.stop\(\)\n    if \(verdict.type === 'onset'\) clearAssistantCaption\(\)\n    send\(/)
 })
 
 test('renderer accepts the closed public Codex project message', async () => {
@@ -71,4 +71,11 @@ test('confirmation uses a fixed natural orb and a compact text-section capsule',
   assert.match(css, /#codex-label\[data-mode='confirmation'\]\s*\{[^}]*height:\s*48px;[^}]*border-radius:\s*999px;/su)
   assert.match(css, /#codex-label\[data-mode='confirmation'\] #codex-operation\s*\{[^}]*white-space:\s*nowrap;[^}]*text-overflow:\s*ellipsis;/su)
   assert.match(css, /#shell:has\(#codex-label\[data-mode='confirmation'\]\) #state-label\s*\{[^}]*display:\s*none;/su)
+})
+
+
+test('interrupt and new confirmation clear the visible conversation bubble', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+  assert.match(source, /function clearAssistantCaption\(\) \{\n  void progressBubbles\.clearConversation\(\)/)
+  assert.match(source, /if \(previousKind !== active.kind \|\| previousId !== active.id\) \{\n    clearAssistantCaption\(\)/)
 })

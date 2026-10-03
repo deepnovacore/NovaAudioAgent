@@ -52,6 +52,7 @@ const SURROGATE_PROACTIVITY_POLICY: Readonly<Record<ProactivityPreset, readonly 
   ],
   eager: [
     'action_required、blocker 和真正的 milestone 应倾向 speak=true。',
+    '长时间没有文字进度后，首次出现的真实执行阶段变化（命令执行结束、文件修改已应用、命令执行失败）可以简短播报；只陈述事件，不把命令结束当验证通过，也不把单条命令失败当整个任务阻塞。重复同一状态仍保持沉默。',
     'eager 可以播报 routine_delta 中首次出现的具体工作方向、实现决定或检查发现，不必等到完成里程碑；摘要只是计数从一个数变成另一个数时，必须 speak=false。',
     '只增加文件或命令计数、重复旧计划、没有实质信息的更新仍保持沉默；不要为了播报把 routine_delta 改称 milestone。',
     '示例：previous_summary=已修改2个文件，summary=已修改3个文件；应输出 speak=false、suggestion_id=null、progress_class=routine_delta，因为没有说明新的工作内容。',
@@ -64,7 +65,7 @@ const SURROGATE_ORACLE_OUTPUT = '只输出 JSON：{"speak": true|false, "suggest
 const SURROGATE_NODE_OUTPUT = '先在 reason 中概括用户已要求的功能，再指出 summary 中超出这些要求和 previous_summary 的新增信息；若没有新增，必须说明没有新增并保持沉默。若用户明确要求静默则说明其适用范围。最后按档位分类并决定是否播报。只输出 JSON：{"reason": "一句内部理由", "progress_class": "routine_delta"|"milestone"|"blocker"|"action_required"|null, "speak": true|false, "suggestion_id": "s-N"|null}。'
 
 /** Apply the user's proactivity choice at the model decision boundary. */
-export function surrogateSystemPrompt(preset: ProactivityPreset): string {
+export function proactivitySystemPrompt(preset: ProactivityPreset): string {
   const policyStart = SURROGATE_SYSTEM.indexOf(SURROGATE_DEFAULT_POLICY_START)
   const policyEnd = SURROGATE_SYSTEM.indexOf(SURROGATE_DEFAULT_POLICY_END)
   if (policyStart < 0 || policyEnd <= policyStart) {
@@ -89,7 +90,7 @@ export function surrogateSystemPrompt(preset: ProactivityPreset): string {
   if (!composed.includes(SURROGATE_ORACLE_OUTPUT)) {
     throw new Error('surrogate prompt output contract mismatch')
   }
-  return composed.replace(SURROGATE_ORACLE_OUTPUT, SURROGATE_NODE_OUTPUT)
+  return composed.replace(SURROGATE_ORACLE_OUTPUT, SURROGATE_NODE_OUTPUT) + '\nproposal 仅用于专门的需求发现快照；当前工作进展观察请省略或置 null。proposal 不授权执行，也不因 speak=true 自动朗读。'
 }
 
 export const COMPRESSOR_SYSTEM = [
@@ -285,40 +286,3 @@ function projectLiveProgress(
   return content
 }
 
-export function renderFastBrainContext(
-  view: ContextView,
-  states: Readonly<Record<string, string>>,
-  includeTrigger = false,
-): string {
-  const rendered = renderContextView(view, includeTrigger)
-  const lines = [rendered, '', '## 视觉可见性']
-  const labels: Readonly<Record<string, string>> = {
-    attached: '图片就在你眼前',
-    record_only: '仅有记录；当前看不到这张图片',
-    unavailable: '图片已不可用',
-  }
-  const capturedAt = new Map<string, number>()
-  for (const channel of view.channels) {
-    for (const item of channel.recent) {
-      const ref = item.content.media_ref
-      const at = item.content.captured_at
-      if (typeof ref === 'string' && typeof at === 'number') capturedAt.set(ref, at)
-    }
-  }
-  const entries = Object.entries(states)
-  if (entries.length > 0) {
-    for (const [ref, state] of entries) {
-      let line = `- ${ref}：${labels[state] ?? state}`
-      const at = capturedAt.get(ref)
-      if (at !== undefined) {
-        const age = Math.max(0, view.now - at)
-        // captured_at is a float in the oracle, so it renders like every timestamp.
-        line += `；约 ${pythonFixedOne(age)} 秒前（核对 token t=${pythonFloat(at)}）`
-      }
-      lines.push(line)
-    }
-  } else {
-    lines.push('- 无')
-  }
-  return lines.join('\n')
-}

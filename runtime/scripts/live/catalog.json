@@ -1,15 +1,239 @@
 {
   "version": 1,
   "suites": [
-    {"id":"text-tools","layer":"model-routing","entry":"text-tools","requires":[],"timeoutMs":60000,"scope":"Real cascaded LLM, production prompt and compiled built-in schemas; synthetic context/results; no executor or host execution."},
-    {"id":"coordinator","layer":"model-planning","entry":"dist/test/coding-coordinator-eval.test.js","requires":[["DASHSCOPE_API_KEY","NOVA_AUDIO_AGENT_MODEL_API_KEY"]],"timeoutMs":240000,"scope":"Real downstream coding assess/cancel selection; existing 80% dev / 70% holdout thresholds."},
-    {"id":"search-mcp","layer":"executor","entry":"scripts/live/search-mcp.mjs","requires":[],"timeoutMs":60000,"scope":"Configured MCP search transport; direct adapter invocation, no model routing."},
-    {"id":"knowledge","layer":"executor","entry":"scripts/live/knowledge.mjs","requires":[],"timeoutMs":120000,"scope":"Synthetic document ingestion, real embedding and retrieval; no model routing."},
-    {"id":"cascaded","layer":"pipeline","entry":"scripts/live/cascaded.mjs","requires":[["ARK_API_KEY"],["DOUBAO_BIGMODEL_API_KEY"]],"timeoutMs":240000,"scope":"Digital audio ASR/LLM/TTS and smoke_echo continuation; no physical microphone/speaker acceptance."},
-    {"id":"qwen","layer":"provider","entry":"scripts/live/qwen.mjs","requires":[["DASHSCOPE_API_KEY","NOVA_AUDIO_AGENT_MODEL_API_KEY"]],"timeoutMs":120000,"scope":"Qwen realtime connection and audio provider contract; no business tools."},
-    {"id":"qwen-surrogate","layer":"model-planning","entry":"scripts/live/qwen-surrogate.mjs","requires":[["DASHSCOPE_API_KEY","NOVA_AUDIO_AGENT_MODEL_API_KEY"]],"timeoutMs":180000,"scope":"Real surrogate progress decisions; not frontend tool selection."},
-    {"id":"qwen-clarification-legacy","layer":"model-routing","requires":[],"timeoutMs":60000,"retired":"Stale import and missing agent descriptors; use text-tools for current frontend routing, coordinator for intake. Voice replacement remains uncovered.","scope":"Historical voice clarification smoke; not an acceptance gate."},
-    {"id":"qwen-routing-legacy","layer":"model-routing","requires":[],"timeoutMs":60000,"retired":"Handwritten legacy codex__status schema differs from current hidden operations; not current-product acceptance.","scope":"Historical memory/status voice routing."},
-    {"id":"project","layer":"end-to-end","entry":"scripts/live/project.mjs","requires":[["NOVA_LIVE_PROJECT_EXECUTE"],["DASHSCOPE_API_KEY"],["DOUBAO_BIGMODEL_API_KEY"]],"timeoutMs":480000,"scope":"Explicit opt-in real workspace and Codex execution; shared Codex login, isolated temporary Nova state. Text or synthetic audio input; no physical device/GUI acceptance."}
+    {
+      "id": "text-tools",
+      "layer": "model-routing",
+      "entry": "text-tools",
+      "requires": [],
+      "timeoutMs": 60000,
+      "scope": "Real cascaded LLM, production prompt and compiled built-in schemas; synthetic context/results; no executor or host execution."
+    },
+    {
+      "id": "coordinator",
+      "layer": "model-planning",
+      "entry": "dist/test/coding-coordinator-eval.test.js",
+      "requires": [
+        [
+          "DASHSCOPE_API_KEY",
+          "MODEL_API_KEY"
+        ]
+      ],
+      "timeoutMs": 240000,
+      "scope": "Real downstream coding assess/cancel selection; existing 80% dev / 70% holdout thresholds."
+    },
+    {
+      "id": "search-mcp",
+      "layer": "executor",
+      "entry": "scripts/live/search-mcp.mjs",
+      "requires": [],
+      "timeoutMs": 60000,
+      "scope": "Configured MCP search transport; direct adapter invocation, no model routing."
+    },
+    {
+      "id": "knowledge",
+      "layer": "executor",
+      "entry": "scripts/live/knowledge.mjs",
+      "requires": [],
+      "timeoutMs": 120000,
+      "scope": "Synthetic document ingestion, real embedding and retrieval; no model routing."
+    },
+    {
+      "id": "cascaded",
+      "layer": "pipeline",
+      "entry": "scripts/live/cascaded.mjs",
+      "requires": [
+        [
+          "ARK_API_KEY"
+        ],
+        [
+          "DOUBAO_BIGMODEL_API_KEY"
+        ]
+      ],
+      "timeoutMs": 240000,
+      "scope": "Digital audio ASR/LLM/TTS and smoke_echo continuation; no physical microphone/speaker acceptance."
+    },
+    {
+      "id": "qwen",
+      "layer": "provider",
+      "entry": "scripts/live/qwen.mjs",
+      "requires": [
+        [
+          "DASHSCOPE_API_KEY",
+          "MODEL_API_KEY"
+        ]
+      ],
+      "timeoutMs": 120000,
+      "scope": "Qwen realtime connection and audio provider contract; no business tools."
+    },
+    {
+      "id": "stepfun",
+      "layer": "provider",
+      "entry": "scripts/live/stepfun.mjs",
+      "requires": [["STEPFUN_API_KEY"]],
+      "timeoutMs": 120000,
+      "scope": "StepAudio 3 realtime connection and audio provider contract; no business tools."
+    },
+    {
+      "id": "qwen-surrogate",
+      "layer": "model-planning",
+      "entry": "scripts/live/qwen-surrogate.mjs",
+      "requires": [
+        [
+          "DASHSCOPE_API_KEY",
+          "MODEL_API_KEY"
+        ]
+      ],
+      "timeoutMs": 180000,
+      "scope": "Real surrogate progress decisions; not frontend tool selection."
+    },
+    {
+      "id": "project",
+      "layer": "end-to-end",
+      "entry": "scripts/live/project.mjs",
+      "requires": [
+        [
+          "NOVA_LIVE_PROJECT_EXECUTE"
+        ],
+        [
+          "DASHSCOPE_API_KEY"
+        ],
+        [
+          "DOUBAO_BIGMODEL_API_KEY"
+        ]
+      ],
+      "timeoutMs": 480000,
+      "scope": "Explicit opt-in real workspace and Codex execution; shared Codex login, isolated temporary Nova state. Text or synthetic audio input; no physical device/GUI acceptance."
+    },
+    {
+      "id": "memory-architecture",
+      "layer": "model-runtime",
+      "entry": "scripts/live/memory-architecture.mjs",
+      "args": [
+        "--module",
+        "architecture"
+      ],
+      "structuredReport": true,
+      "requires": [],
+      "timeoutMs": 240000,
+      "scope": "Real model extraction/resolution, correction, restart and daily summary; isolated synthetic ledger, no client/device acceptance."
+    },
+    {
+      "id": "memory-daily",
+      "layer": "model-runtime",
+      "entry": "scripts/live/memory-architecture.mjs",
+      "args": [
+        "--module",
+        "daily"
+      ],
+      "structuredReport": true,
+      "requires": [],
+      "timeoutMs": 120000,
+      "scope": "Independent synthetic explicit seed; real daily synthesis, once-per-day/restart and correction invalidation."
+    },
+    {
+      "id": "memory-reading",
+      "layer": "model-runtime",
+      "entry": "scripts/live/memory-architecture.mjs",
+      "args": [
+        "--module",
+        "reading"
+      ],
+      "structuredReport": true,
+      "requires": [],
+      "timeoutMs": 120000,
+      "scope": "Real model answers from authorized memory projections; text recall, voice context, correction/restart and revocation. No audio or conversation transport."
+    },
+    {
+      "id": "memory-storage",
+      "layer": "runtime-live",
+      "entry": "scripts/live/memory-storage.mjs",
+      "args": [
+        "--module",
+        "storage"
+      ],
+      "structuredReport": true,
+      "requires": [],
+      "timeoutMs": 90000,
+      "scope": "Real temporary SQLite/Markdown/Git, manual edits, projection rebuild, outbox recovery and Life migration. No model/client."
+    },
+    {
+      "id": "memory-purge",
+      "layer": "runtime-live",
+      "entry": "scripts/live/memory-storage.mjs",
+      "args": [
+        "--module",
+        "purge"
+      ],
+      "structuredReport": true,
+      "requires": [],
+      "timeoutMs": 90000,
+      "scope": "Real host/resource/Knowledge index deletion, migration backup retry and restart, temporary synthetic stores only."
+    },
+    {
+      "id": "memory-desktop",
+      "layer": "desktop-live",
+      "entry": "../clients/desktop/scripts/memory-architecture-live.mjs",
+      "args": [],
+      "structuredReport": true,
+      "electron": true,
+      "requires": [],
+      "timeoutMs": 120000,
+      "scope": "Actual isolated Electron renderer, host and memory stores: correction/new conversation/reopen/permanent deletion. Synthetic seed; no generated response or microphone."
+    },
+    {
+      "id": "life-objects",
+      "layer": "runtime-live",
+      "entry": "scripts/live/life-objects.mjs",
+      "structuredReport": true,
+      "requires": [],
+      "timeoutMs": 90000,
+      "scope": "Real isolated host/SQLite/Markdown Life lifecycle, reminder invalidation and explicit news conversion; synthetic data, no model or external account."
+    },
+    {
+      "id": "life-desktop",
+      "layer": "desktop-live",
+      "entry": "../clients/desktop/scripts/life-desktop-live.mjs",
+      "structuredReport": true,
+      "electron": true,
+      "requires": [],
+      "timeoutMs": 120000,
+      "scope": "Actual isolated Electron renderer and host: explicit news conversion, source display, local date/status controls and restart; synthetic, no model/audio/account."
+    },
+    {
+      "id": "personal-understanding",
+      "layer": "model-runtime",
+      "entry": "scripts/live/personal-understanding.mjs",
+      "structuredReport": true,
+      "requires": [],
+      "timeoutMs": 600000,
+      "scope": "Real configured extraction/resolution model and Jev with isolated Substrate: cross-turn deduplication, anchored reschedule, completion/cancellation, evidence and restart. Fixed conversation acknowledgement; no GUI, microphone or personal data."
+    },
+    {
+      "id": "directory-snapshot",
+      "layer": "runtime-live",
+      "entry": "scripts/live/directory-snapshot.mjs",
+      "structuredReport": true,
+      "requires": [],
+      "timeoutMs": 240000,
+      "scope": "Metadata-only local docs topology rebuilt as anonymous synthetic files; 1/10/100/up-to500 with real directory scanner/Knowledge Worker, local deterministic embeddings, restart and scan bounds."
+    },
+    {
+      "id": "system-life",
+      "layer": "system-live",
+      "entry": "../clients/desktop/scripts/system-life-live.mjs",
+      "electron": true,
+      "structuredReport": true,
+      "requires": [
+        [
+          "DASHSCOPE_API_KEY"
+        ],
+        [
+          "OPENROUTER_API_KEY"
+        ]
+      ],
+      "timeoutMs": 600000,
+      "scope": "Real visible renderer, authenticated desktop WebSocket, production conversation runtime and actual conversation/Understanding/Jev models, isolated Life persistence, recall tool, UI correction and independent Electron process restart."
+    }
   ]
 }

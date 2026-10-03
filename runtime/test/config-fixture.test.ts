@@ -20,7 +20,7 @@ interface ConfigCase {
 }
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const fixtureRoot = resolve(repositoryRoot, 'fixtures/config/v1')
+const fixtureRoot = resolve(repositoryRoot, 'tests/fixtures/config/v1')
 
 test('Node consumes every Python-owned configuration fixture exactly', async () => {
   const casesDocument = JSON.parse(await readFile(resolve(fixtureRoot, 'cases.json'), 'utf8')) as {
@@ -46,7 +46,7 @@ test('Node consumes every Python-owned configuration fixture exactly', async () 
 
 function evaluateConfigFixture(fixture: ConfigCase): unknown {
   if (fixture.action === 'desktop_video') {
-    const value = stripLikePython(fixture.environment.NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE ?? '')
+    const value = stripLikePython(fixture.environment.DESKTOP_VIDEO_FILE ?? '')
     return {ok: value === '' || isAbsolute(value), source: value === '' ? 'local' : 'file'}
   }
   try {
@@ -59,8 +59,8 @@ function evaluateConfigFixture(fixture: ConfigCase): unknown {
       return {
         ok: false,
         fields: error.message.slice('invalid configuration: '.length).split(', ')
-          .map(field => field.startsWith('NOVA_AUDIO_AGENT_')
-            ? field.slice('NOVA_AUDIO_AGENT_'.length)
+          .map(field => field.startsWith('')
+            ? field.slice(''.length)
             : field),
       }
     }
@@ -70,8 +70,8 @@ function evaluateConfigFixture(fixture: ConfigCase): unknown {
 
 function loadPythonOwnedFixtureSettings(environment: NodeJS.ProcessEnv): Settings {
   // Pin the retired Python default; Nova now uses Plus for progress/coordinator reliability.
-  environment = {NOVA_AUDIO_AGENT_SURROGATE_MODEL: 'qwen-flash', ...environment}
-  const legacyProvider = stripLikePython(environment.NOVA_AUDIO_AGENT_REALTIME_PROVIDER ?? '')
+  environment = {...environment, SUPPORT_MODEL: environment.SURROGATE_MODEL ?? 'qwen-flash'}
+  const legacyProvider = stripLikePython(environment.REALTIME_PROVIDER ?? '')
   if (legacyProvider !== 'volcengine') return loadSettings(environment)
 
   // The shared fixture still describes the Python reference runtime's retired
@@ -79,46 +79,46 @@ function loadPythonOwnedFixtureSettings(environment: NodeJS.ProcessEnv): Setting
   // legacy projection below; the product loader itself deliberately has no
   // compatibility aliases and reads only the selected pipeline's configuration.
   const adapted = {...environment}
-  delete adapted.NOVA_AUDIO_AGENT_REALTIME_PROVIDER
-  delete adapted.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL
-  delete adapted.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL
-  adapted.NOVA_AUDIO_AGENT_PIPELINE_MODE = 'cascaded'
-  adapted.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER = 'ark'
+  delete adapted.REALTIME_PROVIDER
+  delete adapted.VOLCENGINE_ARK_MODEL
+  delete adapted.VOLCENGINE_ARK_SUPPORT_MODEL
+  adapted.PIPELINE_MODE = 'cascaded'
+  adapted.CASCADE_LLM_PROVIDER = 'ark'
   const settings = loadSettings(adapted)
 
   return Object.freeze({
     ...settings,
     dashscope_api_key: fixtureOptional(environment.DASHSCOPE_API_KEY, settings.dashscope_api_key),
     qwen_realtime_url: fixtureString(
-      environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL,
+      environment.QWEN_REALTIME_URL,
       settings.qwen_realtime_url,
     ),
     qwen_realtime_model: fixtureString(
-      environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL,
+      environment.QWEN_REALTIME_MODEL,
       settings.qwen_realtime_model,
     ),
     qwen_realtime_voice: fixtureString(
-      environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE,
+      environment.QWEN_REALTIME_VOICE,
       settings.qwen_realtime_voice,
     ),
     qwen_controlled_guard_reconnect: fixtureBoolean(
-      environment.NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT,
+      environment.QWEN_CONTROLLED_GUARD_RECONNECT,
       settings.qwen_controlled_guard_reconnect,
     ),
     qwen_guard_history_recovery: fixtureString(
-      environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY,
+      environment.QWEN_GUARD_HISTORY_RECOVERY,
       settings.qwen_guard_history_recovery,
     ) as Settings['qwen_guard_history_recovery'],
     qwen_guard_history_pairs: fixtureNumber(
-      environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS,
+      environment.QWEN_GUARD_HISTORY_PAIRS,
       settings.qwen_guard_history_pairs,
     ) as Settings['qwen_guard_history_pairs'],
     volcengine_ark_model: fixtureString(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL,
+      environment.VOLCENGINE_ARK_MODEL,
       settings.volcengine_ark_model,
     ),
     volcengine_ark_support_model: fixtureString(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL,
+      environment.VOLCENGINE_ARK_SUPPORT_MODEL,
       settings.volcengine_ark_support_model,
     ),
   })
@@ -182,7 +182,7 @@ function projectSettings(settings: Settings): Readonly<Record<string, unknown>> 
     qwen_realtime_voice: settings.qwen_realtime_voice,
     realtime_provider: settings.pipeline_mode === 'integrated' ? 'qwen' : 'volcengine',
     suggestion_cooldown: settings.suggestion_cooldown,
-    surrogate_model: settings.surrogate_model,
+    surrogate_model: settings.support_model,
     tavily_api_key_present: secretPresent(settings.tavily_api_key),
     volcengine_ark_base_url: settings.volcengine_ark_base_url,
     volcengine_ark_model: settings.volcengine_ark_model,
@@ -238,5 +238,5 @@ function secretPresent(value: string | null): boolean {
 }
 
  test('Node defaults to Plus for progress and coordinator assessment', () => {
-  assert.equal(loadSettings({}).surrogate_model, 'qwen-plus')
+  assert.equal(loadSettings({}).support_model, 'qwen-plus')
 })

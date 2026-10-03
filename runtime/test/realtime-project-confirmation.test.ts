@@ -532,3 +532,41 @@ test('intake confirmation carries its objective title into the granted operation
   assert.equal(operation.session_title, 'Build a game')
   assert.equal(operation.work_order, current.work_order)
 })
+
+
+test('background project proposal outlives human absence and resumes with a fresh presentation deadline', async () => {
+ const clock=new VirtualClock(0),controller=createController(clock)
+ const background=controller as unknown as {setBackground(value:boolean):void}
+ background.setBackground(true)
+ const proposal=prepareSelect(controller)
+ clock.advanceTo(7200);await Promise.resolve()
+ assert.equal(controller.pending,true)
+ assert.equal(controller.view.pending_expires_in_seconds,null)
+ background.setBackground(false)
+ assert.equal(controller.view.pending_confirmation_id,proposal.proposal_id)
+ assert.equal(controller.view.pending_expires_in_seconds,360)
+ clock.advanceTo(7560);await Promise.resolve();assert.equal(controller.pending,false)
+})
+
+
+test('background projects reject late voice authority but preserve exact direct decisions',()=>{
+ const controller=createController(),proposal=prepareSelect(controller)
+ assert.equal(controller.reserveUserItem({epoch:1,itemId:'before'}),true)
+ controller.setBackground(true)
+ assert.equal(controller.reserveUserItem({epoch:1,itemId:'late'}),false)
+ assert.equal(controller.acceptDecision({epoch:1,itemId:'before',proposalId:proposal.proposal_id,confirmed:true}).kind,'ignored')
+ assert.equal(controller.acceptDirectDecision({proposalId:proposal.proposal_id,confirmed:false}).kind,'cancelled')
+})
+
+
+test('foreground new project proposals are live while old unseen ones stay parked',()=>{
+ const clock=new VirtualClock(0),controller=createController(clock)
+ controller.setBackground(true);const old=prepareSelect(controller)
+ controller.setBackground(false,{awaitPresentation:true})
+ clock.advanceTo(7200);assert.equal(controller.pending,true)
+ assert.equal(controller.reserveUserItem({epoch:1,itemId:'unseen'}),false)
+ controller.acceptDirectDecision({proposalId:old.proposal_id,confirmed:false})
+ prepareSelect(controller)
+ assert.equal(controller.view.pending_expires_in_seconds,360)
+ assert.equal(controller.reserveUserItem({epoch:1,itemId:'new'}),true)
+})

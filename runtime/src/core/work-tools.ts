@@ -13,7 +13,7 @@ import {stripLikePython} from '../text/python-text.js'
 export const DISPATCH_TOOL = 'dispatch'
 export const CANCEL_TOOL = 'cancel'
 export const CONFIRM_TOOL = 'confirm'
-export const HOST_TOOL_NAMES: ReadonlySet<string> = new Set([DISPATCH_TOOL, CANCEL_TOOL, CONFIRM_TOOL])
+export const HOST_TOOL_NAMES: ReadonlySet<string> = new Set([DISPATCH_TOOL, CANCEL_TOOL, CONFIRM_TOOL, 'task'])
 
 // ponytail: one app-server child per CODEX_HOME, i.e. per workspace; a settings key is the upgrade
 // path once real usage shows the need.
@@ -25,7 +25,8 @@ const SENTENCE_BREAK = /[。！？!?;；\n]|\. /u
 /** First sentence of the objective, stripped, ≤20 code points; `uniqueSessionTitle` disambiguates later. */
 export function deriveSessionTitle(objective: string): string {
   const first = stripLikePython(objective.split(SENTENCE_BREAK, 1)[0] ?? '')
-  return [...first].slice(0, MAX_SESSION_TITLE_CODE_POINTS).join('')
+  const points = [...first]
+  return points.length > MAX_SESSION_TITLE_CODE_POINTS ? points.slice(0, MAX_SESSION_TITLE_CODE_POINTS - 1).join('') + '…' : first
 }
 
 export interface HostToolSpec {
@@ -49,6 +50,7 @@ export function dispatchToolSpec(agents: readonly AgentDescriptor[]): HostToolSp
     params: {
       type: 'object',
       properties: {
+        task_id: {type: 'string', minLength: 1, maxLength: 512},
         executor: {type: 'string', enum: agents.map(agent => agent.name)},
         instruction: {...INSTRUCTION, description: '本次任务已明确的完整目标、约束和验收，合并最新纠正，不只传最后一句、不添加未要求的约束'},
         source_refs: {type: 'array', maxItems: 8, items: {type: 'string'}, description: '从用户原话引用目录选择本次任务相关的 ref，包含多轮澄清中的最初目标和指定项目；不引用助手建议或无关旧任务。只有当前一句足够时省略。'},
@@ -67,6 +69,7 @@ export function cancelToolSpec(agents: readonly AgentDescriptor[]): HostToolSpec
     params: {
       type: 'object',
       properties: {
+        task_id: {type: 'string', minLength: 1, maxLength: 512},
         executor: {type: 'string', enum: agents.map(agent => agent.name)},
         instruction: {...INSTRUCTION, description: '同时有多个任务在跑时，用户对要停哪一个的描述'},
       },
@@ -82,15 +85,15 @@ export const CONFIRM_TOOL_SPEC: HostToolSpec = {
   description: [
     '对宿主提出的是/否问题作答：待确认的项目操作或权限请求。只有本轮用户明确同意或明确拒绝才调用；',
     'id 从宿主事实原样复制，accepted=true 表示同意，false 表示明确拒绝或取消；尚未决定或追问原因不表示拒绝；',
-    '仅权限请求允许 scope=session，且必须用户明确要求本会话内允许、宿主允许会话授权；普通同意省略 scope，项目操作不得带 scope。',
+    "For Chinese replies to the pending permission question, \"始终确认\", \"永远确认\", and \"始终允许\" mean YES with session scope: accepted=true, scope=session. They are NOT refusals. Distinguish requests to keep asking: \"始终让我确认\", \"每次都问我\", \"always ask me to confirm\", or \"always require my confirmation\" express a prompting preference, NOT a decision on the pending operation; do not call confirm at all for these. Ordinary yes approves once without scope. scope is the requested authorization: the host validates allowed_decisions; unsupported session scope must not be silently downgraded. Project operations cannot request session scope. Negation, quotation and questions are not consent.",
     '只调用一次，同一 response 不输出普通音频或文本，也不调用其他工具；表达含糊时不要调用，等待宿主澄清',
   ].join(''),
   params: {
     type: 'object',
     properties: {
       id: {type: 'string', minLength: 1, maxLength: 128},
-      accepted: {type: 'boolean'},
-      scope: {type: 'string', enum: ['session']},
+      accepted: {type: 'boolean', description: 'Decision on the CURRENT operation only. A preference such as always ask me to confirm is neither approval nor refusal: do not call confirm for that preference.'},
+      scope: {type: 'string', enum: ['session'], description: 'Requested session permission only when the user wants approval without asking again (always allow). Never use for a request to keep asking for confirmation. Ordinary one-shot approval omits scope.'},
     },
     required: ['id', 'accepted'],
     additionalProperties: false,

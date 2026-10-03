@@ -1,3 +1,6 @@
+import {z} from 'zod'
+import {MemoryObservationSchema, MemoryListOptionsSchema, MemorySourceRefSchema, MemoryVersionSchema} from '../memory/entry.js'
+import {VersionedMemory} from './versioned-memory.js'
 import {isMainThread, parentPort, workerData} from 'node:worker_threads'
 
 import {
@@ -49,7 +52,7 @@ interface WorkerData {
 interface Request extends Record<string, unknown> {
   readonly kind: 'request'
   readonly request_id: number
-  readonly operation: 'open' | 'recall' | 'remember' | 'close'
+  readonly operation: 'open' | 'recall' | 'remember' | 'close' | 'list' | 'get' | 'correct' | 'forgetEntry' | 'forgetSource' | 'forget' | 'observeSource'
   readonly sourceId?: unknown
   readonly sessionId?: unknown
   readonly sequence?: unknown
@@ -63,6 +66,7 @@ if (isMainThread || parentPort === null) throw new Error('personal memory store 
 const port = parentPort
 const data = parseWorkerData(workerData)
 let memory: VoiceMem | undefined
+let entries: VersionedMemory | undefined
 let tail = Promise.resolve()
 let owner: AbortController | undefined
 let drain: Promise<void> | undefined
@@ -100,6 +104,7 @@ async function execute(request: Request): Promise<unknown> {
     case 'recall': return recall(request.query, request.scope, request.limit)
     case 'remember': return remember(request)
     case 'close': return close()
+    default: return entryOperation(request)
   }
 }
 
@@ -122,6 +127,8 @@ function open(): VoiceMemOpenResult {
     })
     secureSidecar(path, '-wal')
     secureSidecar(path, '-shm')
+    entries = new VersionedMemory(memory,data.userId,new OpenAIEmbeddingModel({...data.embedding}))
+    entries.suppress()
     owner = new AbortController()
     failedSourceIds.clear()
     responseAdaptation = snapshotResponseAdaptation(memory, 0)
@@ -141,6 +148,7 @@ async function close(): Promise<null> {
   owner=undefined
   const opened = memory
   memory = undefined
+  entries = undefined
   responseAdaptation = {revision: 0, replyPreferences: []}
   if (opened === undefined) return null
   try {
@@ -165,7 +173,9 @@ async function recall(query: unknown, scope: unknown, limit: unknown): Promise<V
       ...(scope === 'recent' ? {candidateLimit: MAX_LIMIT} : {}),
       ...(owner === undefined ? {} : {signal:owner.signal}),
     })
-    return project(result, scope)
+    entries?.suppress()
+    const current = (hit:MemoryHit) => opened.store.memory(data.userId,PERSONAL_SCOPE,hit.id)?.record.revision === hit.revision && !opened.store.memory(data.userId,PERSONAL_SCOPE,hit.id)?.record.supersededBy
+    return project({...result,hits:result.hits.filter(current),rbHits:result.rbHits.filter(current)}, scope)
   } catch (error) {
     if (error instanceof StoreError) throw error
     throw new StoreError('STORE_RECALL_FAILED')
@@ -220,6 +230,7 @@ async function drainPending(opened: VoiceMem): Promise<void> {
 }
 
 function publishResponseAdaptation(opened: VoiceMem): void {
+  entries?.suppress()
   const next = snapshotResponseAdaptation(opened, responseAdaptation.revision + 1)
   if (sameResponseAdaptation(responseAdaptation, next)) return
   responseAdaptation = next
@@ -311,18 +322,17 @@ function parseWorkerData(value: unknown): WorkerData {
 
 function parseRequest(value: unknown): Request | undefined {
   if (!isRecord(value) || value.kind !== 'request' || !positiveInteger(value.request_id)
-    || (value.operation !== 'open' && value.operation !== 'recall' && value.operation !== 'remember' && value.operation !== 'close')) return undefined
-  const allowed = value.operation === 'recall'
-    ? ['kind', 'request_id', 'operation', 'query', 'scope', 'limit']
-    : value.operation === 'remember'
-      ? ['kind','request_id','operation','sourceId','sessionId','sequence','text','occurredAt','previousAssistantReply']
-      : ['kind', 'request_id', 'operation']
+    || !['open','recall','remember','close','list','get','correct','forgetEntry','forgetSource','forget','observeSource'].includes(String(value.operation))) return undefined
+  const fields:Record<string,string[]>={recall:['query','scope','limit'],remember:['sourceId','sessionId','sequence','text','occurredAt','previousAssistantReply'],list:['cursor','limit'],get:['id'],correct:['id','expectedVersion','content','userSource'],forgetEntry:['id','expectedVersion'],forgetSource:['ref'],forget:['sourceId'],observeSource:['source_ref','content','topic']}
+  const allowed=['kind','request_id','operation',...(fields[String(value.operation)]??[])]
   if (!hasOnlyKeys(value, allowed)) return undefined
   return value as Request
 }
 
 function codeFor(error: unknown, operation: Request['operation']): PersonalMemoryStoreErrorCode {
   if (error instanceof StoreError) return error.code
+  if (error instanceof z.ZodError) return 'STORE_INVALID_INPUT'
+  if (error instanceof Error && ['STORE_CONFLICT','STORE_NOT_FOUND','STORE_INVALID_INPUT'].includes(error.message)) return error.message as PersonalMemoryStoreErrorCode
   return operation === 'recall' ? 'STORE_RECALL_FAILED' : 'STORE_WRITE_FAILED'
 }
 
@@ -363,4 +373,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(value).every(key => allowed.includes(key))
+}
+
+async function entryOperation(request:Request):Promise<unknown> {
+  if(!memory||!entries)throw new StoreError('STORE_CLOSED')
+  const id=()=>{if(!nonempty(request.id,256))throw new StoreError('STORE_INVALID_INPUT');return request.id}
+  let result:unknown
+  switch(request.operation){
+    case 'observeSource': result=await entries.observeSource(MemoryObservationSchema.parse({source_ref:request.source_ref,content:request.content,...(request.topic===undefined?{}:{topic:request.topic})}));break
+    case 'list': return entries.list(MemoryListOptionsSchema.parse({...(request.cursor===undefined?{}:{cursor:request.cursor}),...(request.limit===undefined?{}:{limit:request.limit})}))
+    case 'get': return entries.get(id())
+    case 'correct': result=await entries.correct(id(),MemoryVersionSchema.parse(request.expectedVersion),z.string().min(1).max(500).parse(request.content),MemorySourceRefSchema.parse(request.userSource));break
+    case 'forgetEntry': result=entries.forgetEntry(id(),MemoryVersionSchema.parse(request.expectedVersion));break
+    case 'forgetSource':
+    case 'forget': {
+      const ref=request.operation==='forget'?request.sourceId:request.ref
+      if(!nonempty(ref,256))throw new StoreError('STORE_INVALID_INPUT')
+      entries.forgetSource(ref)
+      result=request.operation==='forget'?{state:'forgotten',source_id:ref}:null
+      break
+    }
+    default: throw new StoreError('STORE_INVALID_INPUT')
+  }
+  publishResponseAdaptation(memory)
+  return result
 }

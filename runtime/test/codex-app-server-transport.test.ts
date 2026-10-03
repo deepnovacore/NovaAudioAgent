@@ -1033,14 +1033,15 @@ test('work order, API key, workspace, and controls are redacted from progress an
   const workOrder = 'private-work-order-token'
   const finalText = `${workOrder} api-key-sentinel ${workspace}\u0000 useful result`
   const owner = new MemoryAppServerOwner([], {finalText})
-  const progress: unknown[] = []
+  const progress: unknown[] = [],activity:unknown[]=[]
   const transport = createTransport({spawn: async () => owner})
   const result = await transport.run(
     {workOrder},
-    {onProgress: value => { progress.push(value) }},
+    {onProgress: value => { progress.push(value) },onActivity:value=>{activity.push(value)}},
     {expiresAtMs: Date.now() + 5000},
   )
-  const rendered = JSON.stringify({result, progress})
+  assert.equal(activity.length,1)
+  const rendered = JSON.stringify({result, progress,activity})
   assert.equal(rendered.includes(workOrder), false)
   assert.equal(rendered.includes('api-key-sentinel'), false)
   assert.equal(rendered.includes(workspace), false)
@@ -2835,7 +2836,7 @@ class MemoryAppServerOwner {
     }
     this.#send({method: 'item/completed', params: {
       threadId: this.#options.threadId, turnId: 'turn-1',
-      item: {type: 'agentMessage', text: this.#options.echoSteerInFinal && this.#lastSteer !== null
+      item: {id:'public-message-1',type: 'agentMessage', text: this.#options.echoSteerInFinal && this.#lastSteer !== null
         ? `${this.#options.finalText} ${this.#lastSteer}`
         : this.#options.finalText},
     }})
@@ -3274,4 +3275,79 @@ test('a warmed project routes approval to the later work-scoped controller', asy
     await factory.owner?.killTree().catch(() => undefined)
     await factory.owner?.dispose().catch(() => undefined)
   }
+})
+
+test('task authority is checked at the final turn/start and turn/steer write boundary', async () => {
+  const owner=new MemoryAppServerOwner([])
+  const transport=createTransport({spawn:async()=>owner})
+  try {
+    let checks=0
+    const result=await transport.run({workOrder:'must not write'}, {}, {expiresAtMs:Date.now()+5000,beforeWrite:()=>{checks++;throw Error('stale_task')}})
+    assert.equal(checks,1)
+    assert.equal(result.turnStartWritten,false)
+    assert.equal(owner.received.some(message=>message.method==='turn/start'),false)
+  }finally{await transport.close()}
+  const factory=new FakeAppServerOwnerFactory('delayed-turn'),active=createTransport(factory)
+  try{
+    const running=active.run({workOrder:'running'}, {}, {expiresAtMs:Date.now()+10000})
+    await settleUntil(()=>factory.owner!==null,'owner')
+    await factory.owner!.waitForBarrier('turn_start')
+    const result=await active.steer({instruction:'stale direct input'},{expiresAtMs:Date.now()+5000,beforeWrite:()=>{throw Error('stale_task')}})
+    assert.equal(result.written,false)
+    factory.owner!.release('turn_start');await running
+  }finally{await active.close().catch(()=>undefined);await factory.owner?.killTree().catch(()=>undefined);await factory.owner?.dispose().catch(()=>undefined)}
+})
+
+test('public activity redacts before clipping and never forwards filesystem URLs',async()=>{
+ const workOrder='private-work-order-token',activity: {text:string;text_truncated?:boolean}[]=[]
+ const owner=new MemoryAppServerOwner([],{finalText:'file:///private/secrets '+ 'x'.repeat(15965)+workOrder})
+ const transport=createTransport({spawn:async()=>owner})
+ await transport.run({workOrder},{onActivity:event=>{activity.push(event)}},{expiresAtMs:Date.now()+5000})
+ assert.equal(activity.length,1)
+ assert.equal(activity[0]!.text.includes('file:///'),false)
+ assert.equal(activity[0]!.text.includes('private-work'),false)
+ assert.ok(activity[0]!.text.length<=16000)
+})
+
+test('public activity flags clipping caused by expanding redaction',async()=>{
+ const activity:{text:string;text_truncated?:boolean}[]=[],owner=new MemoryAppServerOwner([],{finalText:'e'.repeat(2000)})
+ const transport=createTransport({spawn:async()=>owner})
+ await transport.run({workOrder:'e'},{onActivity:event=>{activity.push(event)}},{expiresAtMs:Date.now()+5000})
+ assert.equal(activity[0]?.text.length,16000)
+ assert.equal(activity[0]?.text_truncated,true)
+})
+
+test('command and MCP observations redact escaped configured secrets at the real transport boundary',async()=>{
+ for(const secret of ['multiline\nprivate instruction','private "quoted" instruction','private \\escaped\\ instruction']){
+  const activity:{kind:string;text:string}[]=[],owner=new MemoryAppServerOwner([],{delayTurnStart:true,finalText:secret+' useful result'})
+  const transport=createTransport({spawn:async()=>owner},{developerInstructions:secret})
+  try{
+   const running=transport.run({workOrder:'observe checks'},{onActivity:event=>{activity.push(event)}},{expiresAtMs:Date.now()+5000})
+   await owner.turnStartReceived.promise
+   for(const item of [
+    {id:'command',type:'commandExecution',status:'completed',command:'run '+secret,aggregatedOutput:secret+' check passed',exitCode:0},
+    {id:'mcp',type:'mcpToolCall',status:'completed',server:secret,tool:secret,result:{content:[{type:'text',text:secret+' observed state'}]}},
+   ])owner.stdout.write(encoder.encode(JSON.stringify({method:'item/completed',params:{threadId:'thread-1',turnId:'turn-1',item}})+'\n'))
+   owner.completeDelayedTurn();assert.equal((await running).classification,'completed')
+   assert.equal(activity.find(event=>event.kind==='message')?.text,'[REDACTED] useful result')
+   const observations=activity.filter(event=>event.kind==='tool').map(event=>JSON.parse(event.text) as Record<string,unknown>)
+   assert.equal(observations.length,2)
+   assert.equal(observations[0]?.command,'run [REDACTED]');assert.equal(observations[0]?.output,'[REDACTED] check passed');assert.equal(observations[0]?.exit_code,0)
+   assert.equal(observations[1]?.server,'[REDACTED]');assert.equal(observations[1]?.tool,'[REDACTED]');assert.equal(observations[1]?.readback,'[REDACTED] observed state')
+  }finally{await transport.close()}
+ }
+})
+
+test('public MCP readback redacts URL query credentials and preserves benign query fields',async()=>{
+ const activity:{kind:string;text:string}[]=[],owner=new MemoryAppServerOwner([],{delayTurnStart:true})
+ const transport=createTransport({spawn:async()=>owner})
+ try{
+  const running=transport.run({workOrder:'observe URL readback'},{onActivity:event=>{activity.push(event)}},{expiresAtMs:Date.now()+5000})
+  await owner.turnStartReceived.promise
+  owner.stdout.write(encoder.encode(JSON.stringify({method:'item/completed',params:{threadId:'thread-1',turnId:'turn-1',item:{id:'mcp-url',type:'mcpToolCall',status:'completed',server:'nova_computer',tool:'browser_snapshot',result:{content:[{type:'text',text:'https://example.test/read?token=synthetic-value&view=summary'}]}}}})+'\n'))
+  owner.completeDelayedTurn();assert.equal((await running).classification,'completed')
+  const readback=activity.filter(event=>event.kind==='tool').map(event=>JSON.parse(event.text) as {readback?:string})[0]?.readback
+  assert.equal(readback,'https://example.test/read?token=[REDACTED]&view=summary')
+  assert.doesNotMatch(JSON.stringify(activity),/synthetic-value/u)
+ }finally{await transport.close()}
 })

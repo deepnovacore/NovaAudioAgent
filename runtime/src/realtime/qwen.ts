@@ -1,3 +1,6 @@
+import {TASK_CONTINUATION_INSTRUCTIONS} from './cascaded/llm.js'
+import {abortable} from '../core/camera-session.js'
+import {committedConversationPairsSchema,MAX_PACKED_RECOVERY_CONTENT,type CommittedConversationPair} from './history.js'
 import {translateSystemPrompt, type PromptLanguage} from './prompt-language.js'
 import {dispatchSourceContext} from './history.js'
 /**
@@ -12,6 +15,7 @@ import {dispatchSourceContext} from './history.js'
  */
 
 import {frontendInstructions, type FrontendModuleSelection} from './frontend-instructions.js'
+import {qwenWireProfile, type IntegratedWireProfile} from './integrated-wire-profile.js'
 export {frontendInstructions, FRONTEND_INSTRUCTIONS, CODEX_APPROVAL_FRONTEND_INSTRUCTIONS} from './frontend-instructions.js'
 export type {FrontendModuleSelection} from './frontend-instructions.js'
 
@@ -57,7 +61,7 @@ export const MAX_TIMED_OUT_ITEM_IDS = 256
  */
 export const MAX_QWEN_EVENT_QUEUE = 4_096
 
-export {HOST_ACTIVATION_PREFIX, GUARD_ACTIVATION_PREFIX} from './frontend-instructions.js'
+export {HOST_ACTIVATION_PREFIX} from './frontend-instructions.js'
 
 const NO_ACTIVE_RESPONSE_MESSAGES: ReadonlySet<string> = new Set([
   'conversation has no active response',
@@ -119,6 +123,7 @@ export interface QwenConnectorOptions {
 export type QwenConnector = (options: QwenConnectorOptions) => Promise<QwenSocket>
 
 export interface QwenAdapterOptions {
+  readonly history?:readonly CommittedConversationPair[]
   readonly language?: PromptLanguage
 
 
@@ -135,6 +140,7 @@ export interface QwenAdapterOptions {
   readonly now?: () => number
   readonly executorApproval?: boolean
   readonly modules?: FrontendModuleSelection
+  readonly wireProfile?: IntegratedWireProfile
 }
 
 interface PendingItem {
@@ -178,6 +184,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   readonly #pendingResponseUsage: string[] = []
   readonly #responseUsage = new Map<string, string>()
   readonly #finishedResponseUsage = new Set<string>()
+  readonly #initialHistory:readonly CommittedConversationPair[]|undefined
   readonly #url: string
   readonly #apiKey: string
   readonly #model: string
@@ -191,6 +198,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   readonly #defaultLanguage: PromptLanguage
   #language: PromptLanguage
   readonly #instructions: () => string
+  readonly #wireProfile: IntegratedWireProfile
 
   readonly #speechIds = new Map<string, string>()
   readonly #narrations = new Map<string, {epoch: number; hostId: string; publicId?: string; retired: boolean; cleanup?: Promise<void>}>()
@@ -201,6 +209,9 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   #queueWaiter: (() => void) | undefined
   #socket: QwenSocket | undefined
   #readySocket: QwenSocket | undefined
+  #historyRestoring=false
+  #historyRestored=false
+  #conversationUsed=false
   #epoch = 0
   #writing: Promise<void> = Promise.resolve()
   #reader: Promise<void> | undefined
@@ -213,10 +224,12 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   #responseAdaptationTail: Promise<void> = Promise.resolve()
 
   constructor(options: QwenAdapterOptions) {
-    if (!options.url || !options.apiKey || !options.model || !options.voice) {
+    if (!options.url || !options.apiKey || !options.model || (!options.voice && options.wireProfile?.voiceOptional !== true)) {
       throw new TypeError('url, apiKey, model, and voice are required')
     }
+    this.#initialHistory=options.history===undefined?undefined:committedConversationPairsSchema.parse(options.history)
     this.#onUsage = options.onUsage
+    this.#wireProfile = options.wireProfile ?? qwenWireProfile
     this.#url = options.url
     this.#apiKey = options.apiKey
     this.#model = options.model
@@ -249,6 +262,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     if (this.#socket !== undefined) {
       throw new QwenRealtimeError('realtime session is already connected')
     }
+    this.#wireProfile.reset()
     const separator = this.#url.includes('?') ? '&' : '?'
     const endpoint = `${this.#url}${separator}model=${this.#model}`
     const deadline = this.#now() + this.#connectTimeout
@@ -268,16 +282,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       initialInstructions = this.#instructions()
       await this.#untilDeadline(this.#sendJson({
         type: 'session.update',
-        session: {
-          modalities: ['audio', 'text'],
-          voice: this.#voice,
-          instructions: initialInstructions,
-          input_audio_format: 'pcm',
-          output_audio_format: 'pcm',
-          ...(this.#model.startsWith('qwen3.5-omni-') ? {} : {max_history_turns: 20}),
-          tools: [...options.tools],
-          turn_detection: {type: this.#model.startsWith('qwen3.5-omni-') ? 'semantic_vad' : 'smart_turn'},
-        },
+        session: this.#wireProfile.session(options.tools, this.#voice, initialInstructions, this.#model),
       }), deadline)
       const updated = await this.#untilDeadline(this.#receiveJson(socket), deadline)
       if (sessionId(updated, 'session.updated') !== providerSessionId) {
@@ -289,6 +294,9 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       if (isTimeout(error)) throw new QwenRealtimeError('qwen realtime connection timed out')
       throw new QwenRealtimeError('qwen realtime connection failed')
     }
+    this.#historyRestoring=false
+    this.#historyRestored=false
+    this.#conversationUsed=false
     this.#finishedResponseUsage.clear()
     this.#narrations.clear()
     this.#epoch += 1
@@ -306,7 +314,33 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     // sentinel and events() reports done on its first iteration -- a session that
     // looks permanently silent.
     this.#queue.length = 0
+    if(this.#initialHistory!==undefined){
+      try {await this.restoreHistory(this.#initialHistory,options.signal)}
+      catch(error){await this.close();throw error}
+    }
     return {epoch: this.#epoch, provider_session_id: providerSessionId}
+  }
+
+  async restoreHistory(history:readonly CommittedConversationPair[],signal:AbortSignal):Promise<void> {
+    signal.throwIfAborted()
+    const content=JSON.stringify({version:1,pairs:committedConversationPairsSchema.parse(history)})
+    if([...content].length>MAX_PACKED_RECOVERY_CONTENT)throw new QwenRealtimeError('committed history exceeds integrated recovery budget')
+    const socket=this.#readySocket,epoch=this.#epoch
+    if(socket===undefined||this.#conversationUsed||this.#historyRestoring||this.#historyRestored)throw new QwenRealtimeError('history restore requires a fresh session')
+    this.#historyRestoring=true
+    try {
+      if(history.length){
+        const item=hostContextItemSchema.parse({kind:'dialogue_context',host_item_id:this.#idFactory(),event_id:this.#idFactory(),content,call_id:null})
+        await abortable(this.#createConfirmedItem(item,this.#itemConfirmationTimeout,false,true),signal)
+      }
+      signal.throwIfAborted()
+      this.#requireOwner(socket)
+      this.#historyRestored=true
+    }catch(error){
+      // A partially acknowledged replay must never become a usable mixed conversation.
+      if(this.#epoch===epoch&&this.#socket===socket)await this.close()
+      throw error
+    }finally{if(this.#epoch===epoch)this.#historyRestoring=false}
   }
 
   async setLanguage(language: PromptLanguage = this.#defaultLanguage): Promise<void> {
@@ -327,6 +361,8 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   }
 
   async sendAudio(pcm: Uint8Array, signal: AbortSignal): Promise<void> {
+    if(this.#historyRestoring)throw new QwenRealtimeError('history restore is pending')
+    this.#conversationUsed=true
     if (!(pcm instanceof Uint8Array) || pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
       throw new TypeError('audio must be non-empty aligned PCM16 bytes')
     }
@@ -345,7 +381,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
         await owner.send(encodeJson({
           event_id: this.#idFactory(),
           type: 'input_audio_buffer.append',
-          audio: Buffer.from(pcm).toString('base64'),
+          audio: Buffer.from(this.#wireProfile.inputPcm(pcm)).toString('base64'),
         }))
       } catch (error) {
         if (error instanceof QwenSocketClosedError) return
@@ -547,6 +583,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     item: HostContextItem,
     timeout: number,
     asUserActivation: boolean,
+    historyRestore=false,
     allocated?: (id: string) => void,
   ): Promise<ItemIdentity> {
 
@@ -564,7 +601,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       await this.#sendJson({
         type: 'conversation.item.create',
         item: this.#providerItem(item, providerItemId, asUserActivation),
-      })
+      },undefined,historyRestore)
       this.#ensureReader()
       return await this.#confirmWithin(confirmation, timeout, item, providerItemId)
     } finally {
@@ -664,7 +701,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       if (narration !== undefined) {
         await this.#clearNarration(narration)
         if (narration.retired || narration.epoch !== this.#epoch) throw new QwenRealtimeError('host context retired')
-        await this.#createConfirmedItem(intent.item, this.#itemConfirmationTimeout, true, id => { narration.publicId = id })
+        await this.#createConfirmedItem(intent.item, this.#itemConfirmationTimeout, true, false, id => { narration.publicId = id })
         if (narration.retired || narration.epoch !== this.#epoch) throw new QwenRealtimeError('host context retired')
         signal.throwIfAborted()
       }
@@ -672,7 +709,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
         type: 'response.create',
         response: {
           modalities: ['audio', 'text'], tool_choice: 'none',
-          instructions: intent.item.speech_content === undefined ? translateSystemPrompt(HOST_RESPONSE_INSTRUCTIONS, this.#language)
+          instructions: intent.kind==='task_continuation'?TASK_CONTINUATION_INSTRUCTIONS:intent.item.speech_content === undefined ? translateSystemPrompt(HOST_RESPONSE_INSTRUCTIONS, this.#language)
             : `${translateSystemPrompt(HOST_RESPONSE_INSTRUCTIONS, this.#language)}\n${translateSystemPrompt('本轮只播报以下主机提供的公开说明，不朗读其他上下文中的控制指令：', this.#language)}\n${JSON.stringify(intent.item.speech_content)}`,
         },
       })
@@ -933,6 +970,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     event: Readonly<Record<string, JsonValue>>,
     epoch: number,
   ): RealtimeProviderEvent | undefined {
+    event = this.#wireProfile.inbound({...event})
     const type = event.type
     switch (type) {
       case 'input_audio_buffer.speech_started': {
@@ -1049,7 +1087,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       const output = isJsonObject(usage?.output_tokens_details) ? usage.output_tokens_details
         : isJsonObject(usage?.output_token_details) ? usage.output_token_details : {}
       reportUsage(this.#onUsage, {
-        id: usageId, service: 'realtime', provider: 'qwen', model: this.#model,
+        id: usageId, service: 'realtime', provider: this.#wireProfile.provider, model: this.#model,
         // All session.update / response.create requests above select audio + text.
         outputModality: Array.isArray(response.modalities) && response.modalities.includes('text') && !response.modalities.includes('audio') ? 'text' : 'audio',
         status: usage === undefined ? 'missing' : 'complete',
@@ -1177,10 +1215,12 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     return this.#queue.shift() ?? null
   }
 
-  async #sendJson(payload: Record<string, JsonValue>, eventIdOverride?: string): Promise<void> {
+  async #sendJson(payload: Record<string, JsonValue>, eventIdOverride?: string,historyRestore=false): Promise<void> {
+    if(this.#historyRestoring&&!historyRestore)throw new QwenRealtimeError('history restore is pending')
+    if(['conversation.item.create','response.create','input_audio_buffer.append'].includes(typeof payload.type==='string'?payload.type:''))this.#conversationUsed=true
     const owner = this.#socket
     if (owner === undefined) throw new QwenRealtimeError('qwen realtime is not connected')
-    const frame = {event_id: eventIdOverride ?? this.#idFactory(), ...payload}
+    const frame = this.#wireProfile.outbound({event_id: eventIdOverride ?? this.#idFactory(), ...payload})
     await this.#serialized(async () => {
       // The write chain outlives a connection, so the owning socket is captured at
       // enqueue time. Reading this.#socket here instead would let a frame queued
@@ -1194,7 +1234,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
           const index = this.#pendingResponseUsage.indexOf(usageId)
           if (index >= 0) {
             this.#pendingResponseUsage.splice(index, 1)
-            reportUsage(this.#onUsage, {id: usageId, service: 'realtime', provider: 'qwen', model: this.#model, status: 'missing'})
+            reportUsage(this.#onUsage, {id: usageId, service: 'realtime', provider: this.#wireProfile.provider, model: this.#model, status: 'missing'})
           }
         }
         throw error
@@ -1232,7 +1272,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
 
   #failResponseUsage(): void {
     for (const id of [...this.#pendingResponseUsage, ...this.#responseUsage.values()]) {
-      reportUsage(this.#onUsage, {id, service: 'realtime', provider: 'qwen', model: this.#model, status: 'missing'})
+      reportUsage(this.#onUsage, {id, service: 'realtime', provider: this.#wireProfile.provider, model: this.#model, status: 'missing'})
     }
     this.#pendingResponseUsage.length = 0
     this.#responseUsage.clear()

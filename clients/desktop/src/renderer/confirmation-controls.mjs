@@ -20,16 +20,18 @@ export class ConfirmationDecisionController {
   #proposalId = null
   #busy = false
   #hostBusy = false
+  #conversationId = null
 
   constructor({send}) {
     if (typeof send !== 'function') throw new TypeError('send is required')
     this.#send = send
   }
 
-  sync({pending, proposalId, busy = false}) {
+  sync({pending, proposalId, busy = false, conversationId = null}) {
     const next = pending === true && validProposalId(proposalId) ? proposalId : null
     if (next !== this.#proposalId) this.#busy = false
     this.#proposalId = next
+    this.#conversationId = conversationId
     this.#hostBusy = busy === true
     if (next === null || busy === false) this.#busy = false
   }
@@ -43,6 +45,7 @@ export class ConfirmationDecisionController {
     const proposalId = this.#proposalId
     const sent = this.#send({
       type: 'project.confirmation_decision',
+      ...(this.#conversationId ? {conversation_id: this.#conversationId} : {}),
       proposal_id: proposalId,
       confirmed,
     })
@@ -63,6 +66,7 @@ export class CodexApprovalDecisionController {
   #executor = null
   #busy = false
   #hostBusy = false
+  #conversationId = null
   #allowed = ['accept', 'decline']
 
   constructor({send}) {
@@ -70,11 +74,12 @@ export class CodexApprovalDecisionController {
     this.#send = send
   }
 
-  sync({pending, approvalId, executor = null, busy = false, allowedDecisions = ['accept', 'decline']}) {
+  sync({pending, approvalId, executor = null, busy = false, conversationId = null, allowedDecisions = ['accept', 'decline']}) {
     const next = pending === true && validProposalId(approvalId) ? approvalId : null
     if (next !== this.#approvalId) this.#busy = false
     this.#approvalId = next
     this.#executor = next === null ? null : executor
+    this.#conversationId = conversationId
     this.#hostBusy = busy === true
     this.#allowed = Array.isArray(allowedDecisions) ? [...allowedDecisions] : ['decline']
     if (next === null || busy === false) this.#busy = false
@@ -93,6 +98,7 @@ export class CodexApprovalDecisionController {
     if (!this.#allowed.includes(approved ? scope === 'session' ? 'acceptForSession' : 'accept' : 'decline')) return false
     const sent = this.#send({
       type: 'executor.approval_decision',
+      ...(this.#conversationId ? {conversation_id: this.#conversationId} : {}),
       executor: this.#executor,
       approval_id: this.#approvalId,
       approved,
@@ -144,12 +150,14 @@ const APPROVAL_BASE_KEYS = [
 export function parseCodexApprovalMessage(message) {
   if (message === null || typeof message !== 'object' || Array.isArray(message)) return null
   const keys = Object.keys(message).sort().join(',')
+  if (message.conversation_id !== undefined && !validText(message.conversation_id, 128)) return null
+  const scopedKeys = message.conversation_id === undefined ? [] : ['conversation_id']
   const pending = message.pending_approval
   const expectedKeys = pending === true
-    ? [...APPROVAL_BASE_KEYS, 'pending_approval_id',
+    ? [...APPROVAL_BASE_KEYS, ...scopedKeys, 'pending_approval_id',
       ...(message.allowed_decisions === undefined ? [] : ['allowed_decisions']),
       ...(message.work === undefined ? [] : ['work'])].sort().join(',')
-    : [...APPROVAL_BASE_KEYS].sort().join(',')
+    : [...APPROVAL_BASE_KEYS, ...scopedKeys].sort().join(',')
   if (
     keys !== expectedKeys
     || message.type !== EXECUTOR_APPROVAL

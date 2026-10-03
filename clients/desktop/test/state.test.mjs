@@ -138,7 +138,11 @@ test('describes each project action; a proposal without one keeps the generic la
 test('explains incomplete configuration on the visible status line', () => {
   const state = deriveOrbState({ ...base, backendState: 'configuration_required' })
 
-  assert.equal(state.statusLine, '配置不完整')
+  assert.equal(state.statusLine, '配置不完整 · 点此设置')
+  assert.equal(state.statusAction, 'setup')
+  // Only this line acts; a pending confirmation keeps its own copy and no action.
+  assert.equal(deriveOrbState(base).statusAction, null)
+  assert.equal(deriveOrbState({ ...base, backendState: 'configuration_required', pendingConfirmation: true }).statusAction, null)
 })
 
 test('uses a readable fallback instead of leaking undefined for a future state', () => {

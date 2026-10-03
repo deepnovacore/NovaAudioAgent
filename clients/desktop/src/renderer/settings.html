@@ -6,6 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src data:; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>设置</title>
     <link rel="stylesheet" href="./settings.css">
+    <link rel="stylesheet" href="./feishu-guide.css">
   </head>
   <body>
     <header>
@@ -13,6 +14,7 @@
         <span class="eyebrow">NOVA</span>
         <h1>设置</h1>
       </div>
+      <div><p id="startup-status" role="status"></p><button id="startup-retry" type="button" hidden>重试</button></div>
       <span id="status" aria-live="polite"></span>
     </header>
     <nav class="settings-nav" id="settings-nav" aria-label="设置分类">
@@ -20,6 +22,8 @@
       <button type="button" class="nav-item" id="category-usage" data-category="usage" aria-current="false" tabindex="-1">用量</button>
       <button type="button" class="nav-item" id="category-pipeline" data-category="pipeline" aria-current="false" tabindex="-1">语音管线</button>
       <button type="button" class="nav-item" id="category-capabilities" data-category="capabilities" aria-current="false" tabindex="-1">执行器与 MCP</button>
+      <button type="button" class="nav-item" id="category-im" data-category="im" aria-current="false" tabindex="-1">IM 渠道</button>
+      <button type="button" class="nav-item" id="category-connections" data-category="connections" aria-current="false" tabindex="-1">连接与权限</button>
       <button type="button" class="nav-item" id="category-knowledge" data-category="knowledge" aria-current="false" tabindex="-1">知识库</button>
       <button type="button" class="nav-item" id="category-secrets" data-category="secrets" aria-current="false" tabindex="-1">API 密钥</button>
       <button type="button" class="nav-item" id="category-phone" data-category="phone" aria-current="false" tabindex="-1">连接 iPhone</button>
@@ -30,9 +34,13 @@
         <h2>语言 / Language</h2>
         <label for="language">语言 / Language</label>
         <select id="language"><option value="zh-CN">简体中文</option><option value="en">English</option></select>
-        <p class="hint">首次按系统首选语言设置；之后保留你的选择。界面语言将在重新打开 App 后生效。</p>
-        <p class="hint">AI 仅切换 system prompt 的语言，不保证回复始终使用该语言；不自动识别或切换语言，也不更换语音模型或音色。</p>
-        <p class="hint">AI 提示词在保存并重启后台后生效。</p>
+        <p id="language-restart-hint" class="hint" role="status" hidden>保存并重启后生效。</p>
+      </section>
+      <section class="setting-section" id="startup-view-section">
+        <h2>启动时打开</h2>
+        <label for="startup-view">默认界面</label>
+        <select id="startup-view"><option value="orb">Orb（悬浮球）</option><option value="workbench">Workbench（工作台）</option><option value="last">上次使用</option></select>
+        <p class="hint">下次启动时生效；上次使用会记住最后打开的悬浮球或工作台。</p>
       </section>
       <section class="setting-section" id="phone-connection-section">
         <div class="phone-heading"><div><h2>连接 iPhone</h2><p>将 iPhone 安全连接到这台 Nova。</p></div><span class="phone-badge" id="phone-state">私人设备连接</span></div>
@@ -99,8 +107,12 @@
           <div id="capabilities-editor"></div>
         </div>
       </section>
+      <section class="setting-section" id="im-section" hidden><h2>IM 渠道</h2><p class="hint">连接你使用的聊天工具，选择同步范围与提醒方式。</p><div id="im-connection"></div><p id="im-error" role="status" aria-live="polite"></p></section>
+      <section class="setting-section" id="connections-section" hidden><h2>连接与权限</h2><p class="hint">只读取你授权的目录和会话。正文可能交由设置中的模型服务处理；读取权限不授予修改或发送权限。</p><div id="connections-panel"></div><p id="connections-error" role="status" aria-live="polite"></p></section>
       <section class="setting-section" id="knowledge-section">
         <h2>知识库配置</h2>
+        <label class="toggle-row">文字回答前查找相关记忆<input id="memory-prerecall-enabled" type="checkbox" role="switch" aria-describedby="memory-prerecall-hint"></label>
+        <p class="hint" id="memory-prerecall-hint">默认关闭，文字对话仍可按需回忆；语音使用记忆摘要。保存并重启后生效。</p>
         <p class="hint">在「执行器与 MCP」中启用知识库，保存并重启后生效。文档保存在本机，向量计算与回答会使用所选模型服务。</p>
         <div class="field"><label for="embeddingProvider">向量服务</label><select id="embeddingProvider"><option value="dashscope">DashScope</option></select></div>
         <div class="field"><label for="embeddingModel">向量模型</label><input id="embeddingModel" type="text"></div>
@@ -162,7 +174,7 @@
             <option value="thorough" title="澄清时最多提出 5 个问题。">充分（最多 5 个问题）</option>
           </select>
         </div>
-        <label class="field"><input type="checkbox" id="generatePlan"> 执行前生成计划</label>
+        <label class="toggle-row"><input type="checkbox" role="switch" id="generatePlan"> 执行前生成计划</label>
         <p class="hint">关闭后直接整理工作单，仍保留必要的澄清和操作确认。</p>
         <fieldset id="plan-readback" class="segmented compact-segmented segmented-readback">
           <legend>规划回读</legend>
@@ -246,7 +258,7 @@
             <input type="radio" name="pipelineMode" value="integrated">
             <span class="option">
               <span class="option-name">集成式</span>
-              <span class="option-note">一套 Qwen 实时模型完成语音理解与回复</span>
+              <span class="option-note">一套实时模型完成语音理解与回复</span>
             </span>
           </label>
           <label class="choice">
@@ -259,16 +271,18 @@
         </fieldset>
         <section id="integrated-pipeline">
           <div class="pipeline-card">
-            <h3>Qwen 集成实时</h3>
+            <h3>集成式实时语音</h3>
             <div class="field">
               <label for="integratedProvider">服务商</label>
               <select id="integratedProvider">
                 <option value="qwen">Qwen（通义）</option>
+                <option value="stepfun">StepFun（阶跃星辰）· 预览</option>
               </select>
             </div>
             <div class="field">
-              <label for="integratedModel">Qwen 实时模型</label>
+              <label for="integratedModel">实时模型</label>
               <select id="integratedModel">
+                <option value="qwen-audio-3.1-realtime-plus">Qwen Audio 3.1 Plus</option>
                 <option value="qwen-audio-3.0-realtime-plus">Qwen Audio 3.0 Plus</option>
                 <option value="qwen-audio-3.0-realtime-flash">Qwen Audio 3.0 Flash</option>
                 <option value="qwen3.5-omni-flash-realtime">Qwen3.5 Omni Flash Realtime</option>
@@ -276,7 +290,7 @@
               </select>
             </div>
             <div class="field">
-              <label for="integratedVoicePreset">Qwen 语音音色</label>
+              <label for="integratedVoicePreset">语音音色</label>
               <div class="voice-picker">
                 <select id="integratedVoicePreset"></select>
                 <input type="text" id="integratedVoiceCustom" maxlength="64" aria-label="Qwen 自定义音色 ID" hidden autocomplete="off" spellcheck="false" placeholder="输入复刻或自定义音色 ID">
@@ -294,6 +308,23 @@
                 <option value="volcengine">火山引擎 ASR</option>
               </select>
             </div>
+            <section aria-label="声纹验证">
+              <h4>声纹验证</h4>
+              <p class="hint">声纹功能仅支持火山引擎 ASR。</p>
+              <div class="field"><label for="voiceprint-upload-url">声纹上传服务地址</label><input id="voiceprint-upload-url" type="url" placeholder="HTTPS" autocomplete="off"></div>
+              <p id="voiceprint-health" class="hint" role="status"></p>
+              <div id="voiceprint-controls" hidden>
+                <p class="hint">请在安静环境下独自朗读 12 秒。录音将上传至配置的服务和火山引擎用于注册；注册后清理临时录音，声纹保留在您的火山应用中。</p>
+                <p class="hint">录音期间会暂停对话。声纹服务不可用时，自动停用声纹验证。</p>
+                <p id="voiceprint-reading-label">请自然朗读下面这段话：</p>
+                <blockquote id="voiceprint-reading" aria-labelledby="voiceprint-reading-label">今天的天气很晴朗，窗外的树叶随风轻轻摇动。我准备好开始新的工作，也愿意慢慢讲清楚自己的想法。</blockquote>
+                <p class="hint">保持平时说话的语速和音量，不要耳语或模仿音色。读完后如仍在录音，可从头再读一遍。</p>
+                <p id="voiceprint-identity" class="hint"></p>
+                <label class="toggle-row"><input id="voiceprint-enabled" type="checkbox" role="switch">只接收已注册说话人的语音</label>
+                <div class="actions"><button id="voiceprint-register" type="button">录制 12 秒并注册</button><button id="voiceprint-cancel" type="button" hidden>取消录音</button></div>
+              </div>
+              <p id="voiceprint-status" class="hint" role="status" aria-live="polite"></p>
+            </section>
           </div>
           <div class="pipeline-card">
             <h3>2. 对话模型</h3>
@@ -339,6 +370,11 @@
         </summary>
         <div class="secret-content">
           <p id="keyring-warning" class="warning" hidden>密钥将以明文保存(系统未提供钥匙串)</p>
+          <div class="connections-tabs secret-tabs" role="tablist" aria-label="密钥分类">
+            <button type="button" id="secret-tab-models" role="tab" aria-selected="true" aria-controls="secret-panel-models">模型与语音</button>
+            <button type="button" id="secret-tab-connections" role="tab" aria-selected="false" aria-controls="secret-panel-connections" tabindex="-1">搜索与应用连接</button>
+          </div>
+          <div id="secret-panel-models" role="tabpanel" aria-labelledby="secret-tab-models">
           <div class="secret" data-key="dashscopeApiKey">
             <label for="dashscopeApiKey">DashScope</label>
             <span class="badge" id="badge-dashscopeApiKey">未设置</span>
@@ -347,13 +383,21 @@
             <button type="button" class="clear" data-key="dashscopeApiKey">清除</button>
             <a class="key-link" href="https://bailian.console.aliyun.com/?apiKey=1&amp;tab=model" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
           </div>
-          <div class="secret" data-key="tavilyApiKey">
-            <label for="tavilyApiKey">Tavily</label>
-            <span class="badge" id="badge-tavilyApiKey">未设置</span>
-            <span class="key-usage" id="usage-tavilyApiKey">当前未使用</span>
-            <input type="password" id="tavilyApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
-            <button type="button" class="clear" data-key="tavilyApiKey">清除</button>
-            <a class="key-link" href="https://app.tavily.com/" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+          <div class="secret" data-key="stepfunApiKey">
+            <label for="stepfunApiKey">StepFun</label>
+            <span class="badge" id="badge-stepfunApiKey">未设置</span>
+            <span class="key-usage" id="usage-stepfunApiKey">当前未使用</span>
+            <input type="password" id="stepfunApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="stepfunApiKey">清除</button>
+            <a class="key-link" href="https://platform.stepfun.com/interface-key" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+          </div>
+          <div class="secret" data-key="openrouterApiKey">
+            <label for="openrouterApiKey">OpenRouter · Jev</label>
+            <span class="badge" id="badge-openrouterApiKey">未设置</span>
+            <span class="key-usage" id="usage-openrouterApiKey">当前未使用</span>
+            <input type="password" id="openrouterApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="openrouterApiKey">清除</button>
+            <a class="key-link" href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
           </div>
           <div class="secret" data-key="deepseekApiKey">
             <label for="deepseekApiKey">DeepSeek（官方）</label>
@@ -378,6 +422,24 @@
             <input type="password" id="doubaoBigmodelApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
             <button type="button" class="clear" data-key="doubaoBigmodelApiKey">清除</button>
             <a class="key-link" href="https://console.volcengine.com/speech/new/setting/apikeys" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+          </div>
+          </div>
+          <div id="secret-panel-connections" role="tabpanel" aria-labelledby="secret-tab-connections" hidden>
+          <div class="secret" data-key="composioApiKey">
+            <label for="composioApiKey">Composio</label>
+            <span class="badge" id="badge-composioApiKey">未设置</span>
+            <span class="key-usage" id="usage-composioApiKey">应用连接；修改后重启运行时</span>
+            <input type="password" id="composioApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="composioApiKey">清除并停用</button>
+          </div>
+          <div class="secret" data-key="tavilyApiKey">
+            <label for="tavilyApiKey">Tavily</label>
+            <span class="badge" id="badge-tavilyApiKey">未设置</span>
+            <span class="key-usage" id="usage-tavilyApiKey">当前未使用</span>
+            <input type="password" id="tavilyApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="tavilyApiKey">清除</button>
+            <a class="key-link" href="https://app.tavily.com/" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+          </div>
           </div>
         </div>
       </details>

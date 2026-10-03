@@ -416,3 +416,46 @@ test('speech bubble appears before transcript final and streaming updates retain
   assert.equal(bubbles.items[0].expanded, false)
   await bubbles.clear()
 })
+
+
+test('interruption immediately removes hovered speech, keeps progress, and rejects late captions', async () => {
+  const cancelled = []
+  const bubbles = createProgressBubbleController({reserveBubbleArea: async () => ({}), render() {},
+    schedule: () => 1, cancel: timer => cancelled.push(timer)})
+  await bubbles.push({delegateId: 'work', summary: '任务仍在执行', level: 'milestone'})
+  const reply = {kind: 'conversation', delegateId: 'reply-1', summary: '旧播报', level: 'milestone'}
+  await bubbles.push(reply)
+  bubbles.pause(bubbles.items[0].key)
+  const clearing = bubbles.clearConversation()
+  assert.deepEqual(bubbles.items.map(item => item.summary), ['任务仍在执行'])
+  await clearing
+  assert.equal(await bubbles.push({...reply, summary: '迟到的旧播报'}), false)
+  await bubbles.push({...reply, delegateId: 'reply-2', summary: '新回复'})
+  assert.deepEqual(bubbles.items.map(item => item.summary), ['新回复', '任务仍在执行'])
+  await bubbles.clear()
+})
+
+test('interruption fences a pending native reservation and queued speech without losing queued progress', async () => {
+  let release
+  let held = false
+  const shown = []
+  const bubbles = createProgressBubbleController({reserveBubbleArea: () => held
+    ? new Promise(resolve => {release = resolve}) : Promise.resolve({}),
+    render: items => shown.push(items.map(item => item.summary)), schedule: () => 1, cancel() {}})
+  await bubbles.push({delegateId: 'work', summary: '已有任务', level: 'milestone'})
+  held = true
+  const reply = {kind: 'conversation', delegateId: 'reply-1', summary: '不能复活', level: 'milestone'}
+  const pending = bubbles.push(reply)
+  await Promise.resolve()
+  assert.equal(typeof release, 'function')
+  const queued = bubbles.push({...reply, summary: '排队旧字幕'})
+  const progress = bubbles.push({delegateId: 'work-2', summary: '新任务进度', level: 'milestone'})
+  const clearing = bubbles.clearConversation()
+  assert.deepEqual(bubbles.items.map(item => item.summary), ['已有任务'])
+  held = false
+  release({})
+  await Promise.all([pending, queued, progress, clearing])
+  assert.ok(shown.every(summaries => !summaries.includes('不能复活') && !summaries.includes('排队旧字幕')))
+  assert.deepEqual(bubbles.items.map(item => item.summary), ['新任务进度', '已有任务'])
+  await bubbles.clear()
+})

@@ -37,14 +37,14 @@ test('second-instance launch wakes sleeping or blocked audio before settings dis
         assert.equal(s.runtime.state, state)
         const epoch = s.runtime.epoch, shown = s.shown(), muted = s.runtime.muted
         const opened = []
-        const requested = new Function('wakeWord', 'argv', 'shouldOpenSettings', 'activeLaunchId', 'openSettingsWindow', `
+        const requested = new Function('wakeWord', 'argv', 'shouldOpenSettings', 'activeLaunchId', 'openSettingsWindow', 'requestPresentation', 'mainWindow', `
           let openSettingsRequested = false
           ;(() => {${body}})()
           return openSettingsRequested
         `)(s.runtime, argv, shouldOpenSettings, activeLaunchId, id => {
           assert.equal(s.runtime.state, 'active')
           opened.push(id)
-        })
+        }, () => {}, {show() {}, focus() {}})
         assert.equal(s.runtime.state, 'active')
         assert.equal(s.runtime.epoch, epoch + 1)
         assert.equal(s.shown(), shown + 1)
@@ -397,66 +397,27 @@ test('the idle timeout asks for the resting kind of sleep, not the hiding kind',
   assert.deepEqual(reasons, ['idle'])
 })
 
-test('manual hide asks for the hiding kind of sleep', () => {
+test('manual hide requests host background mode without waking or mutating the window', () => {
   const source = readFileSync(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const body = source.match(/function hideOrb\(\) \{([\s\S]*?)\n\}/)[1]
-  const reasons = []
-  new Function('wakeWord', 'mainWindow', body)(
-    {enabled: true, state: 'active', sleep: reason => { reasons.push(reason); return true }},
-    {hide: () => assert.fail('a successful sleep owns the screen')},
-  )
-  // Without this the tray and the global shortcut would only shrink the orb to
-  // a bubble, which is not what "hide" means to someone who just asked for it.
-  assert.deepEqual(reasons, ['manual'])
+  const requests=[]
+  new Function('requestPresentation',body)(mode=>requests.push(mode))
+  assert.deepEqual(requests,['background'])
 })
-
-test('manual hide falls back when sleep is unavailable', () => {
-  const source = readFileSync(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
-  const body = source.match(/function hideOrb\(\) \{([\s\S]*?)\n\}/)[1]
-  for (const wakeWord of [undefined, {enabled: false}, {enabled: true, state: 'active', sleep: () => false}]) {
-    let hidden = 0
-    new Function('wakeWord', 'mainWindow', body)(wakeWord, {hide: () => hidden++})
-    assert.equal(hidden, 1)
-  }
-  let hidden = 0
-  new Function('wakeWord', 'mainWindow', body)({enabled: true, state: 'active', sleep: () => true}, {hide: () => hidden++})
-  assert.equal(hidden, 0)
+test('tray and shortcut request workbench on explicit return', () => {
+  const source=readFileSync(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+  const trayBody=source.match(/function createTray\(\) \{([\s\S]*?)\n\}/)[1]
+  const handlers=[],requests=[];let menu,visible=true,hidden=0
+  class Tray{setToolTip(){}setContextMenu(value){menu=value}on(event,callback){if(event==='click')handlers.push(callback)}}
+  const window={isVisible:()=>visible}
+  new Function('Tray','trayImage','Menu','app','mainWindow','requestPresentation','hideOrb','t',trayBody)(Tray,()=>null,{buildFromTemplate:value=>value},{},window,mode=>requests.push(mode),()=>hidden++,value=>value)
+  for(const item of menu.filter(item=>item.label&&item.label!=='退出'))item.click()
+  assert.deepEqual(requests,['workbench','orb','background']);requests.length=0
+  const shortcut=source.match(/globalShortcut\.register\('CommandOrControl\+Shift\+Space', \(\) => \{([\s\S]*?)\n  \}\)/)[1]
+  handlers.push(()=>new Function('mainWindow','requestPresentation','hideOrb',shortcut)(window,mode=>requests.push(mode),()=>hidden++))
+  for(const handler of handlers){visible=true;handler();visible=false;handler()}
+  assert.equal(hidden,2);assert.deepEqual(requests,['workbench','workbench'])
 })
-
-test('blocked manual hide wakes recovery and tray/shortcut dispatch through hideOrb', () => {
-  const source = readFileSync(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
-  const hideBody = source.match(/function hideOrb\(\) \{([\s\S]*?)\n\}/)[1]
-  let woke = 0
-  new Function('wakeWord', 'mainWindow', hideBody)({
-    enabled: true, state: 'blocked', wake: () => woke++,
-    sleep: () => assert.fail('blocked state must recover'),
-  }, {hide: () => assert.fail('blocked state must stay visible')})
-  assert.equal(woke, 1)
-
-  const trayBody = source.match(/function createTray\(\) \{([\s\S]*?)\n\}/)[1]
-  const handlers = []
-  class Tray {
-    setToolTip() {}
-    setContextMenu() {}
-    on(event, callback) { if (event === 'click') handlers.push(callback) }
-  }
-  let visible = true, hidden = 0
-  const window = {isVisible: () => visible}
-  const wakeWord = {wake: () => woke++}
-  new Function('Tray', 'trayImage', 'Menu', 'app', 'mainWindow', 'wakeWord', 'hideOrb', 't', trayBody)(
-    Tray, () => null, {buildFromTemplate: value => value}, {}, window, wakeWord, () => hidden++, value => value,
-  )
-  const shortcut = source.match(/globalShortcut\.register\('CommandOrControl\+Shift\+Space', \(\) => \{([\s\S]*?)\n  \}\)/)[1]
-  handlers.push(() => new Function('mainWindow', 'wakeWord', 'hideOrb', shortcut)(window, wakeWord, () => hidden++))
-  assert.equal(handlers.length, 2)
-  for (const handler of handlers) {
-    visible = true; handler()
-    visible = false; handler()
-  }
-  assert.equal(hidden, 2)
-  assert.equal(woke, 3)
-})
-
 
 test('explicit bubble sleep works without a detector and resumes without changing mute', () => {
   for (const status of ['off', 'loading', 'ready', 'error']) {
@@ -497,4 +458,22 @@ test('late sleeping audio after stop cannot reach a terminated wake worker', () 
   assert.equal(s.runtime.accept({epoch, pcm: new Uint8Array(640)}), false)
   assert.equal(s.runtime.status, 'off')
   assert.equal(s.runtime.pending, false)
+})
+
+test('a workbench reached from a sleeping orb wakes the detector without re-showing, while the orb stays asleep', async () => {
+  const source = readFileSync(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf("ipcMain.handle('nova:personal:presentation',")
+  const body = source.slice(start, source.indexOf('\n  })', start) + 5)
+  for (const [mode, expected] of [['orb', 'sleeping'], ['workbench', 'active']]) {
+    const s = setup()
+    s.report()
+    assert.equal(s.runtime.sleep('bubble'), true)
+    const shown = s.shown(), sender = {}
+    let handler
+    new Function('ipcMain', 'mainWindow', 'setPersonalCollapsed', 'wakeWord', `let presentationMode='orb';const settingsReady=false,settingsWriter=null,currentSettings={},acceptance=null,acceptanceWakeSettings=()=>({});${body}`)(
+      {handle: (_name, callback) => { handler = callback }}, {webContents: sender, isVisible: () => true, show() {}, focus() {}}, () => {}, s.runtime)
+    await handler({sender}, mode, false)
+    assert.equal(s.runtime.state, expected, mode)
+    assert.equal(s.shown(), shown, 'an unactivated presentation change must not raise the window')
+  }
 })

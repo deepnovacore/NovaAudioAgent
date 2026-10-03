@@ -1046,13 +1046,13 @@ test('the orb markup hosts the particle canvas instead of gradient spans', async
   assert.match(html, /id="state-label"/)
 })
 
-test('the orb rail carries the mute toggle and settings buttons', async () => {
+test('the orb rail carries the mute toggle and leaves settings to the context menu', async () => {
   const html = await readFile(new URL('../src/renderer/index.html', import.meta.url), 'utf8')
   assert.match(html, /<nav id="orb-rail" aria-label="快捷操作">/)
   assert.match(html, /<button id="mute-toggle" title="切换闭麦（Ctrl\+M）" type="button" aria-label="闭麦" aria-pressed="false" disabled>/)
   assert.match(html, /<button id="speaker-toggle" type="button" aria-label="关闭 Nova 声音" aria-pressed="true"/)
   assert.match(html, /<button id="camera-toggle" type="button" aria-label="打开摄像头" aria-pressed="false" disabled>/)
-  assert.match(html, /<button id="open-settings" type="button" aria-label="设置">/)
+  assert.doesNotMatch(html, /id="open-settings"/)
 
   const css = await readFile(new URL('../src/renderer/index.css', import.meta.url), 'utf8')
   assert.match(css, /#orb-rail \{/)
@@ -1061,6 +1061,13 @@ test('the orb rail carries the mute toggle and settings buttons', async () => {
   assert.match(css, /body:hover #orb-rail,\n#orb-rail:has\(:focus-visible\) \{/)
   const fixture = await readFile(new URL('./fixtures/orb-transparency.html', import.meta.url), 'utf8')
   assert.match(fixture, /id="orb-rail"/)
+})
+
+test('the orb task summary only displaces the project label and steps aside for a confirmation', async () => {
+  const css = await readFile(new URL('../src/renderer/workbench.css', import.meta.url), 'utf8')
+  assert.match(css, /#shell:has\(\.personal-orb-task:not\(\[hidden\]\)\) #codex-label\[data-mode="project"\]\{display:none\}/)
+  assert.doesNotMatch(css, /personal-orb-task:not\(\[hidden\]\)\) #codex-label\{/)
+  assert.match(css, /#shell:has\(#codex-label\[data-mode="confirmation"\]\) \.personal-orb-task\{display:none\}/)
 })
 
 test('the stylesheet drops the gradient sphere but keeps the accessibility overrides', async () => {
@@ -1089,7 +1096,7 @@ test('the stylesheet drops the gradient sphere but keeps the accessibility overr
   assert.match(contrast, /#orb::after \{/)
   assert.match(contrast, /\[data-state="error"\] #orb::after/)
   assert.match(contrast, /\[data-state="permission-denied"\] #orb::after/)
-  assert.match(contrast, /\.capture-indicator \{ z-index: 1/)
+  assert.match(contrast, /\.capture-indicator, \.unread-indicator \{ z-index: 1/)
 })
 
 test('the renderer feeds the visual from the same render pass as data-state', async () => {
@@ -1732,7 +1739,7 @@ test('the renderer feeds microphone and playback amplitude into the visual', asy
 
   // Both capture paths land in detectLocalOnset, so one call covers browser and
   // native microphones alike.
-  assert.match(source, /visual\.setLevel\(measurePcmLevel\(pcm\)\)/)
+  assert.match(source, /const level = measurePcmLevel\(pcm\)\n  visual\.setLevel\(level\)/)
   assert.match(source, /getSpeakingLevel: \(\) => getPlaybackLevel\(\)/)
   assert.match(source, /new PlaybackMeter\(/)
   assert.match(source, /new NativeLevelEnvelope\(/)

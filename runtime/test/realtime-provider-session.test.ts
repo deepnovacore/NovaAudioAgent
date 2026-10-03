@@ -548,3 +548,55 @@ test('provider session forwards edited text and draft ASR with connection cancel
   await session.close()
   await assert.rejects(session.submitText('edited'))
 })
+
+test('required async adaptation is refreshed before responses and revoked context is cleared',async()=>{
+ const provider=new FakeProvider();let content:string|null='Authorized memory',revision=1
+ const session=new RealtimeProviderSession(provider,{responseAdaptation:()=>Promise.resolve({revision,content}),responseAdaptationRequired:()=>true})
+ await session.connect();assert.equal(provider.responseAdaptations.at(-1)?.content,'Authorized memory')
+ content=null;revision++;await session.ensureResponse()
+ assert.deepEqual(provider.responseAdaptations.at(-1),{revision:2,content:null});await session.close()
+})
+
+test('required memory adaptation failure closes the session and blocks response using stale memory',async()=>{
+ const provider=new FakeProvider();let content='Authorized memory',revision=1
+ const session=new RealtimeProviderSession(provider,{responseAdaptation:()=>({revision,content}),responseAdaptationRequired:()=>true})
+ await session.connect();provider.adaptationFailure=Error('replacement_failed');content='';revision++
+ await assert.rejects(session.ensureResponse());assert.equal(provider.ensured,0);assert.equal(session.state,'closed')
+})
+
+test('an asynchronous memory read for an aborted session never replaces a later session context',async()=>{
+ const provider=new FakeProvider(),gate=deferred<{revision:number;content:string|null}>();let delayed=false
+ const session=new RealtimeProviderSession(provider,{responseAdaptation:()=>delayed?gate.promise:Promise.resolve({revision:1,content:'current'}),responseAdaptationRequired:()=>true})
+ await session.connect();delayed=true
+ const pending=session.ensureResponse();await new Promise(resolve=>setTimeout(resolve,0));await session.close()
+ gate.resolve({revision:2,content:'stale'});await assert.rejects(pending)
+ assert.ok(!provider.responseAdaptations.some(item=>item.content==='stale'))
+})
+
+for (const mode of ['text','audio'] as const) {
+ test(`required memory refresh gates ${mode} input and blocks it on read failure`,async()=>{
+  let sentText=0, delayed=false
+  let rejectRead: (error:Error)=>void = ()=>undefined
+  const gate={promise:new Promise<{revision:number;content:string|null}>((_,reject)=>{rejectRead=reject})}
+  const provider=Object.assign(new FakeProvider(),{submitText:()=>{sentText++;return Promise.resolve()}})
+  const session=new RealtimeProviderSession(provider,{responseAdaptationRequired:()=>true,responseAdaptation:()=>delayed?gate.promise:Promise.resolve({revision:1,content:'allowed'})})
+  await session.connect();delayed=true
+  const pending=mode==='text'?session.submitText('hello'):session.sendAudio(new Uint8Array(2))
+  await new Promise<void>(resolve=>setImmediate(resolve))
+  assert.equal(sentText,0);assert.equal(provider.sentAudio.length,0)
+  rejectRead(Error('fresh_authorization_unavailable'))
+  await assert.rejects(pending);assert.equal(session.state,'closed')
+  assert.equal(sentText,0);assert.equal(provider.sentAudio.length,0)
+ })
+}
+
+
+test('requested-response audio does not read memory per frame but response admission revalidates it',async()=>{
+ const provider=Object.assign(new FakeProvider(),{userResponseMode:'requested' as const})
+ let reads=0,fail=false
+ const session=new RealtimeProviderSession(provider,{responseAdaptationRequired:()=>true,responseAdaptation:()=>{reads++;if(fail)throw Error('revoked');return {revision:1,content:'allowed'}}})
+ await session.connect();const before=reads;fail=true
+ for(let i=0;i<50;i++)await session.sendAudio(new Uint8Array(640))
+ assert.equal(provider.sentAudio.length,50);assert.equal(reads,before)
+ await assert.rejects(session.ensureResponse());assert.equal(provider.ensured,0);assert.equal(session.state,'closed')
+})

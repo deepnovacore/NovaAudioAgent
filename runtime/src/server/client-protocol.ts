@@ -1,3 +1,4 @@
+import {canonicalJson} from '../text/canonical-json.js'
 import {z} from 'zod'
 import {DesktopProtocolError, MAX_DESKTOP_JSON_BYTES, parseDesktopControl, type DesktopControl} from '../desktop.js'
 import {decodeAudioFrame} from '../desktop/desktop-wire.js'
@@ -82,7 +83,7 @@ export class ClientCommands {
       }
     }
     const control = parseDesktopControl(JSON.stringify(command.payload))
-    const payload = JSON.stringify(control)
+    const payload = canonicalJson(control)
     const previous = this.#results.get(command.request_id)
     if (previous !== undefined) return previous.payload === payload ? previous.result : result('rejected')
     if (this.full) return result('rejected')

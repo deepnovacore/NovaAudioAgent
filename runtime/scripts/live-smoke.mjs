@@ -1,4 +1,4 @@
-import {readFile, writeFile, mkdir} from 'node:fs/promises'
+import {readFile, writeFile, mkdir, readdir} from 'node:fs/promises'
 import {resolve, dirname, join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {parseArgs, parseEnv} from 'node:util'
@@ -6,7 +6,7 @@ import {createRequire} from 'node:module'
 import {spawn, execFileSync} from 'node:child_process'
 import {createHash, randomUUID} from 'node:crypto'
 import {configuration, runTextCase} from './live/text-tools.mjs'
-import {validateFixtures, summary} from './live/validation.mjs'
+import {validateFixtures, validateModuleReport, summary} from './live/validation.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
 const catalog = JSON.parse(await readFile(join(import.meta.dirname, 'live/catalog.json'), 'utf8'))
@@ -29,16 +29,23 @@ if (values.list) {
   if (values.case && (selected.length !== 1 || selected[0].id !== 'text-tools')) throw new Error('--case requires text-tools only')
   if ((values.provider || values.model) && selected.some(suite => suite.id !== 'text-tools')) throw new Error('--provider/--model apply only to text-tools; configure other suites through environment')
   const environment = {...(values['env-file'] ? parseEnv(await readFile(values['env-file'], 'utf8')) : {}), ...process.env}
-  const fixtureText = await readFile(join(root, 'fixtures/live/text-tools.json'), 'utf8')
-  const fixtures = validateFixtures(JSON.parse(fixtureText))
-  const cases = fixtures.cases.filter(entry => !values.case || entry.id === values.case)
-  if (!cases.length) throw new Error('unknown or empty case selection')
+  const usesText=selected.some(suite=>suite.id==='text-tools')
+  const fixtureText = usesText ? await readFile(join(root, 'tests/fixtures/live/text-tools.json'), 'utf8') : ''
+  const cases = usesText ? validateFixtures(JSON.parse(fixtureText)).cases.filter(entry => !values.case || entry.id === values.case) : []
+  if (usesText && !cases.length) throw new Error('unknown or empty case selection')
   const output = resolve(values.output ?? join(tmpdir(), `nova-live-${randomUUID()}.json`))
   const git = (...args) => execFileSync('git', args, {cwd:root, encoding:'utf8'}).trim()
   const harnessHash = createHash('sha256')
   for (const file of ['../live-smoke.mjs','text-tools.mjs','validation.mjs','catalog.json']) harnessHash.update(await readFile(join(import.meta.dirname,'live',file)))
   if (selected.some(suite => suite.id === 'project')) for (const file of ['runtime/scripts/live/project.mjs','runtime/scripts/live/project-result.mjs','runtime/scripts/live/workspace-scenarios.mjs','clients/desktop/scripts/live-project-host.cjs']) harnessHash.update(await readFile(join(root,file)))
-  const report = {version:1, harnessHash:harnessHash.digest('hex'), startedAt:new Date().toISOString(), revision:git('rev-parse','HEAD'),
+  for (const suite of selected.filter(suite=>suite.structuredReport)) harnessHash.update(await readFile(resolve(root,'runtime',suite.entry)))
+  let runtimeHash
+  if(selected.some(suite=>suite.structuredReport)){
+    const hash=createHash('sha256'),directory=join(root,'runtime/dist/src')
+    for(const file of (await readdir(directory,{recursive:true})).filter(file=>file.endsWith('.js')).sort()){hash.update(file);hash.update(await readFile(join(directory,file)))}
+    runtimeHash=hash.digest('hex')
+  }
+  const report = {version:1,...(runtimeHash?{runtimeHash}:{}), harnessHash:harnessHash.digest('hex'), startedAt:new Date().toISOString(), revision:git('rev-parse','HEAD'),
     dirty:git('status','--porcelain').length > 0, node:process.version, platform:process.platform,
     selection:selected.map(suite => suite.id), repeats, fixtures:selected.some(suite => suite.id === 'text-tools') ? cases : [], fixtureHash:createHash('sha256').update(fixtureText).digest('hex'),
     scope:'Only selected suites/cases are accepted. Model-routing never executes tools. Legacy subprocess suites report process-level results.', results:[]}
@@ -64,20 +71,21 @@ if (values.list) {
     for (let repeat = 1; repeat <= repeats; repeat++) {
       for (const entry of suite.id === 'text-tools' ? cases : [{id:suite.id}]) {
         const start = Date.now()
+        const artifact=suite.structuredReport?`${output}.${suite.id}-${repeat}.json`:suite.id==='project'?`${output}.project-${repeat}.json`:undefined
         let result
         if (blocked) result = {status:'blocked', reason:blocked}
         else {
           try {
             result = suite.id === 'text-tools'
               ? await runTextCase(entry, config, suite.timeoutMs)
-              : await runProcess(suite, suite.id === 'project' ? {...environment, NOVA_LIVE_PROJECT_REPORT: `${output}.project-${repeat}.json`} : environment)
+              : await runProcess(suite, suite.id === 'project' ? {...environment, NOVA_LIVE_PROJECT_REPORT: artifact} : suite.structuredReport ? {...environment,NOVA_LIVE_MODULE_REPORT:artifact} : environment,artifact)
           } catch (error) {
             // Never persist transport messages, URLs, headers, env values, or child stdout.
             const code = ['network','http','timeout','aborted','configuration','protocol','overflow','closed'].includes(error.code) ? error.code : 'runner_error'
             result = {status: ['protocol','overflow'].includes(code) ? 'failed' : 'error', reason:code}
           }
         }
-        report.results.push({...(suite.id === 'project' && !blocked ? {artifact: `${output}.project-${repeat}.json`} : {}),suite:suite.id, layer:suite.layer, case:entry.id, repeat,
+        report.results.push({...(artifact && !blocked ? {artifact} : {}),suite:suite.id, layer:suite.layer, case:entry.id, repeat,
           ...(config ? {provider:config.provider, model:config.model} : {}), ...result, elapsedMs:Date.now()-start})
         console.log(`${suite.id}/${entry.id} #${repeat}: ${result.status}${result.failures?.length ? ` (${result.failures.join(', ')})` : ''}`)
         await persist()
@@ -90,16 +98,20 @@ if (values.list) {
   process.exitCode = report.summary.failed ? 1 : report.summary.error || report.summary.blocked ? 2 : 0
 }
 
-function runProcess(suite, environment) {
-  return new Promise(resolveResult => {
+async function runProcess(suite, environment, artifact) {
+  const started=Date.now()
+  const result = await new Promise(resolveResult => {
     const project = suite.id === 'project'
-    const executable = project ? createRequire(join(root,'clients/desktop/package.json'))('electron') : process.execPath
-    const argv = project ? [join(root,'clients/desktop/scripts/live-project-host.cjs')] : [...(suite.id === 'coordinator' ? ['--test'] : []), suite.entry]
+    const electron=project||suite.electron===true
+    const executable = electron ? createRequire(join(root,'clients/desktop/package.json'))('electron') : process.execPath
+    const argv = project ? [join(root,'clients/desktop/scripts/live-project-host.cjs')] : [...(suite.id === 'coordinator' ? ['--test'] : []), suite.entry,...(suite.args??[])]
+    const childEnvironment={...environment,NOVA_LIVE_TESTS:'1'}
+    if(electron)delete childEnvironment.ELECTRON_RUN_AS_NODE
     const child = spawn(executable, argv,
-      {cwd:join(root,'runtime'), env:{...environment, NOVA_LIVE_TESTS:'1'}, stdio:['ignore','pipe','pipe']})
+      {cwd:join(root,'runtime'), env:childEnvironment, stdio:['ignore','pipe','pipe']})
     let bytes = 0, timedOut = false, overflow = false, killTimer
     const terminate = () => {
-      if (!project) { child.kill('SIGKILL'); return }
+      if (!electron) { child.kill('SIGKILL'); return }
       if (killTimer) return
       child.kill('SIGTERM')
       killTimer = setTimeout(() => child.kill('SIGKILL'), 10000)
@@ -111,4 +123,12 @@ function runProcess(suite, environment) {
     child.on('close', code => { clearTimeout(timer); clearTimeout(killTimer); resolveResult({status:timedOut || overflow ? 'error' : code === 0 ? 'passed' : 'failed',
       exitCode:code, ...(timedOut ? {reason:'timeout'} : overflow ? {reason:'output_limit'} : {})}) })
   })
+  if(!suite.structuredReport||result.status==='error')return result
+  try {
+    const bytes=await readFile(artifact,'utf8')
+    if(bytes.length>8_000_000)throw Error('report_limit')
+    const evidence=validateModuleReport(JSON.parse(bytes),suite.id,started)
+    if(evidence.status==='passed'&&result.exitCode!==0)return {...result,reason:'module_exit_mismatch'}
+    return {...result,status:evidence.status,checks:evidence.checks,coverage:evidence.coverage,...(evidence.status==='blocked'?{reason:'module_precondition'}:{})}
+  } catch { return {...result,status:'failed',reason:'missing_or_invalid_module_report'} }
 }

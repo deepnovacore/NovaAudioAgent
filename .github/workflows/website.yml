@@ -1,0 +1,55 @@
+name: Website
+on:
+  push:
+    branches: [main, v0.2.0dev, v0.3.0dev]
+    paths: ['website/**', 'docs/en/**', 'docs/zh-CN/**', 'assets/**', '.github/workflows/website.yml']
+  pull_request:
+    branches: [main, v0.2.0dev, v0.3.0dev]
+    paths: ['website/**', 'docs/en/**', 'docs/zh-CN/**', 'assets/**', '.github/workflows/website.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_PUBLIC_BASE_PATH: /NovaAudioAgent
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  build:
+    if: github.repository == 'deepnovacore/NovaAudioAgent' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v0.2.0dev' || github.ref == 'refs/heads/v0.3.0dev' || github.event_name == 'pull_request')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check:links
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/out
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

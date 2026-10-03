@@ -24,7 +24,7 @@ export function resolveDesktopConfig({
   const defaults = productPaths({ home, pathApi })
   const settingsHasMode = Object.hasOwn(settings, 'codexBinaryMode')
   const settingsBinary = nonempty(settings.codexBinaryPath)
-  const environmentBinary = nonempty(environment.NOVA_AUDIO_AGENT_CODEX_BIN)
+  const environmentBinary = nonempty(environment.CODEX_BIN)
   const settingsMode = settings.codexBinaryMode === 'manual' ? 'manual' : 'auto'
   const codexBinaryMode = environmentBinary !== null
     ? 'manual'
@@ -36,15 +36,15 @@ export function resolveDesktopConfig({
     ? 'manual_path_required'
     : null
   const managedRoot = nonempty(settings.codexManagedRoot)
-    || nonempty(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT)
+    || nonempty(environment.CODEX_MANAGED_ROOT)
     || defaults.managedRoot
-  const stateRoot = nonempty(environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT)
+  const stateRoot = nonempty(environment.CODEX_PROJECT_STATE_ROOT)
     || defaults.stateRoot
   const workspace = nonempty(settings.codexWorkspace)
-    || nonempty(environment.NOVA_AUDIO_AGENT_CODEX_WORKSPACE)
+    || nonempty(environment.CODEX_WORKSPACE)
     || defaults.defaultWorkspace
   const rawModelBaseUrl = nonempty(settings.modelBaseUrl)
-    || nonempty(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL)
+    || nonempty(environment.MODEL_BASE_URL)
     || ''
   const modelBaseUrl = validModelBaseUrl(rawModelBaseUrl)
   const modelConfigurationError = modelBaseUrl === null

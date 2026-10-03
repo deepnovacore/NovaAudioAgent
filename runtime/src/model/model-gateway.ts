@@ -68,6 +68,8 @@ export interface CompleteRequest {
   readonly jsonSchema?: Readonly<Record<string, JsonValue>> | null
   readonly images?: readonly GatewayImage[]
   readonly reasoning?: 'disabled'
+  /** A ceiling on the reply, sent as max_tokens; callers size it well above a normal answer so it only stops runaway output. */
+  readonly maxTokens?: number
   readonly signal?: AbortSignal
 }
 
@@ -172,6 +174,7 @@ export function completeRequestBody(
   if (request.jsonSchema !== undefined && request.jsonSchema !== null) {
     body.response_format = {type: 'json_object'}
   }
+  if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens
   return body
 }
 

@@ -62,6 +62,13 @@ await stageEndpointingProbeAssets({
   repositoryRoot: resolve(root, '../..'),
   outputRoot: resolve(root, 'build'),
 })
+if (process.platform === 'darwin') {
+  await mkdir(resolve(root, 'build/native'), {recursive:true})
+  const calendar = spawnSync('/usr/bin/swiftc', ['-parse-as-library', resolve(root,'native/macos_calendar.swift'), '-O', '-target', `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macosx12.0`, '-framework', 'EventKit', '-module-cache-path', resolve(root,'build/swift-cache'), '-o', resolve(root,'build/native/macos_calendar')], {encoding:'utf8'})
+  assert.equal(calendar.status,0,calendar.stderr)
+  const mail = spawnSync('/usr/bin/swiftc', ['-parse-as-library', resolve(root,'native/macos_mail.swift'), '-O', '-target', `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macosx12.0`, '-framework', 'ScriptingBridge', '-framework', 'Carbon', '-module-cache-path', resolve(root,'build/swift-cache'), '-o', resolve(root,'build/native/macos_mail')], {encoding:'utf8'})
+  assert.equal(mail.status,0,mail.stderr)
+}
 const sourceManifest = await generateSourceHostResourceManifest({
   resourcesRoot: resolve(root, 'build'),
   targetId,

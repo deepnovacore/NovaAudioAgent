@@ -1,3 +1,4 @@
+import {readBoundedResponse} from '../../http/bounded-response.js'
 import { randomUUID } from 'node:crypto'
 import {reportUsage, type UsageReporter} from '../usage.js'
 import { gzipSync, gunzipSync } from 'node:zlib'
@@ -30,7 +31,20 @@ export class DoubaoAsrError extends Error {
   }
 }
 
+export interface AsrVoiceprint {
+  readonly id: string
+  readonly name: string
+}
+
 export class DoubaoAsrProtocol {
+  constructor(readonly voiceprint?: AsrVoiceprint) {
+    if (voiceprint && (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(voiceprint.id)
+      || !voiceprint.name.trim() || /^\d+$/.test(voiceprint.name)
+      || voiceprint.name.length > 128 || /[\u0000-\u001f\u007f]/.test(voiceprint.name))) {
+      throw new DoubaoAsrError('声纹 ID 或名称无效')
+    }
+  }
+
   fullRequest(input: {
     readonly sequence: number
     readonly sampleRate: 16_000
@@ -49,6 +63,10 @@ export class DoubaoAsrProtocol {
         enable_itn: true,
         show_utterances: true,
         result_type: 'full',
+        ...(this.voiceprint ? {
+          enable_nonstream: true, enable_speaker_info: true, ssd_mode: 2,
+          voiceprints: [{id: this.voiceprint.id}],
+        } : {}),
       },
     }
     const plain = new TextEncoder().encode(JSON.stringify(payload))
@@ -117,7 +135,6 @@ export class DoubaoAsrProtocol {
     raiseProviderError(decoded)
     const nested = nestedBody(decoded)
     if (nested !== decoded) raiseProviderError(nested)
-    const text = extractText(decoded)
     const final = flags === 0x03 || sequence < 0 || decoded.is_last_package === true
     if (final) {
       const info = nested.audio_info ?? decoded.audio_info
@@ -125,6 +142,9 @@ export class DoubaoAsrProtocol {
       onFinalDuration?.(typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
         ? duration : undefined)
     }
+    // Do not leak provisional or unidentified text to speculative recall or the LLM.
+    if (this.voiceprint && !final) return null
+    const text = this.voiceprint ? verifiedText(nested, this.voiceprint.name) : extractText(decoded)
     return text !== '' || final ? {text, final} : null
   }
 }
@@ -169,6 +189,8 @@ export function asrHeaders(input: {
 }
 
 export interface DoubaoAsrClientOptions {
+  readonly voiceprintHealthUrl?: string
+  readonly voiceprint?: AsrVoiceprint
   readonly onUsage?: UsageReporter
   readonly endpoint: string
   readonly apiKey: string
@@ -182,14 +204,33 @@ export interface DoubaoAsrClientOptions {
 }
 
 export class DoubaoAsrClient implements AsrClient {
-  readonly #options: Required<Omit<DoubaoAsrClientOptions, 'connector' | 'idFactory' | 'onUsage'>>
+  readonly #options: Required<Omit<DoubaoAsrClientOptions, 'connector' | 'idFactory' | 'onUsage' | 'voiceprint' | 'voiceprintHealthUrl'>>
   readonly #onUsage: UsageReporter | undefined
   readonly #connector: VolcBinaryConnector
   readonly #idFactory: () => string
   readonly #chunkBytes: number
-  readonly #protocol = new DoubaoAsrProtocol()
+  readonly #protocol: DoubaoAsrProtocol
+  readonly #plainProtocol = new DoubaoAsrProtocol()
+  readonly #voiceprintEndpoint: string | undefined
+  readonly #voiceprintHealthUrl: string | undefined
+  #healthCheckedAt = 0
+  #health = false
+  #healthRefresh: Promise<void> | undefined
 
   constructor(options: DoubaoAsrClientOptions) {
+    this.#protocol = new DoubaoAsrProtocol(options.voiceprint)
+    this.#voiceprintHealthUrl = options.voiceprintHealthUrl
+    if (this.#voiceprintHealthUrl && new URL(this.#voiceprintHealthUrl).protocol !== 'https:') throw new DoubaoAsrFailure('configuration')
+    if (options.voiceprint && nonblank(options.endpoint)) {
+      // Speaker verification needs the async endpoint; ordinary sessions keep the configured one.
+      try {
+        const url = new URL(options.endpoint)
+        url.pathname = '/api/v3/sauc/bigmodel_async'
+        this.#voiceprintEndpoint = url.href
+      } catch {
+        throw new DoubaoAsrFailure('configuration')
+      }
+    }
     const sampleRate = options.sampleRate ?? 16_000
     const connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_VOLC_CONNECT_TIMEOUT_MS
     const receiveTimeoutMs = options.receiveTimeoutMs ?? DEFAULT_VOLC_RECEIVE_TIMEOUT_MS
@@ -222,12 +263,21 @@ export class DoubaoAsrClient implements AsrClient {
 
   async open(signal?: AbortSignal): Promise<DoubaoAsrSession> {
     throwIfAborted(signal)
+    let protocol = this.#protocol
+    if (protocol.voiceprint && this.#voiceprintHealthUrl) {
+      // Only the first session waits; later ones use the cached verdict while it refreshes.
+      if (this.#healthCheckedAt === 0) await this.#refreshHealth()
+      else if (Date.now() - this.#healthCheckedAt > 30_000) void this.#refreshHealth()
+      // Explicit product policy: upload-service failure disables the whole voiceprint feature.
+      if (!this.#health) protocol = this.#plainProtocol
+    }
+    throwIfAborted(signal)
     const connectionSignal = signal ?? new AbortController().signal
     let socket: VolcBinarySocket | undefined
     let phase: DoubaoAsrFailureCode = 'connect'
     try {
       socket = await this.#connector({
-        endpoint: this.#options.endpoint,
+        endpoint: protocol.voiceprint ? this.#voiceprintEndpoint! : this.#options.endpoint,
         headers: {...asrHeaders({
           apiKey: this.#options.apiKey,
           resourceId: this.#options.resourceId,
@@ -241,7 +291,7 @@ export class DoubaoAsrClient implements AsrClient {
       phase = 'handshake'
       const userId = this.#idFactory()
       if (!nonblank(userId) || !isWellFormed(userId)) throw new DoubaoAsrFailure('configuration')
-      await socket.send(this.#protocol.fullRequest({
+      await socket.send(protocol.fullRequest({
         sequence: 1,
         sampleRate: this.#options.sampleRate,
         userId,
@@ -249,12 +299,12 @@ export class DoubaoAsrClient implements AsrClient {
       const acknowledgement = await receiveWithTimeout(
         socket, this.#options.receiveTimeoutMs, signal, 'handshake',
       )
-      this.#protocol.decode(acknowledgement)
+      protocol.decode(acknowledgement)
       return new DoubaoAsrSession({
         model: this.#options.resourceId,
         ...(this.#onUsage === undefined ? {} : {onUsage: this.#onUsage}),
         socket,
-        protocol: this.#protocol,
+        protocol,
         sequence: 2,
         chunkBytes: this.#chunkBytes,
         receiveTimeoutMs: this.#options.receiveTimeoutMs,
@@ -271,6 +321,22 @@ export class DoubaoAsrClient implements AsrClient {
       if (error instanceof DoubaoAsrFailure) throw error
       throw new DoubaoAsrFailure(phase)
     }
+  }
+
+  #refreshHealth(): Promise<void> {
+    this.#healthRefresh ??= (async () => {
+      try {
+        const healthSignal = AbortSignal.timeout(2500)
+        const response = await fetch(this.#voiceprintHealthUrl!, {signal:healthSignal,redirect:'error',headers:{'Cache-Control':'no-store'}})
+        const body = await readBoundedResponse(response, {limit:4096,signal:healthSignal,failure:code=>new Error(code)})
+        const status = JSON.parse(new TextDecoder().decode(body)) as unknown
+        this.#health = response.ok && isObject(status) && status.ok === true
+      } catch {this.#health = false} finally {
+        this.#healthCheckedAt = Date.now()
+        this.#healthRefresh = undefined
+      }
+    })()
+    return this.#healthRefresh
   }
 }
 
@@ -539,4 +605,20 @@ function extractText(outer: Record<string, unknown>): string {
   if (body.text === undefined) return ''
   if (typeof body.text !== 'string') throw new DoubaoAsrError('豆包 ASR 返回了无效结果')
   return stripLikePython(body.text)
+}
+
+function verifiedText(body: Record<string, unknown>, speakerName: string): string {
+  const results = Array.isArray(body.result) ? body.result : [body.result]
+  let text = ''
+  for (const result of results) {
+    if (!isObject(result) || !Array.isArray(result.utterances)) continue
+    for (const utterance of result.utterances) {
+      if (!isObject(utterance) || utterance.definite !== true) continue
+      const additions = utterance.additions
+      // Registered SpeakerName replaces speaker_id; numeric diarization IDs are not identity.
+      if (isObject(additions) && additions.speaker_id === speakerName
+        && typeof utterance.text === 'string') text += utterance.text
+    }
+  }
+  return stripLikePython(text)
 }

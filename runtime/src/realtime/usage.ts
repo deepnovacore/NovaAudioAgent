@@ -3,7 +3,7 @@ export type UsageService = 'realtime' | 'llm' | 'asr' | 'tts'
 export interface UsageReport {
   readonly id: string
   readonly service: UsageService
-  readonly provider: 'qwen' | 'ark' | 'deepseek' | 'volcengine'
+  readonly provider: 'qwen' | 'stepfun' | 'ark' | 'deepseek' | 'volcengine'
   readonly model: string
   readonly status: 'complete' | 'missing'
   readonly pricingRegion?: 'cn-beijing' | 'singapore' | 'unknown'
@@ -26,7 +26,7 @@ const meters = ['inputTokens', 'outputTokens', 'inputTextTokens', 'inputAudioTok
 
 export function reportUsage(reporter: UsageReporter | undefined, report: UsageReport): void {
   if (reporter === undefined) return
-  if (!['qwen', 'ark', 'deepseek', 'volcengine'].includes(report.provider)
+  if (!['qwen', 'stepfun', 'ark', 'deepseek', 'volcengine'].includes(report.provider)
     || !['llm', 'realtime', 'asr', 'tts'].includes(report.service)
     || typeof report.id !== 'string' || !report.id || report.id.length > 256
     || typeof report.model !== 'string' || !report.model || report.model.length > 256) return

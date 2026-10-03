@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { acceptanceWakeSettings } from '../src/main/workbench-native-acceptance.mjs'
+import { createWorkbenchFrame } from '../src/main/workbench-frame.mjs'
+import * as settingsCategories from '../src/renderer/settings-categories.mjs'
 import { createContext, runInContext } from 'node:vm'
 
 test('main owns single-instance lifecycle and denies renderer escape', async () => {
@@ -8,7 +11,7 @@ test('main owns single-instance lifecycle and denies renderer escape', async () 
 
   assert.match(source, /requestSingleInstanceLock/)
   assert.match(source, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
-  assert.match(source, /configureWindowSecurity\(window\)/)
+  assert.match(source, /configureWindowSecurity\(window,/)
   assert.match(source, /loadAppWindow\(mainWindow/)
   assert.match(source, /Number\.isInteger\(code\) \? code\.toString\(\) : 'none'/)
   assert.match(source, /apiKeyWindowOpenHandler\(url => shell\.openExternal\(url\)\)/)
@@ -53,14 +56,33 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:native-audio:terminal',
     'nova:orb-menu:show',
     'nova:orb:dormant',
-    'nova:pairing:open',
+    'nova:personal:article',
+    'nova:personal:collapsed',
+    'nova:personal:connector-authorization',
+    'nova:personal:directory',
+    'nova:personal:feishu-verification',
+    'nova:personal:presentation',
+    'nova:personal:presentation-error',
+    'nova:personal:presentation-request',
+    'nova:personal:unread',
+    'nova:personal:wake',
     'nova:phone:action',
     'nova:projects:repair',
     'nova:release-camera:result',
     'nova:settings:changed',
+    'nova:settings:feishu',
     'nova:settings:get',
     'nova:settings:open',
+    'nova:settings:personal',
     'nova:settings:set',
+    'nova:settings:voiceprint',
+    'nova:setup:changed',
+    'nova:setup:open',
+    'nova:setup:save',
+    'nova:setup:status',
+    'nova:setup:test-key',
+    'nova:voiceprint:gate-ready',
+    'nova:voiceprint:recording',
     'nova:wake-word:activity',
     'nova:wake-word:audio',
     'nova:wake-word:changed',
@@ -71,6 +93,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:window-drag:end',
     'nova:window-drag:move',
     'nova:window-drag:start',
+    'nova:window:control',
     'nova:workspaces:clear-all',
     'nova:workspaces:clear-current',
     'nova:workspaces:open-current',
@@ -114,7 +137,9 @@ async function extractedMemoryBoardClear(dialog, owner) {
   let handler
   const sender = {}
   const context = createContext({
+    t: value => value,
     ipcMain: {handle: (_channel, value) => { handler = value }},
+    t: value => value,
     dialog, backendControl: owner, backendGeneration: 1,
     backendStatus: {state: 'connected'}, clearingConversation: null,
     boardWindow: {webContents: sender, isDestroyed: () => false},
@@ -214,11 +239,12 @@ test('a hidden orb window is never shrunk, and comes back at natural size', asyn
   // to refuse, or the hidden window shrinks and pops back as a bubble.
   assert.deepEqual(run(false, true), [], 'a hidden window must not shrink')
   assert.deepEqual(run(true, true), [true], 'a visible window still rests')
+  assert.match(source, /setBounds: bounds => \{ if \(personalCollapsed\) mainWindow\.setBounds\(bounds\) \}/, 'orb size updates do not resize the expanded workspace')
 
   // And whatever was ignored while hidden is undone on the way back.
   assert.match(
     source,
-    /mainWindow\.on\('show', \(\) => \{ orbWindow\.setDormant\(false\) \}\)/,
+    /mainWindow\.on\('show', \(\) => \{ if \(personalCollapsed\) orbWindow\.setDormant\(false\) \}\)/,
   )
 })
 
@@ -236,8 +262,28 @@ test('registers the settings-open channel exactly once and sender-bound', async 
   assert.equal(registrations.length, 1)
   assert.match(
     source,
-    /ipcMain\.on\('nova:settings:open', event => \{\n    if \(mainWindow && event\.sender === mainWindow\.webContents\) openSettingsWindow\(launchId\)\n  \}\)/,
+    /ipcMain\.on\('nova:settings:open', \(event, category\) => \{\n    if \(mainWindow && event\.sender === mainWindow\.webContents\) openSettingsWindow\(launchId, isValidCategory\(category\) \? \{category\} : \{\}\)\n  \}\)/,
   )
+})
+
+test('the settings-open channel forwards only known categories', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const block = source.slice(source.indexOf("  ipcMain.on('nova:settings:open'"), source.indexOf("  ipcMain.handle('nova:memory-board:request'"))
+  const opened = []
+  let receive
+  new Function('ipcMain', 'mainWindow', 'openSettingsWindow', 'launchId', 'isValidCategory', block)(
+    {on: (_, fn) => { receive = fn }}, {webContents: {}}, (...args) => opened.push(args), 'launch', settingsCategories.isValidCategory)
+  const sender = {}
+  receive({sender}, 'connections')
+  receive({sender: {webContents: {}}}, 'connections')
+  for (const bad of ['__proto__', 'x'.repeat(4096), 42, null, undefined, {id: 'im'}]) receive({sender}, bad)
+  assert.equal(opened.length, 0, 'a foreign sender never opens settings')
+  const main = {webContents: sender}
+  new Function('ipcMain', 'mainWindow', 'openSettingsWindow', 'launchId', 'isValidCategory', block)(
+    {on: (_, fn) => { receive = fn }}, main, (...args) => opened.push(args), 'launch', settingsCategories.isValidCategory)
+  receive({sender}, 'connections')
+  for (const bad of ['__proto__', 'x'.repeat(4096), 42, null, undefined, {id: 'im'}]) receive({sender}, bad)
+  assert.deepEqual(opened, [['launch', {category: 'connections'}], ...Array(6).fill(['launch', {}])])
 })
 
 test('the orb menu opens the settings panel above the quit separator', async () => {
@@ -245,9 +291,9 @@ test('the orb menu opens the settings panel above the quit separator', async () 
   const menu = source.slice(source.indexOf('function showOrbMenu('))
   const body = menu.slice(0, menu.indexOf('.popup('))
 
-  assert.match(body, /label: '设置…', click: \(\) => openSettingsWindow\(launchId\)/)
+  assert.match(body, /label: t\("设置…"\), click: \(\) => openSettingsWindow\(launchId\)/)
   assert.ok(
-    body.indexOf("label: '设置…'") < body.indexOf("{ type: 'separator' }"),
+    body.indexOf('label: t("设置…")') < body.indexOf("{ type: 'separator' }"),
     'the settings entry sits above the separator',
   )
   assert.ok(
@@ -377,10 +423,10 @@ test('no decrypted secret can reach the renderer or a log line', async () => {
   // entry written while no keyring existed keeps it on until it is re-sealed.
   assert.match(
     source,
-    /keyringAvailable: secretCodec\.available\(\) && !hasPlaintextSecret\(currentSettings\)/,
+    /keyringAvailable: hasPlaintextSecret\(currentSettings\) \? false : keyringAvailable/,
   )
   // The failure log for a settings save names the error type only, never the payload.
-  assert.match(source, /settings_save_failure type=\$\{error\.name\}/)
+  assert.match(source, /settings_save_failure/)
   // Every console.* line is scanned: a line mentioning "secret" or "apiKey" is
   // allowed only if it is one of the two key-name-only secret diagnostics;
   // anything else naming a secret, or naming the raw settings patch, or
@@ -416,7 +462,7 @@ test('every settings write goes through one queue so overlapping patches merge',
   const set = source.slice(source.indexOf("async function applyDesktopSettings"))
   const handler = set.slice(0, set.indexOf('\n}'))
   assert.match(handler, /applySettingsTransaction\(\{/)
-  assert.match(handler, /write: async value => \{[\s\S]*await settingsWriter\(commit\.settingsPatch \?\? \{\}, next =>/)
+  assert.match(handler, /write: async value => \{[\s\S]*await accessCredentials\(\(\) => settingsWriter\(commit\.settingsPatch \?\? \{\}, next =>/)
   assert.match(handler, /coordinator: lifecycleCoordinator/)
   assert.doesNotMatch(
     handler,
@@ -425,16 +471,17 @@ test('every settings write goes through one queue so overlapping patches merge',
   )
 })
 
-test('a stored secret that would poison the child environment is omitted at spawn', async () => {
+test('a stored secret that would poison the child environment blocks spawn', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const decrypt = source.slice(source.indexOf('function decryptSecretsForSpawn('))
   const body = decrypt.slice(0, decrypt.indexOf('\n}\n'))
 
   // A NUL in an env value makes Node refuse the spawn, which would quit the app
-  // before the panel could clear the offending key. The value is dropped here
-  // and the key named — never its content.
+  // before the panel could clear the offending key. Refuse the attempt and
+  // name only the allowlisted key, never its content.
   assert.match(body, /secretValueIsSafe\(plaintext\)/)
   assert.match(body, /settings_secret_invalid key=\$\{key\}/)
+  assert.match(body, /throw classifyBackendFailure\('credential_invalid'\)/)
 })
 
 test('readSecret is wired at the spawn site, decrypting only what backendLaunchSpec receives', async () => {
@@ -464,12 +511,12 @@ test('the bootstrap payload carries only orb-owned settings', async () => {
 
   const assignment = source.slice(source.indexOf('bootstrap = Object.freeze({'))
   assert.match(assignment.slice(0, assignment.indexOf('})')), /settings: orbSettings\(currentSettings\)/)
-  assert.match(source, /currentSettings = recovered \?\? await loadSettings\(settingsFile\(\)\)/)
+  assert.match(source, /currentSettings = recovered \?\? await loadSettings\(settingsFile\(\), app\.getPreferredSystemLanguages\(\)\)/)
 })
 
 test('quitting drains the backend on the stdin sentinel instead of killing it', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
-  const beforeQuit = source.slice(source.indexOf("app.on('before-quit'"))
+  const beforeQuit = source.slice(source.indexOf("app.on('before-quit'"), source.indexOf("app.on('window-all-closed'"))
 
   assert.match(beforeQuit, /event\.preventDefault\(\)/)
   assert.match(beforeQuit, /shutdownBackendBestEffort\(backend\)/)
@@ -498,7 +545,7 @@ test('backend status survives startup races and is replayed after renderer load'
   assert.match(source, /let backendStatus = Object\.freeze/)
   assert.match(source, /backendStatus = status/)
   const load = source.slice(source.indexOf('loadAppWindow(mainWindow'))
-  assert.match(load.slice(0, 1100), /sendToOrb\('nova:backend-ready', backendStatus\.connection\)/)
+  assert.match(load.slice(0, load.indexOf('tray = createTray()')), /sendToOrb\('nova:backend-ready', backendStatus\.connection\)/)
 })
 
 test('the bootstrap answer carries the current supervised connection at invoke time', async () => {
@@ -525,6 +572,22 @@ test('renderer accepts both supervised disconnect and reconnect events', async (
   assert.match(source, /onBackendExit\(handleBackendExit\)/)
   assert.match(source, /onBackendReady\(connectBackend\)/)
   assert.match(source, /if \(bootstrap\.backend\) connectBackend\(bootstrap\.backend\)/)
+})
+
+test('a cold start with no backend yet never fires the disconnect path', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  // 'stopped' is the initial, never-started state; 'starting' is on its way up.
+  // Only a real exit (any other state) may call handleBackendExit here.
+  assert.match(source, /else if \(axes\.backendState !== 'stopped' && axes\.backendState !== 'starting'\) handleBackendExit\(\)/)
+})
+
+test('main does not raise the backend-exit banner before the backend has ever started', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  const load = source.slice(source.indexOf('void rendererLoaded.then'))
+  const body = load.slice(0, load.indexOf('}).catch('))
+  assert.match(body, /else if \(backendStatus\.state !== 'starting' && backendStatus\.state !== 'stopped'\) sendToOrb\('nova:backend-exit'\)/)
 })
 
 test('every renderer push is guarded against a destroyed orb window', async () => {
@@ -610,7 +673,7 @@ test('main starts without camera permission and exposes only an explicit sender-
   assert.doesNotMatch(start.slice(0, start.indexOf('\n}')), /CameraPermission|camera:permission/u)
   assert.match(
     start,
-    /start: camera => startSelectedCamera\(camera, backendKind, releaseSmokeChannel\)/u,
+    /start: camera => startSelectedCamera\(camera, releaseSmokeChannel\)/u,
   )
   assert.match(source, /ipcMain\.handle\('nova:camera:permission', async event => \{\n\s*if \(\(!mainWindow \|\| event\.sender !== mainWindow\.webContents\) && \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)\)/u)
   assert.match(source, /resolveCameraPermission\(camera\.source, \{/u)
@@ -626,14 +689,14 @@ test('backend mode is admitted before camera selection or permission work', asyn
 
   assert.ok(selection >= 0 && camera > selection)
   assert.match(body, /createReleaseSmokeChannel\(\{/u)
-  assert.match(body, /start: camera => startSelectedCamera\(camera, backendKind, releaseSmokeChannel\)/u)
+  assert.match(body, /start: camera => startSelectedCamera\(camera, releaseSmokeChannel\)/u)
   assert.match(
     source,
     /process\.stderr\.write\(\s*'\[desktop-diagnostic\] source_rollback_unavailable\\n',\s*\(\) => app\.exit\(0\),?\s*\)/u,
   )
   assert.match(source, /releaseSmokeSourceRollbackExitCode\(\{/u)
   assert.match(source, /app\.exit\(sourceRollbackExitCode\)/u)
-  const rollbackPreflight = source.indexOf("process.env.NOVA_AUDIO_AGENT_BACKEND === 'python'")
+  const rollbackPreflight = source.indexOf("process.env.BACKEND === 'python'")
   assert.ok(rollbackPreflight >= 0 && rollbackPreflight < source.indexOf('app.requestSingleInstanceLock()'))
 })
 
@@ -681,7 +744,7 @@ test('camera bootstrap and protocol wiring catch canonical path disclosure or re
   assert.match(bootstrapBody, /cameraSource/)
   assert.doesNotMatch(
     bootstrapBody,
-    /camera\.file|cameraPath|NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE|file:|nova:\/\/orb\/camera-source/u,
+    /camera\.file|cameraPath|DESKTOP_VIDEO_FILE|file:|nova:\/\/orb\/camera-source/u,
   )
 
   const load = main.slice(main.indexOf('loadAppWindow(mainWindow'))
@@ -694,7 +757,7 @@ test('camera bootstrap and protocol wiring catch canonical path disclosure or re
   const mode = boot.indexOf('cameraController.setSourceMode(bootstrap.cameraSource)')
   const socket = boot.indexOf('connectBackend(bootstrap.backend)')
   assert.ok(mode >= 0 && socket > mode, 'immutable mode is installed before any host request can arrive')
-  assert.doesNotMatch(boot.slice(0, socket), /cameraPath|camera\.file|NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE/u)
+  assert.doesNotMatch(boot.slice(0, socket), /cameraPath|camera\.file|DESKTOP_VIDEO_FILE/u)
 })
 
 test('pins X11/XWayland and transparent visuals on linux before the app is ready', async () => {
@@ -725,7 +788,7 @@ test('warns instead of silently failing when the global shortcut cannot register
 
   const registration = source.slice(source.indexOf('globalShortcut.register('))
   assert.match(
-    registration.slice(0, 400),
+    registration.slice(0, 500),
     /console\.warn\('\[nova-audio-agent-desktop\] global shortcut unavailable on this session'\)/,
   )
 })
@@ -764,20 +827,26 @@ test('drag and orb menu paths stay sender validated and bounded', async () => {
   assert.match(mainSource, /validDragDelta/)
   assert.match(mainSource, /ipcMain\.on\('nova:confirmation-mode', \(event, active\) => \{\n\s*if \(!mainWindow \|\| event\.sender !== mainWindow\.webContents\) return\n\s*if \(typeof active !== 'boolean'\) return/u)
   assert.match(mainSource, /orbWindow\.finishDrag\(position\)/u)
-  assert.match(mainSource, /label: '退出 Nova Audio Agent'/)
+  assert.match(mainSource, /label: t\("退出 Nova Audio Agent"\)/)
   assert.match(mainSource, /click: \(\) => app\.quit\(\)/)
   assert.doesNotMatch(rendererSource, /orb\.addEventListener\('click'/)
   assert.match(rendererSource, /event\.preventDefault\(\)/)
   assert.match(rendererSource, /window\.novaAudioAgentDesktop\.orbMenu\.show\(\)/)
 })
 
-test('renderer always activates after microphone preflight and never delegates activation to the orb', async () => {
+test('renderer text startup avoids microphone and explicit voice entry requires preflight', async () => {
   const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  assert.match(renderer, /if \(microphone === 'granted'\) \{\s*axes\.muted = bootstrap\.startMuted === true\s*await activateCapture\(\)\s*\}/)
+  const boot = renderer.slice(renderer.indexOf('async function boot()'), renderer.indexOf('personalView = mountPersonalView'))
+  assert.doesNotMatch(boot, /refreshMicrophonePermission|activateCapture/)
+  assert.match(boot, /axes\.microphone = 'not_requested'/)
+  const voiceEntry = renderer.slice(renderer.indexOf('personalView = mountPersonalView'), renderer.indexOf("orb.addEventListener('pointerdown'"))
+  assert.match(voiceEntry, /await refreshMicrophonePermission\(\) !== 'granted'/)
+  assert.ok(voiceEntry.indexOf('refreshMicrophonePermission') < voiceEntry.indexOf('activateCapture'))
   assert.match(renderer, /async function retryMicrophonePermission\(\)/)
-  assert.match(renderer, /const microphone = await refreshMicrophonePermission\(\)/)
-  assert.match(renderer, /if \(microphone === 'granted' && !axes\.activated\) await activateCapture\(\)/)
+  const retry=renderer.slice(renderer.indexOf('async function retryMicrophonePermission()'),renderer.indexOf('async function boot()'))
+  assert.match(retry,/await refreshMicrophonePermission\(\)/)
+  assert.doesNotMatch(retry,/activateCapture\(/)
   assert.match(renderer, /microphone\.onRetry\(\(\) => \{\s*void retryMicrophonePermission\(\)\s*\}\)/)
   assert.doesNotMatch(renderer, /startListeningOnLaunch/)
   assert.doesNotMatch(renderer, /orb\.addEventListener\('click'/)
@@ -802,13 +871,23 @@ test('the mute toggle drops microphone input at both ingress points', async () =
   // The gate covers mute itself plus a drain window after unmute, so capture
   // batches that straddle the unmute click (or arrive late from a stalled
   // queue) never leak audio that was recorded while muted.
-  assert.match(renderer, /return axes\.muted \|\| performance\.now\(\) < muteDrainUntil/)
+  assert.match(renderer, /return voiceprintRecording \|\| !\['dictation', 'voice'\]\.includes\(personalView\.controller\.mode\) \|\| axes\.muted \|\| performance\.now\(\) < muteDrainUntil/)
   assert.match(renderer, /const UNMUTE_DRAIN_MS = 120/)
   assert.match(renderer, /muteDrainUntil = performance\.now\(\) \+ UNMUTE_DRAIN_MS/)
   // Deactivation discards the session's mute, and the rail buttons are wired.
   assert.match(renderer, /axes\.muted = false/)
   assert.match(renderer, /muteToggle\.addEventListener\('click', \(\) => toggleMute\(\)\)/)
-  assert.match(renderer, /openSettingsButton\.addEventListener\('click', \(\) => window\.novaAudioAgentDesktop\.orbMenu\.openSettings\?\.\(\)\)/)
+  assert.doesNotMatch(renderer, /openSettingsButton/)
+  // Opening the orb's voice conversation keeps a sleeping orb asleep; only an explicit start wakes it.
+  assert.match(renderer, /start: async \(\{wake = true\} = \{\}\) => \{/)
+  assert.match(renderer, /if \(wake\) await window\.novaAudioAgentDesktop\.personal\.wake\(\)/)
+  // Sleep belongs to the orb: neither the idle timer nor Ctrl+L puts the workbench to sleep.
+  assert.match(renderer, /idle: personalView\?\.controller\.presentationMode === 'orb' && canAutoSleep\(/)
+  const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  assert.match(main, /function sleepOrb\(\) \{\n  if \(presentationMode === 'orb'\) wakeWord\?\.sleep\('bubble'\)/)
+  // Double-click is the orb's way back to the workbench, and a drag that ends on the orb does not count.
+  assert.match(renderer, /orb\.addEventListener\('dblclick'/)
+  assert.match(renderer, /if \(lastPointerDragged \|\| personalView\?\.controller\.presentationMode !== 'orb'\) return/)
 })
 
 for (const hasBackend of [true, false]) test(`quit drains once before normal window shutdown (backend=${hasBackend})`, async () => {
@@ -818,7 +897,7 @@ for (const hasBackend of [true, false]) test(`quit drains once before normal win
   let prevented = 0, quits = 0, backendStops = 0
   const event = {preventDefault() { prevented++ }}
   const context = vm.createContext({
-    sourceSmokeStage() {}, cancelPhonePairing: async () => {}, managedPhone: {stop: async () => {}},
+    sourceSmokeStage() {}, feishuSetupOwner: {release: async () => {}}, cancelPhonePairing: async () => {}, managedPhone: {stop: async () => {}},
     app: {
       on: (name, handler) => { if (name === 'before-quit') beforeQuit = handler },
       quit() { quits++; beforeQuit(event) },
@@ -870,6 +949,7 @@ test('settings IPC restarts for capability commits while wake-only updates stay 
       currentSettings: {...DEFAULT_SETTINGS}, settingsApplyStatus: 'applied', settingsRestartPending: false, backendSettings, lifecycleCoordinator: {},
       applySettingsTransaction: async options => { await options.write(payload); restart = options.needsBackendRestart(); return {} },
       parseSettingsCommit: value => value,
+      accessCredentials: operation => operation(), refreshSettingsCapabilities: async () => {},
       settingsWriter: async (patch, prepare) => {
         const next = {...context.currentSettings, ...patch}
         await prepare(next); context.currentSettings = next; return next
@@ -891,9 +971,9 @@ test('settings IPC restarts for capability commits while wake-only updates stay 
 test('settings recovery precedes startup configuration and has one transaction status publisher', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const startup = source.slice(source.indexOf('async function startSelectedCamera'))
-  assert.ok(startup.indexOf('loadStartupSettings()') < startup.indexOf('await refreshDesktopConfiguration()'))
-  assert.match(startup, /if \(settingsReady\) await refreshDesktopConfiguration\(\)/u)
-  assert.match(startup, /if \(settingsReady\) void managedWorkspaceBackendRecovery.start\(\)/u)
+  assert.ok(startup.indexOf('loadStartupSettings()') < startup.indexOf("lifecycleCoordinator.run('startup', async"))
+  assert.match(startup, /if \(settingsReady\) \{[\s\S]*lifecycleCoordinator.run\('startup', async/u)
+  assert.match(startup, /if \(settingsReady && configurationReady\) void managedWorkspaceBackendRecovery.start\(\)/u)
   assert.match(startup, /if \(!settingsReady\) \{[\s\S]*dialog.showMessageBox[\s\S]*shell.openPath\(dirname\(settingsFile\(\)\)\)/u)
   const writers = source.match(/settingsApplyStatus\s*=(?!=)/gu)
   assert.equal(writers.length, 2) // initial value and publishSettingsApplyStatus only
@@ -920,7 +1000,9 @@ test('corrupt recovery keeps the startup settings UI available without starting 
     for (const corrupt of ['{truncated', JSON.stringify({version: 999, settings: previous})]) {
       await writeFile(`${file}.recovery`, corrupt, {mode: 0o600})
       const context = vm.createContext({
+        app: {getPreferredSystemLanguages: () => ['zh-CN']},
         settingsFile: () => file, loadSettings, restoreSettingsRecovery,
+        app: {getPreferredSystemLanguages: () => ['zh-CN']}, setLanguage: () => {},
         settingsRecoveryAvailable: false, openSettingsRequested: false,
         publishSettingsApplyStatus: value => { context.phase = value },
       })
@@ -1046,6 +1128,16 @@ test('workspace cleanup cannot restart a backend while settings recovery is pend
   assert.equal(restarts, 1)
 })
 
+test('personal directory and window controls are bound to main renderer',async()=>{
+ const source=await readFile(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+ for(const channel of ['directory','wake']){
+  const begin=source.indexOf(`ipcMain.handle('nova:personal:${channel}'`)
+  assert.ok(begin>=0)
+  const body=source.slice(begin,source.indexOf("\n  })",begin))
+  assert.match(body,/event.sender !== mainWindow.webContents/)
+ }
+ assert.match(source,/setBounds: bounds => \{ if \(personalCollapsed\) mainWindow.setBounds\(bounds\) \}/)
+})
 
 test('sleep and wake IPC reject other windows and unexpected arguments', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
@@ -1054,9 +1146,9 @@ test('sleep and wake IPC reject other windows and unexpected arguments', async (
     const start = source.indexOf(`ipcMain.on('nova:wake-word:${action}',`)
     const body = source.slice(start, source.indexOf('\n  })', start) + 5)
     let handler, calls = 0
-    new Function('ipcMain', 'mainWindow', 'sleepOrb', 'wakeWord', body)(
+    new Function('ipcMain', 'mainWindow', 'sleepOrb', 'wakeWord', 'presentationMode', body)(
       {on: (_name, callback) => { handler = callback }}, {webContents: sender},
-      () => calls++, {wake: () => calls++})
+      () => calls++, {wake: () => calls++}, 'workbench')
     handler({sender: {}})
     handler({sender}, 'unexpected')
     assert.equal(calls, 0)
@@ -1068,7 +1160,7 @@ test('sleep and wake IPC reject other windows and unexpected arguments', async (
 test('phone actions require the settings sender and restrict actions and device identifiers', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const {default: vm} = await import('node:vm')
-  const body = source.slice(source.indexOf("  ipcMain.handle('nova:phone:action'"), source.indexOf("  ipcMain.on('nova:pairing:open'"))
+  const body = source.slice(source.indexOf("  ipcMain.handle('nova:phone:action'"), source.indexOf("  ipcMain.on('nova:setup:open'"))
   let handler
   const sender = {}, calls = []
   vm.runInNewContext(body, {ipcMain: {handle: (_channel, fn) => {handler = fn}}, settingsWindow: {webContents: sender},
@@ -1102,6 +1194,7 @@ test('unsupported embedding in recovery reaches startup diagnostics without muta
     const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
     const helper = source.slice(source.indexOf('async function loadStartupSettings()'), source.indexOf('async function startSelectedCamera'))
     const context = vm.createContext({settingsFile: () => file, loadSettings, restoreSettingsRecovery,
+        app: {getPreferredSystemLanguages: () => ['zh-CN']}, setLanguage: () => {},
       publishSettingsApplyStatus() {}, settingsRecoveryAvailable: false, openSettingsRequested: false})
     vm.runInContext(helper, context)
     await assert.rejects(context.loadStartupSettings(), {code: 'embedding_provider_invalid'})
@@ -1110,4 +1203,141 @@ test('unsupported embedding in recovery reaches startup diagnostics without muta
     assert.deepEqual(await loadSettings(file), current)
     assert.equal(await readFile(`${file}.recovery`, 'utf8'), journal)
   } finally {await rm(root, {recursive: true, force: true})}
+})
+
+for (const acceptance of [null, {}]) test(`presentation IPC validates sender and modes and restores wake settings (acceptance=${!!acceptance})`,async()=>{
+ const source=await readFile(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+ const start=source.indexOf("ipcMain.handle('nova:personal:presentation',")
+ const body=source.slice(start,source.indexOf('\n  })',start)+5)
+ const sender={},calls=[],wakeSettings=[],saved=[];let handler
+ const currentSettings={wakeWordEnabled:true}
+ const background=source.slice(source.indexOf('function enterBackground(){'),source.indexOf('const requestPresentation ='))
+ const install=new Function('ipcMain','mainWindow','setPersonalCollapsed','wakeWord','nativeAudio','currentSettings','acceptance','acceptanceWakeSettings','settingsWriter',`const settingsReady=true;let presentationMode='workbench';${background};${body};return ()=>presentationMode`)
+ const mode=install({handle:(_name,callback)=>{handler=callback}},{webContents:sender,isVisible:()=>true,hide:()=>calls.push('hide'),show:()=>calls.push('show'),focus:()=>calls.push('focus')},value=>calls.push(value),{stop(){},reset(){},configure:settings=>wakeSettings.push(settings)},null,currentSettings,acceptance,acceptanceWakeSettings,async patch=>{saved.push(patch.lastPresentation)})
+ await assert.rejects(()=>handler({sender:{}},'background'),/rejected/);await assert.rejects(()=>handler({sender},'invalid'),/rejected/)
+ await handler({sender},'background');assert.equal(mode(),'background');assert.deepEqual(calls,['hide'])
+ calls.length=0;await handler({sender},'orb');assert.deepEqual(calls,[true,'show','focus'])
+ assert.deepEqual(wakeSettings,[{wakeWordEnabled:!acceptance}]);assert.equal(currentSettings.wakeWordEnabled,true)
+ calls.length=0;await handler({sender},'workbench',false);assert.deepEqual(calls,[false]);await assert.rejects(()=>handler({sender},'orb','yes'),/rejected/)
+ assert.deepEqual(saved,['orb','workbench'])
+})
+test('background wake IPC cannot reactivate capture or show the window',async()=>{
+ const source=await readFile(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+ const start=source.indexOf("ipcMain.on('nova:wake-word:wake',")
+ const body=source.slice(start,source.indexOf('\n  })',start)+5)
+ const sender={};let handler,calls=0
+ new Function('ipcMain','mainWindow','wakeWord','presentationMode',body)({on:(_name,callback)=>{handler=callback}},{webContents:sender},{wake:()=>calls++},'background')
+ handler({sender});assert.equal(calls,0)
+})
+
+for(const configureShows of [false,true])test(`presentation acknowledgement waits for native show before renderer reconciliation (configureShows=${configureShows})`,async()=>{
+ const source=await readFile(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+ const start=source.indexOf("ipcMain.handle('nova:personal:presentation',"),body=source.slice(start,source.indexOf('\n  })',start)+5)
+ let handler,onShow,visible=false,acknowledged=false
+ const sender={},mainWindow={webContents:sender,isVisible:()=>visible,once:(name,callback)=>{assert.equal(name,'show');onShow=callback},show(){visible=true},focus(){}}
+ new Function('ipcMain','mainWindow','setPersonalCollapsed','wakeWord',`let presentationMode='background';const settingsReady=true,settingsWriter=async()=>{},currentSettings={},acceptance=null,acceptanceWakeSettings=()=>({});${body}`)({handle:(_name,callback)=>{handler=callback}},mainWindow,()=>{},configureShows?{configure:()=>mainWindow.show()}:null)
+ const pending=Promise.resolve(handler({sender},'orb')).then(()=>{acknowledged=true})
+ await Promise.resolve();assert.equal(acknowledged,false,'renderer must not reconcile ahead of the native show reset')
+ visible=true;onShow();await pending;assert.equal(acknowledged,true)
+ onShow=null;await handler({sender},'workbench');assert.equal(onShow,null,'already-visible changes must not wait for an event that will not fire')
+})
+
+test('background entry stops detector and native mic before waiting for renderer or host',async()=>{
+ const source=await readFile(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+ const body=source.slice(source.indexOf('function enterBackground(){'),source.indexOf('const requestPresentation ='))
+ const calls=[]
+ new Function('mainWindow','wakeWord','nativeAudio',`let presentationMode='orb';${body};enterBackground();return presentationMode`)({hide:()=>calls.push('hide')},{stop:()=>calls.push('detector-stop'),reset:()=>calls.push('fence')},{setPlaybackMuted:value=>calls.push(value),deactivate:async()=>calls.push('mic-stop')})
+ assert.deepEqual(calls,['hide','detector-stop','fence',true,'mic-stop'])
+})
+test('foreground changes native presentation before unmuting playback',async()=>{
+ const source=await readFile(new URL('../src/renderer/index.mjs',import.meta.url),'utf8')
+ const body=source.slice(source.indexOf('applyPresentation: async ')+19,source.indexOf('\n  taskAction:',source.indexOf('applyPresentation: async '))).replace(/,\s*$/,'')
+ const calls=[],window={novaAudioAgentDesktop:{personal:{setPresentation:async(mode,activate)=>calls.push(['presentation',mode,activate])},nativeAudio:{setPlaybackMuted:async muted=>calls.push(['muted',muted])}}}
+ const apply=new Function('window','axes','requestAnimationFrame','render',`let lastReportedDormant=true;return ${body}`)(window,{outputMuted:false},()=>{},()=>{})
+ await apply('workbench',{activate:false});assert.deepEqual(calls,[['presentation','workbench',false],['muted',false]])
+})
+
+test('background return reconciles unchanged renderer dormancy with native show reset',async()=>{
+ const {createOrbWindowController}=await import('../src/main/window-position.mjs')
+ const {orbDormant}=await import('../src/renderer/state.mjs')
+ const source=await readFile(new URL('../src/renderer/index.mjs',import.meta.url),'utf8')
+ const main=await readFile(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+ const applyBody=source.slice(source.indexOf('applyPresentation: async ')+19,source.indexOf('\n  taskAction:',source.indexOf('applyPresentation: async '))).replace(/,\s*$/,'')
+ const reportBody=source.slice(source.indexOf('  const dormant = orbDormant('),source.indexOf('\n  const activeDecision',source.indexOf('  const dormant = orbDormant(')))
+ const showBody=main.match(/mainWindow\.on\('show', (\(\) => \{[^\n]+\})\)/)[1]
+ for(const surface of ['resting','bubble','task','confirmation']){
+  let bounds={x:500,y:400,width:160,height:160},visible=true
+  const controller=createOrbWindowController({getBounds:()=>bounds,setBounds:value=>{bounds=value},getZoomFactor:()=>1,getScaleFactor:()=>2,getWorkAreaForPoint:()=>({x:0,y:0,width:1440,height:900}),onConfirmationPlacement(){}})
+  const show=new Function('personalCollapsed','orbWindow',`return ${showBody}`)(true,controller)
+  const reports=[],frames=[],shell={dataset:{}},axes={wakeState:'sleeping',hovered:false,codex:'idle',outputMuted:false,playback:'idle'}
+  const window={novaAudioAgentDesktop:{personal:{setPresentation:async mode=>{visible=mode!=='background';if(visible)show()}},nativeAudio:{clear:async()=>{},setPlaybackMuted:async()=>{}},windowLayout:{setDormant:value=>{reports.push(value);if(visible)controller.setDormant(value)}}}}
+  const fixture=new Function('window','axes','requestAnimationFrame','shell','orbDormant','seenPresentations','alertTone','playback','nativeFrames','nativeLevel',`let lastReportedDormant=null;const state={name:'idle',confirmationVisible:false};const render=()=>{${reportBody}};return {render,apply:${applyBody}}`)(window,axes,callback=>frames.push(callback),shell,orbDormant,new Set(),{stop(){}},{disconnect(){}},{clear(){}},{clear(){}})
+  fixture.render();assert.equal(bounds.width,64)
+  await fixture.apply('background');frames.shift()();assert.equal(visible,false)
+  if(surface==='bubble')controller.reserveBubbleArea(1)
+  if(surface==='task')controller.reserveBubbleArea(0,1)
+  if(surface==='confirmation')controller.setConfirmationMode(true)
+  const before=reports.length
+  await fixture.apply('orb');assert.ok(bounds.width>=160)
+  frames.shift()()
+  if(surface==='resting')assert.deepEqual([bounds.width,bounds.height],[64,64])
+  else assert.ok(bounds.width>=160&&bounds.height>=160,`${surface} must retain its larger surface`)
+  assert.equal(reports.length,before+1,`${surface}: unchanged dormancy must be resent after show`)
+ }
+})
+
+test('the expanded workbench casts a native shadow and the resting orb does not',async()=>{
+ const source=await readFile(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+ const start=source.indexOf('  let personalCollapsed = false')
+ const body=source.slice(start,source.indexOf("  ipcMain.handle('nova:personal:presentation-error'",start))
+ const shadow=[],bounds={x:0,y:0,width:100,height:100}
+ const mainWindow={getBounds:()=>bounds,setResizable(){},setMinimumSize(){},setMaximumSize(){},setAlwaysOnTop(){},setBounds(){},setHasShadow:value=>shadow.push(value)}
+ const screen={getCursorScreenPoint:()=>({x:0,y:0}),getDisplayNearestPoint:()=>({workArea:{x:0,y:0,width:1440,height:900}})}
+ const set=new Function('mainWindow','screen','orbWindow','sendToOrb','createWorkbenchFrame',`${body};return setPersonalCollapsed`)(mainWindow,screen,{sync(){}},()=>{},createWorkbenchFrame)
+ set(false);set(true);set(false)
+ assert.deepEqual(shadow,[true,false,true])
+})
+
+test('keyboard activation wakes a sleeping orb and expands an awake one', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf("orb.addEventListener('keydown',")
+  const body = source.slice(start, source.indexOf('\n})', start) + 3)
+  assert.match(source, /setAttribute\(orb, 'tabindex', '0'\)/)
+  const calls = []
+  let handler
+  const orb = {addEventListener: (_name, callback) => { handler = callback }}
+  const window = {novaAudioAgentDesktop: {wakeWord: {wake: () => calls.push('wake')}}}
+  const axes = {wakeState: 'sleeping'}
+  const personalView = {controller: {presentationMode: 'orb'}, expand: () => calls.push('expand')}
+  new Function('orb', 'axes', 'window', 'personalView', body)(orb, axes, window, personalView)
+  const press = (key, repeat = false) => { const event = {key, repeat, prevented: false, preventDefault() { this.prevented = true } }; handler(event); return event.prevented }
+  assert.equal(press('Enter'), true); assert.deepEqual(calls, ['wake'])
+  axes.wakeState = 'active'
+  assert.equal(press(' '), true); assert.deepEqual(calls, ['wake', 'expand'])
+  assert.equal(press('Enter', true), false, 'a held key must not expand repeatedly')
+  assert.equal(press('a'), false)
+  personalView.controller.presentationMode = 'workbench'; press('Enter')
+  assert.deepEqual(calls, ['wake', 'expand'])
+})
+
+test('closing the workbench stays in background and macOS activation reopens it without waking a visible orb',async()=>{
+ const source=await readFile(new URL('../src/main/main.mjs',import.meta.url),'utf8')
+ let close,activate,control,prevented=0,visible=true,destroyed=false
+ const app={isQuitting:false,on:(_name,handler)=>{activate=handler}},sender={},requests=[]
+ const mainWindow={webContents:sender,on:(_name,handler)=>{close=handler},isVisible:()=>visible,isDestroyed:()=>destroyed}
+ const requestPresentation=mode=>{requests.push(mode);if(mode==='background')visible=false}
+ const closeStart=source.indexOf("  mainWindow.on('close', event => {")
+ new Function('app','mainWindow','requestPresentation',source.slice(closeStart,source.indexOf('\n  })',closeStart)+5))(app,mainWindow,requestPresentation)
+ const activateStart=source.indexOf("  app.on('activate', () => {")
+ new Function('app','mainWindow','requestPresentation',source.slice(activateStart,source.indexOf('\n  })',activateStart)+5))(app,mainWindow,requestPresentation)
+ const controlStart=source.indexOf("  ipcMain.on('nova:window:control',")
+ new Function('ipcMain','mainWindow','requestPresentation',`const personalCollapsed=false;${source.slice(controlStart,source.indexOf('\n  })',controlStart)+5)}`)({on:(_name,handler)=>{control=handler}},mainWindow,requestPresentation)
+ activate();assert.deepEqual(requests,[],'focusing a visible orb must not expand it')
+ control({sender:{}},'close');assert.deepEqual(requests,[])
+ control({sender},'close');assert.deepEqual(requests.splice(0),['background'])
+ activate();assert.deepEqual(requests.splice(0),['workbench'])
+ visible=true;close({preventDefault(){prevented++}});assert.equal(prevented,1);assert.deepEqual(requests.splice(0),['background'])
+ activate();assert.deepEqual(requests.splice(0),['workbench'])
+ destroyed=true;activate();assert.deepEqual(requests,[])
+ destroyed=false;app.isQuitting=true;activate();assert.deepEqual(requests,[]);close({preventDefault(){prevented++}});assert.equal(prevented,1,'real Quit still closes the window')
 })

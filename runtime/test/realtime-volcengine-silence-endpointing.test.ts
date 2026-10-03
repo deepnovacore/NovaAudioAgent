@@ -230,11 +230,11 @@ test('absolute timing ceilings are inclusive and each overage names only its env
     vadMaxUtteranceMs: 60_000,
   })))
   const cases: readonly [keyof SilenceVolcEndpointingConfig, number, string][] = [
-    ['vadPreRollMs', 2_001, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS'],
-    ['vadMinSpeechMs', 10_001, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS'],
-    ['vadSilenceEndMs', 10_001, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS'],
-    ['vadSpeechPadMs', 2_001, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS'],
-    ['vadMaxUtteranceMs', 60_001, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS'],
+    ['vadPreRollMs', 2_001, 'VOLCENGINE_VAD_PRE_ROLL_MS'],
+    ['vadMinSpeechMs', 10_001, 'VOLCENGINE_VAD_MIN_SPEECH_MS'],
+    ['vadSilenceEndMs', 10_001, 'VOLCENGINE_VAD_SILENCE_END_MS'],
+    ['vadSpeechPadMs', 2_001, 'VOLCENGINE_VAD_SPEECH_PAD_MS'],
+    ['vadMaxUtteranceMs', 60_001, 'VOLCENGINE_VAD_MAX_UTTERANCE_MS'],
   ]
   for (const [field, value, variable] of cases) {
     assert.throws(() => new SilenceVolcEndpointing(config({[field]: value})), error => {

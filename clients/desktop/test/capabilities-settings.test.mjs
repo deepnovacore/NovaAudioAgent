@@ -4,7 +4,8 @@ import test from 'node:test'
 import {mkdtemp, readFile, writeFile, rm} from 'node:fs/promises'
 import {join} from 'node:path'
 import {createSettingsWriter, DEFAULT_SETTINGS as SETTINGS_DEFAULTS} from '../src/main/settings-store.mjs'
-import {prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, capabilityDocumentRevision} from '../src/main/capabilities-settings.mjs'
+import {prepareCapabilityCommit, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, capabilityDocumentRevision} from '../src/main/capabilities-settings.mjs'
+import {parseCapabilityRegistry} from '@nova-audio-agent/runtime/desktop'
 
 const codec = {available: () => false}
 const document = {version: 1, modules: {search: {enabled: false}}, mcpServers: {}}
@@ -91,7 +92,15 @@ test('registry validation uses persistable secrets, rejects failed servers befor
   const root = await fixture(t), path = join(root, 'next.json')
   let writes = 0
   const writer = createSettingsWriter({getCurrent: () => ({...SETTINGS_DEFAULTS, capabilitiesConfigPath: path}), codec, commit: () => {}, save: async () => {writes++}})
-  const requiringKey = {version: 1, modules: {search: {provider: 'mcp'}}}
+  // Search is optional: an MCP search whose key cannot be persisted is saved switched off rather than rejected.
+  const searchOnly = {version: 1, modules: {search: {provider: 'mcp'}}}
+  const searchEnvironment = next => capabilityEnvironment(next, {}, {}, searchOnly)
+  let searchEnv
+  await writer({secrets: {dashscopeApiKey: 'dummy-key'}}, next => prepareCapabilityCommit({settings: next, document: searchOnly, environment: searchEnv = searchEnvironment(next)}))
+  assert.equal(parseCapabilityRegistry(searchOnly, searchEnv).modules.search.reason, 'missing_environment:DASHSCOPE_API_KEY')
+  await rm(path)
+  writes = 0
+  const requiringKey = {version: 1, mcpServers: {demo: {transport: 'streamable-http', url: 'https://example.com/mcp', headers: {authorization: 'Bearer ${DASHSCOPE_API_KEY}'}}}}
   await assert.rejects(writer({secrets: {dashscopeApiKey: 'dummy-key'}}, next => prepareCapabilityCommit({settings: next, document: requiringKey, environment: capabilityEnvironment(next, {}, {}, requiringKey)})), {code: 'invalid_settings_commit'})
   assert.equal(writes, 0)
   await assert.rejects(readFile(path), {code: 'ENOENT'})
@@ -122,7 +131,8 @@ test('public probe refuses secret-bearing tool names, redacts descriptions and k
 test('Ark plus enabled MCP or knowledge independently exports DashScope only when needed', () => {
   const settings = {...SETTINGS_DEFAULTS, pipelineMode: 'cascaded', cascadedLlmProvider: 'ark'}
   const secrets = {dashscopeApiKey: 'dummy-dashscope', arkApiKey: 'dummy-ark'}
-  assert.equal(capabilityEnvironment(settings, secrets, {}, document).DASHSCOPE_API_KEY, undefined)
+  assert.equal(capabilityEnvironment(settings, secrets, {MEMORY_CONNECTION: 'disabled'}, document).DASHSCOPE_API_KEY, undefined)
+  assert.equal(capabilityEnvironment(settings, secrets, {}, document).DASHSCOPE_API_KEY, 'dummy-dashscope')
   for (const doc of [{version: 1, modules: {search: {provider: 'mcp'}}}, {version: 1, modules: {search: {enabled: false}, knowledge: {enabled: true}}}]) {
     const env = capabilityEnvironment(settings, secrets, {}, doc)
     assert.equal(env.DASHSCOPE_API_KEY, 'dummy-dashscope')
@@ -169,7 +179,6 @@ test('combined operation validates settings, returns invalid/busy unchanged and 
 })
 test('actual launch and validator share capability credentials and new registry generation', async t => {
   const {backendLaunchSpec} = await import('../src/main/backend.mjs')
-  const {parseCapabilityRegistry} = await import('@nova-audio-agent/runtime/desktop')
   const root = await fixture(t)
   const settings = {...SETTINGS_DEFAULTS, pipelineMode: 'cascaded', cascadedLlmProvider: 'ark', capabilitiesConfigPath: join(root, 'generation.json')}
   const doc = {version: 1, modules: {search: {enabled: false}, coding: {enabled: false}, camera: {enabled: false}}, mcpServers: {docs: {enabled: true, transport: 'streamable-http', url: 'https://example.com/mcp', headers: {authorization: 'Bearer ${DASHSCOPE_API_KEY}'}, tools: {}, exposeTo: {frontbrain: false, codex: true}}}}
@@ -177,7 +186,7 @@ test('actual launch and validator share capability credentials and new registry 
   const validation = capabilityEnvironment(settings, decryptedSecrets, {}, doc)
   const spec = backendLaunchSpec({nodeEntry: '/private/tmp/runtime.js', nodeResourcesPath: root, workspace: root, token: 'a'.repeat(32), readyEndpoint: '127.0.0.1:12345', parentEnv: {}, settings, decryptedSecrets, capabilitiesDocument: doc})
   assert.equal(spec.env.DASHSCOPE_API_KEY, validation.DASHSCOPE_API_KEY)
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG, settings.capabilitiesConfigPath)
+  assert.equal(spec.env.CAPABILITIES_CONFIG, settings.capabilitiesConfigPath)
   const registry = parseCapabilityRegistry(doc, spec.env)
   assert.equal(registry.modules.coding.enabled, false)
   assert.equal(registry.modules.camera.enabled, false)
@@ -187,10 +196,10 @@ test('safe raw URL and headers preserve templates and environment overrides rema
   const root = await fixture(t), path = join(root, 'cap.json')
   const doc = {version: 1, modules: {search: {enabled: false}}, mcpServers: {docs: {enabled: false, transport: 'streamable-http', url: 'https://example.com/mcp?token=${DOCS_TOKEN}', headers: {authorization: 'Bearer ${DOCS_TOKEN}'}, tools: {}}}}
   await writeFile(path, JSON.stringify(doc))
-  const view = readCapabilityEditor({capabilitiesConfigPath: path}, {NOVA_AUDIO_AGENT_SEARCH_PROVIDER: 'mcp'})
+  const view = readCapabilityEditor({capabilitiesConfigPath: path}, {SEARCH_PROVIDER: 'mcp'})
   assert.deepEqual(view.document, doc)
   assert.equal(view.status.modules.search.provider, 'mcp')
-  assert.deepEqual(view.status.overrides, ['NOVA_AUDIO_AGENT_SEARCH_PROVIDER'])
+  assert.deepEqual(view.status.overrides, ['SEARCH_PROVIDER'])
 })
 
 test('all capability settings reach the public form and proposed snapshot validator', async () => {
@@ -219,7 +228,7 @@ test('relative registry paths resolve identically for main validation and a diff
   const {capabilityPath} = await import('../src/main/capabilities-settings.mjs')
   const settings = {...SETTINGS_DEFAULTS, capabilitiesConfigPath: 'config/capabilities.json'}
   const spec = backendLaunchSpec({nodeEntry: '/private/tmp/runtime.js', nodeResourcesPath: '/private/tmp', workspace: '/private/tmp/other-workspace', token: 'a'.repeat(32), readyEndpoint: '127.0.0.1:12345', parentEnv: {}, settings})
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG, capabilityPath(settings))
+  assert.equal(spec.env.CAPABILITIES_CONFIG, capabilityPath(settings))
 })
 
 test('literal harmless HTTP headers remain editable without admitting credential headers', async t => {

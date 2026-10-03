@@ -54,9 +54,9 @@ test('desktop entry reaches coding-disabled composition without importing or con
   export function buildDesktopRealtimeComposition() { throw new Error('disabled-composition-reached'); }`
   const configUrl = new URL('../src/config/config.js', import.meta.url).href
   const config = `import {loadSettings as load} from ${JSON.stringify(configUrl)};
-    export {requireIntegratedRealtime} from ${JSON.stringify(configUrl)};
-    export function loadSettings() { return {...load({DASHSCOPE_API_KEY: 'fixture'}), executors: ['codex']}; }`
-  const registry = `export function loadCapabilityRegistry() { return {modules: {coding: {enabled: false}, knowledge: {enabled: false}}, overrides: [], mcpServers: {}, serverStatuses: []}; }`
+    export {renamedEnvironmentWarnings, requireBlockingCredentials, requireIntegratedRealtime, withoutUncredentialedModules} from ${JSON.stringify(configUrl)};
+    export function loadSettings() { return {...load({DASHSCOPE_API_KEY: 'fixture'}, true), executors: ['codex']}; }`
+  const registry = `export function loadCapabilityRegistry() { return {modules: {camera: {enabled: false}, coding: {enabled: false}, knowledge: {enabled: false}}, overrides: [], mcpServers: {}, serverStatuses: []}; }`
   const telemetry = `export function createRealtimeTelemetry() { return {record() {}, close() {}}; }`
   const replacements = {[new URL('../src/desktop/desktop-session.js', import.meta.url).href]: desktop, [new URL('../src/config/config.js', import.meta.url).href]: config, [new URL('../src/config/capability-registry.js', import.meta.url).href]: registry, [new URL('../src/realtime/telemetry.js', import.meta.url).href]: telemetry}
   const hook = `export async function resolve(specifier, context, next) {
@@ -102,7 +102,7 @@ test('actual desktop entry passes prepared external and knowledge MCP into the c
         transport: 'streamable-http', url: 'http://127.0.0.1:19888/mcp', headers: {},
         tools: {recall: {enabled: true, timeoutMs: 8000, maxResultBytes: 32768, maxCallsPerTurn: 2}}}}}; }`
   const configUrl = new URL('../src/config/config.js', import.meta.url).href
-  const replacements = {[new URL('../src/knowledge/assembly.js', import.meta.url).href]: knowledge, [new URL('../src/desktop/desktop-session.js', import.meta.url).href]: desktop, [new URL('../src/config/config.js', import.meta.url).href]: `import {loadSettings as load} from ${JSON.stringify(configUrl)}; export {requireIntegratedRealtime} from ${JSON.stringify(configUrl)}; export function loadSettings() { return {...load({DASHSCOPE_API_KEY: 'fixture'}), executors: ['codex']}; }`, [new URL('../src/config/capability-registry.js', import.meta.url).href]: registry, [new URL('../src/realtime/telemetry.js', import.meta.url).href]: `export function createRealtimeTelemetry() { return {record() {}, close() {}}; }`, [new URL('../src/executors/codex/host.js', import.meta.url).href]: host}
+  const replacements = {[new URL('../src/knowledge/assembly.js', import.meta.url).href]: knowledge, [new URL('../src/desktop/desktop-session.js', import.meta.url).href]: desktop, [new URL('../src/config/config.js', import.meta.url).href]: `import {loadSettings as load} from ${JSON.stringify(configUrl)}; export {renamedEnvironmentWarnings, requireBlockingCredentials, requireIntegratedRealtime, withoutUncredentialedModules} from ${JSON.stringify(configUrl)}; export function loadSettings() { return {...load({DASHSCOPE_API_KEY: 'fixture'}, true), executors: ['codex']}; }`, [new URL('../src/config/capability-registry.js', import.meta.url).href]: registry, [new URL('../src/realtime/telemetry.js', import.meta.url).href]: `export function createRealtimeTelemetry() { return {record() {}, close() {}}; }`, [new URL('../src/executors/codex/host.js', import.meta.url).href]: host}
   const hook = `export async function resolve(specifier, context, next) {
     const replacements = ${JSON.stringify(replacements)};
     if (['/desktop-entry.js', '/production-composition.js'].some(path => context.parentURL?.endsWith(path)) && replacements[new URL(specifier, context.parentURL).href]) return {url: 'data:text/javascript,' + encodeURIComponent(replacements[new URL(specifier, context.parentURL).href]), shortCircuit: true};
@@ -118,7 +118,7 @@ test('actual desktop entry preserves production provider usage through private I
   const target = new URL('../src/desktop-entry.js', import.meta.url).href
   const configUrl = new URL('../src/config/config.js', import.meta.url).href
   const registryUrl = new URL('../src/config/capability-registry.js', import.meta.url).href
-  const report = {id: 'usage-production', provider: 'qwen', service: 'realtime', model: 'qwen-audio-3.0-realtime-plus', status: 'complete', inputTokens: 12, outputTokens: 9,
+  const report = {id: 'usage-production', provider: 'qwen', service: 'llm', model: 'qwen-plus', status: 'complete', inputTokens: 12, outputTokens: 9,
     inputTextTokens: 5, inputAudioTokens: 7, outputTextTokens: 3, outputAudioTokens: 6}
   const replacements = {
     [new URL('../src/desktop/desktop-session.js', import.meta.url).href]: `export async function runDesktopEntryWithStopSources({construct}) {
@@ -128,21 +128,19 @@ test('actual desktop entry preserves production provider usage through private I
     }
     export function buildDesktopRealtimeComposition({buildRealtime}) { return buildRealtime({}, {}); }`,
     [new URL('../src/config/config.js', import.meta.url).href]: `import {loadSettings as load} from ${JSON.stringify(configUrl)};
-      export {requireIntegratedRealtime} from ${JSON.stringify(configUrl)};
-      export function loadSettings() { return load({DASHSCOPE_API_KEY: 'fixture', NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated'}); }`,
+      export {renamedEnvironmentWarnings, requireBlockingCredentials, requireIntegratedRealtime, withoutUncredentialedModules} from ${JSON.stringify(configUrl)};
+      export function loadSettings() { return load({DASHSCOPE_API_KEY: 'fixture', PIPELINE_MODE: 'integrated'}, true); }`,
     [new URL('../src/config/capability-registry.js', import.meta.url).href]: `import {parseCapabilityRegistry} from ${JSON.stringify(registryUrl)};
-      export function loadCapabilityRegistry() { return parseCapabilityRegistry({version: 1, modules: {coding: {enabled: false}, knowledge: {enabled: false}, search: {enabled: false}, camera: {enabled: false}}}); }`,
+      export function loadCapabilityRegistry() { return parseCapabilityRegistry({version: 1, modules: {camera: {enabled: false}, coding: {enabled: false}, knowledge: {enabled: false}, search: {enabled: false}, camera: {enabled: false}}}); }`,
     [new URL('../src/realtime/telemetry.js', import.meta.url).href]: `export function createRealtimeTelemetry() { return {record() {}, close() {}}; }`,
   }
-  const provider = `export class QwenAudioRealtimeAdapter {
-    constructor(options) { options.onUsage(${JSON.stringify(report)}); throw new Error('usage-provider-reached'); }
-  }`
+  const provider = `export function createQwenCascadedLlmFactory(options) { options.onUsage(${JSON.stringify(report)}); throw new Error('usage-provider-reached'); }`
   const hook = `export async function resolve(specifier, context, next) {
     const replacements = ${JSON.stringify(replacements)};
     if (['/desktop-entry.js', '/production-composition.js'].some(path => context.parentURL?.endsWith(path)) && replacements[new URL(specifier, context.parentURL).href]) {
       return {url: 'data:text/javascript,' + encodeURIComponent(replacements[new URL(specifier, context.parentURL).href]), shortCircuit: true};
     }
-    if (context.parentURL?.endsWith('/cascaded-realtime-assembly.js') && specifier === '../realtime/qwen.js') {
+    if (context.parentURL?.endsWith('/cascaded-realtime-assembly.js') && specifier === '../realtime/cascaded/qwen-llm.js') {
       return {url: 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(provider)}), shortCircuit: true};
     }
     return next(specifier, context);

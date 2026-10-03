@@ -14,7 +14,7 @@ import {
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/qwen/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/realtime/qwen/v1')
 
 interface Scenario {
   readonly id: string
@@ -296,7 +296,7 @@ test('Qwen clarification fixture covers adaptive first-turn and merged multi-tur
 })
 
 test('Qwen instructions clarify before submitting coding actions through host tools (spec 08)', () => {
-  assert.match(FRONTEND_INSTRUCTIONS, /只有决定执行用户操作时，才通过 dispatch、cancel、confirm 三个宿主工具提交/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /只有决定执行用户操作时，才通过当前可用的宿主工具提交/u)
   assert.match(FRONTEND_INSTRUCTIONS, /关键歧义已消除就立即派发，不重复提问/u)
   assert.match(FRONTEND_INSTRUCTIONS, /instruction 汇总本次任务多轮已经明确的目标、约束、验收及修改/u)
   assert.match(FRONTEND_INSTRUCTIONS, /由下游 coordinator 决定工作区和 Session 的选择、新建、切换/u)

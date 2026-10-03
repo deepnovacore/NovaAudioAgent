@@ -131,3 +131,10 @@ function pairTextLength(pairs: readonly (readonly [RecoveryTurn, RecoveryTurn])[
 function codePointLength(value: string): number {
   return [...value].length
 }
+
+/** Host-committed user/final-assistant pairs only; provider tool state is never restorable history. */
+export const committedConversationPairsSchema = z.array(z.object({
+  user: z.string().min(1).max(4_000).refine(value=>!value.includes('\0')),
+  assistant: z.string().min(1).max(4_000).refine(value=>!value.includes('\0')),
+}).strict()).max(32).refine(pairs=>[...JSON.stringify(pairs)].length<=131_072,'committed history exceeds character budget')
+export type CommittedConversationPair = z.infer<typeof committedConversationPairsSchema>[number]

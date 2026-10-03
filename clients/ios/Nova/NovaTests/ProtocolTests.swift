@@ -153,7 +153,7 @@ final class ProtocolTests: XCTestCase {
             let name: String; let hex: String; let valid: Bool; let expected: Expected?
         }
         #if SWIFT_PACKAGE
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../../fixtures/client-protocol/v1/vectors.json").standardizedFileURL
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../../tests/fixtures/client-protocol/v1/vectors.json").standardizedFileURL
         #else
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "vectors", withExtension: "json"))
         #endif

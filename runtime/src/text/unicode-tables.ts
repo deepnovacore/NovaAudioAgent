@@ -201,14 +201,6 @@ export function isLetterCategory(codePoint: number): boolean {
   return contains(L_RANGES, codePoint)
 }
 
-/** Whether any character in the string is in a L category at the pinned version. */
-export function hasLetterCategory(value: string): boolean {
-  for (const character of value) {
-    if (isLetterCategory(character.codePointAt(0)!)) return true
-  }
-  return false
-}
-
 // N*: Nd, Nl, No.
 // every kind of number -- one half of Python `str.isalnum()` used by project slugs.
 // 137 ranges covering 1831 code points.
@@ -235,12 +227,4 @@ export const NUMBER_CATEGORY_RANGE_COUNT = N_RANGES.starts.length
  */
 export function isNumberCategory(codePoint: number): boolean {
   return contains(N_RANGES, codePoint)
-}
-
-/** Whether any character in the string is in a N category at the pinned version. */
-export function hasNumberCategory(value: string): boolean {
-  for (const character of value) {
-    if (isNumberCategory(character.codePointAt(0)!)) return true
-  }
-  return false
 }

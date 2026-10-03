@@ -1,3 +1,4 @@
+import {acquireTaskResources,taskResourcesBusy,taskResourcesUncertain,quarantineTaskResources} from './task-resources.js'
 /** External MCP tools are direct, untrusted executors; discovery never grants approval or probe authority. */
 import {createHash} from 'node:crypto'
 import {AjvJsonSchemaValidator} from '@modelcontextprotocol/sdk/validation/ajv'
@@ -78,6 +79,7 @@ export class McpExecutorAdapter implements ExecutorAdapter {
     })
     compileToolSchema([this.manifest]) // Existing reserved params/provider schema rules remain authoritative.
   }
+  taskResource():string|null{return this.config.computerUse?.resource??null}
   admitRequest(op: string, request: Readonly<Record<string, JsonValue>>) {
     return this.#validators.get(op)?.(request).valid === true
       ? {ok: true as const, request, sync_result: this.manifest.ops.find(value => value.name === op)!.sync_result}
@@ -109,15 +111,23 @@ export class McpExecutorAdapter implements ExecutorAdapter {
     counts.set(op, count + 1)
     const timeoutMs = Math.min(policy.timeoutMs, Math.max(0, ((context.delegate.deadline ?? (context.clock.now() + policy.timeoutMs / 1000)) - context.clock.now()) * 1000))
     if (timeoutMs <= 0 || context.signal.aborted) return failure('timeout', 'unknown')
+    const resource=this.taskResource();if(this.config.computerUse&&!resource)return failure('computer_resource_unavailable')
+    let release:(()=>void)|undefined,called=false,uncertain=false
     try {
+      if(resource){if(taskResourcesBusy([resource]))await context.resourceWaiting?.(taskResourcesUncertain([resource])?'computer_resource_uncertain':'computer_resource_busy');release=await acquireTaskResources([resource],AbortSignal.any([context.signal,AbortSignal.timeout(timeoutMs)]));await context.resourceWaiting?.(null)}
+      context.beforeWrite?.();if(!operation.readonly&&!wanted())return failure('stale_user_origin')
       context.progress({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
+      called=true
       const result = await this.connection.call(original, request, {signal: context.signal, timeoutMs, maxBytes: policy.maxResultBytes,
         ...(operation.readonly ? {} : {stillWanted: wanted})})
       return {outcome: 'ok', trust: 'untrusted_external', content: {result: jsonValueSchema.parse(result), verified: false}}
     } catch (error) {
       const code = error instanceof McpFailure ? error.code : 'call_failed'
-      return failure(code, code === 'stale_user_origin' ? 'refused' : operation.readonly ? 'failed' : 'unknown')
-    }
+      uncertain=called&&!operation.readonly&&code!=='stale_user_origin'
+      if(uncertain&&resource)quarantineTaskResources([resource])
+      return failure(code, !called||code === 'stale_user_origin' ? 'refused' : operation.readonly ? 'failed' : 'unknown')
+    }finally{if(!uncertain)release?.()}
+
   }
 }
 

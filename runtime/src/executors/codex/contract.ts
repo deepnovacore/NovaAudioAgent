@@ -103,6 +103,8 @@ const STEER_PROJECT: OpSpec = {
     properties: {
       instruction: {type: 'string', minLength: 1, maxLength: MAX_CODEX_STEER_INSTRUCTION},
       project: PROJECT,
+      session_id: {type:'string',minLength:1,maxLength:80},
+      work_id: {type:'string',minLength:1,maxLength:512},
     },
     required: ['instruction'],
     additionalProperties: false,
@@ -221,12 +223,13 @@ function validateProjectRun(request: Record<string, unknown>): CodexRequestValid
 }
 
 function validateProjectSteer(request: Record<string, unknown>): CodexRequestValidation {
-  const allowed = new Set(['instruction', 'project'])
+  const allowed = new Set(['instruction', 'project', 'session_id', 'work_id'])
   if (Object.keys(request).some(key => !allowed.has(key))) return failure('invalid_params', 'steer')
   const instruction = normalizedString(request.instruction, MAX_CODEX_STEER_INSTRUCTION)
   if (instruction === null) return failure('invalid_params', 'steer')
   const result: Record<string, unknown> = {instruction}
   if (!projectField(request, result)) return failure('invalid_params', 'steer')
+  for(const key of ['session_id','work_id'])if(Object.hasOwn(request,key)){const value=normalizedString(request[key],key==='work_id'?512:80);if(value===null)return failure('invalid_params','steer');result[key]=value}
   return success(result)
 }
 

@@ -1,10 +1,14 @@
+import {hostWorkspacePath} from '../src/executors/codex/process-owner.js'
+import {CodingTargetController} from '../src/personal-agent/coding-targets.js'
+import {fixture as projectFixture} from './fixtures/codex/project-adapter-fixture.js'
+import type {PersonalMemoryResource} from '../src/memory/personal-memory.js'
 import assert from 'node:assert/strict'
-import {mkdtemp, realpath, rm, writeFile, readFile} from 'node:fs/promises'
+import {mkdtemp, realpath, rm, writeFile, readFile, stat} from 'node:fs/promises'
 import {once} from 'node:events'
 import {setTimeout as delay, setImmediate as yieldImmediate} from 'node:timers/promises'
 import {type BlackboardSessionOptions} from '../src/memory/blackboard-session.js'
 import {tmpdir} from 'node:os'
-import {join, resolve} from 'node:path'
+import {dirname, join, resolve} from 'node:path'
 import {test} from 'node:test'
 import {Worker} from 'node:worker_threads'
 import {parseCapabilityRegistry} from '../src/config/capability-registry.js'
@@ -16,6 +20,7 @@ import {
   buildAssembly,
 } from '../src/composition/assembly.js'
 import {
+  composeRealtime,
   REALTIME_ASSEMBLY_SHUTDOWN_GRACE_MS,
   buildRealtimeAssembly as buildRealtimeAssemblyRaw,
   type CodingAgentControllerFactory,
@@ -119,6 +124,9 @@ import {
 import {CodexLiveAdapter} from '../src/executors/codex/adapter-live.js'
 import {MediaStore} from '../src/core/media-store.js'
 import {handoffPolicySchema} from '../src/core/memory.js'
+import {SuggestionPool} from '../src/core/suggestions.js'
+import {PersonalAgentHost} from '../src/personal-agent/host.js'
+import {TaskExecutionRejected} from '../src/personal-agent/task-loop.js'
 import {createArkCascadedLlmSession} from '../src/realtime/cascaded/ark-llm.js'
 import {type CascadedLlmFactory} from '../src/realtime/cascaded/llm.js'
 import {CascadedRealtimeError} from '../src/realtime/cascaded/adapter.js'
@@ -625,6 +633,19 @@ test('one provider session supports the realtime session connect and reconnect c
   }
 })
 
+test('unconfigured personal storage uses a private temporary directory', async () => {
+  const realtime = buildRealtimeAssembly({core: realCore(), provider: new WorkspaceContextProvider()})
+  const directory = dirname(realtime.personalAgent.options.path)
+  try {
+    assert.notEqual(directory, await realpath(tmpdir()))
+    if (process.platform !== 'win32') assert.equal((await stat(directory)).mode & 0o777, 0o700)
+    await realtime.start()
+  } finally {
+    await realtime.stop()
+    if (directory !== await realpath(tmpdir())) await rm(directory, {recursive: true, force: true})
+  }
+})
+
 test('conversation clear republishes workspace context without the old work order', async () => {
   const core = realCore()
   const provider = new WorkspaceContextProvider()
@@ -662,9 +683,9 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
     core,
     provider,
     idFactory: () => `factory-${++id}`,
-    controlledGuardReconnect: true,
-    guardHistoryRecovery: 'packed',
-    guardHistoryPairs: 2,
+    controlledPreemptiveAlertReconnect: true,
+    preemptiveAlertHistoryRecovery: 'packed',
+    preemptiveAlertHistoryPairs: 2,
     onDiagnostic: () => undefined,
   })
 
@@ -1212,7 +1233,7 @@ test('intake without a coding executor fails assembly instead of silently droppi
         models: {
           assess: () => Promise.reject(new Error('not used')),
           plan: () => Promise.reject(new Error('not used')),
-          resolveCancelTarget: () => Promise.reject(new Error('not used')),
+          targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.reject(new Error('not used'))},
         },
         settings: {clarification_depth: 'balanced', plan_readback: 'summary'},
       },
@@ -1376,7 +1397,9 @@ test('callbacks route once through the single playback, session, bridge, and ser
   assert.deepEqual(spoken, ['hello'])
   assert.equal(deliveries.length, 1)
   assert.equal(deliveries[0]?.text, 'hello')
-  assert.deepEqual(captions, [
+  assert.ok(captions[0]?.turn_id)
+  assert.equal(captions[0]?.turn_id,captions[1]?.turn_id)
+  assert.deepEqual(captions.map(frame => { const result = {...frame}; delete result.turn_id; return result }), [
     {role: 'assistant', text: 'hel', final: false, message_id: 'assistant:1:r-1'},
     {role: 'assistant', text: 'hello', final: true, full_text: 'hello', message_id: 'assistant:1:r-1'},
   ])
@@ -1391,6 +1414,121 @@ test('callbacks route once through the single playback, session, bridge, and ser
   assert.deepEqual(diagnostics, [])
 
   await settleNamed('callback assembly stop', realtime.stop())
+})
+
+for (const scenario of ['direct', 'changed', 'unbound'] as const) {
+  test(`conversation-bound direct start ${scenario}`, async () => {
+    const value = await projectFixture({preexistingSession: true})
+    await value.adapter.initialize()
+    const targets = new CodingTargetController(value.adapter.targetPort)
+    const original = (await targets.list()).find(target => target.session_id !== null)!
+    if (scenario !== 'unbound') await targets.setTarget(original)
+    const beta = await value.store.createManaged('beta')
+    const assessmentGate = deferred<void>()
+    const assessmentEntered = deferred<void>()
+    let controller!: CodexAgentController
+    const provider = new WorkspaceContextProvider()
+    const core = buildAssembly({settings: settingsSchema.parse({executors: ['codex']}), clock: value.clock,
+      gateway: new NeverCalledGateway(), searchTransport: new NeverCalledSearch(), executors: [value.adapter]})
+    const realtime = buildRealtimeAssembly({core, provider, projectAdapter: value.adapter, codingTarget: targets,
+      codingAgentControllerFactory: {create: context => {
+        controller = new CodexAgentController({channel: context.channel, intake: context.intake!, dispatchPort: context.dispatchPort, resolveCancelTarget: context.resolveCancelTarget})
+        return controller
+      }},
+      intake: {settings: {clarification_depth: 'balanced', plan_readback: 'confirm'}, models: {
+        assess: async input => {
+          assessmentEntered.resolve(); await assessmentGate.promise
+          return {intake_id: input.intake_id, revision: input.revision, kind: 'work', project: '当前项目', project_evidence: null,
+            session: {mode: 'latest'}, execution_mode: 'direct', intent_to_proceed: true, candidate_question: null,
+            discovery: [], early_exit: true, abandon: false, readiness: 1,
+            slots: Object.fromEntries(['goal', 'scope', 'acceptance', 'constraints'].map(key => [key, {state: 'stated', note: key === 'goal' ? 'Fix button' : key}]))}
+        }, plan: () => Promise.reject(Error('direct work must not plan')), targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
+      }},
+    })
+    await realtime.start()
+    try {
+      await realtime.service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 'bound', provider_item_id: 'bound-user'})
+      await realtime.service.handleEvent({kind: 'user_speech_ended', session_epoch: 1, speech_id: 'bound', provider_item_id: 'bound-user'})
+      await realtime.service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'bound-user', text: '在当前项目修复按钮，直接开始'})
+      await realtime.service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'bound-response'})
+      const call = {kind: 'tool_call_ready', session_epoch: 1, call_id: 'bound-call', item_id: 'bound-function', response_id: 'bound-response',
+        name: 'dispatch', arguments: {executor: 'codex', instruction: '修复按钮', origin_ref: 'conversation:1'}} as const
+      await realtime.service.handleEvent(call)
+      await assessmentEntered.promise
+      const revision = targets.revision
+      if (scenario === 'changed') await targets.setTarget({workspace_id: beta.workspace_id, session_id: null})
+      assessmentGate.resolve()
+      await controller.settleIntakeForTest()
+      if (scenario === 'unbound') {
+        assert.equal(controller.inspectIntakeForTest()?.outcome, 'routed', 'unbound current workspace must request selection, never use global active')
+        assert.equal(value.factory.calls.length, 0)
+        assert.equal(value.confirmation.pending, false)
+      } else if (scenario === 'changed') {
+        assert.equal(controller.inspectIntakeForTest()?.outcome, 'cancelled')
+        assert.equal(value.factory.calls.length, 0)
+        assert.equal(value.confirmation.pending, false)
+      } else {
+        assert.equal(controller.inspectIntakeForTest()?.outcome, 'dispatched')
+        await waitNamed('real bound adapter execution', () => value.factory.calls.length === 1)
+        assert.equal(hostWorkspacePath(value.factory.bindings[0]!.workspace), (await value.store.resolveWorkspace('alpha')).canonical_path)
+        assert.equal(value.factory.bindings[0]?.resumeThreadId, null, 'an independent task starts new despite remembered session')
+        assert.ok(targets.revision > revision, 'accepted target persistence advanced the binding revision')
+        await realtime.service.handleEvent(call)
+        await controller.settleIntakeForTest()
+        assert.equal(value.factory.calls.length, 1, 'the existing epoch/call ledger suppresses replay')
+      }
+    } finally {assessmentGate.resolve(); await realtime.stop(); await rm(value.root, {recursive: true, force: true})}
+  })
+}
+
+test('review boundary: two conversation assemblies independently resolve current workspace and new sessions', async () => {
+  const value = await projectFixture({preexistingSession: true})
+  await value.adapter.initialize()
+  const alpha = await value.store.resolveWorkspace('alpha')
+  const beta = await value.store.createManaged('beta')
+  await value.store.createManaged('global-third')
+  const graphs: ReturnType<typeof buildRealtimeAssembly>[] = []
+  try {
+    for (const workspace of [alpha, beta]) {
+      const targets = new CodingTargetController(value.adapter.targetPort)
+      await targets.setTarget({workspace_id: workspace.workspace_id, session_id: null})
+      let controller!: CodexAgentController
+      const core = buildAssembly({settings: settingsSchema.parse({executors: ['codex']}), clock: value.clock,
+        gateway: new NeverCalledGateway(), searchTransport: new NeverCalledSearch(), executors: [value.adapter]})
+      const graph = buildRealtimeAssembly({core, provider: new WorkspaceContextProvider(), projectAdapter: value.adapter, codingTarget: targets,
+        codingAgentControllerFactory: {create: context => {
+          controller = new CodexAgentController({channel: context.channel, intake: context.intake!, dispatchPort: context.dispatchPort, resolveCancelTarget: context.resolveCancelTarget})
+          return controller
+        }},
+        intake: {settings: {clarification_depth: 'balanced', plan_readback: 'confirm'}, models: {
+          assess: input => Promise.resolve({intake_id: input.intake_id, revision: input.revision, kind: 'work', project: '当前工作区', project_evidence: null,
+            session: {mode: 'new'}, execution_mode: 'direct', intent_to_proceed: true, candidate_question: null,
+            discovery: [], early_exit: true, abandon: false, readiness: 1,
+            slots: Object.fromEntries(['goal', 'scope', 'acceptance', 'constraints'].map(key => [key, {state: 'stated', note: key}]))}),
+          plan: () => Promise.reject(Error('direct work must not plan')), targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
+        }},
+      })
+      graphs.push(graph)
+      await graph.start()
+      await value.store.selectWorkspace('global-third')
+      await graph.service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 'bound', provider_item_id: 'bound-user'})
+      await graph.service.handleEvent({kind: 'user_speech_ended', session_epoch: 1, speech_id: 'bound', provider_item_id: 'bound-user'})
+      await graph.service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'bound-user', text: '在当前工作区修复按钮，直接开始'})
+      await graph.service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'bound-response'})
+      const call = {kind: 'tool_call_ready', session_epoch: 1, call_id: 'same-call', item_id: 'bound-function', response_id: 'bound-response',
+        name: 'dispatch', arguments: {executor: 'codex', instruction: '修复按钮', origin_ref: 'conversation:1'}} as const
+      await graph.service.handleEvent(call)
+      await controller.settleIntakeForTest()
+      assert.equal(controller.inspectIntakeForTest()?.outcome, 'dispatched')
+      await waitNamed('independent conversation execution', () => value.factory.calls.length === graphs.length)
+      assert.equal(hostWorkspacePath(value.factory.bindings.at(-1)!.workspace), workspace.canonical_path)
+      assert.equal(value.factory.bindings.at(-1)!.resumeThreadId, null)
+      await graph.service.handleEvent(call)
+      await controller.settleIntakeForTest()
+      assert.equal(value.factory.calls.length, graphs.length)
+    }
+    assert.equal(value.factory.calls.length, 2)
+  } finally {for (const graph of graphs) await graph.stop(); await rm(value.root, {recursive: true, force: true})}
 })
 
 test('project proposal reaches provider and desktop before confirmation', async () => {
@@ -1461,7 +1599,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
         intake_id: input.intake_id, revision: input.revision,
         work_order: {objective: slots.goal.note, scope_in: ['单页小游戏'], acceptance: ['可以玩']},
       }),
-      resolveCancelTarget: () => Promise.resolve(null),
+      targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
     },
     settings: {clarification_depth: 'balanced', plan_readback: 'summary'},
   } as const
@@ -1800,6 +1938,166 @@ test('project adapter wiring carries one confirmed identity through the real rea
     await realtime.stop()
   }
   assert.equal(closeCalls, 1)
+})
+
+test('confirmed project dispatch preserves task routing for new and existing tasks', async () => {
+  for (const existing of [false, true]) {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), `nova-confirmed-route-${existing ? 'existing' : 'new'}-`)))
+    const clock = new VirtualClock(0)
+    const confirmation = new ProjectConfirmationController({
+      clock,
+      idFactory: () => `confirmed-route-${existing ? 'existing' : 'new'}`,
+    })
+    const host = new PersonalAgentHost({
+      path: join(directory, 'personal.json'), userScope: 'test', memory: () => undefined,
+      pool: new SuggestionPool(), evidence: () => null,
+    })
+    const effect = deferred<void>()
+    let routeBeforeEffect: string | undefined
+    let taskIdBeforeEffect: string | undefined
+    const adapterShape: ExecutorAdapter & Record<string, unknown> = {
+      manifest: CODEX_PROJECT_MANIFEST,
+      confirmationController: confirmation,
+      roster: () => [],
+      running: () => [],
+      cancel: () => Promise.resolve({code: 'not_running'}),
+      resolveIntakeTarget: () => Promise.resolve({
+        workspace: 'beta', action: 'create', workspace_display_name: 'beta', workspace_id: null,
+        session_title: 'confirmed goal', session_id: null,
+      }),
+      dispatch: (_op: string, _request: Readonly<Record<string, JsonValue>>, context: ExecutorDispatchContext) => {
+        const task = host.tasks.list().find(task => task.origin_ref === context.delegate.origin_ref)
+        taskIdBeforeEffect = task?.id
+        routeBeforeEffect = task?.execution_route
+        effect.resolve()
+        return Promise.resolve({
+          outcome: 'failed', trust: 'trusted_system', content: {code: 'synthetic_failure'}, refs: [],
+        })
+      },
+      commitConfirmed: async (operation: ConfirmedProjectOperation, runtimeDispatch: (
+        request: Readonly<Record<string, unknown>>, reason: Readonly<Record<string, unknown>>,
+        capability: object, launchAuthorized: () => boolean,
+      ) => Promise<{accepted: boolean; delegate_id: string | null}>) => {
+        let launchAuthorized = false
+        const admission = await runtimeDispatch({
+          executor: 'codex', op: 'run', request: {work_order: operation.work_order ?? ''},
+          origin_ref: operation.origin_ref,
+        }, {kind: 'realtime_tool', priority: 100, routing_class: 'user_awaited', origin: null, selected_suggestion: null}, operation, () => launchAuthorized)
+        if (!admission.accepted || admission.delegate_id === null) {
+          confirmation.rollbackConfirmed(operation)
+          return {accepted: false, code: 'runtime_rejected'}
+        }
+        if (!confirmation.recordRuntimeAdmission(operation) || !confirmation.claimConfirmed(operation)) {
+          return {accepted: false, code: 'confirmation_invalid'}
+        }
+        launchAuthorized = true
+        return {accepted: true, code: 'accepted', delegate_id: admission.delegate_id}
+      },
+      publicProjectView: () => ({
+        workspace_display_name: null, session_title: null, roster: [],
+        pending_confirmation: false, pending_confirmation_busy: false,
+      }),
+      publicProjectContext: () => ({
+        workspace_id: null,
+        view: {workspace_display_name: null, session_title: null, roster: [], pending_confirmation: false, pending_confirmation_busy: false},
+      }),
+      initialize: () => Promise.resolve(),
+      activeCommittedWorkspace: () => Promise.resolve(null),
+      observeProjectView: () => () => undefined,
+      observeProjectContext: () => () => undefined,
+      close: () => Promise.resolve(),
+    }
+    const core = buildAssembly({
+      settings: settingsSchema.parse({executors: ['codex']}), clock,
+      gateway: new NeverCalledGateway(), searchTransport: new NeverCalledSearch(), executors: [adapterShape],
+    })
+    const slots = {
+      goal: {state: 'stated' as const, note: 'confirmed goal'},
+      scope: {state: 'inferred' as const, note: 'confirmed scope'},
+      acceptance: {state: 'inferred' as const, note: 'confirmed acceptance'},
+      constraints: {state: 'missing' as const, note: ''},
+    }
+    const intake = {
+      models: {
+        assess: (input: Readonly<Record<string, unknown>>) => Promise.resolve({
+          intake_id: input.intake_id, revision: input.revision, slots, readiness: 0.75,
+          kind: 'create' as const, project: 'beta', project_evidence: 'beta', session: {mode: 'latest' as const},
+          intent_to_proceed: true, candidate_question: null, discovery: [], early_exit: false, abandon: false,
+        }),
+        plan: (input: Readonly<Record<string, unknown>>) => Promise.resolve({
+          intake_id: input.intake_id, revision: input.revision,
+          work_order: {objective: slots.goal.note, scope_in: [slots.scope.note], acceptance: [slots.acceptance.note]},
+        }),
+        targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
+      },
+      settings: {clarification_depth: 'balanced' as const, plan_readback: 'summary' as const},
+    }
+    let realtime: ReturnType<typeof buildRealtimeAssembly> | undefined
+    try {
+      await host.open()
+      const prior = existing ? await host.tasks.delegate('existing-task', {
+        conversation_id: 'conversation:test', conversation_generation: 1,
+        goal: 'existing goal', acceptance: ['existing acceptance'], origin_ref: 'conversation:1',
+      }) : undefined
+      realtime = buildRealtimeAssembly({
+        core, provider: new WorkspaceContextProvider(), projectAdapter: adapterShape as never,
+        projectConfirmation: confirmation, intake, sharedPersonal: {host, memory: undefined},
+        taskConversationId: 'conversation:test', taskConversationGeneration: 1,
+      })
+      await realtime.start()
+      await realtime.service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 'speech-work', provider_item_id: 'item-work'})
+      await realtime.service.handleEvent({kind: 'user_speech_ended', session_epoch: 1, speech_id: 'speech-work', provider_item_id: 'item-work'})
+      await realtime.service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'item-work', text: 'create beta and do the confirmed work'})
+      await realtime.service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-work'})
+      await realtime.service.handleEvent({
+        kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-work', item_id: 'function-work', response_id: 'response-work', name: 'dispatch',
+        arguments: {executor: 'codex', instruction: 'create beta and do the confirmed work', origin_ref: 'conversation:1', ...(prior ? {task_id: prior.id} : {})},
+      })
+      await realtime.service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: 'response-work', status: 'completed', reason: 'done'})
+      await waitNamed('confirmed route proposal', () => confirmation.pending)
+      for (let i = 0; i < 5 && !realtime.service.session.providerIdle; i++) {
+        await realtime.service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: `readback-${i}`})
+        await realtime.service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: `readback-${i}`, status: 'completed', reason: 'done'})
+      }
+      await realtime.service.handleEvent({kind: 'user_speech_started', session_epoch: 1, speech_id: 'speech-confirm', provider_item_id: 'item-confirm'})
+      await realtime.service.handleEvent({kind: 'user_speech_ended', session_epoch: 1, speech_id: 'speech-confirm', provider_item_id: 'item-confirm'})
+      await realtime.service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-confirm'})
+      await realtime.service.handleEvent({kind: 'user_transcript_final', session_epoch: 1, item_id: 'item-confirm', text: 'confirm'})
+      await realtime.service.handleEvent({
+        kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-confirm', item_id: 'function-confirm', response_id: 'response-confirm', name: 'confirm',
+        arguments: {id: `confirmed-route-${existing ? 'existing' : 'new'}`, accepted: true},
+      })
+      await settleNamed('confirmed route effect', effect.promise)
+      assert.equal(routeBeforeEffect, 'codex')
+      const tasks = host.tasks.list()
+      assert.equal(tasks.length, 1)
+      const task = tasks[0]!
+      assert.equal(task.id, taskIdBeforeEffect)
+      if (prior) assert.equal(task.id, prior.id)
+      assert.equal(task.execution_route, 'codex')
+      assert.equal(task.conversation_id, 'conversation:test')
+      assert.equal(task.conversation_generation, 1)
+      assert.equal(task.origin_ref, 'conversation:1')
+      assert.equal(task.goal, existing ? 'existing goal' : 'confirmed goal')
+      assert.deepEqual(task.acceptance, existing ? ['existing acceptance'] : ['confirmed acceptance'])
+      await waitNamed('failed task outcome', () => host.tasks.evidence(task.id).some(item => item.outcome === 'failed'))
+      const continued = await realtime.service.dispatchTask(host.tasks.continuationContext({
+        task_id: task.id, control_revision: task.control_revision, goal_revision: task.goal_revision,
+      }), 'continue with the same executor')
+      assert.equal(continued.code, 'intake_opened')
+
+      const staleGoal = host.tasks.continuationContext({task_id: task.id, control_revision: task.control_revision, goal_revision: task.goal_revision})
+      const revised = await host.tasks.reviseGoal(`revise-${existing}`, staleGoal.fence, {kind: 'nova'}, 'revised goal', ['revised acceptance'])
+      await assert.rejects(realtime.service.dispatchTask(staleGoal, 'stale goal'), TaskExecutionRejected)
+      const staleControl = host.tasks.continuationContext({task_id: task.id, control_revision: revised.control_revision, goal_revision: revised.goal_revision})
+      await host.tasks.control(`control-${existing}`, staleControl.fence, {kind: 'nova'}, {kind: 'user', client_id: 'workbench'})
+      await assert.rejects(realtime.service.dispatchTask(staleControl, 'stale control'), TaskExecutionRejected)
+    } finally {
+      await realtime?.stop()
+      await host.close()
+      await rm(directory, {recursive: true, force: true})
+    }
+  }
 })
 
 test('active project views replace one provider context without publishing history', async () => {
@@ -2313,6 +2611,22 @@ test('personal memory opens before voice resources and closes inside their order
   assert.ok(actions.indexOf('memory:close') < actions.indexOf('core:stop'))
 })
 
+test('personal memory cold start may exceed shutdown grace before voice starts', async () => {
+  const actions: string[] = []
+  const realtime = buildRealtimeAssembly({
+    core: realCore(new RecordingFrameSource(actions)),
+    provider: new AbortAwareProvider(actions),
+    createPersonalMemory: () => ({
+      open: () => delay(1_200),
+      recall: () => Promise.reject(new Error('unused')),
+      close: () => Promise.resolve(),
+    }),
+    onDiagnostic: () => undefined,
+  })
+  try { await realtime.start(); assert.ok(actions.includes('provider:connect')) }
+  finally { await realtime.stop() }
+})
+
 test('personal learning uses host session identity and only the accepted user evidence', async () => {
   const remembered: {sourceId: string; sessionId: string; sequence: number; text: string; occurredAt: string | null}[] = []
   for (let run = 0; run < 2; run += 1) {
@@ -2392,6 +2706,28 @@ test('personal reply preferences refresh response style without invoking recall'
     assert.equal(provider.adaptations.at(-1)?.revision, 3)
     assert.ok(provider.adaptations.at(-1)?.content?.includes('New preference'))
   } finally { await realtime.stop() }
+})
+
+test('memory reading modes select bounded low-trust snapshots without invoking retrieval',async()=>{
+ for(const mode of ['text','voice'] as const){
+  const provider=new ResponseAdaptationProvider();let recalled=0
+  let context={text:'Text directory: synthetic-entry@1',voice:'Voice profile and one-page summary'}
+  const realtime=buildRealtimeAssembly({core:realCore(),provider,memoryReadMode:mode,memoryConsumerFingerprint:'fixture-consumer',
+   createPersonalMemory:()=>({open:()=>Promise.resolve(),close:()=>Promise.resolve(),recall:()=>{recalled++;return Promise.reject(Error('unexpected recall'))},prepareResponseAdaptation:consumer=>{assert.equal(consumer,'fixture-consumer');return Promise.resolve({revision:1,replyPreferences:[],memoryContext:context})}}),onDiagnostic:()=>undefined})
+  try{
+   await realtime.start();await realtime.service.sendAudio(new Uint8Array([0,1]))
+   const content=provider.adaptations.at(-1)?.content??''
+   assert.ok(content.includes(context[mode]));assert.ok(!content.includes(context[mode==='text'?'voice':'text']))
+   assert.match(content,/untrusted|low.trust/i);assert.match(content,/cannot authorize/)
+   assert.equal(recalled,0)
+   context={text:'x'.repeat(10000)+'OMITTED_TAIL',voice:'y'.repeat(10000)+'OMITTED_TAIL'}
+   await realtime.service.sendAudio(new Uint8Array([2,3]));await new Promise<void>(resolve=>setImmediate(resolve))
+   const bounded=provider.adaptations.at(-1)?.content??''
+   assert.ok(bounded.length<(mode==='text'?6500:4500));assert.ok(!bounded.includes('OMITTED_TAIL'))
+   context={text:'',voice:''};await realtime.service.sendAudio(new Uint8Array([2,3]));await new Promise<void>(resolve=>setImmediate(resolve))
+   assert.equal(provider.adaptations.at(-1)?.content,null)
+  }finally{await realtime.stop()}
+ }
 })
 
 test('response-adaptation failure stays advisory and emits only fixed diagnostic metadata', async () => {
@@ -3268,6 +3604,53 @@ test('failed provider connect keeps recovered blackboard owned until retry or fi
     await assert.rejects(core.runtime.openMemory(), /memory is closed/u)
   } finally { await realtime.stop(); await rm(directory, {recursive: true, force: true}) }
 })
+
+test('personal host shares opened memory, persists configuration and closes with production owner', async () => {
+  const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-personal-assembly-'))
+  let opens=0,closes=0,lists=0
+  const resource:PersonalMemoryResource={
+    open:()=>{opens++;return Promise.resolve()},close:()=>{closes++;return Promise.resolve()},
+    recall:()=>Promise.resolve({source:'personal',state:'empty',scope:'recent',hits:[],degraded:false}),
+    list:()=>{assert.equal(opens,1);lists++;return Promise.resolve({entries:[],cursor:null})},
+  }
+  const realtime=buildRealtimeAssembly({core:realCore(new RecordingFrameSource(),{path:join(dir,'board.sqlite'),ownerId:'test'}),provider:new AbortAwareProvider(),createPersonalMemory:()=>resource})
+  try {
+    await realtime.start()
+    assert.equal(realtime.personalMemory,resource)
+    assert.equal(opens,1)
+    assert(lists>0)
+    const result=await realtime.personalAgent.command({type:'personal.command',request_id:'configure',method:'discovery.configure',params:{enabled:false}})
+    assert.equal((result as {ok:boolean}).ok,true)
+    assert.equal(realtime.personalAgent.snapshot().settings.discovery_enabled,false)
+  } finally {await realtime.stop();await rm(dir,{recursive:true,force:true})}
+  assert.equal(closes,1)
+})
+
+test('knowledge-only composition opens canonical originals without enabling personal capture', async () => {
+  const directory=await mkdtemp(join(await realpath(tmpdir()),'nova-knowledge-only-'))
+  const capabilities=parseCapabilityRegistry({version:1,modules:{search:{enabled:false},coding:{enabled:false},knowledge:{enabled:true}}},{})
+  const settings=settingsSchema.parse({executors:[],model_api_key:'test-key',knowledge_path:join(directory,'knowledge.sqlite'),workspace_graph_path:join(directory,'memory.sqlite'),memory_connection:'disabled'})
+  const knowledge=await prepareKnowledge(settings,capabilities)
+  assert.ok(knowledge)
+  const core=buildAssembly({settings,capabilities,knowledge,frameSource:new RecordingFrameSource(),gateway:new NeverCalledGateway()})
+  const realtime=composeRealtime(core,new AbortAwareProvider(),{settings,idFactory:()=> 'knowledge-only-id'},{controlledPreemptiveAlertReconnect:false,preemptiveAlertHistoryRecovery:'none',preemptiveAlertHistoryPairs:2})
+  try {
+    await realtime.start()
+    const memory=realtime.personalMemory
+    assert.ok(memory?.recordEvidence)
+    assert.equal(memory.remember,undefined)
+    assert.equal(memory.list,undefined)
+    assert.equal(memory.responseAdaptation,undefined)
+    const saved=await memory.recordEvidence({sourceId:'knowledge:document',locator:'notes/demo',text:'Demo notes',observedAt:new Date().toISOString(),kind:'file',embeddingConsent:true})
+    assert.equal((await realtime.retrieval.evidence(saved.evidence_id)).evidence?.text,'Demo notes')
+    const second=await memory.recordEvidence({sourceId:'knowledge:document-two',locator:'notes/second',text:'More notes',observedAt:new Date().toISOString(),kind:'file',embeddingConsent:true})
+    assert.ok(memory.forgetSources,'knowledge-only facade exposes batched source erasure')
+    await memory.forgetSources(['knowledge:document','knowledge:document-two'])
+    assert.equal((await realtime.retrieval.evidence(saved.evidence_id)).evidence,null)
+    assert.equal((await realtime.retrieval.evidence(second.evidence_id)).evidence,null)
+    assert.deepEqual((await memory.recall('demo')).hits,[])
+  } finally {await realtime.stop();await knowledge.close();await rm(directory,{recursive:true,force:true})}
+})
 }
 
 {
@@ -3413,7 +3796,7 @@ function recordingConnector(options: {readonly failFirstWith?: Error} = {}): Rec
 }
 
 function settings(environment: NodeJS.ProcessEnv = {}): Settings {
-  return loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
+  return loadSettings({MEMORY_CONNECTION: 'disabled',
     TAVILY_API_KEY: 'tavily-test-key',
     ...environment,
   })
@@ -3470,7 +3853,7 @@ async function exerciseGateway(gateway: ModelGateway): Promise<void> {
 test('Qwen factory and plain assembly both leave the fast slot to the realtime owner', () => {
   const connector = recordingConnector()
   const realtime = buildQwenRealtimeAssembly(qwenOptions(
-    settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+    settings({MODEL_API_KEY: 'model-key'}),
     connector.connector,
   ))
   const qwenBindings = realtime.tools.bindings
@@ -3485,7 +3868,7 @@ test('Qwen factory and plain assembly both leave the fast slot to the realtime o
   // There is no second mode left: plain assembly wires no text front brain either, so a
   // user turn cannot take the fast slot out from under the realtime provider.
   const ordinary = buildAssembly({
-    settings: settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+    settings: settings({MODEL_API_KEY: 'model-key'}),
     gateway: new NeverGateway(),
     searchTransport: new NeverSearch(),
   })
@@ -3514,8 +3897,8 @@ test('Qwen production composition derives cameraModuleEnabled from Settings', ()
   const connector = recordingConnector()
   const realtime = buildQwenRealtimeAssembly(qwenOptions(
     settings({
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
-      NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED: 'false',
+      MODEL_API_KEY: 'model-key',
+      CAMERA_MODULE_ENABLED: 'false',
     }), connector.connector,
   ))
   const names = [...realtime.core.runtime.executors.keys()]
@@ -3529,7 +3912,7 @@ test('Qwen production composition forwards the personal memory owner', async () 
   let created = 0
   let closed = 0
   const realtime = buildQwenRealtimeAssembly(qwenOptions(
-    settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+    settings({MODEL_API_KEY: 'model-key'}),
     recordingConnector().connector,
     {createPersonalMemory: () => {
       created += 1
@@ -3552,7 +3935,7 @@ test('Qwen factory construction does not invoke an unrelated LiveKit agents load
   let agentsLoaderCalls = 0
   const input = {
     ...qwenOptions(
-      settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+      settings({MODEL_API_KEY: 'model-key'}),
       connector.connector,
     ),
     agentsLoader: () => {
@@ -3622,8 +4005,8 @@ test('Qwen composition exposes approval only for the exact controller-bearing re
   }
   const input = {
     ...qwenOptions(settings({
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
-      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+      MODEL_API_KEY: 'model-key',
+      EXECUTOR: 'codex',
     }), connector.connector),
     codexResource: resource,
     codingAgentControllerFactory: testCodingAgentControllerFactory,
@@ -3656,8 +4039,8 @@ test('Qwen composition exposes approval only for the exact controller-bearing re
   }
   const neverRealtime = buildQwenRealtimeAssembly({
     ...qwenOptions(settings({
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
-      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+      MODEL_API_KEY: 'model-key',
+      EXECUTOR: 'codex',
     }), neverConnector.connector),
     codexResource: neverResource,
     codingAgentControllerFactory: testCodingAgentControllerFactory,
@@ -3689,8 +4072,8 @@ test('Qwen realtime composition rejects a live Codex fallback', () => {
 
   assert.throws(() => buildQwenRealtimeAssembly({
     ...qwenOptions(settings({
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
-      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+      MODEL_API_KEY: 'model-key',
+      EXECUTOR: 'codex',
     }), recordingConnector().connector),
     codexResource: resource,
   }), error => error instanceof AssemblyError
@@ -3709,14 +4092,14 @@ test('Qwen factory preserves resource identity, explicit Guard settings, and one
   const ids = new RecordingIds()
   const frame = new RecordingFrameSource()
   const realtime = buildQwenRealtimeAssembly(qwenOptions(settings({
-    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+    MODEL_API_KEY: 'model-key',
     DASHSCOPE_API_KEY: 'dash-key',
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: 'wss://qwen.example/realtime',
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: 'qwen-test',
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: 'voice-test',
-    NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT: 'true',
-    NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY: 'packed',
-    NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS: '1',
+    QWEN_REALTIME_URL: 'wss://qwen.example/realtime',
+    QWEN_REALTIME_MODEL: 'qwen-test',
+    QWEN_REALTIME_VOICE: 'voice-test',
+    QWEN_CONTROLLED_GUARD_RECONNECT: 'true',
+    QWEN_GUARD_HISTORY_RECOVERY: 'packed',
+    QWEN_GUARD_HISTORY_PAIRS: '1',
   }), connector.connector, {clock, ids, frameSource: frame}))
 
   assert.ok(realtime.provider instanceof QwenAudioRealtimeAdapter)
@@ -3794,7 +4177,7 @@ test('desktop Qwen composition shares one clock, Chromium source, and camera ser
     buildRealtime: (callbacks, transport) => {
       source = new ChromiumFrameSource({source: 'file', transport, clock})
       return buildQwenRealtimeAssembly(qwenOptions(
-        settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+        settings({MODEL_API_KEY: 'model-key'}),
         connector.connector,
         {clock, frameSource: source, ...callbacks},
       ))
@@ -3817,7 +4200,7 @@ test('desktop Qwen composition shares one clock, Chromium source, and camera ser
 
 test('Qwen factory maps legacy history settings to the generic preemptive-alert service seam', () => {
   const defaults = buildQwenRealtimeAssembly(qwenOptions(
-    settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+    settings({MODEL_API_KEY: 'model-key'}),
     recordingConnector().connector,
   ))
   assert.deepEqual(defaults.service.preemptiveAlertConfiguration, {
@@ -3827,10 +4210,10 @@ test('Qwen factory maps legacy history settings to the generic preemptive-alert 
   })
   for (const pairs of ['1', '2', '4']) {
     const realtime = buildQwenRealtimeAssembly(qwenOptions(settings({
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
-      NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT: 'true',
-      NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY: 'packed',
-      NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS: pairs,
+      MODEL_API_KEY: 'model-key',
+      QWEN_CONTROLLED_GUARD_RECONNECT: 'true',
+      QWEN_GUARD_HISTORY_RECOVERY: 'packed',
+      QWEN_GUARD_HISTORY_PAIRS: pairs,
     }), recordingConnector().connector))
     assert.deepEqual(realtime.service.preemptiveAlertConfiguration, {
       controlledReconnect: true,
@@ -3846,14 +4229,14 @@ test('Qwen factory keeps websocket and model-gateway credential priorities disti
       name: 'both',
       environment: {
         DASHSCOPE_API_KEY: 'dash-key',
-        NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+        MODEL_API_KEY: 'model-key',
       },
       websocket: 'dash-key',
       gateway: 'model-key',
     },
     {
       name: 'model only',
-      environment: {NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'},
+      environment: {MODEL_API_KEY: 'model-key'},
       websocket: 'model-key',
       gateway: 'model-key',
     },
@@ -3867,7 +4250,7 @@ test('Qwen factory keeps websocket and model-gateway credential priorities disti
       name: 'Python-whitespace DashScope',
       environment: {
         DASHSCOPE_API_KEY: '\u001c\u0085',
-        NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+        MODEL_API_KEY: 'model-key',
       },
       websocket: 'model-key',
       gateway: 'model-key',
@@ -3902,7 +4285,7 @@ test('integrated Qwen support requests never send DashScope credentials to a gen
         name: 'DashScope fallback',
         environment: {
           DASHSCOPE_API_KEY: 'dash-support-key',
-          NOVA_AUDIO_AGENT_MODEL_BASE_URL: `https://hostile.example/private?sentinel=${sentinel}`,
+          MODEL_BASE_URL: `https://hostile.example/private?sentinel=${sentinel}`,
         },
         endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         authorization: 'Bearer dash-support-key',
@@ -3911,8 +4294,8 @@ test('integrated Qwen support requests never send DashScope credentials to a gen
         name: 'generic override',
         environment: {
           DASHSCOPE_API_KEY: 'dash-provider-key',
-          NOVA_AUDIO_AGENT_MODEL_API_KEY: 'generic-support-key',
-          NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://generic.example/compatible/v9',
+          MODEL_API_KEY: 'generic-support-key',
+          MODEL_BASE_URL: 'https://generic.example/compatible/v9',
         },
         endpoint: 'https://generic.example/compatible/v9/chat/completions',
         authorization: 'Bearer generic-support-key',
@@ -3960,7 +4343,7 @@ test('integrated Qwen support requests never send DashScope credentials to a gen
 test('Qwen factory forwards only the reviewed provider tool subset', async () => {
   const connector = recordingConnector()
   const realtime = buildQwenRealtimeAssembly(qwenOptions(
-    settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+    settings({MODEL_API_KEY: 'model-key'}),
     connector.connector,
     {providerToolView: tools => ({...tools, schemas: tools.schemas.slice(0, 2)})},
   ))
@@ -3978,7 +4361,7 @@ test('Qwen factory forwards only the reviewed provider tool subset', async () =>
   })
   assert.throws(
     () => buildQwenRealtimeAssembly(qwenOptions(
-      settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+      settings({MODEL_API_KEY: 'model-key'}),
       connector.connector,
       {providerToolView: copiedBindings},
     )),
@@ -3992,11 +4375,11 @@ test('Qwen factory validates synchronously without connecting or leaking secrets
   const sentinel = 'synchronous-sentinel-secret'
   assert.throws(
     () => buildQwenRealtimeAssembly(qwenOptions(settings({
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: sentinel,
-      NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: `https://invalid/?secret=${sentinel}`,
+      MODEL_API_KEY: sentinel,
+      QWEN_REALTIME_URL: `https://invalid/?secret=${sentinel}`,
     }), connector.connector)),
     error => error instanceof ConfigurationError
-      && error.message === 'NOVA_AUDIO_AGENT_QWEN_REALTIME_URL 必须使用 wss://'
+      && error.message === 'QWEN_REALTIME_URL 必须使用 wss://'
       && !error.message.includes(sentinel),
   )
   assert.equal(connector.calls.length, 0)
@@ -4009,7 +4392,7 @@ test('Qwen connector failure rolls core back safely and permits one later retry'
   )})
   const frame = new RecordingFrameSource()
   const realtime = buildQwenRealtimeAssembly(qwenOptions(
-    settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+    settings({MODEL_API_KEY: 'model-key'}),
     connector.connector,
     {frameSource: frame},
   ))
@@ -4030,24 +4413,24 @@ test('Qwen connector failure rolls core back safely and permits one later retry'
 })
 
 test('qwen rejects the final tool budget after evaluating the provider view once', () => {
-  const configured = loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+  const configured = loadSettings({MEMORY_CONNECTION: 'disabled',
+    PIPELINE_MODE: 'integrated',
     DASHSCOPE_API_KEY: 'fixture-only', DOUBAO_BIGMODEL_API_KEY: 'fixture-only',
   })
   const capabilities = parseCapabilityRegistry({version: 1, frontbrainToolBudget: 1, modules: {search: {enabled: false}}})
   let views = 0
   assert.throws(() => buildQwenRealtimeAssembly({
     settings: configured, capabilities, providerToolView: tools => { views++; return tools },
-  }), {code: 'frontbrain_tool_budget_exceeded', toolCount: 4, toolBudget: 1})
+  }), {code: 'frontbrain_tool_budget_exceeded', toolCount: 5, toolBudget: 1})
   assert.equal(views, 1)
 })
 }
 
 {
 function settings(environment: NodeJS.ProcessEnv = {}): Settings {
-  return loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
-    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+  return loadSettings({MEMORY_CONNECTION: 'disabled',
+    PIPELINE_MODE: 'cascaded',
+    CASCADE_LLM_PROVIDER: 'ark',
     ARK_API_KEY: 'ark-test-key',
     DOUBAO_BIGMODEL_API_KEY: 'doubao-test-key',
     TAVILY_API_KEY: 'tavily-test-key',
@@ -4327,8 +4710,8 @@ function recordingRegistries(calls: string[]): CascadedProviderRegistries {
 test('cascaded defaults resolve endpointing, ASR, Qwen LLM, and TTS in order', () => {
   const calls: string[] = []
   buildCascadedRealtimeAssembly({
-    settings: loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    settings: loadSettings({MEMORY_CONNECTION: 'disabled',
+      PIPELINE_MODE: 'cascaded',
       DASHSCOPE_API_KEY: 'dash-secret',
       DOUBAO_BIGMODEL_API_KEY: 'doubao-secret',
       TAVILY_API_KEY: 'search-secret',
@@ -4342,10 +4725,10 @@ test('cascaded defaults resolve endpointing, ASR, Qwen LLM, and TTS in order', (
 test('explicit Ark resolves no Qwen factory', () => {
   const calls: string[] = []
   buildCascadedRealtimeAssembly({
-    settings: loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
-      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
-      NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-explicit',
+    settings: loadSettings({MEMORY_CONNECTION: 'disabled',
+      PIPELINE_MODE: 'cascaded',
+      CASCADE_LLM_PROVIDER: 'ark',
+      CASCADE_LLM_MODEL: 'ark-explicit',
       ARK_API_KEY: 'ark-secret',
       DOUBAO_BIGMODEL_API_KEY: 'doubao-secret',
       TAVILY_API_KEY: 'search-secret',
@@ -4361,10 +4744,10 @@ test('cascaded assembly never reads unselected LLM credentials or config', () =>
     const inaccessible = provider === 'qwen'
       ? new Set<PropertyKey>(['ark_api_key', 'volcengine_ark_base_url'])
       : new Set<PropertyKey>(['dashscope_api_key'])
-    const base = loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
-      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: provider,
-      ...(provider === 'ark' ? {NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-explicit'} : {}),
+    const base = loadSettings({MEMORY_CONNECTION: 'disabled',
+      PIPELINE_MODE: 'cascaded',
+      CASCADE_LLM_PROVIDER: provider,
+      ...(provider === 'ark' ? {CASCADE_LLM_MODEL: 'ark-explicit'} : {}),
       ...(provider === 'qwen' ? {DASHSCOPE_API_KEY: 'dash-secret'} : {ARK_API_KEY: 'ark-secret'}),
       DOUBAO_BIGMODEL_API_KEY: 'doubao-secret',
       TAVILY_API_KEY: 'search-secret',
@@ -4591,11 +4974,11 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
   const mediaStore = new MediaStore()
   let telemetryCloses = 0
   const configured = settings({
-    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'generic-model-key',
-    NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-realtime-distinct',
-    NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT: 'true',
-    NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY: 'packed',
-    NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS: '1',
+    MODEL_API_KEY: 'generic-model-key',
+    CASCADE_LLM_MODEL: 'ark-realtime-distinct',
+    QWEN_CONTROLLED_GUARD_RECONNECT: 'true',
+    QWEN_GUARD_HISTORY_RECOVERY: 'packed',
+    QWEN_GUARD_HISTORY_PAIRS: '1',
   })
   const realtime = buildCascadedRealtimeAssembly(assemblyOptions(configured, {
     clock, ids, frameSource, mediaStore,
@@ -4652,7 +5035,7 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
 
 test('cascaded production composition derives cameraModuleEnabled from Settings', () => {
   const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings({
-    NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED: 'false',
+    CAMERA_MODULE_ENABLED: 'false',
   })))
   const names = [...realtime.core.runtime.executors.keys()]
   assert.deepEqual(names, ['search'])
@@ -4681,7 +5064,7 @@ test('cascaded production composition forwards the personal memory owner', async
 
 
 test('cascaded realtime composition rejects a matching live coding resource by project mode', () => {
-  const configured = settings({NOVA_AUDIO_AGENT_EXECUTORS: 'fast_sim'})
+  const configured = settings({EXECUTORS: 'fast_sim'})
   const resource: CodexAssemblyResource = {
     adapter: modelProbeAdapter,
     mode: 'live',
@@ -4748,7 +5131,7 @@ test('cascaded composition forwards an explicit generic controller for a renamed
   }
   const gatewayRequests: Readonly<Record<string, unknown>>[] = []
   const realtime = buildCascadedRealtimeAssembly(assemblyOptions(settings({
-    NOVA_AUDIO_AGENT_EXECUTORS: 'workspace_coder',
+    EXECUTORS: 'workspace_coder',
   }), {
     codexResource: resource,
     agentDescriptors: [codexAgentDescriptor('workspace_coder')],
@@ -4781,8 +5164,8 @@ test('core gateway preserves generic models or applies all Ark support overrides
       {
         name: 'generic',
         environment: {
-          NOVA_AUDIO_AGENT_MODEL_API_KEY: 'generic-safe-key',
-          NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://generic.example/v9',
+          MODEL_API_KEY: 'generic-safe-key',
+          MODEL_BASE_URL: 'https://generic.example/v9',
         },
         endpoint: 'https://generic.example/v9/chat/completions',
         authorization: 'Bearer generic-safe-key',
@@ -4791,8 +5174,8 @@ test('core gateway preserves generic models or applies all Ark support overrides
       {
         name: 'Python-whitespace Ark fallback',
         environment: {
-          NOVA_AUDIO_AGENT_MODEL_API_KEY: '\u001c\u0085',
-          NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://generic.example/v9',
+          MODEL_API_KEY: '\u001c\u0085',
+          MODEL_BASE_URL: 'https://generic.example/v9',
         },
         endpoint: 'https://ark-support.example/api/v3/chat/completions',
         authorization: 'Bearer ark-test-key',
@@ -4801,10 +5184,10 @@ test('core gateway preserves generic models or applies all Ark support overrides
       {
         name: 'Qwen fallback',
         environment: {
-          NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'qwen',
-          NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'qwen-flash',
+          CASCADE_LLM_PROVIDER: 'qwen',
+          CASCADE_LLM_MODEL: 'qwen-flash',
           DASHSCOPE_API_KEY: 'dash-support-key',
-          NOVA_AUDIO_AGENT_MODEL_API_KEY: '\u001c\u0085',
+          MODEL_API_KEY: '\u001c\u0085',
         },
         endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         authorization: 'Bearer dash-support-key',
@@ -4815,19 +5198,19 @@ test('core gateway preserves generic models or applies all Ark support overrides
       const records: GatewayRequest[] = []
       const restoreFetch = installRecordingFetch(records)
       const configured = settings({
-        NOVA_AUDIO_AGENT_EXECUTOR: 'fast_sim',
-        NOVA_AUDIO_AGENT_FAST_MODEL: 'fast-original',
-        NOVA_AUDIO_AGENT_WATCH_MODEL: 'watch-original',
-        NOVA_AUDIO_AGENT_SURROGATE_MODEL: 'surrogate-original',
-        NOVA_AUDIO_AGENT_COMPRESSOR_MODEL: 'compressor-original',
-        NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL: 'https://ark-support.example/api/v3',
-        NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-selected',
+        EXECUTOR: 'fast_sim',
+        FAST_MODEL: 'fast-original',
+        WATCH_MODEL: 'watch-original',
+        SUPPORT_MODEL: 'surrogate-original',
+        COMPRESSOR_MODEL: 'compressor-original',
+        VOLCENGINE_ARK_BASE_URL: 'https://ark-support.example/api/v3',
+        CASCADE_LLM_MODEL: 'ark-selected',
         ...scenario.environment,
       })
       const beforeModels = {
         fast: configured.fast_model,
         watch: configured.watch_model,
-        surrogate: configured.surrogate_model,
+        surrogate: configured.support_model,
         compressor: configured.compressor_model,
       }
       let realtime: ReturnType<typeof buildCascadedRealtimeAssembly>
@@ -4844,7 +5227,7 @@ test('core gateway preserves generic models or applies all Ark support overrides
       assert.deepEqual({
         fast: configured.fast_model,
         watch: configured.watch_model,
-        surrogate: configured.surrogate_model,
+        surrogate: configured.support_model,
         compressor: configured.compressor_model,
       }, beforeModels, scenario.name)
       assert.deepEqual(records.map(record => record.role).sort(), [
@@ -4860,15 +5243,15 @@ test('core gateway preserves generic models or applies all Ark support overrides
   })
 
 test('cascaded rejects the final tool budget after evaluating the provider view once', () => {
-  const configured = loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+  const configured = loadSettings({MEMORY_CONNECTION: 'disabled',
+    PIPELINE_MODE: 'cascaded',
     DASHSCOPE_API_KEY: 'fixture-only', DOUBAO_BIGMODEL_API_KEY: 'fixture-only',
   })
   const capabilities = parseCapabilityRegistry({version: 1, frontbrainToolBudget: 1, modules: {search: {enabled: false}}})
   let views = 0
   assert.throws(() => buildCascadedRealtimeAssembly({
     settings: configured, capabilities, providerToolView: tools => { views++; return tools },
-  }), {code: 'frontbrain_tool_budget_exceeded', toolCount: 4, toolBudget: 1})
+  }), {code: 'frontbrain_tool_budget_exceeded', toolCount: 5, toolBudget: 1})
   assert.equal(views, 1)
 })
 }

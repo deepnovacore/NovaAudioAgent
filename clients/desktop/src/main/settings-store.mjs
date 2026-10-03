@@ -1,3 +1,5 @@
+import {validUploadUrl} from './voiceprint.mjs'
+import {CONTROL_CHARACTERS, RUNTIME_DEFAULTS} from './settings-defaults.mjs'
 import {preferredLanguage} from '../renderer/locale.mjs'
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
@@ -8,8 +10,11 @@ import {isAbsolute, resolve} from 'node:path'
 export const SETTINGS_VERSION = 4
 
 export const SECRET_KEYS = Object.freeze([
+  'composioApiKey',
   'dashscopeApiKey',
+  'stepfunApiKey',
   'tavilyApiKey',
+  'openrouterApiKey',
   'modelApiKey',
   'codexApiKey',
   'arkApiKey',
@@ -21,7 +26,7 @@ export const SECRET_KEYS = Object.freeze([
 export const PALETTES = Object.freeze(['ember', 'graphite'])
 export const PROACTIVITY_LEVELS = Object.freeze(['conservative', 'balanced', 'eager'])
 export const PIPELINE_MODES = Object.freeze(['integrated', 'cascaded'])
-export const INTEGRATED_PROVIDERS = Object.freeze(['qwen'])
+export const INTEGRATED_PROVIDERS = Object.freeze(['qwen', 'stepfun'])
 export const CASCADED_ENDPOINTING_PROVIDERS = Object.freeze(['auto'])
 export const CASCADED_ASR_PROVIDERS = Object.freeze(['volcengine'])
 export const CASCADED_LLM_PROVIDERS = Object.freeze(['qwen', 'ark', 'deepseek'])
@@ -36,12 +41,13 @@ export const MAX_SECRET_LENGTH = 4096
 const MAX_CIPHERTEXT_BASE64 = 8192
 
 export const DEFAULT_SETTINGS = Object.freeze({
+  ...RUNTIME_DEFAULTS,
   version: SETTINGS_VERSION,
   language: 'zh-CN',
+  startupView: 'workbench',
+  lastPresentation: 'workbench',
   palette: 'ember',
-  proactivity: 'balanced',
   codingProgressNarration: 'smart',
-  codexHeartbeatSeconds: 30,
   codexBinaryMode: 'auto',
   codexBinaryPath: '',
   codexWorkspace: '',
@@ -50,26 +56,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   startListeningOnLaunch: false,
   wakeWordEnabled: false,
   autoHideSeconds: 60,
-  pipelineMode: 'integrated',
-  integratedProvider: 'qwen',
-  integratedModel: 'qwen-audio-3.0-realtime-plus',
-  integratedVoice: 'longanqian',
-  cascadedEndpointingProvider: 'auto',
-  cascadedAsrProvider: 'volcengine',
-  cascadedLlmProvider: 'deepseek',
-  cascadedLlmModels: Object.freeze({
-    qwen: 'qwen-plus',
-    ark: 'doubao-seed-2-0-pro-260215',
-    deepseek: 'deepseek-flash',
-  }),
-  cascadedTtsProvider: 'volcengine',
-  cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
-  codexApprovalMode: 'ask',
-  clarificationDepth: 'balanced',
-  planReadback: 'summary',
-  generatePlan: true,
-  plannerModel: '',
-  progressBubbles: 'milestones',
+  voiceprintEnabled: false,
+  voiceprintId: '',
+  voiceprintName: '',
+  voiceprintUploadUrl: '',
   conversationVisionEnabled: false,
   monitorCameraDeviceId: '',
   watchModel: '',
@@ -77,10 +67,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   phoneServerPort: 0,
   phoneServerTokenFile: '',
   phoneServerUrl: '',
-  embeddingProvider: 'dashscope',
-  embeddingModel: 'text-embedding-v4',
-  capabilitiesConfigPath: '',
-  knowledgePath: '',
+  memoryPrerecallEnabled: false,
   secrets: Object.freeze({}),
 })
 
@@ -100,7 +87,6 @@ const PLAN_READBACK_MODES = new Set(['summary', 'confirm', 'silent'])
 const PROGRESS_BUBBLE_MODES = new Set(['off', 'milestones', 'all'])
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 // Control characters would survive into an env value handed to a child process.
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 // Files are JSON and Electron IPC structured-clones settings patches.
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -226,6 +212,7 @@ function normalizeSecrets(raw) {
   const secrets = {}
   if (!isRecord(raw)) return secrets
   for (const key of SECRET_KEYS) {
+    if (key === 'composioApiKey' && raw[key]?.enc === 'cleared') { secrets[key] = {enc:'cleared',data:''}; continue }
     const entry = validSecretEntry(raw[key])
     if (entry) secrets[key] = entry
   }
@@ -246,6 +233,8 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
   return {
     version: SETTINGS_VERSION,
     language: pick(source.language, fallback.language, DEFAULT_SETTINGS.language, value => ['zh-CN', 'en'].includes(value) ? value : null),
+    startupView: pick(source.startupView, fallback.startupView, DEFAULT_SETTINGS.startupView, value => ['orb', 'workbench', 'last'].includes(value) ? value : null),
+    lastPresentation: pick(source.lastPresentation, fallback.lastPresentation, DEFAULT_SETTINGS.lastPresentation, value => ['orb', 'workbench'].includes(value) ? value : null),
     palette: pick(source.palette, fallback.palette, DEFAULT_SETTINGS.palette, validPalette),
     codingProgressNarration: pick(source.codingProgressNarration, fallback.codingProgressNarration, DEFAULT_SETTINGS.codingProgressNarration, value => value === 'smart' || value === 'continuous' ? value : null),
     proactivity: pick(source.proactivity, fallback.proactivity, DEFAULT_SETTINGS.proactivity, validProactivity),
@@ -271,6 +260,10 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
     integratedVoice: pick(source.integratedVoice, fallback.integratedVoice, DEFAULT_SETTINGS.integratedVoice, validModelOrVoice),
     cascadedEndpointingProvider: pick(source.cascadedEndpointingProvider, fallback.cascadedEndpointingProvider, DEFAULT_SETTINGS.cascadedEndpointingProvider, validCascadedEndpointingProvider),
     cascadedAsrProvider: pick(source.cascadedAsrProvider, fallback.cascadedAsrProvider, DEFAULT_SETTINGS.cascadedAsrProvider, validCascadedAsrProvider),
+    voiceprintEnabled: pick(source.voiceprintEnabled, fallback.voiceprintEnabled, false, validBoolean),
+    voiceprintId: pick(source.voiceprintId, fallback.voiceprintId, '', value => typeof value === 'string' && (value === '' || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) ? value : null),
+    voiceprintName: pick(source.voiceprintName, fallback.voiceprintName, '', value => typeof value === 'string' && value.length <= 128 && !CONTROL_CHARACTERS.test(value) && !/^\d+$/.test(value) ? value : null),
+    voiceprintUploadUrl: pick(source.voiceprintUploadUrl, fallback.voiceprintUploadUrl, '', validUploadUrl),
     cascadedLlmProvider: pick(source.cascadedLlmProvider, fallback.cascadedLlmProvider, DEFAULT_SETTINGS.cascadedLlmProvider, validCascadedLlmProvider),
     cascadedLlmModels: normalizeCascadedLlmModels(
       source.cascadedLlmModels,
@@ -294,13 +287,20 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
     embeddingProvider: pick(acceptsV4Fields ? source.embeddingProvider : undefined, acceptsV4Fields ? fallback.embeddingProvider : undefined, DEFAULT_SETTINGS.embeddingProvider, validEmbeddingProvider),
     embeddingModel: pick(acceptsV4Fields ? source.embeddingModel : undefined, acceptsV4Fields ? fallback.embeddingModel : undefined, DEFAULT_SETTINGS.embeddingModel, validDesktopString),
     capabilitiesConfigPath: pick(acceptsV4Fields ? source.capabilitiesConfigPath : undefined, acceptsV4Fields ? fallback.capabilitiesConfigPath : undefined, DEFAULT_SETTINGS.capabilitiesConfigPath, validDesktopString),
+    memoryPrerecallEnabled: pick(source.memoryPrerecallEnabled, fallback.memoryPrerecallEnabled, DEFAULT_SETTINGS.memoryPrerecallEnabled, validBoolean),
     knowledgePath: pick(acceptsV4Fields ? source.knowledgePath : undefined, acceptsV4Fields ? fallback.knowledgePath : undefined, DEFAULT_SETTINGS.knowledgePath, validDesktopString),
     secrets: normalizeSecrets(source.secrets),
   }
 }
 
+export function startupPresentation(settings, argv = []) {
+  const normalized = normalizeSettings(settings)
+  if (argv.includes('--workbench')) return 'workbench'
+  return normalized.startupView === 'last' ? normalized.lastPresentation : normalized.startupView
+}
+
 export function backendSettings(settings) {
-  const {palette, wakeWordEnabled, autoHideSeconds, codingProgressNarration, phoneConnectionEnabled, phoneServerPort, phoneServerTokenFile, phoneServerUrl, ...backend} = normalizeSettings(settings)
+  const {startupView, lastPresentation, palette, wakeWordEnabled, autoHideSeconds, codingProgressNarration, phoneConnectionEnabled, phoneServerPort, phoneServerTokenFile, phoneServerUrl, ...backend} = normalizeSettings(settings)
   return backend
 }
 
@@ -311,6 +311,7 @@ export function publicSettings(settings) {
   return {
     version: normalized.version,
     language: normalized.language,
+    startupView: normalized.startupView,
     palette: normalized.palette,
     proactivity: normalized.proactivity,
     codingProgressNarration: normalized.codingProgressNarration,
@@ -329,6 +330,10 @@ export function publicSettings(settings) {
     integratedVoice: normalized.integratedVoice,
     cascadedEndpointingProvider: normalized.cascadedEndpointingProvider,
     cascadedAsrProvider: normalized.cascadedAsrProvider,
+    voiceprintEnabled: normalized.voiceprintEnabled,
+    voiceprintId: normalized.voiceprintId,
+    voiceprintName: normalized.voiceprintName,
+    voiceprintUploadUrl: normalized.voiceprintUploadUrl,
     cascadedLlmProvider: normalized.cascadedLlmProvider,
     cascadedLlmModels: { ...normalized.cascadedLlmModels },
     cascadedTtsProvider: normalized.cascadedTtsProvider,
@@ -350,6 +355,7 @@ export function publicSettings(settings) {
     embeddingModel: normalized.embeddingModel,
     capabilitiesConfigPath: normalized.capabilitiesConfigPath,
     knowledgePath: normalized.knowledgePath,
+    memoryPrerecallEnabled: normalized.memoryPrerecallEnabled,
   }
 }
 
@@ -370,7 +376,7 @@ export function orbSettings(settings) {
 export function secretsPresent(settings) {
   const { secrets } = normalizeSettings(settings)
   const present = {}
-  for (const key of SECRET_KEYS) present[key] = Boolean(secrets[key])
+  for (const key of SECRET_KEYS) present[key] = Boolean(secrets[key]) && secrets[key].enc !== 'cleared'
   return present
 }
 
@@ -445,7 +451,8 @@ function updatedSecrets(stored, updates, codec) {
       continue
     }
     if (value === '') {
-      delete secrets[key]
+      if (key === 'composioApiKey') secrets[key] = {enc:'cleared',data:''}
+      else delete secrets[key]
       continue
     }
     // Per field, like every other validator here: an unusable key is refused on
@@ -514,9 +521,10 @@ export function applySettingsUpdate(current, patch, codec) {
 // nothing, and leaves the queue usable for whatever is behind it.
 export function createSettingsWriter({ getCurrent, commit, save, codec }) {
   let queue = Promise.resolve()
-  return (patch, prepare) => {
+  return (patch, prepare, {preserveSecrets = false} = {}) => {
     const write = queue.then(async () => {
-      const next = applySettingsUpdate(getCurrent(), patch, codec)
+      // Window-state persistence must not prompt for or migrate credentials.
+      const next = applySettingsUpdate(getCurrent(), preserveSecrets ? {...patch, secrets: undefined} : patch, preserveSecrets ? undefined : codec)
       const prepared = await prepare?.(next)
       try {
         await save(next)
@@ -540,6 +548,7 @@ export function readSecret(settings, key, codec) {
   if (!SECRET_KEY_SET.has(key)) return null
   const entry = normalizeSettings(settings).secrets[key]
   if (!entry) return null
+  if (entry.enc === 'cleared') return ''
   const raw = Buffer.from(entry.data, 'base64')
   if (entry.enc === 'none') return raw.toString('utf8')
   try {

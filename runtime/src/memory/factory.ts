@@ -15,7 +15,6 @@ export function personalMemoryFactory(
   const path = resolve(configured.path.startsWith('~/')
     ? resolve(homedir(), configured.path.slice(2))
     : configured.path)
-  return () => configured.provider === 'mem0'
-    ? createMem0PersonalMemory({...configured, path})
-    : new PersonalMemoryStoreClient({...configured, path})
+  if (configured.provider === 'mem0') return () => createMem0PersonalMemory({...configured, path})
+  return Object.assign(() => new PersonalMemoryStoreClient({...configured, path}), {localMemoryConfig: {...configured, path}})
 }

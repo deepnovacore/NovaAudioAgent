@@ -70,6 +70,9 @@ mac:
   entitlementsInherit: resources/entitlements.mac.inherit.plist
   extendInfo:
     LSUIElement: true
+    NSCalendarsFullAccessUsageDescription: Nova 读取你选择的日历和日程以提供提醒。系统要求完整日历访问权限，Nova 不修改日程。
+    NSAppleEventsUsageDescription: Nova 通过 Apple 邮件只读取你选择的邮箱，不发送或修改邮件。
+    NSCalendarsUsageDescription: Nova 读取你选择的日历和日程，不修改日程。
     NSMicrophoneUsageDescription: Nova Audio Agent 使用麦克风进行带系统级回声消除的实时语音交互。
     NSCameraUsageDescription: Nova Audio Agent 使用摄像头按需捕获画面，用于本地视觉观察和安全提醒。
   icon: build/icon.icns
@@ -78,6 +81,10 @@ mac:
   extraResources:
     - from: ../../runtime/scripts/pair-device.swift
       to: pair-device.swift
+    - from: build/native/macos_mail
+      to: native/macos_mail
+    - from: build/native/macos_calendar
+      to: native/macos_calendar
     - from: build/macos_voice_io
       to: native/macos_voice_io
     - from: build/native/codex-sandbox-probe

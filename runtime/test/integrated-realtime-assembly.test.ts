@@ -7,6 +7,7 @@ import {
   type IntegratedProviderRegistry,
 } from '../src/composition/cascaded-realtime-assembly.js'
 import {QwenAudioRealtimeAdapter} from '../src/realtime/qwen.js'
+import {createStepFunWireProfile} from '../src/realtime/integrated-wire-profile.js'
 
 test('integrated registry resolves only Qwen and passes an immutable selected config', () => {
   const calls: string[] = []
@@ -34,12 +35,12 @@ test('integrated registry resolves only Qwen and passes an immutable selected co
   }
 
   const actual = buildIntegratedRealtimeAssembly({
-    settings: loadSettings({
-      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
-      NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER: 'qwen',
-      NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: 'wss://qwen.example/realtime',
-      NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: 'qwen-audio-test',
-      NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: 'voice-test',
+    settings: loadSettings({MEMORY_CONNECTION: 'disabled',
+      PIPELINE_MODE: 'integrated',
+      INTEGRATED_PROVIDER: 'qwen',
+      QWEN_REALTIME_URL: 'wss://qwen.example/realtime',
+      QWEN_REALTIME_MODEL: 'qwen-audio-test',
+      QWEN_REALTIME_VOICE: 'voice-test',
       DASHSCOPE_API_KEY: 'dash-secret',
       TAVILY_API_KEY: 'search-secret',
     }),
@@ -52,8 +53,8 @@ test('integrated registry resolves only Qwen and passes an immutable selected co
 test('integrated registry receives only selected provider inputs and cannot inspect host composition', () => {
   const connector = () => Promise.reject(new Error('unused'))
   let insideRegistry = false
-  const settings = new Proxy(loadSettings({
-    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+  const settings = new Proxy(loadSettings({MEMORY_CONNECTION: 'disabled',
+    PIPELINE_MODE: 'integrated',
     DASHSCOPE_API_KEY: 'selected-dash-secret',
     TAVILY_API_KEY: 'host-search-secret',
   }), {
@@ -120,10 +121,35 @@ test('integrated registry receives only selected provider inputs and cannot insp
   assert.ok(realtime.provider instanceof QwenAudioRealtimeAdapter)
 })
 
+test('StepFun selection passes only its own immutable endpoint and credential', () => {
+  let selected = false
+  const registry: IntegratedProviderRegistry = {
+    stepfun: input => {
+      selected = true
+      assert.deepEqual(input.config, {
+        url: 'wss://api.stepfun.com/v1/realtime',
+        model: 'stepaudio-3-realtime-preview', voice: '', apiKey: 'step-secret',
+      })
+      assert.equal(Object.isFrozen(input.config), true)
+      return new QwenAudioRealtimeAdapter({...input.config, wireProfile: createStepFunWireProfile(),
+        connector: () => Promise.reject(new Error('unused'))})
+    },
+  }
+  const assembly = buildIntegratedRealtimeAssembly({settings: loadSettings({
+    MEMORY_CONNECTION: 'disabled',
+    PIPELINE_MODE: 'integrated',
+    INTEGRATED_PROVIDER: 'stepfun',
+    STEPFUN_API_KEY: 'step-secret',
+    TAVILY_API_KEY: 'search-secret',
+  })}, registry)
+  assert.equal(selected, true)
+  assert.ok(assembly.provider instanceof QwenAudioRealtimeAdapter)
+})
+
 
 test('integrated selection rejects a missing own registry entry before provider construction', () => {
   assert.throws(() => buildIntegratedRealtimeAssembly({
-    settings: loadSettings({DASHSCOPE_API_KEY: 'selected-dash-secret'}),
+    settings: loadSettings({MEMORY_CONNECTION: 'disabled', DASHSCOPE_API_KEY: 'selected-dash-secret'}),
   }, Object.create({qwen: () => { throw new Error('inherited factory invoked') }}) as IntegratedProviderRegistry),
-  /NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER/)
+  /INTEGRATED_PROVIDER/)
 })

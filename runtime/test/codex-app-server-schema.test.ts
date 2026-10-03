@@ -265,7 +265,7 @@ test('the exact supported request and inbound schema bundle validates', () => {
 })
 
 test('the pinned Codex 0.152.0 approval schema bundle validates', () => {
-  const root = resolve(import.meta.dirname, '../../../fixtures/codex/app-server-schema/0.152.0')
+  const root = resolve(import.meta.dirname, '../../../tests/fixtures/codex/app-server-schema/0.152.0')
   const files = new Set<string>(['ClientRequest.json'])
   for (const spec of Object.values(APP_SERVER_METHOD_SCHEMAS)) files.add(spec.file)
   for (const spec of APP_SERVER_INBOUND_SCHEMAS) files.add(spec.file)

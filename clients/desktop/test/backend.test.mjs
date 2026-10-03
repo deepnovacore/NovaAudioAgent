@@ -20,6 +20,11 @@ import {
 } from '../src/main/backend.mjs'
 import { resolveDesktopConfig } from '../src/main/platform-config.mjs'
 
+test('local memory injects its saved DashScope key independently of conversation provider',()=>{
+  const env=capabilityEnvironment({pipelineMode:'cascaded',cascadedLlmProvider:'deepseek'},{dashscopeApiKey:'memory-key'},{MEMORY_CONNECTION:'local'},{modules:{knowledge:{enabled:false},search:{enabled:false}}})
+  assert.equal(env.DASHSCOPE_API_KEY,'memory-key')
+})
+
 const TOKEN = 'b'.repeat(32)
 const SETTINGS_V2 = Object.freeze({
   version: 2,
@@ -43,7 +48,6 @@ const SETTINGS_V2 = Object.freeze({
 
 function nodeLaunchSpec(options) {
   return backendLaunchSpec({
-    backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
     nodeResourcesPath: '/repo/clients/desktop/build',
     ...options,
@@ -132,27 +136,27 @@ test('passes token only through environment and dials back over loopback', () =>
   })
 
   assert.deepEqual(spec.argv, [])
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_DESKTOP_TOKEN, TOKEN)
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT, '127.0.0.1:49152')
-  assert.equal('NOVA_AUDIO_AGENT_DESKTOP_READY_FD' in spec.env, false)
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/workspace')
+  assert.equal(spec.env.DESKTOP_TOKEN, TOKEN)
+  assert.equal(spec.env.DESKTOP_READY_ENDPOINT, '127.0.0.1:49152')
+  assert.equal('DESKTOP_READY_FD' in spec.env, false)
+  assert.equal(spec.env.CODEX_WORKSPACE, '/workspace')
   assert.deepEqual(spec.stdio, ['ignore', 'pipe', 'pipe'])
   assert.equal(spec.stdio.length, 3)
   assert.equal(JSON.stringify(spec.argv).includes(TOKEN), false)
   assert.equal(spec.kind, 'node')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'node')
+  assert.equal(spec.env.BACKEND, 'node')
 })
 
 test('backend selection is Node-only and refuses the retired Python rollback', () => {
   assert.equal(selectedBackend({}), 'node')
-  assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'node' }), 'node')
+  assert.equal(selectedBackend({ BACKEND: 'node' }), 'node')
   assert.throws(
-    () => selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'python' }),
+    () => selectedBackend({ BACKEND: 'python' }),
     error => error?.code === 'source_rollback_unavailable'
       && error.message === 'source_rollback_unavailable',
   )
   assert.throws(
-    () => selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'private-invalid-value' }),
+    () => selectedBackend({ BACKEND: 'private-invalid-value' }),
     error => !error.message.includes('private-invalid-value'),
   )
 })
@@ -160,14 +164,14 @@ test('backend selection is Node-only and refuses the retired Python rollback', (
 test('packaged backend selection refuses explicit Python before resolving an interpreter', () => {
   assert.equal(selectedBackend({}, { isPackaged: true }), 'node')
   assert.equal(
-    selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'node' }, { isPackaged: true }),
+    selectedBackend({ BACKEND: 'node' }, { isPackaged: true }),
     'node',
   )
   assert.throws(
     () => selectedBackend(
       {
-        NOVA_AUDIO_AGENT_BACKEND: 'python',
-        NOVA_AUDIO_AGENT_PYTHON: '/private/poison/python',
+        BACKEND: 'python',
+        PYTHON: '/private/poison/python',
         PATH: '/private/poison',
       },
       { isPackaged: true },
@@ -177,22 +181,10 @@ test('packaged backend selection refuses explicit Python before resolving an int
   )
 })
 
-test('launch spec cannot construct the retired Python process', () => {
-  assert.throws(() => nodeLaunchSpec({
-    backend: 'python',
-    python: '/private/poison/python',
-    workspace: '/workspace',
-    token: TOKEN,
-    readyEndpoint: '127.0.0.1:49152',
-    parentEnv: {},
-  }), /backend kind is invalid/)
-})
-
 test('Node launch uses the compiled utility-process entry and no writable stdin', () => {
   const nodeEntry = '/repo/runtime/dist/src/desktop-entry.js'
   const nodeResourcesPath = '/repo/clients/desktop/build'
   const spec = nodeLaunchSpec({
-    backend: 'node',
     nodeEntry,
     nodeResourcesPath,
     workspace: '/workspace',
@@ -205,12 +197,11 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
   assert.equal(spec.entry, nodeEntry)
   assert.deepEqual(spec.argv, [])
   assert.deepEqual(spec.stdio, ['ignore', 'pipe', 'pipe'])
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'node')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH, nodeResourcesPath)
+  assert.equal(spec.env.BACKEND, 'node')
+  assert.equal(spec.env.CODEX_RESOURCES_PATH, nodeResourcesPath)
   assert.equal(JSON.stringify(spec).includes(TOKEN), true)
   assert.equal(JSON.stringify(spec.argv).includes(TOKEN), false)
   assert.throws(() => nodeLaunchSpec({
-    backend: 'node',
     nodeEntry: 'relative-entry.js',
     nodeResourcesPath,
     workspace: '/workspace',
@@ -219,7 +210,6 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
     parentEnv: {},
   }), /absolute Node runtime entry/)
   assert.throws(() => nodeLaunchSpec({
-    backend: 'node',
     nodeEntry,
     nodeResourcesPath: 'relative-resources',
     workspace: '/workspace',
@@ -231,18 +221,17 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
 
 test('resolved desktop settings override inherited Codex and model configuration', () => {
   const spec = nodeLaunchSpec({
-    backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
     nodeResourcesPath: '/repo/clients/desktop/build',
     workspace: '/environment/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {
-      NOVA_AUDIO_AGENT_CODEX_BIN: '/environment/codex',
-      NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: '["/environment/shim.js"]',
-      NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: '/environment/managed',
-      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '/environment/state',
-      NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://environment.example/v1',
+      CODEX_BIN: '/environment/codex',
+      CODEX_PREFIX_ARGS: '["/environment/shim.js"]',
+      CODEX_MANAGED_ROOT: '/environment/managed',
+      CODEX_PROJECT_STATE_ROOT: '/environment/state',
+      MODEL_BASE_URL: 'https://environment.example/v1',
     },
     resolvedConfig: {
       workspace: '/settings/workspace',
@@ -254,15 +243,15 @@ test('resolved desktop settings override inherited Codex and model configuration
     },
   })
 
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/settings/workspace')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_BIN, '/settings/codex')
+  assert.equal(spec.env.CODEX_WORKSPACE, '/settings/workspace')
+  assert.equal(spec.env.CODEX_BIN, '/settings/codex')
   assert.equal(
-    spec.env.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS,
+    spec.env.CODEX_PREFIX_ARGS,
     '["/settings/node_modules/@openai/codex/bin/codex.js"]',
   )
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT, '/settings/managed')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT, '/settings/state')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_BASE_URL, 'https://settings.example/v1')
+  assert.equal(spec.env.CODEX_MANAGED_ROOT, '/settings/managed')
+  assert.equal(spec.env.CODEX_PROJECT_STATE_ROOT, '/settings/state')
+  assert.equal(spec.env.MODEL_BASE_URL, 'https://settings.example/v1')
 })
 
 test('launch spec forwards explicit v4 settings for runtime validation and omits empty overrides', () => {
@@ -271,9 +260,9 @@ test('launch spec forwards explicit v4 settings for runtime validation and omits
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {
-      NOVA_AUDIO_AGENT_PLANNER_MODEL: 'parent-planner',
-      NOVA_AUDIO_AGENT_EMBEDDING_MODEL: 'parent-embedding',
-      NOVA_AUDIO_AGENT_KNOWLEDGE_PATH: '/parent/knowledge.sqlite',
+      PLANNER_MODEL: 'parent-planner',
+      EMBEDDING_MODEL: 'parent-embedding',
+      KNOWLEDGE_PATH: '/parent/knowledge.sqlite',
     },
     settings: {
       codexApprovalMode: 'yolo',
@@ -289,15 +278,15 @@ test('launch spec forwards explicit v4 settings for runtime validation and omits
   })
 
   assert.deepEqual({
-    approval: spec.env.NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE,
-    depth: spec.env.NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH,
-    readback: spec.env.NOVA_AUDIO_AGENT_PLAN_READBACK,
-    planner: spec.env.NOVA_AUDIO_AGENT_PLANNER_MODEL,
-    bubbles: spec.env.NOVA_AUDIO_AGENT_PROGRESS_BUBBLES,
-    embeddingProvider: spec.env.NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER,
-    embeddingModel: spec.env.NOVA_AUDIO_AGENT_EMBEDDING_MODEL,
-    capabilities: spec.env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG,
-    knowledge: spec.env.NOVA_AUDIO_AGENT_KNOWLEDGE_PATH,
+    approval: spec.env.CODEX_APPROVAL_MODE,
+    depth: spec.env.CLARIFICATION_DEPTH,
+    readback: spec.env.PLAN_READBACK,
+    planner: spec.env.PLANNER_MODEL,
+    bubbles: spec.env.PROGRESS_BUBBLES,
+    embeddingProvider: spec.env.EMBEDDING_PROVIDER,
+    embeddingModel: spec.env.EMBEDDING_MODEL,
+    capabilities: spec.env.CAPABILITIES_CONFIG,
+    knowledge: spec.env.KNOWLEDGE_PATH,
   }, {
     approval: 'yolo', depth: 'thorough', readback: 'confirm', planner: 'settings-planner',
     bubbles: 'all', embeddingProvider: 'local', embeddingModel: 'custom-embedding',
@@ -309,24 +298,24 @@ test('launch spec forwards explicit v4 settings for runtime validation and omits
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {
-      NOVA_AUDIO_AGENT_PLANNER_MODEL: 'parent-planner',
-      NOVA_AUDIO_AGENT_EMBEDDING_MODEL: 'parent-embedding',
+      PLANNER_MODEL: 'parent-planner',
+      EMBEDDING_MODEL: 'parent-embedding',
     },
     settings: {
       plannerModel: '', embeddingModel: '', capabilitiesConfigPath: '', knowledgePath: '',
     },
   })
-  assert.equal(empty.env.NOVA_AUDIO_AGENT_PLANNER_MODEL, 'parent-planner')
-  assert.equal(empty.env.NOVA_AUDIO_AGENT_EMBEDDING_MODEL, 'parent-embedding')
-  assert.equal('NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG' in empty.env, false)
-  assert.equal('NOVA_AUDIO_AGENT_KNOWLEDGE_PATH' in empty.env, false)
+  assert.equal(empty.env.PLANNER_MODEL, 'parent-planner')
+  assert.equal(empty.env.EMBEDDING_MODEL, 'parent-embedding')
+  assert.equal('CAPABILITIES_CONFIG' in empty.env, false)
+  assert.equal('KNOWLEDGE_PATH' in empty.env, false)
 })
 
 test('plan generation settings override the parent environment and preserve explicit false', () => {
   for (const [settings, expected] of [[undefined, 'true'], [{generatePlan: true}, 'true'], [{generatePlan: false}, 'false']]) {
     const spec = nodeLaunchSpec({workspace: '/workspace', token: TOKEN, readyEndpoint: '127.0.0.1:49152',
-      parentEnv: {NOVA_AUDIO_AGENT_GENERATE_PLAN: 'false'}, settings})
-    assert.equal(spec.env.NOVA_AUDIO_AGENT_GENERATE_PLAN, expected)
+      parentEnv: {GENERATE_PLAN: 'false'}, settings})
+    assert.equal(spec.env.GENERATE_PLAN, expected)
   }
 })
 
@@ -334,7 +323,7 @@ test('the runtime receives the exact state root resolved for desktop maintenance
   const resolvedConfig = resolveDesktopConfig({
     settings: {},
     environment: {
-      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '/existing/project-state',
+      CODEX_PROJECT_STATE_ROOT: '/existing/project-state',
     },
     home: '/home/nova',
     platform: 'linux',
@@ -346,29 +335,28 @@ test('the runtime receives the exact state root resolved for desktop maintenance
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {
-      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '/stale/project-state',
+      CODEX_PROJECT_STATE_ROOT: '/stale/project-state',
     },
     resolvedConfig,
   })
 
   assert.equal(resolvedConfig.stateRoot, '/existing/project-state')
   assert.equal(
-    spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,
+    spec.env.CODEX_PROJECT_STATE_ROOT,
     resolvedConfig.stateRoot,
   )
 })
 
 test('resolved desktop configuration removes an invalid inherited Codex binary', () => {
   const spec = nodeLaunchSpec({
-    backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
     nodeResourcesPath: '/repo/clients/desktop/build',
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {
-      NOVA_AUDIO_AGENT_CODEX_BIN: '/private/invalid-codex',
-      NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: '["/private/invalid.js"]',
+      CODEX_BIN: '/private/invalid-codex',
+      CODEX_PREFIX_ARGS: '["/private/invalid.js"]',
     },
     resolvedConfig: {
       workspace: '/workspace',
@@ -379,8 +367,8 @@ test('resolved desktop configuration removes an invalid inherited Codex binary',
     },
   })
 
-  assert.equal('NOVA_AUDIO_AGENT_CODEX_BIN' in spec.env, false)
-  assert.equal('NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS' in spec.env, false)
+  assert.equal('CODEX_BIN' in spec.env, false)
+  assert.equal('CODEX_PREFIX_ARGS' in spec.env, false)
 })
 
 test('runtime entry resolves inside the workspace for dev and the asar for packages', () => {
@@ -403,19 +391,19 @@ test('launch spec strips a stale inherited readiness pipe', () => {
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
-    parentEnv: { NOVA_AUDIO_AGENT_DESKTOP_READY_FD: '3' },
+    parentEnv: { DESKTOP_READY_FD: '3' },
   })
 
-  assert.equal('NOVA_AUDIO_AGENT_DESKTOP_READY_FD' in spec.env, false)
+  assert.equal('DESKTOP_READY_FD' in spec.env, false)
 })
 
 test('a local runtime entry override is absolute and ignored by packaged clients', () => {
   const options = {appPath: '/repo/clients/desktop', packageRoot: '/repo/clients/desktop',
-    environment: {NOVA_AUDIO_AGENT_DEV_BACKEND_ENTRY: '/private/tmp/local-entry.mjs'}}
+    environment: {DEV_BACKEND_ENTRY: '/private/tmp/local-entry.mjs'}}
   assert.equal(nodeRuntimeEntry({...options, isPackaged: false}), '/private/tmp/local-entry.mjs')
   assert.notEqual(nodeRuntimeEntry({...options, isPackaged: true}), '/private/tmp/local-entry.mjs')
   assert.throws(() => nodeRuntimeEntry({...options, isPackaged: false,
-    environment: {NOVA_AUDIO_AGENT_DEV_BACKEND_ENTRY: '../relative.mjs'}}), /absolute/u)
+    environment: {DEV_BACKEND_ENTRY: '../relative.mjs'}}), /absolute/u)
 })
 
 test('integrated launch injects all active public settings and only its platform credential', () => {
@@ -440,26 +428,42 @@ test('integrated launch injects all active public settings and only its platform
     },
   })
 
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET, 'eager')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL, '45')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_PIPELINE_MODE, 'integrated')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER, 'qwen')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL, 'qwen-integrated-custom')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE, 'longxiaochun')
+  assert.equal(spec.env.PROACTIVITY_PRESET, 'eager')
+  assert.equal(spec.env.CODEX_WORKING_INTERVAL, '45')
+  assert.equal(spec.env.PIPELINE_MODE, 'integrated')
+  assert.equal(spec.env.INTEGRATED_PROVIDER, 'qwen')
+  assert.equal(spec.env.QWEN_REALTIME_MODEL, 'qwen-integrated-custom')
+  assert.equal(spec.env.QWEN_REALTIME_VOICE, 'longxiaochun')
   assert.equal(spec.env.DASHSCOPE_API_KEY, 'dash-key')
   for (const name of [
-    'NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER',
-    'NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER',
-    'NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER',
-    'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL',
-    'NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER',
-    'NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE',
+    'CASCADE_ENDPOINTING_PROVIDER',
+    'CASCADE_ASR_PROVIDER',
+    'CASCADE_LLM_PROVIDER',
+    'CASCADE_LLM_MODEL',
+    'CASCADE_TTS_PROVIDER',
+    'DOUBAO_TTS_VOICE',
     'ARK_API_KEY',
     'DOUBAO_BIGMODEL_API_KEY',
     'DOUBAO_ASR_API_KEY',
   ]) {
     assert.equal(name in spec.env, false, `${name} is inactive for integrated mode`)
   }
+})
+
+test('StepFun launch selects its model and credential without leaking inactive provider keys', () => {
+  const spec = nodeLaunchSpec({workspace: '/workspace', token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152', parentEnv: {},
+    settings: {...SETTINGS_V2, integratedProvider: 'stepfun',
+      integratedModel: 'stepaudio-3-realtime-preview', integratedVoice: 'default'},
+    decryptedSecrets: {stepfunApiKey: 'step-key', dashscopeApiKey: 'support-key', arkApiKey: 'unused-key'},
+  })
+  assert.equal(spec.env.INTEGRATED_PROVIDER, 'stepfun')
+  assert.equal(spec.env.STEPFUN_REALTIME_MODEL, 'stepaudio-3-realtime-preview')
+  assert.equal(spec.env.STEPFUN_REALTIME_VOICE, 'default')
+  assert.equal(spec.env.STEPFUN_API_KEY, 'step-key')
+  assert.equal(spec.env.DASHSCOPE_API_KEY, 'support-key')
+  assert.equal('QWEN_REALTIME_MODEL' in spec.env, false)
+  assert.equal('ARK_API_KEY' in spec.env, false)
 })
 
 test('cascaded Qwen launch injects active selectors, remembered model, and Doubao credentials', () => {
@@ -484,20 +488,20 @@ test('cascaded Qwen launch injects active selectors, remembered model, and Douba
     },
   })
 
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_PIPELINE_MODE, 'cascaded')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER, 'auto')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER, 'volcengine')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER, 'qwen')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL, 'qwen-flash')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER, 'volcengine')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE, 'zh_female_custom')
+  assert.equal(spec.env.PIPELINE_MODE, 'cascaded')
+  assert.equal(spec.env.CASCADE_ENDPOINTING_PROVIDER, 'auto')
+  assert.equal(spec.env.CASCADE_ASR_PROVIDER, 'volcengine')
+  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'qwen')
+  assert.equal(spec.env.CASCADE_LLM_MODEL, 'qwen-flash')
+  assert.equal(spec.env.CASCADE_TTS_PROVIDER, 'volcengine')
+  assert.equal(spec.env.DOUBAO_TTS_VOICE, 'zh_female_custom')
   assert.equal(spec.env.DASHSCOPE_API_KEY, 'dash-key')
   assert.equal(spec.env.DOUBAO_BIGMODEL_API_KEY, 'doubao-key')
   assert.equal(spec.env.DOUBAO_ASR_API_KEY, 'asr-key')
   assert.equal('ARK_API_KEY' in spec.env, false)
-  assert.equal('NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER' in spec.env, false)
-  assert.equal('NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL' in spec.env, false)
-  assert.equal('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE' in spec.env, false)
+  assert.equal('INTEGRATED_PROVIDER' in spec.env, false)
+  assert.equal('QWEN_REALTIME_MODEL' in spec.env, false)
+  assert.equal('QWEN_REALTIME_VOICE' in spec.env, false)
   assert.deepEqual(settings.cascadedLlmModels, {
     qwen: 'qwen-flash',
     ark: 'ark-remembered',
@@ -515,7 +519,7 @@ test('cascaded Ark launch selects the remembered Ark model without injecting Das
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
-    parentEnv: {},
+    parentEnv: {MEMORY_CONNECTION: 'disabled'},
     settings,
     decryptedSecrets: {
       dashscopeApiKey: 'dash-key',
@@ -524,8 +528,8 @@ test('cascaded Ark launch selects the remembered Ark model without injecting Das
     },
   })
 
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER, 'ark')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL, 'ark-selected')
+  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'ark')
+  assert.equal(spec.env.CASCADE_LLM_MODEL, 'ark-selected')
   assert.equal(spec.env.ARK_API_KEY, 'ark-key')
   assert.equal(spec.env.DOUBAO_BIGMODEL_API_KEY, 'doubao-key')
   assert.equal('DASHSCOPE_API_KEY' in spec.env, false)
@@ -559,12 +563,12 @@ test('launch spec falls back to the settings-store defaults when settings is mis
     parentEnv: {},
   })
 
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET, 'balanced')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL, '30')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_PIPELINE_MODE, 'integrated')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER, 'qwen')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL, 'qwen-audio-3.0-realtime-plus')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE, 'longanqian')
+  assert.equal(spec.env.PROACTIVITY_PRESET, 'balanced')
+  assert.equal(spec.env.CODEX_WORKING_INTERVAL, '30')
+  assert.equal(spec.env.PIPELINE_MODE, 'cascaded')
+  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'deepseek')
+  assert.equal(spec.env.CASCADE_LLM_MODEL, 'deepseek-flash')
+  assert.equal(spec.env.DOUBAO_TTS_VOICE, 'zh_female_vv_uranus_bigtts')
 })
 
 test('launch spec falls back per-field for a partially-populated settings object', () => {
@@ -576,12 +580,12 @@ test('launch spec falls back per-field for a partially-populated settings object
     settings: { proactivity: 'conservative' },
   })
 
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET, 'conservative')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL, '30')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_PIPELINE_MODE, 'integrated')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER, 'qwen')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL, 'qwen-audio-3.0-realtime-plus')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE, 'longanqian')
+  assert.equal(spec.env.PROACTIVITY_PRESET, 'conservative')
+  assert.equal(spec.env.CODEX_WORKING_INTERVAL, '30')
+  assert.equal(spec.env.PIPELINE_MODE, 'cascaded')
+  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'deepseek')
+  assert.equal(spec.env.CASCADE_LLM_MODEL, 'deepseek-flash')
+  assert.equal(spec.env.DOUBAO_TTS_VOICE, 'zh_female_vv_uranus_bigtts')
 })
 
 test('launch spec injects decrypted secrets as env overrides when present', () => {
@@ -590,6 +594,7 @@ test('launch spec injects decrypted secrets as env overrides when present', () =
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {},
+    settings: {pipelineMode:'integrated'},
     decryptedSecrets: {
       dashscopeApiKey: 'dash-key',
       tavilyApiKey: 'tavily-key',
@@ -603,8 +608,8 @@ test('launch spec injects decrypted secrets as env overrides when present', () =
 
   assert.equal(spec.env.DASHSCOPE_API_KEY, 'dash-key')
   assert.equal(spec.env.TAVILY_API_KEY, 'tavily-key')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_API_KEY, 'model-key')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_API_KEY, 'codex-key')
+  assert.equal(spec.env.MODEL_API_KEY, 'model-key')
+  assert.equal(spec.env.CODEX_API_KEY, 'codex-key')
   assert.equal('ARK_API_KEY' in spec.env, false)
   assert.equal('DOUBAO_BIGMODEL_API_KEY' in spec.env, false)
   assert.equal('DOUBAO_ASR_API_KEY' in spec.env, false)
@@ -653,8 +658,8 @@ test('launch spec omits a secret env var entirely when absent, empty, or undefin
 
   assert.equal('DASHSCOPE_API_KEY' in spec.env, false)
   assert.equal('TAVILY_API_KEY' in spec.env, false)
-  assert.equal('NOVA_AUDIO_AGENT_MODEL_API_KEY' in spec.env, false)
-  assert.equal('NOVA_AUDIO_AGENT_CODEX_API_KEY' in spec.env, false)
+  assert.equal('MODEL_API_KEY' in spec.env, false)
+  assert.equal('CODEX_API_KEY' in spec.env, false)
   assert.equal('ARK_API_KEY' in spec.env, false)
   assert.equal('DOUBAO_BIGMODEL_API_KEY' in spec.env, false)
   assert.equal('DOUBAO_ASR_API_KEY' in spec.env, false)
@@ -701,7 +706,7 @@ test('launch spec omits a decrypted secret carrying a control character', () => 
   // injection loop is the last line of defence: drop the value, keep the rest,
   // and let the parent environment's own value stand.
   assert.equal(spec.env.DASHSCOPE_API_KEY, 'from-dotenv')
-  assert.equal('NOVA_AUDIO_AGENT_MODEL_API_KEY' in spec.env, false)
+  assert.equal('MODEL_API_KEY' in spec.env, false)
   assert.equal(spec.env.TAVILY_API_KEY, 'tvly-clean')
   for (const value of Object.values(spec.env)) {
     assert.doesNotMatch(String(value), /poison/, 'no poisoned value survives into env')
@@ -712,8 +717,8 @@ test('integrated launch rejects raw boundary controls in every active secret ove
   const parentEnv = {
     DASHSCOPE_API_KEY: 'parent-dash',
     TAVILY_API_KEY: 'parent-tavily',
-    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'parent-model',
-    NOVA_AUDIO_AGENT_CODEX_API_KEY: 'parent-codex',
+    MODEL_API_KEY: 'parent-model',
+    CODEX_API_KEY: 'parent-codex',
   }
   const spec = nodeLaunchSpec({
     workspace: '/workspace',
@@ -731,8 +736,8 @@ test('integrated launch rejects raw boundary controls in every active secret ove
 
   assert.equal(spec.env.DASHSCOPE_API_KEY, 'parent-dash')
   assert.equal(spec.env.TAVILY_API_KEY, 'parent-tavily')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_API_KEY, 'parent-model')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_API_KEY, 'parent-codex')
+  assert.equal(spec.env.MODEL_API_KEY, 'parent-model')
+  assert.equal(spec.env.CODEX_API_KEY, 'parent-codex')
 })
 
 test('cascaded Ark launch rejects raw boundary controls in every new secret override', () => {
@@ -1320,10 +1325,10 @@ test('a spawned backend reaches readiness through the launch spec environment', 
   })
   const script = `
     const net = require('node:net')
-    const [host, port] = process.env.NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT.split(':')
-    if (process.env.NOVA_AUDIO_AGENT_DESKTOP_READY_FD) throw new Error('fd 3 must be gone')
+    const [host, port] = process.env.DESKTOP_READY_ENDPOINT.split(':')
+    if (process.env.DESKTOP_READY_FD) throw new Error('fd 3 must be gone')
     const payload = JSON.stringify({
-      token: process.env.NOVA_AUDIO_AGENT_DESKTOP_TOKEN,
+      token: process.env.DESKTOP_TOKEN,
       host: '127.0.0.1',
       port: 52525,
     })
@@ -1368,6 +1373,13 @@ test('dev dotenv keys override saved keys in both public metadata and runtime co
   assert.doesNotMatch(JSON.stringify({secretsPresent: resolved.secretsPresent, secretSources: resolved.secretSources}), /repo-key|speech-key|stored-key/)
 })
 
+test('memory prerecall switch overrides inherited env and defaults off', () => {
+  for (const enabled of [undefined, false, true]) {
+    const spec=nodeLaunchSpec({workspace:'/workspace',token:TOKEN,readyEndpoint:'127.0.0.1:49152',parentEnv:{MEMORY_PRERECALL_ENABLED:'stale'},settings:{...SETTINGS_V2,...(enabled===undefined?{}:{memoryPrerecallEnabled:enabled})}})
+    assert.equal(spec.env.MEMORY_PRERECALL_ENABLED,String(enabled??false))
+  }
+})
+
 test('DeepSeek cascade injects only its selected official model credential', () => {
   const env = capabilityEnvironment({pipelineMode: 'cascaded', cascadedLlmProvider: 'deepseek'}, {deepseekApiKey: 'deepseek-test', arkApiKey: 'unused-ark'}, {}, {modules: {search: {enabled: false}, camera: {enabled: false}}})
   assert.equal(env.DEEPSEEK_API_KEY, 'deepseek-test')
@@ -1375,4 +1387,26 @@ test('DeepSeek cascade injects only its selected official model credential', () 
   const view = resolveSecretConfiguration({}, {}, {DEEPSEEK_API_KEY: 'deepseek-dotenv-test'})
   assert.equal(view.secretsPresent.deepseekApiKey, true)
   assert.equal(view.secretSources.deepseekApiKey, 'dotenv')
+})
+
+test('Composio saved key overrides dotenv and explicit clear disables inherited credentials', () => {
+  const environment={COMPOSIO_API_KEY:'parent-fixture'},dev={COMPOSIO_API_KEY:'dotenv-fixture'}
+  assert.equal(resolveSecretConfiguration({composioApiKey:'saved-fixture'},environment,dev).secrets.composioApiKey,'saved-fixture')
+  const cleared=resolveSecretConfiguration({composioApiKey:''},environment,dev)
+  assert.equal(cleared.secretsPresent.composioApiKey,false)
+  assert.equal(capabilityEnvironment({},cleared.secrets,environment).COMPOSIO_API_KEY,'')
+  assert.equal(resolveSecretConfiguration({},environment,dev).secrets.composioApiKey,'dotenv-fixture')
+})
+
+test('OpenRouter secret reaches runtime independently of conversation provider', () => {
+  const environment = capabilityEnvironment({}, {openrouterApiKey:'synthetic-openrouter'}, {})
+  assert.equal(environment.OPENROUTER_API_KEY, 'synthetic-openrouter')
+})
+
+test('RSS language uses the system signal independently of saved UI language',()=>{
+ for(const [newsLanguage,language] of [['zh-CN','en'],['en','zh-CN']]){
+  const spec=nodeLaunchSpec({workspace:'/workspace',token:TOKEN,readyEndpoint:'127.0.0.1:12345',parentEnv:{},settings:{...SETTINGS_V2,language},newsLanguage})
+  assert.equal(spec.env.NEWS_LANGUAGE,newsLanguage)
+  assert.equal(spec.env.PROMPT_LANGUAGE,language)
+ }
 })

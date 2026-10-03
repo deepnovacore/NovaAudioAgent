@@ -99,11 +99,11 @@ export class WakeWordRuntime {
     this.queuedBytes = 0
     worker?.terminate()
   }
-  wake() {
+  wake({show = true} = {}) {
     this.state = 'active'
     this.idleSince = null
     this.reset()
-    this.show()
+    if (show) this.show()
   }
   report(value) {
     if (!value || value.epoch !== this.epoch

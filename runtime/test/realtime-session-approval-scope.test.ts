@@ -15,7 +15,7 @@ const offer: ApprovalOffer = {
 
 for (const scenario of ['once', 'session', 'unsupported', 'expired'] as const) {
   test(`structured permission confirmation scope: ${scenario}`, async () => {
-    const {service, executorApproval, clock, injectedContents} = realtimeServiceHarness('pipeline', {
+    const {service, executorApproval, clock, injectedContents, telemetry} = realtimeServiceHarness('pipeline', {
       projectTool: true, withExecutorApproval: true,
     })
     assert.ok(executorApproval)
@@ -34,6 +34,9 @@ for (const scenario of ['once', 'session', 'unsupported', 'expired'] as const) {
       response_id: 'decision-response', name: 'confirm',
       arguments: {id, accepted: true, ...(scenario === 'once' ? {} : {scope: 'session'})},
     })
+    assert.equal(telemetry.findLast(event => event.kind === 'approval.decision')?.payload.requested_scope, scenario === 'expired' ? undefined : scenario === 'once' ? 'once' : 'session')
+    if (scenario === 'session') assert.ok(injectedContents.some(content => content.includes('"code":"approval_accepted"') && content.includes('"scope":"session"')))
+    if (scenario === 'once') assert.ok(injectedContents.some(content => content.includes('"code":"approval_accepted"') && !content.includes('"scope"')))
     if (scenario === 'unsupported') {
       assert.equal(executorApproval.pending, true, 'unsupported scope never silently degrades to one-shot approval')
       assert.ok(injectedContents.some(content => content.includes('approval_scope_unsupported') && content.includes('"state":"retryable"')))

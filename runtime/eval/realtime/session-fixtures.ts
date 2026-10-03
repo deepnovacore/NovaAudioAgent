@@ -1,7 +1,7 @@
 /**
  * The differential-fixture contract for the realtime session.
  *
- * The runtime fixtures in `fixtures/runtime/v1` drive the whole reducer from host stimuli. These
+ * The runtime fixtures in `tests/fixtures/runtime/v1` drive the whole reducer from host stimuli. These
  * drive one layer lower: a scripted sequence of normalized provider events and host actions goes
  * into a real `RealtimeSession`, and the golden records what came out -- the session's own verdict
  * on each event, the calls it made on the provider, the playback effects it produced, and the

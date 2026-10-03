@@ -1,9 +1,9 @@
 name: iOS
 on:
   push:
-    paths: ['clients/ios/**', 'fixtures/client-protocol/**', '.github/workflows/ios.yml']
+    paths: ['clients/ios/**', 'tests/fixtures/client-protocol/**', '.github/workflows/ios.yml']
   pull_request:
-    paths: ['clients/ios/**', 'fixtures/client-protocol/**', '.github/workflows/ios.yml']
+    paths: ['clients/ios/**', 'tests/fixtures/client-protocol/**', '.github/workflows/ios.yml']
   workflow_dispatch:
 permissions:
   contents: read

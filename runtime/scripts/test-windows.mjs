@@ -14,9 +14,18 @@ const posixTests = new Set([
   'realtime-telemetry.test.js',
 ])
 const directory = resolve(import.meta.dirname, '../dist/test')
-const tests = readdirSync(directory)
-  .filter(file => file.endsWith('.test.js') && !posixTests.has(file))
-  .map(file => resolve(directory, file))
+// CI covers Windows-specific process and filesystem authority here; the full
+// portable suite remains available via test:win and runs on macOS/Linux in CI.
+const platformTests = [
+  'presentation-storage.test.js',
+  'codex-windows-guardian.test.js',
+  'codex-project-platform-policy.test.js',
+  'project-native-resource.test.js',
+]
+const files = process.argv.includes('--platform-only')
+  ? platformTests
+  : readdirSync(directory).filter(file => file.endsWith('.test.js') && !posixTests.has(file))
+const tests = files.map(file => resolve(directory, file))
 // Native workers and cold module loads compete with unrelated fixtures' short
 // deadlines on Windows. Files are isolated; concurrency inside each case is unchanged.
 const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...tests], { stdio: 'inherit' })

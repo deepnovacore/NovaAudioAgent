@@ -7,7 +7,7 @@ import { canonicalJson } from '../src/text/canonical-json.js'
 import { checkRuntimeFixtures, main, runDeterministicDemo } from '../src/cli.js'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const fixtureRoot = resolve(repositoryRoot, 'fixtures/runtime/v1')
+const fixtureRoot = resolve(repositoryRoot, 'tests/fixtures/runtime/v1')
 
 test('Node CLI fixture check runs every committed scenario', async () => {
   assert.equal(await checkRuntimeFixtures(fixtureRoot), 19)

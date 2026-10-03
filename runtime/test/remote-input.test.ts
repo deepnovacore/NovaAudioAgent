@@ -171,7 +171,7 @@ for (const repeat of [false, true]) for (const preEvent of [false, true]) for (c
   const replacement = deferred<void>()
   const secondReplacement = deferred<void>()
   const freshEvent = deferred<void>()
-  let streams = 0
+  const streamEpochs: number[] = []
   const provider: RealtimeProvider = {
     connect: async () => {epoch++; if (epoch > 1) {await (epoch === 2 ? replacement.promise : secondReplacement.promise); if (failReconnect) throw new Error('replacement failed')}
       return {epoch, provider_session_id: `provider-${epoch}`}},
@@ -180,7 +180,7 @@ for (const repeat of [false, true]) for (const preEvent of [false, true]) for (c
     createResponse: () => Promise.resolve(), cancelResponse: () => Promise.resolve(),
     async *events(signal) {
       const current = epoch
-      streams++
+      streamEpochs.push(current)
       if (current === 1 && preEvent) yield {kind: 'user_speech_started', session_epoch: current, speech_id: 'old'}
       if (current > 1) {
         await freshEvent.promise
@@ -221,11 +221,17 @@ for (const repeat of [false, true]) for (const preEvent of [false, true]) for (c
     assert.deepEqual(received, [8000])
   } else {
     await fresh; await lastFeed; assert.deepEqual(received, [8000, repeat ? 14000 : 12000]); assert.equal(closes, repeat ? 2 : 1)
-    await until(() => streams === 2)
+    // Language synchronization may let an intermediate connection start its reader.
+    await until(() => streamEpochs.includes(repeat ? 3 : 2))
     freshEvent.resolve()
     await until(() => handled.mock.calls.some(call => call.arguments[0].session_epoch === (repeat ? 3 : 2)))
   }
   await tick()
+  const freshCalls = handled.mock.calls.filter(call => {
+    const event = call.arguments[0]
+    return event.kind === 'user_speech_started' && event.speech_id === 'fresh'
+  })
+  assert.ok(freshCalls.every(call => call.arguments[0].session_epoch === (repeat ? 3 : 2)), 'superseded readers cannot deliver events')
   h.alive()
 })
 
@@ -266,7 +272,7 @@ test('a later disconnect retries failed input reset and resumes PCM and provider
   const received: number[] = []
   const recovery = deferred<void>()
   const eventReady = deferred<void>()
-  let streams = 0
+  const streamEpochs: number[] = []
   const provider: RealtimeProvider = {
     connect: async () => {
       epoch++
@@ -279,7 +285,7 @@ test('a later disconnect retries failed input reset and resumes PCM and provider
     createResponse: () => Promise.resolve(), cancelResponse: () => Promise.resolve(), close: () => Promise.resolve(),
     async *events(signal) {
       const current = epoch
-      streams++
+      streamEpochs.push(current)
       if (current === 3) {
         await eventReady.promise
         yield {kind: 'user_speech_started', session_epoch: current, speech_id: 'recovered'}
@@ -305,7 +311,7 @@ test('a later disconnect retries failed input reset and resumes PCM and provider
   recovery.resolve()
   await fresh
   assert.deepEqual(received, [8000, 14000])
-  await until(() => streams === 2)
+  await until(() => streamEpochs.includes(3))
   eventReady.resolve()
   await until(() => handled.mock.calls.some(call => call.arguments[0].session_epoch === 3))
   await tick()

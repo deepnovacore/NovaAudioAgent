@@ -202,3 +202,36 @@ test('compact task cards keep host identity and only connected active work anima
   assert.deepEqual(reservations, [1])
   banner.dispose()
 })
+
+
+test('workbench can retain expired terminal rows until the authoritative snapshot evicts them',()=>{
+ const {banner,advance,sent}=harness()
+ banner.receive(frame([task('a','completed'),task('b','cancelled')]))
+ advance(8000);advance(8000)
+ assert.deepEqual(banner.state().tasks,[])
+ assert.deepEqual(banner.state({includeExpired:true}).tasks.map(t=>t.work_id),['a','b'])
+ banner.disconnect();banner.action('open');assert.deepEqual(sent,[])
+ assert.equal(banner.state({includeExpired:true}).connected,false)
+ assert.equal(banner.state({includeExpired:true}).tasks.length,2)
+ banner.connect();banner.receive(frame([task('c')],1))
+ assert.deepEqual(banner.state({includeExpired:true}).tasks.map(t=>t.work_id),['c'])
+ banner.dispose()
+})
+
+
+test('workbench actions address retained work without reviving expired orb rows or selecting it',()=>{
+ const {banner,advance,sent}=harness()
+ banner.receive(frame([task('a','completed')]))
+ advance(8000)
+ assert.equal(banner.action('open','a'),true)
+ assert.equal(sent[0].work_id,'a');assert.equal(sent[0].action,'open')
+ assert.deepEqual(banner.state().tasks,[]);assert.equal(banner.state().visible,false);assert.equal(banner.state().selected,null)
+ assert.equal(banner.state({includeExpired:true}).tasks[0].opening,true)
+ banner.receiveActionResult({...sent[0],type:'executor.task_action_result',status:'failed'})
+ assert.deepEqual(banner.state().tasks,[]);assert.match(banner.state({includeExpired:true}).tasks[0].error,/未成功/u)
+ banner.receive(frame([task('a','completed'),task('b'),task('c')],2))
+ assert.equal(banner.state().selected.work_id,'b')
+ assert.equal(banner.action('cancel','c'),true);assert.equal(sent[1].work_id,'c')
+ assert.equal(banner.state().selected.work_id,'b');assert.equal(banner.action('open','missing'),false)
+ banner.dispose()
+})

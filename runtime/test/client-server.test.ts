@@ -1,3 +1,7 @@
+import {mkdtemp,rm,realpath} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {ClientPairing} from '../src/server/client-pairing.js'
 import assert from 'node:assert/strict'
 import {once} from 'node:events'
 import {test} from 'node:test'
@@ -198,4 +202,21 @@ test('authenticated language is validated and omitted language does not inherit 
   invalid.socket.send(JSON.stringify({type: 'hello', token, protocol_version: 1, language: 'fr'}))
   await closed
   assert.deepEqual(languages, ['en', undefined])
+})
+test('authenticated paired identity survives reconnect and remains distinct from shared master', {timeout:5000},async t=>{
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-task-client-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+ const pairing=new ClientPairing(token,join(dir,'devices.json'))
+ const device=pairing.redeem(pairing.create('wss://example.com/client/v1').code,'Device')
+ const identities:unknown[]=[]
+ const server=new ClientServer({token,port:0,pairing,onControl:(_control,context)=>{identities.push(context)}})
+ t.after(()=>server.close());const {port}=await server.start()
+ const connections:unknown[]=[]
+ for(const credential of [device.token,device.token,token]){
+  const client=await peer(port);hello(client.socket,credential);const ready=await client.next();connections.push(ready.connection_id)
+  client.socket.send(JSON.stringify({type:'client.command',request_id:'same',connection_id:ready.connection_id,payload:{type:'personal.command',request_id:'same',method:'tasks.list',params:{}}}))
+  assert.equal((await client.next()).status,'applied');await server.disconnectClient()
+ }
+ assert.notEqual(connections[0],connections[1])
+ assert.deepEqual(identities,[{client_id:'remote:'+device.device_id,can_takeover:true},{client_id:'remote:'+device.device_id,can_takeover:true},{client_id:'remote:master',can_takeover:false}])
+ assert.throws(()=>pairing.clientIdentity('f'.repeat(32)),/authentication failed/)
 })

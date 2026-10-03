@@ -1,3 +1,5 @@
+import type {PersonalCommandContext} from '../personal-agent/host.js'
+import {randomUUID,createHash} from 'node:crypto'
 import type {PromptLanguage} from '../realtime/prompt-language.js'
 import {
   DesktopTasks,
@@ -37,6 +39,8 @@ import {
   playbackTelemetrySchema,
   type DesktopControl,
   DesktopOutboundValidationError,
+  DesktopPersonalFrameTooLargeError,
+  MAX_DESKTOP_PERSONAL_JSON_BYTES,
   DesktopProtocolError,
   NodeDesktopServer,
   type DesktopReadiness,
@@ -52,6 +56,7 @@ import {type CaptionFrame} from '../realtime/session-state.js'
 import {type ExecutorState} from '../realtime/service-state.js'
 import {type ApprovalView as ExecutorApprovalView} from '../core/approval-port.js'
 import {type RealtimeTelemetry} from '../realtime/telemetry.js'
+import {DictationError, pcmLevel} from '../realtime/dictation.js'
 import {codePointLengthLikePython, stripLikePython} from '../text/python-text.js'
 import {
   executorProgressSchema,
@@ -91,6 +96,7 @@ export interface DesktopCommand {
 
 /** The service surface the bridge drives. Narrow: six calls and one read. */
 export interface BridgeService {
+  readonly inputCapabilities?: readonly string[]
   setLanguage?(language?: PromptLanguage): Promise<void>
 
   readonly executorState: ExecutorState
@@ -114,6 +120,11 @@ export interface BridgeService {
 }
 
 export interface DesktopBridgeOptions {
+  readonly conversationService?:(id:string)=>BridgeService|undefined
+  readonly voiceService?:()=>BridgeService|undefined
+  readonly sendConversationAudio?: (id:string,pcm:Uint8Array)=>Promise<void>
+  readonly submitConversationText?: (id:string,text:string,requestId?:string,sourceTodo?:{id:string;version:number})=>Promise<void>
+  readonly validateConversationInput?: (kind:'audio'|'dictation',id:string|undefined)=>void
   readonly token: string
   readonly service: BridgeService
   /** Set to tear the transport down. Overflow of a non-droppable frame trips it. */
@@ -178,8 +189,10 @@ export class DesktopSocketBridge {
   #latestAssistantCaptionSequence = 0
   /** Assistant captions at or below this belong to a cleared turn. */
   #fencedAssistantCaptionSequence = 0
+  readonly #inputInstanceId = randomUUID()
+  readonly #textReceipts = new Map<string,{hash:string;result:Promise<{type:'input.text_result';request_id:string;ok:boolean;error?:string}>}>()
   #draftInput = false
-  #dictation: {id: string; chunks: Uint8Array[]; size: number; finishing: boolean; controller: AbortController; timer: ReturnType<typeof setTimeout>} | undefined
+  #dictation: {id: string; conversationId?:string; chunks: Uint8Array[]; size: number; finishing: boolean; controller: AbortController; timer: ReturnType<typeof setTimeout>} | undefined
   #claimed = false
   #authenticated = false
   #everAuthenticated = false
@@ -196,7 +209,18 @@ export class DesktopSocketBridge {
   #firstFrameSeen: string | null = null
   #playbackTelemetryRejected = 0
 
+  readonly #conversationService:DesktopBridgeOptions['conversationService']
+  readonly #voiceService: DesktopBridgeOptions['voiceService']
+  #voiceConversation:string|undefined
+  readonly #sendConversationAudio: DesktopBridgeOptions['sendConversationAudio']
+  readonly #submitConversationText: DesktopBridgeOptions['submitConversationText']
+  readonly #validateConversationInput: DesktopBridgeOptions['validateConversationInput']
   constructor(options: DesktopBridgeOptions) {
+    this.#conversationService=options.conversationService
+    this.#voiceService=options.voiceService
+    this.#sendConversationAudio=options.sendConversationAudio
+    this.#submitConversationText=options.submitConversationText
+    this.#validateConversationInput=options.validateConversationInput
     // 128 bits of hex, exactly. A shorter token is a weaker one, and a longer one means the caller is
     // passing something other than what this expects.
     if (options.token.length !== 32 || !/^[0-9a-fA-F]+$/u.test(options.token)) {
@@ -433,12 +457,15 @@ export class DesktopSocketBridge {
   }
 
   /** Mark the connection authenticated, which is what unblocks the single-slot queues. */
+  onPersonalFrame(frame: unknown): void { if (this.#authenticated) this.#enqueue(JSON.stringify(frame)) }
+
   markAuthenticated(): void {
     if (this.#everAuthenticated) {
       this.#fencePlaybackForConnectionBoundary({resumeDelivery: true})
     }
     this.#authenticated = true
     this.#everAuthenticated = true
+    if(this.#service.inputCapabilities !== undefined)this.onPersonalFrame({type: 'desktop.capabilities', capabilities: this.#service.inputCapabilities, input_instance_id:this.#inputInstanceId})
     this.#syncExecutorStateDelivery()
     this.#syncProjectDelivery()
     this.#syncApprovalDelivery()
@@ -465,7 +492,7 @@ export class DesktopSocketBridge {
   #fencePlaybackForConnectionBoundary(
     options: {readonly resumeDelivery?: boolean} = {},
   ): void {
-    void this.#service.playbackDisconnected(options).catch(() => {
+    void (this.#voiceService?.()??this.#service).playbackDisconnected(options).catch(() => {
       this.#telemetry?.record('desktop.playback_disconnect_failed', {})
     })
   }
@@ -507,16 +534,35 @@ export class DesktopSocketBridge {
       draft.chunks.push(pcm.slice()); draft.size += pcm.length
       return
     }
-    if (!this.#draftInput) await this.#service.sendAudio(pcm)
+    if (!this.#draftInput) {this.#validateConversationInput?.('audio',this.#voiceConversation);if(this.#voiceConversation){if(!this.#sendConversationAudio)throw Error('voice_unavailable');await this.#sendConversationAudio(this.#voiceConversation,pcm)}else await this.#service.sendAudio(pcm)}
   }
 
   async receiveControl(control: DesktopControl): Promise<void> {
-    if (control.type === 'input.audio') { if (this.#dictation) throw new Error('dictation active'); this.#draftInput = false; return }
-    if (control.type === 'input.dictation') { this.#dictationControl(control.id, control.action); return }
+    if (control.type === 'input.audio') { this.#validateConversationInput?.('audio',control.conversation_id);this.#voiceConversation=control.conversation_id; if (this.#dictation) throw new Error('dictation active'); this.#draftInput = false; return }
+    if (control.type === 'input.dictation') { if(control.action==='start')this.#validateConversationInput?.('dictation',control.conversation_id); this.#dictationControl(control.id, control.action,control.conversation_id); return }
     if (control.type === 'input.text') {
-      if (this.#dictation) throw new Error('dictation active')
-      if (!this.#service.submitText) throw new Error('text input unavailable')
-      await this.#service.submitText(control.text)
+      const submit=async()=>{
+        if (this.#dictation) throw new Error('dictation active')
+        if(control.conversation_id){if(!this.#submitConversationText)throw Error('conversation_runtime_unavailable');await this.#submitConversationText(control.conversation_id,control.text,control.request_id,control.source_todo);return}
+        if (!this.#service.submitText) throw new Error('text input unavailable')
+        await this.#service.submitText(control.text)
+      }
+      if(control.request_id===undefined){await submit();return}
+      const id=control.request_id
+      const result=(ok:boolean,error?:string)=>({type:'input.text_result' as const,request_id:id,ok,...(control.conversation_id?{conversation_id:control.conversation_id}:{}),...(error===undefined?{}:{error})})
+      let receipt:ReturnType<typeof result>
+      const hash=createHash('sha256').update(JSON.stringify([control.conversation_id??null,control.text,control.source_todo??null])).digest('hex')
+      const prior=this.#textReceipts.get(id)
+      if(control.input_instance_id!==undefined&&control.input_instance_id!==this.#inputInstanceId)receipt=result(false,'outcome_unknown')
+      else if(prior)receipt=prior.hash===hash?await prior.result:result(false,'request_id_conflict')
+      else if(this.#textReceipts.size>=256)receipt=result(false,'request_capacity')
+      else {
+        // Record before calling the provider. Reconnect retries share this exact operation.
+        const operation=Promise.resolve().then(submit).then(()=>result(true),()=>result(false,'submission_failed'))
+        this.#textReceipts.set(id,{hash,result:operation})
+        receipt=await operation
+      }
+      if(this.#authenticated)this.#enqueue(JSON.stringify(receipt))
       return
     }
     await this.#receiveCommand(commandFromControl(control))
@@ -527,7 +573,7 @@ export class DesktopSocketBridge {
     clearTimeout(this.#dictation.timer); this.#dictation.controller.abort(); this.#dictation = undefined
   }
 
-  #dictationControl(id: string, action: 'start' | 'finish' | 'cancel'): void {
+  #dictationControl(id: string, action: 'start' | 'finish' | 'cancel',conversationId?:string): void {
     if (action === 'cancel') { if (this.#dictation?.id === id) this.#cancelDictation(); return }
     if (!this.#service.transcribeDraft) throw new Error('dictation unavailable')
     if (action === 'start') {
@@ -535,7 +581,7 @@ export class DesktopSocketBridge {
       if (this.#dictation) throw new Error('dictation active')
       const controller = new AbortController()
       const timer = setTimeout(() => { if (this.#dictation?.controller === controller) this.#cancelDictation() }, 90000)
-      this.#dictation = {id, chunks: [], size: 0, finishing: false, controller, timer}
+      this.#dictation = {id,...(conversationId?{conversationId}:{}), chunks: [], size: 0, finishing: false, controller, timer}
       return
     }
     const draft = this.#dictation
@@ -543,8 +589,14 @@ export class DesktopSocketBridge {
     draft.finishing = true
     const pcm = Buffer.concat(draft.chunks); draft.chunks = []
     void this.#service.transcribeDraft(pcm, AbortSignal.any([draft.controller.signal, AbortSignal.timeout(30000)]))
-      .then(text => { if (this.#dictation === draft) this.#enqueue(JSON.stringify({type: 'input.transcription', id, text})) })
-      .catch(() => { if (this.#dictation === draft) this.#enqueue(JSON.stringify({type: 'input.transcription', id, error: 'recognition_failed'})) })
+      .then(text => { if (this.#dictation === draft) this.#enqueue(JSON.stringify({type: 'input.transcription', id,...(draft.conversationId?{conversation_id:draft.conversationId}:{}), text})) })
+      .catch((error: unknown) => {
+        if (this.#dictation !== draft) return
+        const level = pcmLevel(pcm)
+        try { this.#telemetry?.record('dictation.failed', {bytes: pcm.length, peak: level.peak, rms: level.rms, error: (error instanceof Error ? error.message : String(error)).replace(/[\r\n]/gu, ' ').slice(0, 200)}) }
+        catch { /* the failure frame below must reach the client even when the telemetry disk cannot be written */ }
+        this.#enqueue(JSON.stringify({type: 'input.transcription', id,...(draft.conversationId?{conversation_id:draft.conversationId}:{}), error: error instanceof DictationError ? error.code : 'recognition_failed'}))
+      })
       .finally(() => { if (this.#dictation === draft) this.#cancelDictation() })
   }
 
@@ -584,30 +636,30 @@ export class DesktopSocketBridge {
         )
         return
       case 'speech_onset':
-        await this.#service.localSpeechOnset(String(command.payload.speech_id))
+        await (this.#voiceService?.()??this.#service).localSpeechOnset(String(command.payload.speech_id))
         return
       case 'playback_started':
-        this.#service.playbackStarted(
+        (this.#voiceService?.()??this.#service).playbackStarted(
           String(command.payload.utterance_id),
           Number(command.payload.generation_epoch),
         )
         return
       case 'playback_done':
-        this.#service.playbackDone(
+        (this.#voiceService?.()??this.#service).playbackDone(
           String(command.payload.utterance_id),
           Number(command.payload.generation_epoch),
           optionalPlayedMs(command.payload),
         )
         return
       case 'playback_stopped':
-        await this.#service.playbackStopped(
+        await (this.#voiceService?.()??this.#service).playbackStopped(
           String(command.payload.utterance_id),
           Number(command.payload.generation_epoch),
           optionalPlayedMs(command.payload),
         )
         return
       case 'playback_cleared':
-        this.#service.playbackCleared(
+        (this.#voiceService?.()??this.#service).playbackCleared(
           String(command.payload.utterance_id),
           Number(command.payload.generation_epoch),
           optionalPlayedMs(command.payload),
@@ -616,7 +668,9 @@ export class DesktopSocketBridge {
       case 'project_confirmation_decision': {
         const proposalId = command.payload.proposal_id
         if (typeof proposalId !== 'string') return
-        await this.#service.projectConfirmationDecision(
+        const target=typeof command.payload.conversation_id==='string'?this.#conversationService?.(command.payload.conversation_id):this.#service
+        if(!target)return
+        await target.projectConfirmationDecision(
           proposalId,
           command.payload.confirmed === true,
         )
@@ -626,7 +680,9 @@ export class DesktopSocketBridge {
         const approvalId = command.payload.approval_id
         // A decision names its executor; one that names another executor is not ours to relay.
         if (typeof approvalId !== 'string' || command.payload.executor !== this.#executor?.executor) return
-        this.#service.executorApprovalDecision(approvalId, command.payload.approved === true, command.payload.scope === 'session' ? 'session' : undefined)
+        const target=typeof command.payload.conversation_id==='string'?this.#conversationService?.(command.payload.conversation_id):this.#service
+        if(!target)return
+        target.executorApprovalDecision(approvalId, command.payload.approved === true, command.payload.scope === 'session' ? 'session' : undefined)
         return
       }
       default:
@@ -1081,6 +1137,7 @@ export function parseClientMessage(
 
 function commandFromControl(control: Exclude<DesktopControl, {type: 'input.audio' | 'input.text' | 'input.dictation'}>): DesktopCommand {
   switch (control.type) {
+    case 'personal.command':
     case 'executor.task_action':
     case 'coding.progress_narration':
       throw new DesktopWireProtocolError('desktop host control requires authenticated transport')
@@ -1110,12 +1167,12 @@ function commandFromControl(control: Exclude<DesktopControl, {type: 'input.audio
     case 'project.confirmation_decision':
       return {
         kind: 'project_confirmation_decision',
-        payload: {proposal_id: control.proposal_id, confirmed: control.confirmed},
+        payload: {proposal_id: control.proposal_id, confirmed: control.confirmed,...(control.conversation_id?{conversation_id:control.conversation_id}:{})},
       }
     case 'executor.approval_decision':
       return {
         kind: 'executor_approval_decision',
-        payload: {executor: control.executor, approval_id: control.approval_id, approved: control.approved, ...(control.scope === undefined ? {} : {scope: control.scope})},
+        payload: {...(control.conversation_id?{conversation_id:control.conversation_id}:{}),executor: control.executor, approval_id: control.approval_id, approved: control.approved, ...(control.scope === undefined ? {} : {scope: control.scope})},
       }
     case 'clock.pong':
       return {
@@ -1247,6 +1304,8 @@ export interface DesktopServerTransport {
 }
 
 export interface DesktopRealtimeOptions extends DesktopBridgeOptions {
+  readonly personalCommand?: (command: unknown,context?:PersonalCommandContext) => Promise<unknown>
+  readonly personalSnapshot?: () => unknown
   readonly taskPort?: CodingTaskPort
   readonly openTaskDirectory?: (path: string) => Promise<void>
   /** Remote transport errors release the connection; desktop retains its fatal policy. */
@@ -1312,9 +1371,18 @@ export class DesktopRealtime {
         return memoryBoard(request.request_id, request.detail, request)
       },
       onAudio: pcm => this.bridge.receiveAudio(pcm),
-      onControl: async control => {
+      onControl: async (control,context) => {
         const generation = this.#activeGeneration
         if (generation === null) throw new DesktopProtocolError('desktop control is unauthenticated')
+        if (control.type === 'personal.command') {
+          const result = options.personalCommand ? await options.personalCommand(control,context??(transportFailure==='disconnect'?undefined:{client_id:'desktop:local'})) : {type:'personal.result',request_id:control.request_id,ok:false,error:'unavailable'}
+          if (this.#activeGeneration === generation) {
+            this.bridge.onPersonalFrame(result)
+            // Inspector reads must not publish state and trigger another inspector read.
+            if (options.personalSnapshot && !['tasks.get', 'tasks.list'].includes(control.method)) this.bridge.onPersonalFrame(options.personalSnapshot())
+          }
+          return
+        }
         if (control.type === 'coding.progress_narration') { options.service.setCodingProgressNarration?.(control.mode); return }
         if (control.type !== 'executor.task_action') return this.bridge.receiveControl(control)
         const request = taskActionSchema.parse(control)
@@ -1385,6 +1453,19 @@ export class DesktopRealtime {
             await this.#send(delivery)
           } catch (error) {
             if (this.#activeGeneration !== generation) break
+            if (error instanceof DesktopPersonalFrameTooLargeError) {
+              this.#telemetry?.record('desktop.personal_frame_rejected', {
+                frame_type: error.frameType, bytes: error.bytes, limit: MAX_DESKTOP_PERSONAL_JSON_BYTES,
+              })
+              try {
+                // A command may already have committed. Reject its response without replaying it.
+                await this.server.sendText(JSON.stringify(error.frameType === 'personal.result'
+                  ? {type: 'personal.result', request_id: error.requestId, ok: false, error: 'personal_frame_too_large', input_status: 'unknown'}
+                  : {type: 'personal.error', error: 'personal_frame_too_large'}))
+                continue
+              } catch { /* A failed error delivery still follows the transport failure policy. */ }
+              if (this.#activeGeneration !== generation) break
+            }
             if (delivery.policy === 'required' && this.#transportFailure === 'abort') this.#stop.abort()
             else if (delivery.policy !== 'required' && error instanceof DesktopOutboundValidationError) {
               this.#telemetry?.record('desktop.outbound_validation_dropped', {
@@ -1553,6 +1634,14 @@ export function buildDesktopRealtimeComposition(
     token: options.token,
     ...(options.transportFailure === undefined ? {} : {transportFailure: options.transportFailure}),
     service: realtime.service,
+    conversationService:id=>realtime.personalAgent.conversationService(id),
+    voiceService:()=>realtime.personalAgent.voiceService(),
+    sendConversationAudio:(id,pcm)=>realtime.personalAgent.sendConversationAudio(id,pcm),
+    submitConversationText:(id,text,requestId,sourceTodo)=>realtime.personalAgent.submitConversationText(id,text,requestId,sourceTodo),
+    validateConversationInput:(kind,id)=>{if(realtime.personalAgent.presentationMode==='background')throw Error('presentation_hidden');const state=realtime.personalAgent.conversationSnapshot();if(id!==undefined&&!state.items.some(item=>item.id===id))throw Error('conversation_not_found');if(kind==='audio'&&((id!==undefined&&state.voice_id!==id)||(id===undefined&&state.voice_id!==null)))throw Error('voice_not_owned');if(kind==='dictation'&&state.voice_id!==null)throw Error('voice_active')},
+    personalCommand: (command,context) => realtime.personalAgent.command(command,context),
+    personalSnapshot: () => realtime.personalAgent.snapshot(),
+    onConnectionReleased:()=>{if(realtime.personalAgent.presentationMode!==null)void realtime.personalAgent.disconnectPresentation().catch(()=>{ /* pending decisions remain fail-closed during shutdown */ })},
     executor: codingExecutorIdentity(realtime) ?? options.approvalExecutor ?? null,
     ...(() => {
       const adapter = [...realtime.runtime.executors.values()].find(adapter => adapter.manifest.roles.includes('coding'))
@@ -1577,6 +1666,8 @@ export function buildDesktopRealtimeComposition(
     ...(options.createServer === undefined ? {} : {createServer: options.createServer}),
   })
   holder.desktop = desktop
+  const unsubscribePersonal = realtime.personalAgent.subscribe(() => desktop.bridge.onPersonalFrame(realtime.personalAgent.snapshot()))
+  options.stop.signal.addEventListener('abort', unsubscribePersonal, {once:true})
   startDesktopActivityHeartbeat(realtime.service, idle => desktop.bridge.onActivity(idle), options.stop.signal)
 
   const unsubscribeProgress = realtime.runtime.observe((event, currentConversation) => {
@@ -1999,7 +2090,10 @@ export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 |
 
 function desktopEntryFailureCode(error: unknown): string {
   if (error !== null && typeof error === 'object') {
-    const value = error as {readonly name?: unknown; readonly code?: unknown}
+    const value = error as {readonly name?: unknown; readonly code?: unknown; readonly message?: unknown}
+    if (value.message === 'personal_store_locked') return 'personal_store_locked'
+    if (['EACCES', 'EPERM', 'EROFS'].includes(String(value.code))) return 'filesystem_permissions'
+    if (['state_permissions', 'state_busy', 'state_lock_failed', 'personal_store_locked', 'workspace_not_found', 'workspace_invalid'].includes(String(value.code))) return String(value.code)
     if (value.code === 'frontbrain_tool_budget_exceeded') return 'configuration_required'
     if (value.code === 'credential_missing') return 'authentication_failed'
     if (new Set([

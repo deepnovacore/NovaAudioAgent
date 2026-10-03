@@ -34,3 +34,61 @@ test('generic host FIFO preserves parked work, fresh promotion TTL and single-us
   assert.equal(beta.consume(second), 'decline')
   assert.equal(host.pending, false)
 })
+
+
+test('background hold survives project release and queued promotion without weakening cancel', async () => {
+  const clock=new VirtualClock(0);let sequence=0
+  const host=new HostApprovalController({clock,idFactory:()=>`r${++sequence}`})
+  const hold=host.hold.bind(host) as (reason?:string)=>boolean
+  const release=host.release.bind(host) as (reason?:string)=>boolean
+  hold('background')
+  const abort=new AbortController()
+  const a=host.offer(offer,abort.signal)
+  const b=host.offer(offer,new AbortController().signal)
+  hold('project');release('project')
+  clock.advanceTo(7200);await Promise.resolve()
+  assert.equal(host.pending,true,'background keeps the first approval alive')
+  assert.equal(host.view.pending_approval_id,'r1')
+  abort.abort();assert.equal((await a)?.decision,'decline')
+  clock.advanceTo(14400);await Promise.resolve()
+  assert.equal(host.view.pending_approval_id,'r2','promoted entry inherits background hold')
+  assert.equal(host.pending,true)
+  release('background')
+  assert.equal(host.view.expires_at,14460)
+  assert.equal(host.acceptDecision({approvalId:'r1',decision:'accept'}),false)
+  assert.equal(host.acceptDecision({approvalId:'r2',decision:'accept'}),true)
+  const resolution=(await b)!;assert.equal(host.consume(resolution),'accept');assert.equal(host.consume(resolution),'decline')
+})
+
+
+test('queued background approvals wait for their own card presentation',async()=>{
+ const clock=new VirtualClock(0);let sequence=0
+ const host=new HostApprovalController({clock,idFactory:()=>`r${++sequence}`})
+ host.hold('background')
+ const a=host.offer(offer,new AbortController().signal),b=host.offer(offer,new AbortController().signal)
+ host.release('background')
+ assert.equal(host.acceptDecision({approvalId:'r1',decision:'accept'}),true)
+ host.consume((await a)!)
+ clock.advanceTo(7200);await Promise.resolve()
+ assert.equal(host.pending,true);assert.equal(host.view.pending_approval_id,'r2')
+ assert.equal(host.release('background'),true)
+ assert.equal(host.view.expires_at,7260)
+ host.invalidate('test_cleanup');await b
+})
+
+
+test('foreground stops holding new offers but preserves unseen background entries',async()=>{
+ const clock=new VirtualClock(0);let sequence=0
+ const host=new HostApprovalController({clock,idFactory:()=>`r${++sequence}`})
+ host.hold('background')
+ host.release('background',{awaitPresentation:true})
+ const a=host.offer(offer,new AbortController().signal)
+ assert.equal(host.view.held,undefined)
+ host.hold('background');host.release('background',{awaitPresentation:true})
+ assert.equal(host.view.held,true)
+ clock.advanceTo(7200);await Promise.resolve();assert.equal(host.pending,true)
+ host.release('background');host.acceptDecision({approvalId:'r1',decision:'accept'});host.consume((await a)!)
+ const b=host.offer(offer,new AbortController().signal)
+ assert.equal(host.view.held,undefined)
+ host.invalidate('cleanup');await b
+})

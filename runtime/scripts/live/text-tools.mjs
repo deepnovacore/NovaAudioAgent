@@ -69,9 +69,9 @@ export function score(expect, observed, tools) {
 }
 
 export function configuration(environment, provider, model) {
-  const settings = loadSettings({...environment, NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
-    ...(provider ? {NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: provider} : {}),
-    ...(model ? {NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: model} : {})})
+  const settings = loadSettings({...environment, PIPELINE_MODE: 'cascaded',
+    ...(provider ? {CASCADE_LLM_PROVIDER: provider} : {}),
+    ...(model ? {CASCADE_LLM_MODEL: model} : {})})
   const selected = resolveCascadedSelection(settings)
   return {provider: selected.llmProvider, model: selected.llmModel,
     apiKey: selected.llmProvider === 'qwen' ? settings.dashscope_api_key : settings.ark_api_key,

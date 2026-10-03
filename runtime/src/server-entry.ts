@@ -1,6 +1,7 @@
 import {ClientPairing} from './server/client-pairing.js'
 /** Headless production service. No Electron, parent-port, or stdin lifecycle dependency. */
 import {pathToFileURL} from 'node:url'
+import {renamedEnvironmentWarnings} from './config/config.js'
 import {initializeServerToken, loadServerConfig, type ServerConfig} from './server/server-config.js'
 import type {DesktopEntryOptions, DesktopStopEventSource} from './desktop/desktop-session.js'
 
@@ -12,12 +13,14 @@ export async function runServerEntry(options: {
   readonly onDiagnostic?: (line: string) => void
 } = {}): Promise<0 | 2> {
   const onDiagnostic = options.onDiagnostic ?? (line => { process.stderr.write(`${line}\n`) })
+  // Before the configuration check, so a stale name is reported even when it is the reason startup fails.
+  for (const warning of renamedEnvironmentWarnings(options.environment ?? process.env)) onDiagnostic(warning)
   let config: ServerConfig
   let pairing: ClientPairing
   try {
     config = loadServerConfig(options.environment)
     const environment = options.environment ?? process.env
-    pairing = new ClientPairing(config.token, `${environment.NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE}.devices.json`)
+    pairing = new ClientPairing(config.token, `${environment.SERVER_TOKEN_FILE}.devices.json`)
   } catch {
     onDiagnostic('[runtime-diagnostic] configuration_required')
     return 2
@@ -31,7 +34,7 @@ export async function runServerEntry(options: {
     if (config.mediaMode === 'aoq_chat') {
       const {AoqChatServer, issueAoqCredential, aoqCredentialURL} = await import('./server/aoq-chat-server.js')
       const environment = options.environment ?? process.env
-      const apiHost = environment.NOVA_AUDIO_AGENT_AOQ_API_HOST ?? ''
+      const apiHost = environment.AOQ_API_HOST ?? ''
       try { aoqCredentialURL(apiHost) } catch {
         onDiagnostic('[runtime-diagnostic] aoq_api_host_required')
         return 2
@@ -56,7 +59,7 @@ export async function runServerEntry(options: {
     const aoqModule = aoq ? await import('./server/aoq-chat-server.js') : undefined
     const aoqProvider = aoq ? await import('./realtime/aoq.js') : undefined
     const link = aoqProvider === undefined ? undefined : new aoqProvider.AoqRuntimeLink()
-    const apiHost = environment.NOVA_AUDIO_AGENT_AOQ_API_HOST ?? ''
+    const apiHost = environment.AOQ_API_HOST ?? ''
     if (aoq) {
       try { aoqModule!.aoqCredentialURL(apiHost) } catch {
         onDiagnostic('[runtime-diagnostic] aoq_api_host_required'); return 2
@@ -73,10 +76,10 @@ export async function runServerEntry(options: {
         const {ClientServer} = await import('./server/client-server.js')
         return buildProductionComposition({
           token: config.token, stop, ownership, onDiagnostic, remote: true,
-          environment: aoq ? {...environment, NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
-            NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER: 'qwen',
-            NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: 'qwen-audio-3.0-realtime-plus',
-            NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: 'longanqian'} : environment,
+          environment: aoq ? {...environment, PIPELINE_MODE: 'integrated',
+            INTEGRATED_PROVIDER: 'qwen',
+            QWEN_REALTIME_MODEL: 'qwen-audio-3.0-realtime-plus',
+            QWEN_REALTIME_VOICE: 'longanqian'} : environment,
           ...(link === undefined ? {} : {integratedProviders: {qwen: input => new aoqProvider!.AoqRealtimeAdapter({
             ...input.config, ...(input.language === undefined ? {} : {language: input.language}), link, onDiagnostic, idFactory: input.idFactory, now: input.now,
             executorApproval: input.executorApproval,
@@ -106,7 +109,7 @@ export async function runServerEntry(options: {
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === 'token-init') {
     try {
-      initializeServerToken(process.env.NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE ?? '')
+      initializeServerToken(process.env.SERVER_TOKEN_FILE ?? '')
       process.stderr.write('[server-token] initialized local credential file\n')
     } catch {
       process.stderr.write('[runtime-diagnostic] token_initialization_failed\n')

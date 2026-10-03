@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import {TaskService} from '../src/personal-agent/tasks.js'
+import {realpath} from 'node:fs/promises'
 import {readdirSync} from 'node:fs'
 import {mkdir, readFile, rename, rm, symlink} from 'node:fs/promises'
 import {join} from 'node:path'
@@ -291,8 +293,9 @@ test('confirmed resume revalidates ready state before runtime dispatch', async (
   }
 })
 
-test('real external dispatch carries one opaque confirmation identity outside every public delegate', async () => {
+test('real external dispatch carries independent opaque confirmation and task authorities outside every public delegate', async () => {
   const value = await fixture()
+  const tasks=new TaskService(join(await realpath(value.root),'tasks.json'));await tasks.open()
   const runtime = new CausalRuntime({
     clock: value.clock,
     ids: new MonotonicIdFactory(),
@@ -305,6 +308,8 @@ test('real external dispatch carries one opaque confirmation identity outside ev
     content: {text: 'continue exactly'},
   })
   const originRef = `${origin.channel}:${origin.seq}`
+  const task=await tasks.delegate('task',{conversation_id:'c',goal:'exact work',acceptance:[],origin_ref:originRef})
+  const grant=tasks.continuationContext({task_id:task.id,control_revision:0,goal_revision:0})
   const stop = new AbortController()
   const serving = runtime.serve(stop.signal)
   try {
@@ -321,7 +326,7 @@ test('real external dispatch carries one opaque confirmation identity outside ev
     })
     const committed = await value.adapter.commitConfirmed(
       operation,
-      (request, reason, capability, launchAuthorized) => runtime.dispatchConfirmedExternal(request, reason, capability, launchAuthorized),
+      (request, reason, capability, launchAuthorized) => runtime.dispatchConfirmedExternal(request, reason, capability, launchAuthorized,grant),
     )
     assert.equal(committed.accepted, true)
     const delegate = runtime.core.activeDelegates()[0]
@@ -336,6 +341,9 @@ test('real external dispatch carries one opaque confirmation identity outside ev
     )
     const beta = await value.store.resolveWorkspace('beta')
     assert.equal((await value.store.listSessions(beta))[0]?.display_title, 'exact work')
+    assert.deepEqual(tasks.get(task.id).work_ids,[committed.delegate_id])
+    assert.deepEqual(tasks.get(task.id).session_ids,[(await value.store.listSessions(beta))[0]!.session_id])
+    await tasks.close()
   } finally {
     stop.abort()
     await serving

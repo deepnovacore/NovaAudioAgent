@@ -6,15 +6,15 @@ import {join} from 'node:path'
 import {spawnSync} from 'node:child_process'
 import {fileURLToPath} from 'node:url'
 import {surface, score, runTextCase} from './text-tools.mjs'
-import {validateFixtures, summary} from './validation.mjs'
+import {validateFixtures, validateModuleReport, summary} from './validation.mjs'
 
-const fixture = JSON.parse(readFileSync(new URL('../../../fixtures/live/text-tools.json', import.meta.url)))
+const fixture = JSON.parse(readFileSync(new URL('../../../tests/fixtures/live/text-tools.json', import.meta.url)))
 test('fixture contract, current built-in surface and expectations cannot silently drift', () => {
   const parsed = validateFixtures(fixture)
   const full = surface()
-  assert.deepEqual(full.tools.map(tool => tool.name).sort(), ['memory__recall','search__search',
+  assert.deepEqual(full.tools.map(tool => tool.name).sort(), ['memory__recall','memory__evidence','search__search',
     'mcp__nova_knowledge__recall','dispatch','cancel','confirm'].sort())
-  assert.deepEqual(surface(['coding','camera','search','knowledge']).tools.map(tool => tool.name), ['memory__recall'])
+  assert.deepEqual(surface(['coding','camera','search','knowledge']).tools.map(tool => tool.name), ['memory__recall','memory__evidence'])
   const covered = new Set()
   for (const entry of parsed.cases) for (const step of entry.steps) for (const call of step.expect.calls) {
     assert.ok(surface(entry.disabled).tools.some(tool => tool.name === call.name), `${entry.id}: unavailable expected tool`)
@@ -177,3 +177,22 @@ test('optional memory fallback accepts an honest direct limitation or validates 
    assert.equal(result.status, 'passed')
    assert.equal(turn, 2)
  })
+
+
+test('module acceptance requires matching completed evidence, not merely exit zero',()=>{
+ const report={version:1,module:'memory-reading',layer:'model-runtime',synthetic:true,status:'passed',checks:['current state read'],coverage:['synthetic only'],started_at:'2026-09-21T00:00:00Z',finished_at:'2026-09-21T00:01:00Z'}
+ assert.equal(validateModuleReport(report,'memory-reading').status,'passed')
+ assert.throws(()=>validateModuleReport(report,'memory-reading',Date.parse('2026-09-22T00:00:00Z')))
+ for(const change of [{module:'memory-desktop'},{status:'running'},{checks:[]},{finished_at:undefined},{synthetic:false}])assert.throws(()=>validateModuleReport({...report,...change},'memory-reading'))
+ assert.equal(validateModuleReport({...report,status:'blocked',checks:[]},'memory-reading').status,'blocked')
+})
+test('a model module without credentials produces a structured blocked artifact',()=>{
+ const directory=mkdtempSync(join(tmpdir(),'nova-memory-module-contract-'))
+ try{
+  const output=join(directory,'report.json')
+  const result=spawnSync(process.execPath,[fileURLToPath(new URL('../live-smoke.mjs',import.meta.url)),'--target=memory-daily','--output',output],{env:{PATH:process.env.PATH},encoding:'utf8',timeout:15000})
+  assert.equal(result.status,2,result.stderr);const report=JSON.parse(readFileSync(output,'utf8'))
+  assert.equal(report.summary.blocked,1);assert.equal(report.summary.accepted,false)
+  const evidence=JSON.parse(readFileSync(report.results[0].artifact,'utf8'));assert.equal(evidence.module,'memory-daily');assert.equal(evidence.status,'blocked');assert.deepEqual(evidence.calls,[])
+ }finally{rmSync(directory,{recursive:true,force:true})}
+})

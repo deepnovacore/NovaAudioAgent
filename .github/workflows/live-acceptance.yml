@@ -35,14 +35,14 @@ jobs:
         env:
           LIVE_TARGET: ${{ inputs.target }}
           LIVE_REPEAT: ${{ inputs.repeat }}
-          NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: ${{ inputs.provider }}
-          NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: ${{ inputs.model }}
+          CASCADE_LLM_PROVIDER: ${{ inputs.provider }}
+          CASCADE_LLM_MODEL: ${{ inputs.model }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           ARK_API_KEY: ${{ secrets.ARK_API_KEY }}
           DOUBAO_BIGMODEL_API_KEY: ${{ secrets.DOUBAO_BIGMODEL_API_KEY }}
           DOUBAO_ASR_API_KEY: ${{ secrets.DOUBAO_ASR_API_KEY }}
         run: |
-          if [ -z "$NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL" ]; then unset NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL; fi
+          if [ -z "$CASCADE_LLM_MODEL" ]; then unset CASCADE_LLM_MODEL; fi
           node runtime/scripts/live-smoke.mjs --target "$LIVE_TARGET" --repeat "$LIVE_REPEAT" --output artifacts/live.json
       - uses: actions/upload-artifact@v4
         if: always()

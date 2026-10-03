@@ -1,5 +1,6 @@
-import {resolve} from 'node:path'
-import type {ExecutorProgress} from '../../core/causal-runtime.js'
+import {SensitiveContentPolicy,SensitivePathPolicy,redactUrlQueryCredentials} from '../../memory/sensitivity.js'
+import {isAbsolute,relative,resolve} from 'node:path'
+import type {ExecutorProgress,ExecutorActivity} from '../../core/causal-runtime.js'
 import type {Clock} from '../../core/clock.js'
 import {snapshotJsonRecord} from './safe-json.js'
 import type {CodexLaunchProfile} from './launch-profile.js'
@@ -9,9 +10,14 @@ import {
   CodexProtocolError,
   MAX_FINAL_TEXT_INPUT,
   MAX_INTERNAL_ACTIVITY,
+  MAX_STDOUT,
   SUMMARY_PROSE_LIMIT,
   WORKING_INTERVAL,
 } from './protocol.js'
+
+const observationSensitivity = new SensitiveContentPolicy()
+const artifactPathSensitivity = new SensitivePathPolicy()
+const EAGER_ACTIVITY_INTERVAL_SECONDS = 60
 
 export interface TurnCompletion {
   readonly status: 'completed' | 'failed'
@@ -21,9 +27,18 @@ export interface TurnCompletion {
 }
 
 export class AppServerTurnProjection {
+  readonly #sanitizePublicText:((text:string)=>{text:string;truncated:boolean})|undefined
+  readonly #onActivity:((event:ExecutorActivity)=>void)|undefined
+  readonly #publicStages=new Set<string>()
+  #pendingPublic:ExecutorActivity[]=[]
+  #pendingPublicBytes=0
+  #workspace:string|null=null
   readonly #clock: Clock
   readonly #onProgress: ((progress: ExecutorProgress) => void) | undefined
   readonly #workingInterval: number
+  readonly #eagerProgress: boolean
+  #reportedActivities = new Set<string>()
+  #lastSummaryAt: number | null = null
   #threadId: string | null = null
   #notificationTurnId: string | null = null
   #responseTurnId: string | null = null
@@ -41,12 +56,18 @@ export class AppServerTurnProjection {
 
   constructor(options: {
     readonly clock: Clock
+    readonly sanitizePublicText?:(text:string)=>{text:string;truncated:boolean}
+    readonly onActivity?:(event:ExecutorActivity)=>void
     readonly onProgress?: (progress: ExecutorProgress) => void
     readonly workingInterval?: number
+    readonly eagerProgress?: boolean
   }) {
+    this.#sanitizePublicText=options.sanitizePublicText
+    this.#onActivity=options.onActivity
     this.#clock = options.clock
     this.#onProgress = options.onProgress
     this.#workingInterval = options.workingInterval ?? WORKING_INTERVAL
+    this.#eagerProgress = options.eagerProgress === true
     if (!Number.isFinite(this.#workingInterval) || this.#workingInterval < 0) {
       throw new RangeError('working interval must be non-negative and finite')
     }
@@ -127,6 +148,7 @@ export class AppServerTurnProjection {
         const profile = requireObject(envelope.activePermissionProfile)
         if (profile.id !== 'nova_audio_agent') throw new TypeError('profile')
       }
+      this.#workspace=options.workspace
       this.#threadId = threadId
     } catch {
       throw new CodexProtocolError('unsupported_protocol')
@@ -142,9 +164,12 @@ export class AppServerTurnProjection {
       throw new CodexProtocolError('unsupported_protocol')
     }
     if (this.#notificationTurnId !== null && this.#notificationTurnId !== turnId) {
+      this.#pendingPublic=[];this.#pendingPublicBytes=0
       throw new CodexProtocolError('turn_identity_mismatch')
     }
     this.#responseTurnId = turnId
+    const pending=this.#pendingPublic;this.#pendingPublic=[];this.#pendingPublicBytes=0
+    for(const event of pending)this.#emitActivity(event)
     return turnId
   }
 
@@ -193,11 +218,14 @@ export class AppServerTurnProjection {
     this.#lastEmittedProse = null
     this.#startedAt = this.#clock.now()
     this.#lastWorkingAt = this.#startedAt
+    this.#lastSummaryAt = this.#startedAt
+    this.#reportedActivities.clear()
     this.#emit({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
   }
 
   #itemStarted(params: Readonly<Record<string, unknown>>): void {
     if (!this.#matchesItem(params)) return
+    this.#publicItem(params.item,'started')
     const startedItem = params.item
     if (
       startedItem.type !== 'fileChange'
@@ -217,6 +245,7 @@ export class AppServerTurnProjection {
 
   #itemCompleted(params: Readonly<Record<string, unknown>>): void {
     if (!this.#matchesItem(params) || this.#startedAt === null) return
+    this.#publicItem(params.item,'completed')
     const completedItem = params.item
     if (typeof completedItem.id === 'string') this.#fileChangeItems.delete(completedItem.id)
     if (completedItem.type === 'agentMessage' && typeof completedItem.text === 'string') {
@@ -228,7 +257,22 @@ export class AppServerTurnProjection {
     const elapsed = Math.max(0, now - this.#startedAt)
     const intervalElapsed = this.#lastWorkingAt !== null
       && now - this.#lastWorkingAt >= this.#workingInterval
-    const summary = this.#summaryProse !== this.#lastEmittedProse ? this.#summaryProse : null
+    let summary = this.#summaryProse !== this.#lastEmittedProse ? this.#summaryProse : null
+    if (summary !== null) this.#reportedActivities.clear()
+    else if (this.#eagerProgress && this.#lastSummaryAt !== null
+      && now - this.#lastSummaryAt >= Math.max(EAGER_ACTIVITY_INTERVAL_SECONDS, this.#workingInterval)) {
+      // Use only structured completion facts. Never summarize commands, paths, output or reasoning.
+      const activity = completedItem.type === 'commandExecution'
+        ? completedItem.status === 'failed' ? '一条工作区命令执行失败，尚未确认恢复结果。'
+          : completedItem.status === 'completed' ? '一条工作区命令已执行结束，尚未确认任务最终结果。' : null
+        : completedItem.type === 'fileChange' && completedItem.status === 'completed'
+          ? '已应用一批文件修改，尚未确认验证结果。' : null
+      if (activity !== null && !this.#reportedActivities.has(activity)) {
+        summary = activity
+        this.#reportedActivities.add(activity)
+      }
+    }
+    if (summary !== null) this.#lastSummaryAt = now
     if (!intervalElapsed && summary === null) return
     this.#lastWorkingAt = now
     this.#lastEmittedProse = this.#summaryProse
@@ -239,6 +283,51 @@ export class AppServerTurnProjection {
       summary,
     })
   }
+
+  #publicItem(item:Readonly<Record<string,unknown>>,stage:'started'|'completed'):void{
+    if(!this.#onActivity)return
+    if(typeof item.id!=='string'||!item.id||item.id.length>512)return
+    const key=JSON.stringify([item.id,stage]);if(this.#publicStages.has(key)||(stage==='started'&&this.#publicStages.has(JSON.stringify([item.id,'completed']))))return
+    let kind:ExecutorActivity['kind'],text:string,sender:ExecutorActivity['sender']
+    if(item.type==='agentMessage'&&typeof item.text==='string'){kind='message';text=item.text;sender='executor'}
+    else if(item.type==='commandExecution'||item.type==='fileChange'||item.type==='mcpToolCall'||item.type==='webSearch'){
+      kind='tool';text=String(item.type)+' '+stage+(typeof item.status==='string'&&['completed','failed','inProgress','declined'].includes(item.status)?': '+item.status:'')
+    }else return
+    let fieldTruncated=false
+    const publicField=(raw:unknown):string|null=>{
+      if(typeof raw!=='string')return null
+      const value=redactUrlQueryCredentials(raw)
+      const scrubbed=observationSensitivity.scrub('executor_observation',value)
+      const safe=scrubbed.kind==='clean'?value:scrubbed.kind==='redacted'?scrubbed.value:'[redacted]'
+      const sanitized=this.#sanitizePublicText?.(safe)??{text:safe,truncated:false}
+      fieldTruncated||=sanitized.truncated;return sanitized.text
+    }
+    const status=typeof item.status==='string'&&['completed','failed','inProgress','declined'].includes(item.status)?item.status:null
+    if(stage==='completed'&&item.type==='commandExecution')text=JSON.stringify({type:item.type,status,command:publicField(item.command),output:publicField(item.aggregatedOutput),exit_code:Number.isSafeInteger(item.exitCode)?item.exitCode:null})
+    if(stage==='completed'&&item.type==='mcpToolCall'){
+      const result=isPlainObject(item.result)&&Array.isArray(item.result.content)?item.result.content:[]
+      const readback=result.filter((part):part is Record<string,unknown>=>isPlainObject(part)&&part.type==='text'&&typeof part.text==='string').map(part=>part.text as string).join('\n')
+      text=JSON.stringify({type:item.type,server:publicField(item.server),tool:publicField(item.tool),status,is_error:isPlainObject(item.result)&&typeof item.result.isError==='boolean'?item.result.isError:null,readback:publicField(readback)})
+    }
+    this.#publicStages.add(key)
+    const refs:string[]=[]
+    if(item.type==='fileChange'&&Array.isArray(item.changes)&&this.#workspace)for(const change of item.changes){
+      if(!isPlainObject(change)||typeof change.path!=='string')continue
+      const absolutePath=resolve(this.#workspace,change.path)
+      const path=relative(this.#workspace,absolutePath)
+      if(path&&!isAbsolute(path)&&path!=='..'&&!path.startsWith('../')&&!/[\p{C}]/u.test(path)&&path.length<=480&&artifactPathSensitivity.allows(absolutePath)&&observationSensitivity.scrub('artifact_path',path).kind==='clean')refs.push('workspace-file:'+path)
+      if(refs.length===128)break
+    }
+    const sanitized=this.#sanitizePublicText?.(text)??{text,truncated:false};text=sanitized.text
+    const event:ExecutorActivity={thread_id:this.#threadId!,turn_id:this.#activeTurnId!,item_id:item.id,stage,kind,...(sender?{sender}:{}),text:text.slice(0,16000),refs,...(fieldTruncated||sanitized.truncated||text.length>16000?{text_truncated:true}:{})}
+    if(this.#responseTurnId===null){
+      this.#pendingPublicBytes+=Buffer.byteLength(JSON.stringify(event))
+      if(this.#pendingPublicBytes>MAX_STDOUT){this.#pendingPublic=[];this.#pendingPublicBytes=0;throw new CodexProtocolError('unsupported_protocol')}
+      this.#pendingPublic.push(event)
+    }else this.#emitActivity(event)
+  }
+  #emitActivity(event:ExecutorActivity):void{try{this.#onActivity?.(event)}catch{/* public display is advisory */}}
+
 
   #reduceSummaryItem(item: Readonly<Record<string, unknown>>): void {
     const type = item.type
@@ -272,6 +361,7 @@ export class AppServerTurnProjection {
     ) throw new CodexProtocolError('unsupported_protocol')
     let finalText: string | null = null
     for (const candidate of turn.items) {
+      if(isPlainObject(candidate))this.#publicItem(candidate,'completed')
       if (
         isPlainObject(candidate)
         && candidate.type === 'agentMessage'

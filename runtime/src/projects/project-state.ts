@@ -10,7 +10,8 @@ import {type HostWorkspace} from './host-paths.js'
 import {type ProjectFileIdentity} from './project-root-file.js'
 
 export const PROJECT_STATE_VERSION = 1
-export const MAX_PROJECT_WORKSPACES = 100
+// Keep legacy cwd imports while admitting saved Desktop project roots on upgrade.
+export const MAX_PROJECT_WORKSPACES = 256
 export const MAX_PROJECT_SESSIONS_PER_WORKSPACE = 200
 export const MAX_PROJECT_SESSIONS_TOTAL = 1000
 export const MAX_PROJECT_WORKSPACE_NAME = 80

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import type {ExecutorProgress} from '../src/core/causal-runtime.js'
+import type {ExecutorProgress,ExecutorActivity} from '../src/core/causal-runtime.js'
 import {VirtualClock, type Clock} from '../src/core/clock.js'
 import {CodexProtocolError, MAX_FINAL_TEXT_INPUT, MAX_INTERNAL_ACTIVITY} from '../src/executors/codex/protocol.js'
 import {AppServerTurnProjection} from '../src/executors/codex/turn-projection.js'
@@ -381,4 +381,133 @@ test('activity count saturates at the fixed bound', () => {
     turn: {id: 'PRIVATE-TURN', status: 'completed', items: []},
   })
   assert.equal(completion?.internal_activity, MAX_INTERNAL_ACTIVITY)
+})
+
+for (const eager of [false, true]) {
+  test(`tool progress is factual, bounded and eager-only: ${eager}`, () => {
+    const clock = new VirtualClock()
+    const events: ExecutorProgress[] = []
+    const projection = new AppServerTurnProjection({clock, eagerProgress: eager, workingInterval: 30,
+      onProgress: value => events.push(value)})
+    projection.bindThread(ephemeralThread(), {workspace: '/workspace'})
+    projection.notification('turn/started', {threadId: 'PRIVATE-THREAD', turn: {id: 'PRIVATE-TURN'}})
+    const completed = {type: 'commandExecution', status: 'completed', command: 'SECRET-COMMAND', aggregatedOutput: 'SECRET-OUTPUT'}
+    clock.advanceTo(30)
+    item(projection, completed)
+    assert.equal(events.at(-1)?.summary, null)
+    clock.advanceTo(60)
+    item(projection, completed)
+    assert.equal(events.at(-1)?.summary, eager ? '一条工作区命令已执行结束，尚未确认任务最终结果。' : null)
+    clock.advanceTo(120)
+    item(projection, completed)
+    assert.equal(events.at(-1)?.summary, null, 'same operational status is not repeated')
+    item(projection, {type: 'fileChange', status: 'completed', changes: [{path: 'SECRET-PATH'}]})
+    if (eager) assert.equal(events.at(-1)?.summary, '已应用一批文件修改，尚未确认验证结果。')
+    clock.advanceTo(180)
+    item(projection, {...completed, status: 'failed'})
+    assert.equal(events.at(-1)?.summary, eager ? '一条工作区命令执行失败，尚未确认恢复结果。' : null)
+    clock.advanceTo(240)
+    item(projection, {type: 'reasoning', text: 'SECRET-REASONING'})
+    assert.equal(events.at(-1)?.summary, null)
+    item(projection, {type: 'agentMessage', text: 'Actual explanation'})
+    assert.equal(events.at(-1)?.summary, 'Actual explanation')
+    clock.advanceTo(270)
+    item(projection, {...completed, status: 'failed'})
+    assert.equal(events.at(-1)?.summary, null, 'fresh commentary suppresses fallback for a minute')
+    clock.advanceTo(300)
+    const countBeforeForeign = events.length
+    projection.notification('item/completed', {threadId: 'OTHER', turnId: 'PRIVATE-TURN', item: completed})
+    assert.equal(events.length, countBeforeForeign, 'foreign events do not create progress')
+    item(projection, {...completed, status: 'inProgress'})
+    assert.equal(events.at(-1)?.summary, null, 'unknown or nonterminal status cannot invent completion')
+    assert.ok(!JSON.stringify(events).includes('SECRET'))
+  })
+}
+
+test('public projection rejects wrong pairs, hides reasoning, and preserves item stages',()=>{
+ const events: ExecutorActivity[]=[]
+ const projection=new AppServerTurnProjection({clock:new VirtualClock(),onActivity:event=>events.push(event)})
+ projection.bindThread(ephemeralThread(),{workspace:'/workspace'})
+ projection.bindTurnResponse({turn:{id:'PRIVATE-TURN'}})
+ const event={threadId:'PRIVATE-THREAD',turnId:'PRIVATE-TURN',item:{id:'m',type:'agentMessage',text:'Checking'}}
+ projection.notification('item/completed',event)
+ projection.notification('turn/started',{threadId:'PRIVATE-THREAD',turn:{id:'PRIVATE-TURN'}})
+ projection.notification('item/completed',{...event,turnId:'wrong'})
+ item(projection,{id:'reason',type:'reasoning',text:'Never display'})
+ projection.notification('item/started',event)
+ projection.notification('item/started',event)
+ projection.notification('item/completed',event)
+ assert.equal(events.length,2)
+ assert.deepEqual(events.map(event=>event.stage),['started','completed'])
+ assert.ok(events.every(event=>event.sender==='executor'&&event.text==='Checking'))
+ item(projection,{id:'long',type:'agentMessage',text:'x'.repeat(17000)})
+ assert.equal(events.at(-1)?.text.length,16000);assert.equal(events.at(-1)?.text_truncated,true)
+})
+
+test('public file changes retain workspace artifact refs and ignore late started stage',()=>{
+ const events:ExecutorActivity[]=[]
+ const projection=new AppServerTurnProjection({clock:new VirtualClock(),onActivity:event=>events.push(event)})
+ projection.bindThread(ephemeralThread(),{workspace:'/workspace'})
+ projection.bindTurnResponse({turn:{id:'PRIVATE-TURN'}})
+ projection.notification('turn/started',{threadId:'PRIVATE-THREAD',turn:{id:'PRIVATE-TURN'}})
+ const change={id:'file',type:'fileChange',status:'completed',changes:[
+  {path:'/workspace/src/login.ts',kind:{type:'update'}},
+  {path:'/workspace/.env.local',kind:{type:'update'}},
+  {path:'/workspace/config/api_key.txt',kind:{type:'update'}},
+  {path:'/workspace/certs/server.pem',kind:{type:'update'}},
+  {path:'/workspace/notes/token=private-value.txt',kind:{type:'update'}},
+  {path:'/private/secrets',kind:{type:'update'}},
+ ]}
+ item(projection,change)
+ projection.notification('item/started',{threadId:'PRIVATE-THREAD',turnId:'PRIVATE-TURN',item:change})
+ assert.equal(events.length,1);assert.deepEqual(events[0]?.refs,['workspace-file:src/login.ts'])
+})
+
+test('turn completion replays public items omitted from item notifications exactly once',()=>{
+ const events:ExecutorActivity[]=[]
+ const projection=new AppServerTurnProjection({clock:new VirtualClock(),onActivity:event=>events.push(event)})
+ projection.bindThread(ephemeralThread(),{workspace:'/workspace'})
+ projection.bindTurnResponse({turn:{id:'PRIVATE-TURN'}})
+ projection.notification('turn/started',{threadId:'PRIVATE-THREAD',turn:{id:'PRIVATE-TURN'}})
+ item(projection,{id:'a',type:'agentMessage',text:'Already seen'})
+ projection.notification('turn/completed',{threadId:'PRIVATE-THREAD',turn:{id:'PRIVATE-TURN',status:'completed',items:[{id:'a',type:'agentMessage',text:'Already seen'},{id:'b',type:'agentMessage',text:'Completion only'}]}})
+ assert.deepEqual(events.map(event=>event.text),['Already seen','Completion only'])
+})
+
+test('public activity waits for turn response identity and mismatched responses never release it',()=>{
+ for(const responseId of ['PRIVATE-TURN','wrong']){
+  const events:ExecutorActivity[]=[]
+  const projection=new AppServerTurnProjection({clock:new VirtualClock(),onActivity:event=>events.push(event)})
+  projection.bindThread(ephemeralThread(),{workspace:'/workspace'})
+  projection.notification('turn/started',{threadId:'PRIVATE-THREAD',turn:{id:'PRIVATE-TURN'}})
+  item(projection,{id:'early',type:'agentMessage',text:'Not yet confirmed'})
+  assert.equal(events.length,0)
+  if(responseId==='wrong'){assert.throws(()=>projection.bindTurnResponse({turn:{id:responseId}}),/turn_identity_mismatch/);assert.equal(events.length,0)}
+  else{projection.bindTurnResponse({turn:{id:responseId}});assert.equal(events.length,1);projection.bindTurnResponse({turn:{id:responseId}});assert.equal(events.length,1)}
+ }
+})
+
+test('public check observations preserve command output and managed MCP readback without reasoning or image payloads',()=>{
+ const events:ExecutorActivity[]=[],projection=new AppServerTurnProjection({clock:new VirtualClock(),onActivity:event=>events.push(event),sanitizePublicText:text=>({text:text.replaceAll('SECRET','[REDACTED]'),truncated:false})})
+ projection.bindThread(ephemeralThread(),{workspace:'/workspace'});projection.notification('turn/started',{threadId:'PRIVATE-THREAD',turn:{id:'PRIVATE-TURN'}});projection.bindTurnResponse({turn:{id:'PRIVATE-TURN'}})
+ item(projection,{id:'cmd',type:'commandExecution',command:'npm test',aggregatedOutput:'2 passed SECRET',exitCode:0,status:'completed',reasoning:'PRIVATE_REASONING'})
+ item(projection,{id:'readback',type:'mcpToolCall',server:'nova_computer',tool:'browser_snapshot',status:'completed',result:{content:[{type:'text',text:'button is blue'},{type:'image',data:'PRIVATE_IMAGE',mimeType:'image/png'}]},arguments:{secret:'SECRET'}})
+ const observed=JSON.stringify(events);assert.match(observed,/npm test/u);assert.match(observed,/2 passed/u);assert.match(observed,/exit_code/u);assert.match(observed,/button is blue/u);assert.doesNotMatch(observed,/PRIVATE_REASONING|PRIVATE_IMAGE|SECRET/u)
+})
+
+test('truncated check observations advertise missing output and redact secrets before clipping',()=>{
+ const events:ExecutorActivity[]=[],secret='SECRET-TOKEN',projection=new AppServerTurnProjection({clock:new VirtualClock(),onActivity:event=>events.push(event),sanitizePublicText:text=>({text:text.replaceAll(secret,'[REDACTED]'),truncated:false})})
+ projection.bindThread(ephemeralThread(),{workspace:'/workspace'});projection.notification('turn/started',{threadId:'PRIVATE-THREAD',turn:{id:'PRIVATE-TURN'}});projection.bindTurnResponse({turn:{id:'PRIVATE-TURN'}})
+ item(projection,{id:'cmd',type:'commandExecution',command:'npm test',aggregatedOutput:'x'.repeat(9996)+secret+'y'.repeat(10000),exitCode:0,status:'completed'})
+ assert.equal(events[0]?.text_truncated,true);assert.ok(events[0].text.length<=16000);assert.doesNotMatch(events[0].text,/SECR/u)
+})
+
+
+test('public check observations redact unknown credentials in command output and MCP URLs',()=>{
+ const events:ExecutorActivity[]=[],projection=new AppServerTurnProjection({clock:new VirtualClock(),onActivity:event=>events.push(event)})
+ projection.bindThread(ephemeralThread(),{workspace:'/workspace'});projection.notification('turn/started',{threadId:'PRIVATE-THREAD',turn:{id:'PRIVATE-TURN'}});projection.bindTurnResponse({turn:{id:'PRIVATE-TURN'}})
+ item(projection,{id:'cmd',type:'commandExecution',command:'node --test',aggregatedOutput:'1 passed; password=unknown-password-value',exitCode:0,status:'completed'})
+ item(projection,{id:'mcp',type:'mcpToolCall',server:'cua_live',tool:'js',status:'completed',result:{isError:false,content:[{type:'text',text:'Counter value: 1; https://example.invalid/?token=unknown-query-value'}]}})
+ assert.match(events[0]!.text,/1 passed/);assert.match(events[1]!.text,/Counter value: 1/)
+ assert.doesNotMatch(JSON.stringify(events),/unknown-password-value|unknown-query-value/)
 })

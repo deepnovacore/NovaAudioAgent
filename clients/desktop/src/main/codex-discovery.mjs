@@ -1,5 +1,3 @@
-import {admitCodexCliVersion} from '@nova-audio-agent/runtime/executors/codex/version'
-
 const SOURCES = new Set(['path', 'npm-user', 'common', 'manual', 'npm-launcher'])
 
 function appendNative(target, seen, command, source) {
@@ -100,6 +98,10 @@ function safeInvocation(value) {
 
 export async function discoverCodex({ candidates, canonicalize, inspect }) {
   if (!Array.isArray(candidates)) return missing()
+  // Candidate enumeration also runs before the source launcher builds runtime.
+  const {admitCodexCliVersion} = await import(
+    '@nova-audio-agent/runtime/executors/codex/version',
+  )
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object' || !SOURCES.has(candidate.source)) continue
     let invocation

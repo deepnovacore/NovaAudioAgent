@@ -1,3 +1,4 @@
+import {proposalSchema} from '../personal-agent/contracts.js'
 import { z } from 'zod'
 import { jsonValueSchema, outcomeSchema, trustSchema } from './events.js'
 import { handoffPolicySchema, memoryRefSchema } from './memory.js'
@@ -74,12 +75,13 @@ export const progressClassSchema = z.enum([
   'action_required',
 ]).nullable()
 
-export const surrogateOutputSchema = z.object({
+export const proactiveOutputSchema = z.object({
+  proposal: proposalSchema.nullable().optional(),
   speak: z.boolean(),
   suggestion_id: z.string().nullable().default(null),
   progress_class: progressClassSchema.default(null),
   reason: z.string().default(''),
-}).strict()
+}).strict().refine(output=>!(output.proposal&&(output.suggestion_id!==null||output.progress_class!==null)))
 
 export const compressorOutputSchema = z.object({
   channel: z.string().min(1),
@@ -87,8 +89,6 @@ export const compressorOutputSchema = z.object({
 }).strict()
 
 export type FastBrainOutput = z.infer<typeof fastBrainOutputSchema>
-export type SurrogateOutput = z.infer<typeof surrogateOutputSchema>
-export type CompressorOutput = z.infer<typeof compressorOutputSchema>
 
 export const opSpecSchema = z.object({
   name: z.string().min(1),
@@ -149,4 +149,3 @@ export const executorManifestSchema = z.object({
 export type OpSpec = z.infer<typeof opSpecSchema>
 export type ExecutorManifest = z.infer<typeof executorManifestSchema>
 export type ExecutorRole = z.infer<typeof executorRoleSchema>
-export type ExecutorModelVisibility = z.infer<typeof executorModelVisibilitySchema>

@@ -18,6 +18,7 @@ import {
   WIRE_FRAME_TYPES,
 } from '../src/desktop/desktop-wire.js'
 import {type ExecutorState} from '../src/realtime/service-state.js'
+import {DictationError} from '../src/realtime/dictation.js'
 import {type JsonValue} from '../src/core/events.js'
 import {type RealtimeTelemetry, JsonlTelemetry} from '../src/realtime/telemetry.js'
 import {WebSocket, type RawData} from 'ws'
@@ -1042,6 +1043,53 @@ test('dictation buffers audio without sending it to the model; only explicit edi
   bridge.release()
 })
 
+test('a failed dictation reports recognition_failed to the client and the real cause to telemetry only', async () => {
+  const {bridge, service, telemetry} = harness()
+  service.transcribeDraft = () => Promise.reject(new Error('empty transcript'))
+  bridge.markAuthenticated(); drainJsonFrames(bridge)
+  await bridge.receiveControl({type: 'input.dictation', id: 'd2', action: 'start'})
+  await bridge.receiveAudio(new Uint8Array(6))
+  await bridge.receiveControl({type: 'input.dictation', id: 'd2', action: 'finish'})
+  await new Promise(resolve => setImmediate(resolve))
+  const frame = findJsonFrame(drainJsonFrames(bridge), 'input.transcription') as unknown as {error?: string}
+  assert.equal(frame.error, 'recognition_failed')
+  const failed = telemetry.records.filter(record => record.kind === 'dictation.failed')
+  assert.equal(failed.length, 1)
+  assert.deepEqual(failed[0]?.payload, {bytes: 6, peak: 0, rms: 0, error: 'empty transcript'})
+  bridge.release()
+})
+
+test('a dictation failure with a known cause reports that cause to the client and its input level to telemetry', async () => {
+  const {bridge, service, telemetry} = harness()
+  service.transcribeDraft = () => Promise.reject(new DictationError('no_speech', 'empty transcript'))
+  bridge.markAuthenticated(); drainJsonFrames(bridge)
+  await bridge.receiveControl({type: 'input.dictation', id: 'd4', action: 'start'})
+  const pcm = new Uint8Array(4), view = new DataView(pcm.buffer)
+  view.setInt16(0, 1200, true); view.setInt16(2, -3000, true)
+  await bridge.receiveAudio(pcm)
+  await bridge.receiveControl({type: 'input.dictation', id: 'd4', action: 'finish'})
+  await new Promise(resolve => setImmediate(resolve))
+  const frame = findJsonFrame(drainJsonFrames(bridge), 'input.transcription') as unknown as {error?: string}
+  assert.equal(frame.error, 'no_speech')
+  const failed = telemetry.records.filter(record => record.kind === 'dictation.failed')
+  assert.deepEqual(failed[0]?.payload, {bytes: 4, peak: 3000, rms: 2285, error: 'empty transcript'})
+  bridge.release()
+})
+
+test('a failed dictation still reports recognition_failed when the telemetry disk cannot be written', async () => {
+  const {bridge, service, telemetry} = harness()
+  telemetry.record = () => { throw new Error('ENOSPC') }
+  service.transcribeDraft = () => Promise.reject(new Error('empty transcript'))
+  bridge.markAuthenticated(); drainJsonFrames(bridge)
+  await bridge.receiveControl({type: 'input.dictation', id: 'd3', action: 'start'})
+  await bridge.receiveAudio(new Uint8Array(6))
+  await bridge.receiveControl({type: 'input.dictation', id: 'd3', action: 'finish'})
+  await new Promise(resolve => setImmediate(resolve))
+  const frame = findJsonFrame(drainJsonFrames(bridge), 'input.transcription') as unknown as {error?: string}
+  assert.equal(frame.error, 'recognition_failed')
+  bridge.release()
+})
+
 test('cancelled dictation drops a late transcript and release aborts recognition', async () => {
   const {bridge, service} = harness()
   let finish!: (text: string) => void
@@ -1056,6 +1104,85 @@ test('cancelled dictation drops a late transcript and release aborts recognition
   finish('late draft'); await new Promise(resolve => setImmediate(resolve))
   assert.equal(drainJsonFrames(bridge).some(frame => frame.type === 'input.transcription'), false)
   bridge.release()
+})
+
+test('text acceptance uses a required correlated receipt, not captions; reconnect retries do not resubmit', async () => {
+  const {bridge,service,calls}=harness()
+  service.submitText=text=>{calls.push('text:'+text);return Promise.resolve()}
+  bridge.markAuthenticated();drainJsonFrames(bridge)
+  await bridge.receiveControl({type:'input.text',request_id:'text-1',text:'repeat'})
+  const delivery=bridge.takeNextDelivery()!
+  assert.equal(delivery.policy,'required')
+  assert.deepEqual(JSON.parse(String(delivery.frame)),{type:'input.text_result',request_id:'text-1',ok:true})
+  bridge.onCaption({role:'user',text:'repeat',final:true});drainJsonFrames(bridge)
+  bridge.release();bridge.markAuthenticated();drainJsonFrames(bridge)
+  await bridge.receiveControl({type:'input.text',request_id:'text-1',text:'repeat'})
+  assert.deepEqual(calls.filter(c=>c.startsWith('text:')),['text:repeat'])
+  assert.deepEqual(JSON.parse(String(bridge.takeNextFrame())),{type:'input.text_result',request_id:'text-1',ok:true})
+  await bridge.receiveControl({type:'input.text',request_id:'text-1',text:'changed'})
+  assert.deepEqual(JSON.parse(String(bridge.takeNextFrame())),{type:'input.text_result',request_id:'text-1',ok:false,error:'request_id_conflict'})
+  bridge.release()
+})
+
+test('text failure receipts and backend instance fences never turn into repeated submissions', async () => {
+  const {bridge,service,calls}=harness()
+  service.submitText=()=>{calls.push('submit');return Promise.reject(Error('provider unavailable'))}
+  bridge.markAuthenticated();drainJsonFrames(bridge)
+  await bridge.receiveControl({type:'input.text',request_id:'failed',text:'draft'})
+  assert.deepEqual(JSON.parse(String(bridge.takeNextFrame())),{type:'input.text_result',request_id:'failed',ok:false,error:'submission_failed'})
+  await bridge.receiveControl({type:'input.text',request_id:'failed',text:'draft'})
+  drainJsonFrames(bridge);assert.equal(calls.filter(c=>c==='submit').length,1)
+  await bridge.receiveControl({type:'input.text',request_id:'old-instance',input_instance_id:'a-prior-runtime',text:'draft'})
+  assert.deepEqual(JSON.parse(String(bridge.takeNextFrame())),{type:'input.text_result',request_id:'old-instance',ok:false,error:'outcome_unknown'})
+  assert.equal(calls.filter(c=>c==='submit').length,1)
+  bridge.release()
+})
+
+test('caption wire preserves stable source identity even when a previous final is dropped',()=>{
+  const {bridge}=harness();bridge.markAuthenticated();drainJsonFrames(bridge)
+  bridge.onCaption({role:'user',text:'first',final:false,turn_id:'1:user:item-1'})
+  bridge.onCaption({role:'user',text:'next',final:false,turn_id:'1:user:item-2'})
+  const frames=drainJsonFrames(bridge).filter(f=>f.type==='caption') as unknown as {turn_id:string}[]
+  assert.deepEqual(frames.map(f=>f.turn_id),['1:user:item-1','1:user:item-2'])
+  bridge.release()
+})
+
+test('text reconnect while provider submission is pending shares one host operation',async()=>{
+  const {bridge,service}=harness();let submits=0;let finish!:()=>void
+  service.submitText=()=>{submits++;return new Promise<void>(resolve=>{finish=resolve})}
+  bridge.markAuthenticated();drainJsonFrames(bridge)
+  const command={type:'input.text' as const,request_id:'pending',text:'once'}
+  const first=bridge.receiveControl(command);await Promise.resolve()
+  bridge.release();bridge.markAuthenticated();drainJsonFrames(bridge)
+  const retry=bridge.receiveControl(command);finish();await Promise.all([first,retry])
+  assert.equal(submits,1)
+  const receipts=drainJsonFrames(bridge).filter(frame=>frame.type==='input.text_result')
+  assert.equal(receipts.length,2)
+  assert.deepEqual(receipts[0],receipts[1]);bridge.release()
+})
+
+test('unscoped PCM and dictation cannot bypass an owned conversation voice',async()=>{
+ const checked:(string|undefined)[]=[]
+ const {bridge,calls}=harness({validateConversationInput:(_kind,id)=>{checked.push(id);if(id!=='voice')throw Error('voice_not_owned')},sendConversationAudio:()=>Promise.resolve()})
+ await assert.rejects(bridge.receiveAudio(new Uint8Array(4)),/voice_not_owned/)
+ await assert.rejects(bridge.receiveControl({type:'input.audio'}),/voice_not_owned/)
+ await assert.rejects(bridge.receiveControl({type:'input.dictation',id:'draft',action:'start'}),/voice_not_owned/)
+ await bridge.receiveControl({type:'input.audio',conversation_id:'voice'});await bridge.receiveAudio(new Uint8Array(4))
+ assert.deepEqual(checked,[undefined,undefined,undefined,'voice','voice']);assert.equal(calls.length,0)
+})
+test('text receipt identity includes conversation and scoped decisions do not fall back',async()=>{
+ const routed:string[]=[]
+ const target=harness().service
+ target.projectConfirmationDecision=(id)=>{routed.push(id);return Promise.resolve()}
+ const {bridge,calls}=harness({submitConversationText:(id,text)=>{routed.push(id+':'+text);return Promise.resolve()},conversationService:id=>id==='a'?target:undefined})
+ bridge.markAuthenticated();drainJsonFrames(bridge)
+ await bridge.receiveControl({type:'input.text',conversation_id:'a',request_id:'same',text:'hello'})
+ await bridge.receiveControl({type:'input.text',conversation_id:'b',request_id:'same',text:'hello'})
+ const receipts=drainJsonFrames(bridge) as {type:string;ok:boolean;error?:string;conversation_id?:string}[]
+ assert.equal(receipts[0]?.conversation_id,'a');assert.equal(receipts[1]?.error,'request_id_conflict')
+ await bridge.receiveControl({type:'project.confirmation_decision',conversation_id:'a',proposal_id:'owned',confirmed:true})
+ await bridge.receiveControl({type:'project.confirmation_decision',conversation_id:'missing',proposal_id:'stale',confirmed:true})
+ assert.deepEqual(routed,['a:hello','owned']);assert.equal(calls.length,0)
 })
 }
 
@@ -1319,6 +1446,44 @@ test('real loopback covers every declared orb frame, preemption, and duplex traf
   } finally {
     await closeDesktop(socket)
     await settleWithin('desktop realtime server close', realtime.server.close())
+  }
+})
+
+for (const oversized of [false, true]) test(`personal frames ${oversized ? 'over the bound report errors' : 'above 16 KiB arrive intact'} without stopping realtime`, async () => {
+  const {service} = serviceHarness()
+  const stop = new AbortController()
+  const telemetry = new RecordingTelemetry()
+  const snapshot = {type: 'personal.state', revision: 1, tasks: [], feed: [], memory: {entries: []}, conversations: {items: [], messages: []}, data: ''}
+  const result = {type: 'personal.result', request_id: 'detail', ok: true, data: ''}
+  const bytes = oversized ? 8 * 1024 * 1024 + 1 : 20 * 1024
+  snapshot.data = 'x'.repeat(bytes - Buffer.byteLength(JSON.stringify(snapshot)))
+  result.data = 'x'.repeat(bytes - Buffer.byteLength(JSON.stringify(result)))
+  const realtime = new DesktopRealtime({token: TOKEN, executor: CODEX, service, stop, telemetry,
+    personalCommand: () => Promise.resolve(result), personalSnapshot: () => snapshot})
+  const readiness = await realtime.server.start()
+  const socket = await connectDesktop(readiness.port)
+  try {
+    const initial = nextFrames(socket, 3, 'personal frame bootstrap')
+    socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
+    await initial
+    const response = nextFrames(socket, 2, 'personal command and snapshot')
+    socket.send(JSON.stringify({type: 'personal.command', request_id: 'detail', method: 'state', params: {}}))
+    const frames = (await response).map(frame => JSON.parse(text(frame)) as unknown)
+    assert.deepEqual(frames, oversized ? [
+      {type: 'personal.result', request_id: 'detail', ok: false, error: 'personal_frame_too_large', input_status: 'unknown'},
+      {type: 'personal.error', error: 'personal_frame_too_large'},
+    ] : [result, snapshot])
+    const update = nextFrames(socket, 1, 'healthy executor update after personal delivery')
+    realtime.bridge.onExecutorState('idle')
+    assert.equal((JSON.parse(text((await update)[0]!)) as {state: string}).state, 'idle')
+    assert.equal(stop.signal.aborted, false)
+    if (oversized) assert.deepEqual(telemetry.records.filter(record => record.kind === 'desktop.personal_frame_rejected').map(record => record.payload), [
+      {frame_type: 'personal.result', bytes, limit: 8 * 1024 * 1024},
+      {frame_type: 'personal.state', bytes, limit: 8 * 1024 * 1024},
+    ])
+  } finally {
+    await closeDesktop(socket)
+    await realtime.server.close()
   }
 })
 
@@ -1782,4 +1947,19 @@ test('a pending folder launch does not block subsequent inbound audio', async ()
     assert.ok(calls.includes('audio:0,0'))
   } finally { release?.() }
 })
+test('personal commands use stable host desktop identity across reconnect and never default remote to local',async()=>{
+ const {service}=serviceHarness(),identities:unknown[]=[]
+ for(const transportFailure of ['abort','disconnect'] as const){
+  const desktop=new DesktopRealtime({token:TOKEN,service,stop:new AbortController(),transportFailure,
+   personalCommand:(_command,context)=>{identities.push(context);return Promise.resolve({ok:true})},
+   createServer:()=>({sendText:()=>Promise.resolve(),sendBinary:()=>Promise.resolve(),disconnectClient:()=>Promise.resolve(),start:()=>Promise.resolve({} as never),close:()=>Promise.resolve()})})
+  for(let i=0;i<2;i++){
+   await desktop.serverOptions.onClientAuthenticated?.()
+   await desktop.serverOptions.onControl?.({type:'personal.command',request_id:'identity',method:'tasks.list',params:{}})
+   desktop.serverOptions.onClientDisconnect?.()
+  }
+ }
+ assert.deepEqual(identities,[{client_id:'desktop:local'},{client_id:'desktop:local'},undefined,undefined])
+})
+
 }

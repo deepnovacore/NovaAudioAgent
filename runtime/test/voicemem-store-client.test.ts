@@ -20,16 +20,19 @@ class FakeWorker implements PersonalMemoryStoreWorker {
   readonly messages: unknown[] = []
   readonly listeners = new Map<string, Listener[]>()
   terminated = 0
+  referenced = true
 
   postMessage(value: unknown): void { this.messages.push(value) }
   on(event: 'message' | 'error' | 'exit', listener: Listener): void {
     this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener])
   }
   terminate(): Promise<number> {
+    this.referenced = true // Node's Worker.terminate() calls ref() before requesting exit.
     this.terminated += 1
     this.emit('exit', 1)
     return Promise.resolve(1)
   }
+  unref(): void { this.referenced = false }
   emit(event: 'message' | 'error' | 'exit', value: unknown): void {
     for (const listener of this.listeners.get(event) ?? []) listener(value as never)
   }
@@ -505,8 +508,10 @@ test('source deletion is opt-in and requires a matching durable tombstone receip
 
 test('close is bounded and unreferences a worker whose terminate never settles', async () => {
   const worker = new FakeWorker()
-  let unreferenced = false
-  Object.assign(worker, {unref: () => {unreferenced = true}, terminate: () => new Promise<number>(() => { /* emulate a stuck native worker */ })})
+  Object.assign(worker, {terminate: () => {
+    worker.referenced = true
+    return new Promise<number>(() => { /* emulate a stuck native worker */ })
+  }})
   const {client: store} = client(worker)
   const opening = store.open()
   worker.respond(requestId(worker, 0), {response_adaptation: responseAdaptation()})
@@ -514,7 +519,7 @@ test('close is bounded and unreferences a worker whose terminate never settles',
   const start = performance.now()
   await store.close()
   assert.ok(performance.now() - start < 1_000)
-  assert.equal(unreferenced, true)
+  assert.equal(worker.referenced, false)
 })
 
 
@@ -528,5 +533,6 @@ test('a stalled worker request rejects at its deadline and terminates its owner'
   t.mock.timers.tick(5_000)
   await recalled
   assert.equal(worker.terminated, 1)
+  assert.equal(worker.referenced, false)
   await store.close()
 })

@@ -46,7 +46,7 @@ async function readOwnedAsset(path, expectedHash) {
 }
 
 export async function stageEndpointingProbeAssets({repositoryRoot, outputRoot}) {
-  const source = resolve(repositoryRoot, 'fixtures/realtime/volcengine/v1/endpointing')
+  const source = resolve(repositoryRoot, 'assets/endpointing/volcengine-v1')
   const inventory = (await readdir(source)).sort()
   assert.deepEqual(inventory, ASSETS.map(asset => asset.name).sort(),
     'endpointing_probe_asset_inventory_invalid')

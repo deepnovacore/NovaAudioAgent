@@ -33,7 +33,7 @@ import type { PlaybackCompletion } from '../src/realtime/playback.js'
 import type { ExecutorState } from '../src/realtime/service-state.js'
 
 const CODEX = {executor: 'codex', display_name: 'Codex'} as const
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/desktop/wire/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/desktop/wire/v1')
 
 interface Case {
   readonly name: string

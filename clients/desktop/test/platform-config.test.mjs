@@ -33,11 +33,11 @@ test('desktop configuration lets the explicit process binary override saved disc
       startListeningOnLaunch: true,
     },
     environment: {
-      NOVA_AUDIO_AGENT_CODEX_BIN: 'C:\\Env\\codex.exe',
-      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: 'C:\\Env\\Workspace',
-      NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: 'C:\\Env\\Managed',
-      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: 'C:\\Env\\State',
-      NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://env.example/v1',
+      CODEX_BIN: 'C:\\Env\\codex.exe',
+      CODEX_WORKSPACE: 'C:\\Env\\Workspace',
+      CODEX_MANAGED_ROOT: 'C:\\Env\\Managed',
+      CODEX_PROJECT_STATE_ROOT: 'C:\\Env\\State',
+      MODEL_BASE_URL: 'https://env.example/v1',
     },
     home: 'C:\\Users\\nova',
     platform: 'win32',
@@ -92,7 +92,7 @@ test('empty desktop settings admit environment and hidden-root defaults', () => 
 test('an environment Codex binary remains effective after settings normalization saves auto mode', () => {
   const resolved = resolveDesktopConfig({
     settings: {codexBinaryMode: 'auto', codexBinaryPath: 'C:\\Stale\\codex.exe'},
-    environment: {NOVA_AUDIO_AGENT_CODEX_BIN: 'C:\\Env\\codex.exe'},
+    environment: {CODEX_BIN: 'C:\\Env\\codex.exe'},
     home: 'C:\\Users\\nova', platform: 'win32', pathApi: win32,
     canonicalize: value => value,
   })
@@ -104,7 +104,7 @@ test('an environment Codex binary remains effective after settings normalization
 test('an environment Codex binary fills a saved empty manual path', () => {
   const resolved = resolveDesktopConfig({
     settings: {codexBinaryMode: 'manual', codexBinaryPath: ''},
-    environment: {NOVA_AUDIO_AGENT_CODEX_BIN: 'C:\\Env\\codex.exe'},
+    environment: {CODEX_BIN: 'C:\\Env\\codex.exe'},
     home: 'C:\\Users\\nova', platform: 'win32', pathApi: win32,
     canonicalize: value => value,
   })
@@ -115,13 +115,13 @@ test('an environment Codex binary fills a saved empty manual path', () => {
 
 test('environment model URL uses the same safety validator as Settings', () => {
   const invalid = resolveDesktopConfig({
-    settings: {}, environment: {NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'http://models.example/v1'},
+    settings: {}, environment: {MODEL_BASE_URL: 'http://models.example/v1'},
     home: '/home/nova', platform: 'linux', pathApi: posix, canonicalize: value => value,
   })
   assert.equal(invalid.modelBaseUrl, '')
   assert.equal(invalid.modelConfigurationError, 'model_base_url_invalid')
   const loopback = resolveDesktopConfig({
-    settings: {}, environment: {NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'http://127.0.0.1:8080/v1'},
+    settings: {}, environment: {MODEL_BASE_URL: 'http://127.0.0.1:8080/v1'},
     home: '/home/nova', platform: 'linux', pathApi: posix, canonicalize: value => value,
   })
   assert.equal(loopback.modelBaseUrl, 'http://127.0.0.1:8080/v1')
@@ -150,4 +150,11 @@ test('startup creates every application-owned default directory before spawn', a
     { path: '/home/nova/.nova-audio-agent/workspaces', options: { recursive: true, mode: 0o700 } },
     { path: '/home/nova/.nova-audio-agent/workspaces/default', options: { recursive: true, mode: 0o700 } },
   ])
+})
+
+test('desktop startup model preflight accepts both modes without voice credentials',()=>{
+ for(const pipelineMode of ['integrated','cascaded']){
+  const config=resolveDesktopConfig({settings:{pipelineMode,modelBaseUrl:'https://api.example.com/v1'},environment:{},home:'/home/nova',platform:'darwin',pathApi:posix})
+  assert.equal(config.modelConfigurationError,null)
+ }
 })

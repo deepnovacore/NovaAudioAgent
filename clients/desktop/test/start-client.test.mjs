@@ -32,7 +32,7 @@ test('root demo command selects the repository camera fixture without mutating i
     pathApi: posix,
   }), {
     KEEP_ME: 'yes',
-    NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE:
+    DESKTOP_VIDEO_FILE:
       '/repo/assets/demos/cat-sofa-guard/cat-sofa-guard.mp4',
   })
   assert.deepEqual(environment, { KEEP_ME: 'yes' })
@@ -41,7 +41,7 @@ test('root demo command selects the repository camera fixture without mutating i
     environment: {},
     rootDir: 'C:\\repo',
     pathApi: win32,
-  }).NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE,
+  }).DESKTOP_VIDEO_FILE,
   'C:\\repo\\assets\\demos\\cat-sofa-guard\\cat-sofa-guard.mp4')
 })
 
@@ -179,9 +179,9 @@ test('client launch plan installs when needed, builds once, and forces the Node 
     envFileContents: [
       'TAVILY_API_KEY=from-file',
       'KEEP_ME=from-file',
-      'NOVA_AUDIO_AGENT_CODEX_WORKSPACE=~/configured/workspace',
-      'NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces',
-      'NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent',
+      'CODEX_WORKSPACE=~/configured/workspace',
+      'CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces',
+      'CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent',
       '',
     ].join('\n'),
     platform: 'darwin',
@@ -214,18 +214,18 @@ test('client launch plan installs when needed, builds once, and forces the Node 
   ])
   assert.equal(plan[3].env.KEEP_ME, 'from-file')
   assert.equal(plan[3].env.TAVILY_API_KEY, 'from-file')
-  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_BACKEND, 'node')
-  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_BIN, '/opt/codex/bin/codex')
-  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/Users/example/configured/workspace')
+  assert.equal(plan[3].env.BACKEND, 'node')
+  assert.equal(plan[3].env.CODEX_BIN, '/opt/codex/bin/codex')
+  assert.equal(plan[3].env.CODEX_WORKSPACE, '/Users/example/configured/workspace')
   assert.equal(
-    plan[3].env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT,
+    plan[3].env.CODEX_MANAGED_ROOT,
     '/Users/example/.nova-audio-agent/workspaces',
   )
   assert.equal(
-    plan[3].env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,
+    plan[3].env.CODEX_PROJECT_STATE_ROOT,
     '/Users/example/.nova-audio-agent',
   )
-  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_ENV_FILE, '/repo/.env')
+  assert.equal(plan[3].env.ENV_FILE, '/repo/.env')
 })
 
 test('client launch plan is Windows-safe and skips an unnecessary install', () => {
@@ -278,9 +278,9 @@ test('client launch plan starts the settings-capable desktop without env or Code
 
   assert.equal(plan.length, 2)
   assert.equal(plan[1].env.KEEP_ME, 'yes')
-  assert.equal(plan[1].env.NOVA_AUDIO_AGENT_BACKEND, 'node')
-  assert.equal('NOVA_AUDIO_AGENT_CODEX_BIN' in plan[1].env, false)
-  assert.equal('NOVA_AUDIO_AGENT_ENV_FILE' in plan[1].env, false)
+  assert.equal(plan[1].env.BACKEND, 'node')
+  assert.equal('CODEX_BIN' in plan[1].env, false)
+  assert.equal('ENV_FILE' in plan[1].env, false)
 })
 
 test('client launch plan fails before side effects for an invalid invocation', () => {
@@ -303,4 +303,9 @@ test('client launch plan fails before side effects for an invalid invocation', (
     envFileExists: true,
     dependenciesInstalled: true,
   }), /npm CLI unavailable/u)
+})
+
+test('workbench launcher forwards a one-time presentation override to Electron', () => {
+  const steps = planClientLaunch({argv: ['--workbench'], env: {}, platform: 'linux', rootDir: '/repo', nodeExecutable: '/usr/bin/node', npmCli: '/npm/bin/npm-cli.js', dependenciesInstalled: true})
+  assert.deepEqual(steps.at(-1).args.slice(-2), ['--', '--workbench'])
 })

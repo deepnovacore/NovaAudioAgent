@@ -35,7 +35,7 @@ import {
   type FrameSource,
 } from '../src/executors/watcher.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/executors/watcher/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/executors/watcher/v1')
 
 interface Case {
   readonly name: string

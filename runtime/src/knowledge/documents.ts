@@ -1,7 +1,8 @@
+import {readBoundedResponse} from '../http/bounded-response.js'
 import {createHash} from 'node:crypto'
 import {lookup as dnsLookup} from 'node:dns/promises'
 import {constants} from 'node:fs'
-import {basename, extname, isAbsolute} from 'node:path'
+import {basename, extname, isAbsolute, relative} from 'node:path'
 import {BlockList, isIP, type LookupFunction} from 'node:net'
 import {lstat, open, realpath} from 'node:fs/promises'
 import {Worker} from 'node:worker_threads'
@@ -89,7 +90,7 @@ export function chunkKnowledgeText(text: string): KnowledgeChunk[] {
   return chunks
 }
 
-export async function readKnowledgeFile(path: string, signal?: AbortSignal): Promise<KnowledgeDocument> {
+export async function readKnowledgeFile(path: string, signal?: AbortSignal, allowedRoot?: string): Promise<KnowledgeDocument> {
   signal?.throwIfAborted()
   if (!isAbsolute(path) || !pathPolicy.allows(path)) throw new KnowledgeDocumentFailure('path_denied')
 
@@ -101,6 +102,12 @@ export async function readKnowledgeFile(path: string, signal?: AbortSignal): Pro
   }
   signal?.throwIfAborted()
   if (!pathPolicy.allows(canonical)) throw new KnowledgeDocumentFailure('path_denied')
+  if (allowedRoot !== undefined) {
+    const child = relative(allowedRoot, canonical)
+    if (child === '..' || child.startsWith('../') || child.startsWith('..\\') || isAbsolute(child)) {
+      throw new KnowledgeDocumentFailure('path_denied')
+    }
+  }
 
   const format = fileFormat(canonical)
   if (format === null) throw new KnowledgeDocumentFailure('unsupported_mime')
@@ -365,39 +372,9 @@ function parseInWorker(kind: 'pdf' | 'docx', bytes: Uint8Array, signal?: AbortSi
 }
 
 async function readResponseBounded(response: Response, signal: AbortSignal): Promise<Uint8Array> {
-  const declared = response.headers.get('content-length')
-  if (declared !== null && (!/^\d+$/u.test(declared) || Number(declared) > MAX_FILE_BYTES)) {
-    void response.body?.cancel()
-    throw new KnowledgeDocumentFailure('file_too_large')
-  }
-  if (response.body === null) throw new KnowledgeDocumentFailure('empty_text')
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  try {
-    for (;;) {
-      signal.throwIfAborted()
-      const chunk: {readonly done?: boolean; readonly value?: Uint8Array} = await reader.read()
-      if (chunk.done) break
-      if (chunk.value === undefined) continue
-      total += chunk.value.byteLength
-      if (total > MAX_FILE_BYTES) {
-        await reader.cancel().catch(() => undefined)
-        throw new KnowledgeDocumentFailure('file_too_large')
-      }
-      chunks.push(chunk.value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  if (total === 0) throw new KnowledgeDocumentFailure('empty_text')
-  const result = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    result.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return result
+  const bytes=await readBoundedResponse(response,{limit:MAX_FILE_BYTES,signal,failure:()=>new KnowledgeDocumentFailure('file_too_large')})
+  if(!bytes.length)throw new KnowledgeDocumentFailure('empty_text')
+  return bytes
 }
 
 function admittedUrl(value: string): URL {
@@ -506,4 +483,25 @@ function containsBinaryControls(value: string): boolean {
 
 function codePointsLength(value: string): number {
   return [...value].length
+}
+
+
+/** Bounded extract from screened document prose; never infer facts from a filename. */
+export function knowledgeExcerpt(text: string): string {
+  let fenced = false
+  const lines: string[] = []
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line.startsWith('```') || line.startsWith('~~~')) {fenced = !fenced; continue}
+    if (fenced || !line || /^(?:#|<|\||!\[|\[!\[|---|===)/u.test(line)) continue
+    const plain = line.replace(/!\[[^\]]*\]\([^)]*\)/gu, '').replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1').replace(/[*`_]/gu, '').trim()
+    if (plain) lines.push(plain)
+    if ([...lines.join(' ')].length >= 450) break
+  }
+  let excerpt = ''
+  for (const character of lines.join(' ')) {
+    if (excerpt.length + character.length > 450) break
+    excerpt += character
+  }
+  return excerpt
 }

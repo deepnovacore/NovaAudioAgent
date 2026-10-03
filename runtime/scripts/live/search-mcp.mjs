@@ -6,7 +6,7 @@ import {RealClock} from '../../dist/src/core/clock.js'
 
 let transport
 try {
-  const registry = loadCapabilityRegistry({environment: {...process.env, NOVA_AUDIO_AGENT_SEARCH_PROVIDER: 'mcp'}})
+  const registry = loadCapabilityRegistry({environment: {...process.env, SEARCH_PROVIDER: 'mcp'}})
   if (!registry.modules.search.enabled || registry.modules.search.mcp === undefined) throw new CapabilityConfigurationError('search_disabled')
   transport = new McpSearchTransport(registry.modules.search.mcp)
   const result = await new SearchAdapter(transport).dispatch('search', {query: process.argv[2] || 'Model Context Protocol official documentation', k: 3}, {

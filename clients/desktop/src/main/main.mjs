@@ -1,7 +1,13 @@
-import {setLanguage, currentLanguage, t} from '../renderer/locale.mjs'
-import {createBackendControl, classifyBackendFailure, createBackendDiagnosticCollector, createBackendSupervisor} from './backend-supervisor.mjs'
-import {createLifecycleCoordinator, canonicalInstalledExecutable, canonicalInstalledInvocation, inspectCodexVersion, prepareDesktopStartup, reportStartupFailure} from './desktop-startup.mjs'
-import {VISION_MODELS} from '@nova-audio-agent/runtime/desktop'
+import {deleteVoiceprint, registerVoiceprint, voiceprintHealth} from './voiceprint.mjs'
+import {probeAcceptanceGate,acceptanceRuntimeHash,appendAcceptanceCounts, allowAcceptanceLoopback, installAcceptanceGate, assertOriginalProfilePaths, assertAcceptanceUrl} from '@nova-audio-agent/runtime/desktop'
+import {captureNativeWorkbench,waitForNativeWorkbench,installAcceptanceWindowGate,installAcceptanceSessionGate,acceptanceWakeSettings,acceptanceBackendSettings,waitForAcceptanceRuntimeGate} from './workbench-native-acceptance.mjs'
+import {writeFileSync as writeAcceptanceFile} from 'node:fs'
+import {updateTrayUnread, resetTrayUnreadForBackend} from './tray-unread.mjs'
+import {createFeishuSetupOwner} from './feishu-setup.mjs'
+import {setLanguage, currentLanguage, preferredLanguage, t} from '../renderer/locale.mjs'
+import {createBackendControl, classifyBackendFailure, configWarnings, startupErrors, createBackendDiagnosticCollector, createBackendSupervisor} from './backend-supervisor.mjs'
+import {createLifecycleCoordinator, canonicalInstalledExecutable, canonicalInstalledInvocation, inspectCodexVersion, prepareDesktopStartup, reportStartupFailure, startupFailureCode} from './desktop-startup.mjs'
+import {FeishuConnector, VISION_MODELS} from '@nova-audio-agent/runtime/desktop'
 import {configureDesktopIdentity} from './desktop-identity.mjs'
 import {createFrontendUsage} from './frontend-usage.mjs'
 import {createKnowledgeActions} from './knowledge-actions.mjs'
@@ -22,6 +28,7 @@ import {
   net,
   protocol,
   safeStorage,
+  session,
   screen,
   shell,
   systemPreferences,
@@ -29,6 +36,7 @@ import {
   utilityProcess,
 } from 'electron'
 import {
+  describeMissingBlockingEnvironment,
   inspectProjectNativeHostFromResources,
   ManagedWorkspaceMaintenanceService,
 } from '@nova-audio-agent/runtime/desktop'
@@ -62,6 +70,7 @@ import {
 import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
+import { createWorkbenchFrame } from './workbench-frame.mjs'
 import { executorResultDialogOptions, executorResultMenuTemplate } from './executor-result.mjs'
 import { shouldOpenSettings } from './launch-command.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
@@ -80,6 +89,7 @@ import {
   saveSettingsRecovery, restoreSettingsRecovery, clearSettingsRecovery,
   hasPlaintextSecret,
   loadSettings,
+  startupPresentation,
   orbSettings,
   publicSettings,
   readSecret,
@@ -108,6 +118,9 @@ import {
 import {
   allowRendererNavigation,
   apiKeyWindowOpenHandler,
+  feishuVerificationUrl,
+  connectorAuthorizationUrl,
+  newsArticleUrl,
   boardWindowOptions,
   browserWindowOptions,
   configureWindowSecurity,
@@ -115,11 +128,18 @@ import {
   resolveCameraPermission,
   resolveMicrophonePermission,
   settingsWindowOptions,
+  setupWindowOptions,
   validateBootstrap,
 } from './security.mjs'
+import {probeApiKey} from './key-probe.mjs'
+import {SETUP_KEYS, setupCommit} from './setup-choice.mjs'
 import { validReleaseCameraResult } from '../renderer/release-camera-contract.mjs'
+import { isValidCategory } from '../renderer/settings-categories.mjs'
 
 configureDesktopIdentity(app)
+const acceptance = installAcceptanceGate()
+let acceptanceFailure=false
+if(acceptance)assertOriginalProfilePaths({userData:app.getPath('userData'),blackboardPath:process.env.BLACKBOARD_PATH},{userData:acceptance.originalUserData,blackboardPath:acceptance.originalBlackboardPath})
 registerAppScheme(protocol)
 
 // Windows groups taskbar/notification identity by AppUserModelID; a no-op
@@ -162,9 +182,22 @@ let backendStatus = Object.freeze({
 })
 let backendGeneration = 0
 let settingsGeneration = 0
+let voiceprintRecording = false
+let voiceprintBusy = false
+let voiceprintGateReady = null
+let voiceprintRecordingTimer = null
+function endVoiceprintRecording() {
+  voiceprintRecording = false
+  clearTimeout(voiceprintRecordingTimer)
+  voiceprintGateReady?.(false)
+  voiceprintGateReady = null
+  sendToOrb('nova:voiceprint:recording', false)
+}
+
 let launchGeneration = 0
 let runtimeCapabilities = null
 let capabilityEditorCache = null
+const feishuSetupOwner = createFeishuSetupOwner({Connector: FeishuConnector})
 let backendControl = null
 let settingsApplyStatus = 'idle'
 let settingsRestartPending = false
@@ -173,9 +206,21 @@ let mainWindow = null
 let boardWindow = null
 let clearingConversation = null
 let settingsWindow = null
+let setupWindow = null
 let pendingSettingsCategory = null
 let wakeWord = null
 let tray = null
+let presentationMode = 'workbench'
+function enterBackground(){
+  presentationMode='background'
+  mainWindow?.hide();wakeWord?.stop();wakeWord?.reset()
+  nativeAudio?.setPlaybackMuted(true)
+  void nativeAudio?.deactivate().catch(()=>{})
+}
+const requestPresentation = mode => {
+  if(mode==='background')enterBackground()
+  sendToOrb('nova:personal:presentation-request',mode)
+}
 let bootstrap = null
 let activeLaunchId = null
 let openSettingsRequested = shouldOpenSettings(process.argv)
@@ -191,6 +236,14 @@ let releaseSmokeChannel = null
 // Settings and debug boards are main-owned IPC surfaces. Neither relays through
 // the orb renderer or shares the realtime voice socket.
 const frontendUsage = createFrontendUsage({file: resolve(app.getPath('userData'), 'frontend-usage.json')})
+let startup = Object.freeze({stage: 'configuration', code: null})
+// "Connection lost" is only true after a connection existed; a backend that keeps failing to start is still starting.
+let backendEverConnected = false
+let settingsReady = false
+let configurationReady = false
+let keyringAvailable = null
+let credentialFailure = null
+let credentialQueue = Promise.resolve()
 let currentSettings = null
 let desktopConfig = null
 let codexStatus = Object.freeze({
@@ -228,6 +281,37 @@ function sendToOrb(channel, ...args) {
 
 function sendToSettings(channel, ...args) {
   sendToWindow(settingsWindow, channel, ...args)
+  if (channel === 'nova:settings:changed') sendToWindow(setupWindow, 'nova:setup:changed', setupView())
+}
+
+// First-run projection: which pipeline is chosen, which of its keys exist, and what the last launch lacked.
+function setupView() {
+  const {secretsPresent: present} = settingsView()
+  return Object.freeze({
+    pipelineMode: currentSettings.pipelineMode,
+    cascadedLlmProvider: currentSettings.cascadedLlmProvider,
+    secretsPresent: Object.fromEntries(SETUP_KEYS.map(key => [key, present[key] === true])),
+    missing: runtimeCapabilities?.reason === 'configuration_required' ? runtimeCapabilities.missing ?? [] : [],
+    backendStatus: backendStatus.state,
+  })
+}
+
+function openSetupWindow() {
+  if (!activeLaunchId) return
+  if (setupWindow) {
+    setupWindow.show()
+    setupWindow.focus()
+    return
+  }
+  const window = new BrowserWindow(localizedWindowOptions(setupWindowOptions(preload, activeLaunchId)))
+  window.webContents.setWindowOpenHandler(apiKeyWindowOpenHandler(url => shell.openExternal(url)))
+  window.webContents.on('will-navigate', (event, url) => {
+    if (!allowRendererNavigation(url)) event.preventDefault()
+  })
+  window.once('ready-to-show', () => window.show())
+  window.on('closed', () => { setupWindow = null })
+  setupWindow = window
+  return window.loadURL('nova://orb/setup.html')
 }
 
 function windowPositionFile() {
@@ -255,26 +339,12 @@ function managedWorkspacesView() {
 // while no keyring existed is still readable by anyone, so the warning stays up
 // until the next save re-seals it.
 function settingsView() {
-  let capabilities = capabilityEditorCache?.view ?? {document: null, problems: []}
-  let capabilityDiskVersion = null
-  if (settingsWindow) {
-    try { capabilityDiskVersion = capabilityDocumentRevision(currentSettings, process.env) }
-    catch { capabilityDiskVersion = 'unreadable' }
-  }
-  if (settingsWindow && (capabilityEditorCache?.generation !== settingsGeneration
-    || capabilityEditorCache?.diskVersion !== capabilityDiskVersion)) {
-    try {
-      const document = readCapabilityDocument(currentSettings, process.env)
-      const secrets = decryptSecretsForSpawn(currentSettings, secretCodec)
-      capabilities = readCapabilityEditor(currentSettings, capabilityEnvironment(currentSettings, secrets, process.env, document), Object.values(secrets))
-    } catch { capabilities = {document: null, problems: ['file_unreadable_or_invalid_json']} }
-    // Cache only this examined public projection, never decrypted values or a resolved registry.
-    capabilityEditorCache = {generation: settingsGeneration, diskVersion: capabilityDiskVersion, view: capabilities}
-  }
+  const capabilities = capabilityEditorCache?.view ?? {document: null, problems: ['credentials_not_checked']}
   const {secretsPresent: effectivePresence, secretSources} = resolveSecretConfiguration(
     {}, process.env, developmentEnv)
   for (const [key, present] of Object.entries(secretsPresent(currentSettings))) {
-    if (present && secretSources[key] !== 'dotenv') {
+    if (key === 'composioApiKey' && currentSettings.secrets?.[key]?.enc === 'cleared') { effectivePresence[key]=false; secretSources[key]='cleared'; continue }
+    if (present && (key === 'composioApiKey' || secretSources[key] !== 'dotenv')) {
       effectivePresence[key] = true
       secretSources[key] = 'settings'
     }
@@ -290,6 +360,7 @@ function settingsView() {
     backendStatus: backendStatus.state,
     backendDiagnostic: backendStatus.diagnostic,
     backendRetryInMs: backendStatus.retryInMs,
+    startup,
     settingsApplyStatus,
     settingsRecoveryAvailable,
     managedWorkspaces: managedWorkspacesView(),
@@ -302,8 +373,76 @@ function settingsView() {
     }) : null,
     secretsPresent: effectivePresence,
     secretSources,
-    keyringAvailable: secretCodec.available() && !hasPlaintextSecret(currentSettings),
+    keyringAvailable: hasPlaintextSecret(currentSettings) ? false : keyringAvailable,
   }
+}
+
+function publishStartup(stage, code = null) {
+  startup = Object.freeze({stage, code})
+  sendToOrb('nova:backend-status', {...backendStatus, startup})
+  sendToSettings('nova:settings:changed', settingsView())
+}
+
+async function paintStartup(stage) {
+  publishStartup(stage)
+  const visible = window => window && !window.isDestroyed() && window.isVisible() && !window.isMinimized()
+  const window = visible(settingsWindow) ? settingsWindow
+    : presentationMode === 'workbench' && visible(mainWindow) ? mainWindow : null
+  if (!window) throw classifyBackendFailure('startup_presentation_required')
+  const selector = window === settingsWindow ? '#startup-status' : '#startup-notice'
+  // Bound only the asynchronous paint fence, never the synchronous OS credential call.
+  let timer
+  try {
+    const painted = await Promise.race([
+      window.webContents.executeJavaScript(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
+        const notice = document.querySelector(${JSON.stringify(selector)})
+        resolve(document.visibilityState === 'visible' && notice?.dataset.stage === ${JSON.stringify(stage)} && notice.getClientRects().length > 0)
+      })))`),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(classifyBackendFailure('startup_presentation_required')), 1500) }),
+    ])
+    if (painted !== true || !visible(window) || (window === mainWindow && presentationMode !== 'workbench')) throw classifyBackendFailure('startup_presentation_required')
+  } catch { throw classifyBackendFailure('startup_presentation_required') }
+  finally { clearTimeout(timer) }
+}
+
+async function accessCredentials(operation, {retry = false, startupAttempt = false} = {}) {
+  const run = credentialQueue.then(async () => {
+    if (retry) credentialFailure = null
+    if (credentialFailure) throw credentialFailure
+    const previous = startup
+    try {
+      await paintStartup('credentials')
+      try { keyringAvailable = secretCodec.available() }
+      catch { throw classifyBackendFailure('credential_access_failed') }
+      const result = await operation()
+      if (startup.stage === 'credentials') {
+        if (startupAttempt && backendStatus.state === 'starting') publishStartup('backend')
+        else if (backendStatus.state === 'connected') publishStartup('ready')
+        else publishStartup(previous.stage, previous.code)
+      }
+      return result
+    } catch (error) {
+      if (['credential_access_failed', 'credential_invalid'].includes(error?.code)) credentialFailure = error
+      if (startup.stage === 'credentials') publishStartup(previous.stage, previous.code)
+      throw error
+    }
+  })
+  credentialQueue = run.then(() => undefined, () => undefined)
+  return run
+}
+
+async function refreshSettingsCapabilities() {
+  if (backendStatus.state === 'starting' || credentialFailure) return
+  try { await accessCredentials(() => refreshCapabilityEditor(decryptSecretsForSpawn(currentSettings, secretCodec))) }
+  catch { /* The bounded credential failure remains visible; never project unread secrets. */ }
+}
+
+function refreshCapabilityEditor(secrets) {
+  try {
+    const document = readCapabilityDocument(currentSettings, process.env)
+    const view = readCapabilityEditor(currentSettings, capabilityEnvironment(currentSettings, secrets, process.env, document), Object.values(secrets))
+    capabilityEditorCache = {view}
+  } catch { capabilityEditorCache = {view: {document: null, problems: ['file_unreadable_or_invalid_json']}} }
 }
 
 async function loadMemoryBoardExport() {
@@ -347,7 +486,7 @@ const settingsWriter = createSettingsWriter({
 function publishCommittedSettings() {
   if (!currentSettings.phoneConnectionEnabled) void managedPhone.stop()
   capabilityEditorCache = null
-  wakeWord?.configure(currentSettings)
+  if(presentationMode!=='background')wakeWord?.configure(acceptanceWakeSettings(currentSettings,!!acceptance))
   settingsGeneration += 1
   sendToOrb('nova:settings:changed', orbSettings(currentSettings))
   sendToSettings('nova:settings:changed', settingsView())
@@ -414,7 +553,8 @@ async function createWindow(launchId) {
   const position = clampToNearestWorkArea(candidate)
   window.setPosition(position.x, position.y)
   window.setAlwaysOnTop(true, 'floating')
-  configureWindowSecurity(window)
+  if(acceptance)installAcceptanceWindowGate(window,assertAcceptanceUrl)
+  configureWindowSecurity(window, () => voiceprintRecording ? settingsWindow?.webContents : null)
   window.once('ready-to-show', () => window.showInactive())
   return window
 }
@@ -441,11 +581,10 @@ function openMemoryBoard(launchId) {
 }
 
 function openSettingsWindow(launchId, { category } = {}) {
-  capabilityEditorCache = null
   if (settingsWindow) {
     settingsWindow.show()
     settingsWindow.focus()
-    void refreshManagedWorkspaceCapabilities().then(() => {
+    void refreshManagedWorkspaceCapabilities().then(refreshSettingsCapabilities).then(() => {
       sendToSettings('nova:settings:changed', settingsFocusView(category))
     })
     return
@@ -453,9 +592,8 @@ function openSettingsWindow(launchId, { category } = {}) {
   // Held for the cold-open path, where no push can reach the panel yet.
   pendingSettingsCategory = category ?? null
   const window = new BrowserWindow(localizedWindowOptions(settingsWindowOptions(preload, launchId)))
-  // Same rule as the board: webContents-level walls only. Re-binding the
-  // session's permission handlers here would move the orb's microphone grant
-  // onto a panel that has no business holding it.
+  // The shared session keeps its orb owner; it grants audio to this exact panel
+  // only while main has an active voiceprint recording lease.
   window.webContents.setWindowOpenHandler(apiKeyWindowOpenHandler(url => shell.openExternal(url)))
   window.webContents.on('will-navigate', (event, url) => {
     if (!allowRendererNavigation(url)) event.preventDefault()
@@ -463,6 +601,7 @@ function openSettingsWindow(launchId, { category } = {}) {
   window.once('ready-to-show', () => window.show())
   window.on('closed', () => {
     void cancelPhonePairing()
+    endVoiceprintRecording()
     settingsWindow = null
     pendingSettingsCategory = null
   })
@@ -470,7 +609,28 @@ function openSettingsWindow(launchId, { category } = {}) {
   void refreshManagedWorkspaceCapabilities().then(() => {
     sendToSettings('nova:settings:changed', settingsFocusView(category))
   })
-  void window.loadURL('nova://orb/settings.html')
+  return window.loadURL('nova://orb/settings.html')
+}
+
+async function verifySettingsRenderer() {
+  const ready = await settingsWindow.webContents.executeJavaScript(`(async () => {
+    if (location.href !== 'nova://orb/settings.html'
+      || typeof window.novaAudioAgentDesktop?.settings?.get !== 'function'
+      || document.querySelectorAll('#language option').length !== 2) return false
+    const view = await window.novaAudioAgentDesktop.settings.get()
+    if (!['en', 'zh-CN'].includes(view.language)) return false
+    const general = document.querySelector('#category-general')
+    const usage = document.querySelector('#category-usage')
+    if (!general || !usage) return false
+    usage.click()
+    const switched = usage.getAttribute('aria-current') === 'true'
+      && document.querySelector('#language-section').hidden
+    general.click()
+    return switched && general.getAttribute('aria-current') === 'true'
+      && !document.querySelector('#language-section').hidden
+  })()`)
+  if (!ready) throw new Error('settings_renderer_unavailable')
+  process.stdout.write('[desktop-smoke] settings_ready\n')
 }
 
 // The orb's MCP submenu asks for a category; every other caller omits it and
@@ -497,26 +657,28 @@ let phoneQueue = Promise.resolve()
 const managedPhone = createManagedPhoneService({
   shutdown: child => shutdownBackend(child),
   launch: async () => {
+    if (!configurationReady) throw classifyBackendFailure('configuration_required')
     const entry = nodeRuntimeEntry({isPackaged: app.isPackaged, appPath: app.getAppPath(), packageRoot})
     const {initializeServerToken, loadServerConfig} = await import(pathToFileURL(resolve(dirname(entry), 'server/server-config.js')).href)
     await mkdir(phoneRoot(), {recursive: true, mode: 0o700})
     const tokenFile = resolve(phoneRoot(), 'host.token')
     try { initializeServerToken(tokenFile) } catch (error) { if (error.code !== 'EEXIST') throw error }
-    const environment = {NOVA_AUDIO_AGENT_SERVER_PORT: '19876', NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: tokenFile}
+    const environment = {SERVER_PORT: '19876', SERVER_TOKEN_FILE: tokenFile}
     phoneConfig = loadServerConfig(environment)
-    const spec = backendLaunchSpec({backend: 'node', nodeEntry: entry,
+    const spec = backendLaunchSpec({
+      newsLanguage: preferredLanguage(app.getPreferredSystemLanguages()),backend: 'node', nodeEntry: entry,
       nodeResourcesPath: app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'build'),
       workspace: desktopConfig?.workspace || process.cwd(), token: phoneConfig.token,
       readyEndpoint: '127.0.0.1:1', parentEnv: process.env, settings: currentSettings,
-      decryptedSecrets: decryptSecretsForSpawn(currentSettings, secretCodec), resolvedConfig: desktopConfig,
+      decryptedSecrets: await accessCredentials(() => decryptSecretsForSpawn(currentSettings, secretCodec)), resolvedConfig: desktopConfig,
       capabilitiesDocument: readCapabilityDocument(currentSettings, process.env)})
     if (app.isQuitting || !currentSettings.phoneConnectionEnabled) throw new Error('service_unavailable')
     return utilityProcess.fork(resolve(dirname(entry), 'desktop/phone-desktop-entry.js'), [], {
       cwd: desktopConfig?.workspace || process.cwd(), stdio: 'pipe', serviceName: 'Nova iPhone Service',
-      env: {...spec.env, ...environment, NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE: 'relay',
-        NOVA_AUDIO_AGENT_BLACKBOARD_PATH: resolve(phoneRoot(), 'blackboard.sqlite'),
-        NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID: 'phone',
-        NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: resolve(phoneRoot(), 'projects')},
+      env: {...spec.env, ...environment, SERVER_MEDIA_MODE: 'relay',
+        BLACKBOARD_PATH: resolve(phoneRoot(), 'blackboard.sqlite'),
+        BLACKBOARD_OWNER_ID: 'phone',
+        CODEX_PROJECT_STATE_ROOT: resolve(phoneRoot(), 'projects')},
     })
   },
 })
@@ -529,17 +691,18 @@ async function cancelPhonePairing(invalidate = true) {
 }
 
 async function phoneAction(action, deviceId, epoch = phoneEpoch) {
+  if(acceptance)throw Error('acceptance_phone_disabled')
   if (action === 'cancel') { await cancelPhonePairing(); return {state: 'idle'} }
   if (app.isQuitting) return {state: 'idle'}
   if (action === 'install') { await shell.openExternal('https://tailscale.com/download'); return {state: 'not_installed'} }
   if (action === 'login') { await shell.openPath('/Applications/Tailscale.app'); return {state: 'needs_login', service: true} }
   if (action === 'help') { await shell.openExternal('https://tailscale.com/docs/features/tailscale-serve'); return {state: 'needs_serve'} }
   if (action === 'disable') {
-    await settingsWriter({phoneConnectionEnabled: false})
+    await accessCredentials(() => settingsWriter({phoneConnectionEnabled: false}), {retry: true})
     await cancelPhonePairing(); await managedPhone.stop()
     return {state: 'idle'}
   }
-  if (action === 'enable') await settingsWriter({phoneConnectionEnabled: true})
+  if (action === 'enable') await accessCredentials(() => settingsWriter({phoneConnectionEnabled: true}), {retry: true})
   if (!currentSettings.phoneConnectionEnabled) return {state: 'idle'}
   try {
     if (process.platform !== 'darwin') return {state: 'unsupported'}
@@ -547,8 +710,8 @@ async function phoneAction(action, deviceId, epoch = phoneEpoch) {
       await managedPhone.stop()
       const entry = nodeRuntimeEntry({isPackaged: app.isPackaged, appPath: app.getAppPath(), packageRoot})
       const {loadServerConfig} = await import(pathToFileURL(resolve(dirname(entry), 'server/server-config.js')).href)
-      const external = loadServerConfig({NOVA_AUDIO_AGENT_SERVER_PORT: String(currentSettings.phoneServerPort),
-        NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: currentSettings.phoneServerTokenFile})
+      const external = loadServerConfig({SERVER_PORT: String(currentSettings.phoneServerPort),
+        SERVER_TOKEN_FILE: currentSettings.phoneServerTokenFile})
       if (phoneConfig?.port !== external.port || phoneConfig?.token !== external.token) await cancelPhonePairing(false)
       phoneConfig = external
     } else {
@@ -591,8 +754,9 @@ function openPairingWindow(launchId = activeLaunchId) {
   openSettingsWindow(launchId, {category: 'phone'})
 }
 
+// Sleep is an orb state; the workbench has no bubble to rest in.
 function sleepOrb() {
-  wakeWord?.sleep('bubble')
+  if (presentationMode === 'orb') wakeWord?.sleep('bubble')
 }
 
 async function applyDesktopSettings(payload, restart = false) {
@@ -615,7 +779,7 @@ async function applyDesktopSettings(payload, restart = false) {
         if (settingsRecoveryAvailable) await rollbackSettings(false)
         const commit = parseSettingsCommit(value)
         capabilitiesChanged = commit.capabilitiesDocument !== undefined
-        return await settingsWriter(commit.settingsPatch ?? {}, next => {
+        return await accessCredentials(() => settingsWriter(commit.settingsPatch ?? {}, next => {
           validatePreparedSettings(commit.settingsPatch, publicSettings(next))
           if ([resolve(settingsFile()), resolve(`${settingsFile()}.recovery`)].includes(capabilityPath(next, process.env))) throw invalidCommit('capability_settings_path_conflict')
           const document = commit.capabilitiesDocument ?? readCapabilityDocument(next, process.env)
@@ -626,9 +790,9 @@ async function applyDesktopSettings(payload, restart = false) {
               await saveSettingsRecovery(settingsFile(), currentSettings, capability)
               settingsRecoveryAvailable = true
             }})
-        })
+        }), {retry: true})
       } catch (error) {
-        console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
+        console.error('[desktop-diagnostic] settings_save_failure')
         throw error
       }
     },
@@ -650,16 +814,22 @@ async function applyDesktopSettings(payload, restart = false) {
   })
   if (applied.operationStatus === 'pending_restart') settingsRestartPending = true
   else if (applied.operationStatus === 'applied') settingsRestartPending = false
+  if (['applied', 'pending_restart'].includes(applied.operationStatus)) await refreshSettingsCapabilities()
   return {...settingsView(), ...applied}
 }
 
 function showOrbMenu(launchId) {
   Menu.buildFromTemplate([
+    { label: t("显示模式"), submenu: [
+      { label: t("工作台"), type: 'radio', checked: presentationMode === 'workbench', click: () => requestPresentation('workbench') },
+      { label: t("悬浮球"), type: 'radio', checked: presentationMode === 'orb', click: () => requestPresentation('orb') },
+      { label: t("隐藏"), type: 'radio', checked: presentationMode === 'background', click: () => requestPresentation('background') },
+    ] },
     { label: t("连接 iPhone…"), click: () => { void openPairingWindow() } },
     { label: t("记忆面板"), click: () => openMemoryBoard(launchId) },
     { label: t("设置…"), click: () => openSettingsWindow(launchId) },
     { label: t("MCP 服务"), submenu: activeMcpSubmenu(launchId) },
-    { label: t("重启后台"), enabled: currentSettings !== null && !lifecycleCoordinator.busy, click: async () => {
+    { label: t("重启后台"), enabled: settingsReady && !lifecycleCoordinator.busy, click: async () => {
       try {
         const result = await applyDesktopSettings({settingsPatch: {}}, true)
         if (result.operationStatus === 'applied') return
@@ -714,36 +884,38 @@ function trayImage() {
 }
 
 function hideOrb() {
-  if (wakeWord?.state === 'blocked') wakeWord.wake()
-  else if (!wakeWord?.enabled || !wakeWord.sleep('manual')) mainWindow?.hide()
+  requestPresentation('background')
 }
 
 function createTray() {
   const next = new Tray(trayImage())
   next.setToolTip('Nova Audio Agent Desktop')
   next.setContextMenu(Menu.buildFromTemplate([
-    { label: t("显示"), click: () => wakeWord?.wake() },
+    ...[['workbench','工作台'],['orb','悬浮球'],['background','隐藏']].map(([mode,label]) => ({label:t(label),click:()=>requestPresentation(mode)})),
     { type: 'separator' },
     { label: t("退出"), click: () => app.quit() },
   ]))
-  next.on('click', () => mainWindow?.isVisible() ? hideOrb() : wakeWord?.wake())
+  next.on('click', () => mainWindow?.isVisible() ? hideOrb() : requestPresentation('workbench'))
   return next
 }
 
 // Main-only decryption for launch, prepared-save validation, explicit probes,
-// and a settings panel's public projection. Plaintext stays local to those calls;
+// and an explicitly refreshed settings projection. Plaintext stays local to those calls;
 // the panel projection caches only examined public data for its settings generation.
-// Unreadable or invalid entries are diagnosed by key name and omitted.
+// Unreadable or invalid entries stop the attempt with a bounded, non-retrying error.
 function decryptSecretsForSpawn(settings, codec) {
   const present = secretsPresent(settings)
   const decrypted = {}
   for (const key of SECRET_KEYS) {
+    if (key === 'composioApiKey' && settings.secrets?.[key]?.enc === 'cleared') { decrypted[key]=''; continue }
     if (!present[key]) continue
     const plaintext = readSecret(settings, key, codec)
     if (typeof plaintext !== 'string' || !plaintext) {
       console.error(`[desktop-diagnostic] settings_secret_unreadable key=${key}`)
+      throw classifyBackendFailure('credential_access_failed')
     } else if (!secretValueIsSafe(plaintext)) {
       console.error(`[desktop-diagnostic] settings_secret_invalid key=${key}`)
+      throw classifyBackendFailure('credential_invalid')
     } else {
       decrypted[key] = plaintext
     }
@@ -819,6 +991,9 @@ async function commitDesktopConfiguration(prepared) {
   managedWorkspaceMaintenance = prepared.maintenance
   if (previousMaintenance !== null) await previousMaintenance.close().catch(() => undefined)
   await refreshManagedWorkspaceCapabilities()
+  configurationReady = true
+  settingsReady = true
+  if (!acceptance && currentSettings.phoneConnectionEnabled && !currentSettings.phoneServerTokenFile) void managedPhone.start().catch(() => {})
   return Object.freeze({
     externalWorkspaceReset: reconciliation?.status === 'reconciled'
       && reconciliation.active_workspace_reset === true,
@@ -909,16 +1084,17 @@ const workspaceActions = createWorkspaceActions({
   },
 })
 
-async function launchBackend(backendKind, smokeChannel, onExit) {
+async function launchBackend(smokeChannel, onExit) {
   capabilityEditorCache = null
   let launchDocument
   try { launchDocument = readCapabilityDocument(currentSettings, process.env) }
   catch { throw classifyBackendFailure('configuration_required') }
-  const codingEnabled = launchDocument?.modules?.coding?.enabled !== false
-  const configurationCode = codingEnabled ? desktopConfig?.codexConfigurationError
-    ?? desktopConfig?.modelConfigurationError : desktopConfig?.modelConfigurationError
-  if (configurationCode) throw classifyBackendFailure(configurationCode)
-  if (codingEnabled && codexStatus.status !== 'ready') throw classifyBackendFailure('codex_unavailable')
+  const codingEnabled = !acceptance && launchDocument?.modules?.coding?.enabled !== false
+  if (desktopConfig?.modelConfigurationError) throw classifyBackendFailure(desktopConfig.modelConfigurationError)
+  // Coding is optional: without a usable Codex CLI, including an unfinished manual path,
+  // the runtime starts with the coding module off.
+  const codingUnavailable = codingEnabled
+    && (Boolean(desktopConfig?.codexConfigurationError) || codexStatus.status !== 'ready')
   const token = randomBytes(16).toString('hex')
   const workspace = desktopConfig?.workspace || process.cwd()
   let spawnedBackend = null
@@ -926,6 +1102,8 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
   // dial it; the readiness timeout still kills a backend that never arrives.
   const listener = createReadinessListener({
     token,
+    // Restoring local memory and the knowledge index can exceed the empty-state deadline.
+    timeoutMs: 60_000,
     onTimeout: () => {
       if (spawnedBackend) void shutdownBackendBestEffort(spawnedBackend)
     },
@@ -933,14 +1111,15 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
   let ready
   const diagnostic = createBackendDiagnosticCollector()
   try {
-    const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
+    const decryptedSecrets = await accessCredentials(() => decryptSecretsForSpawn(currentSettings, secretCodec), {startupAttempt: true})
+    refreshCapabilityEditor(decryptedSecrets)
     const capabilitiesDocument = launchDocument
     const diskGeneration = settingsGeneration
     const generation = ++launchGeneration
     runtimeCapabilities = null
     let searchProxyUrl = ''
     try {
-      const proxyRules = await mainWindow?.webContents.session.resolveProxy(
+      const proxyRules = acceptance ? '' : await mainWindow?.webContents.session.resolveProxy(
         'https://api.tavily.com/search',
       )
       searchProxyUrl = searchProxyUrlFromRules(proxyRules)
@@ -948,7 +1127,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       // Proxy discovery is best-effort. Explicit HTTP(S)_PROXY values still flow through parentEnv.
     }
     const spec = backendLaunchSpec({
-      backend: backendKind,
+      newsLanguage: preferredLanguage(app.getPreferredSystemLanguages()),
       nodeEntry: nodeRuntimeEntry({
         isPackaged: app.isPackaged,
         appPath: app.getAppPath(),
@@ -961,18 +1140,29 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       token,
       readyEndpoint: await listener.endpoint,
       parentEnv: process.env,
-      settings: currentSettings,
+      settings: acceptanceBackendSettings(currentSettings,acceptance),
       decryptedSecrets,
       capabilitiesDocument,
       resolvedConfig: desktopConfig,
       searchProxyUrl,
     })
-    spawnedBackend = utilityProcess.fork(spec.entry, spec.argv, {
+    if (codingUnavailable) spec.env.CODING_MODULE_ENABLED = 'false'
+    const blocking = describeMissingBlockingEnvironment(spec.env, true)
+    if (blocking && blocking.missing.length > 0) {
+      runtimeCapabilities = Object.freeze({state: 'startup_failed', toolCount: null, toolBudget: 24,
+        reason: 'configuration_required', pipeline: blocking.pipeline, missing: blocking.missing, generation, diskGeneration})
+      if (smokeChannel === null) void openSetupWindow()
+      throw classifyBackendFailure('configuration_required')
+    }
+    await feishuSetupOwner.release()
+    if(acceptance&&(spec.env.NOVA_WORKBENCH_ACCEPTANCE_MANIFEST!==process.env.NOVA_WORKBENCH_ACCEPTANCE_MANIFEST||spec.env.NOVA_WORKBENCH_ACCEPTANCE_REPORT!==process.env.NOVA_WORKBENCH_ACCEPTANCE_REPORT))throw Error('acceptance_child_environment_missing')
+    spawnedBackend = utilityProcess.fork(spec.entry, acceptance?[...spec.argv,'--nova-workbench-acceptance-required']:spec.argv, {
       cwd: workspace,
       env: spec.env,
       stdio: spec.stdio,
       serviceName: 'Nova Audio Agent Runtime',
     })
+    const acceptanceProof=acceptance?waitForAcceptanceRuntimeGate(spawnedBackend,{buildCommit:acceptance.buildCommit,runtimeHash:acceptanceRuntimeHash(spec.entry)}):Promise.resolve()
     backend = spawnedBackend
     backendControl?.close()
     backendControl = createBackendControl(spawnedBackend, {onUsage: report => {
@@ -980,10 +1170,13 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       if (frontendUsage.add(generation, report) && settingsWindow) sendToSettings('nova:settings:changed', settingsView())
     }, onStatus: status => {
       if (backend !== spawnedBackend || launchGeneration !== generation) return
+      diagnostic.pushCapabilityStatus(status)
       runtimeCapabilities = {...status, generation, diskGeneration, state: backendStatus.state === 'connected' ? 'running' : status.state}
       sendToSettings('nova:settings:changed', settingsView())
     }})
     spawnedBackend.stderr?.on('data', chunk => {
+      for (const warning of configWarnings(chunk.toString('utf8'))) console.error(warning)
+      for (const failure of startupErrors(chunk.toString('utf8'))) console.error(failure)
       const code = diagnostic.push(chunk.toString('utf8'))
       if (code) console.error(`[backend-diagnostic] ${code}`)
     })
@@ -1007,11 +1200,13 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
         onExit(diagnostic.failure())
       },
     })
-    ready = await waitForBackendReadiness(spawnedBackend, listener.readiness, diagnostic)
+    ;[ready] = await Promise.all([waitForBackendReadiness(spawnedBackend, listener.readiness, diagnostic),acceptanceProof])
+    if(acceptance)appendAcceptanceCounts('runtime_gate_verified',{verified:1})
   } finally {
     listener.close()
   }
   const validated = validateBootstrap({ endpoint: ready.endpoint, token })
+  allowAcceptanceLoopback(validated.endpoint)
   smokeChannel?.ready({endpoint: validated.endpoint, token: validated.token})
   return Object.freeze({backend: spawnedBackend, connection: validated})
 }
@@ -1027,8 +1222,9 @@ function initializeDesktopBootstrap(cameraSource) {
   }) : null
   nativeAudio?.setCaptureEpoch(wakeWord?.epoch ?? 0)
   bootstrap = Object.freeze({
+    startupPresentation: sourceStartupSmoke || acceptance ? 'workbench' : startupPresentation(currentSettings, process.argv),
     audioMode: 'inactive',
-    startMuted: !app.isPackaged && process.env.NOVA_AUDIO_AGENT_DEV_START_MUTED === '1',
+    startMuted: !app.isPackaged && process.env.DEV_START_MUTED === '1',
     nativeAvailable,
     platform: process.platform,
     opaque,
@@ -1055,18 +1251,16 @@ async function loadStartupSettings() {
   }
 }
 
-async function startSelectedCamera(camera, backendKind, smokeChannel) {
-  const settingsReady = await loadStartupSettings()
+async function startSelectedCamera(camera, smokeChannel) {
+  settingsReady = await loadStartupSettings()
   setLanguage(currentSettings.language)
-  if (settingsReady) await refreshDesktopConfiguration()
   initializeDesktopBootstrap(camera.source)
   const launchId = randomBytes(8).toString('hex')
-  activeLaunchId = launchId
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
   wakeWord = new WakeWordRuntime({
     modelRoot: resolve(app.getPath('userData'), 'models/wake-word'),
-    show: () => { mainWindow?.show(); mainWindow?.focus() },
+    show: () => { if(presentationMode !== 'background'){ mainWindow?.show(); mainWindow?.focus() } },
     // An idle timeout no longer clears the screen: the renderer sees the same
     // 'sleeping' state arrive on nova:wake-word:changed and shrinks the window
     // to a bubble through nova:orb:dormant, so the window must stay visible for
@@ -1078,7 +1272,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       sendToSettings('nova:settings:changed', settingsView())
     },
   })
-  wakeWord.configure(currentSettings)
+  wakeWord.configure(acceptanceWakeSettings(currentSettings,!!acceptance))
 
   const windowShown = sourceStartupSmoke
     ? new Promise((resolveShown, rejectShown) => {
@@ -1090,9 +1284,99 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
         mainWindow.once('closed', () => rejectShown(new Error('source_startup_window_closed')))
       })
     : null
-  const orbWindow = createOrbWindowController({
+  let personalCollapsed = false
+  let personalBounds = null
+  let initialOrbBounds = mainWindow.getBounds()
+  const workbenchFrame = createWorkbenchFrame({
     getBounds: () => mainWindow.getBounds(),
     setBounds: bounds => mainWindow.setBounds(bounds),
+    getWorkArea: bounds => screen.getDisplayMatching(bounds).workArea,
+  })
+  const setPersonalCollapsed = value => {
+    if (value === personalCollapsed && personalBounds !== null) return
+    if (value) {
+      personalBounds = workbenchFrame.naturalBounds()
+      workbenchFrame.forget()
+      personalCollapsed = true
+      mainWindow.setResizable(false)
+      mainWindow.setMinimumSize(1, 1)
+      mainWindow.setAlwaysOnTop(true, 'floating')
+      mainWindow.setHasShadow(false)
+      mainWindow.setBounds(initialOrbBounds)
+      orbWindow.sync()
+    } else {
+      if(personalCollapsed)initialOrbBounds=mainWindow.getBounds()
+      personalCollapsed = false
+      const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+      const width = Math.min(1120, area.width), height = Math.min(780, area.height)
+      mainWindow.setMaximumSize(10000, 10000)
+      mainWindow.setResizable(true)
+      mainWindow.setMinimumSize(Math.min(660, area.width), Math.min(520, area.height))
+      mainWindow.setAlwaysOnTop(false)
+      // The orb window is created shadowless; the workbench needs the system
+      // shadow (macOS derives it from the rounded, transparent content) to read
+      // as a window against the desktop.
+      mainWindow.setHasShadow(true)
+      mainWindow.setBounds(personalBounds ?? {x:area.x+Math.round((area.width-width)/2),y:area.y+Math.round((area.height-height)/2),width,height})
+      personalBounds = mainWindow.getBounds()
+    }
+    sendToOrb('nova:personal:collapsed', value)
+  }
+  ipcMain.handle('nova:personal:presentation-error', (event, message) => {
+    if(event.sender !== mainWindow.webContents || typeof message !== 'string' || message.length > 2000) throw new Error('presentation error rejected')
+    return dialog.showMessageBox({type:'error',title:'Nova',message})
+  })
+  ipcMain.handle('nova:personal:presentation', async (event, mode, activate=true) => {
+    if(event.sender !== mainWindow.webContents || !['background','workbench','orb'].includes(mode) || typeof activate!=='boolean') throw new Error('presentation request rejected')
+    if(mode === 'background'){enterBackground();return}
+    // configure() can show too; fence before any path can trigger the native reset.
+    const shown=activate&&!mainWindow.isVisible()?new Promise(resolve=>mainWindow.once('show',()=>resolve())):undefined
+    const wasBackground=presentationMode==='background'
+    presentationMode=mode
+    setPersonalCollapsed(mode === 'orb')
+    if (settingsReady) {
+      await settingsWriter({lastPresentation: mode}, undefined, {preserveSecrets: true}).catch(error => {
+        console.error(`[desktop-diagnostic] presentation_save_failure type=${error.name}`)
+      })
+    }
+    if(wasBackground)wakeWord?.configure(acceptanceWakeSettings(currentSettings,!!acceptance))
+    // Sleep is an orb state: a workbench reached from a sleeping orb must hear its voice session, not the wake detector.
+    if(mode==='workbench'&&['sleeping','blocked'].includes(wakeWord?.state))wakeWord.wake({show:false})
+    if(activate){mainWindow.show();mainWindow.focus();return shown}
+  })
+  ipcMain.handle('nova:personal:unread', (event, value) => {
+    if (event.sender !== mainWindow.webContents || !Number.isSafeInteger(value) || value < 0 || value > 1000000) throw new Error('unread request rejected')
+    updateTrayUnread(tray, backendStatus.state === 'connected' ? value : 0)
+  })
+  ipcMain.handle('nova:personal:wake', event => {
+    if (event.sender !== mainWindow.webContents) throw new Error('wake request rejected')
+    if(presentationMode !== 'background') wakeWord?.wake()
+  })
+  ipcMain.handle('nova:personal:feishu-verification', async (event, value) => {
+    if (event.sender !== mainWindow.webContents && event.sender !== settingsWindow?.webContents) throw new Error('authorization request rejected')
+    await shell.openExternal(feishuVerificationUrl(value))
+  })
+  ipcMain.handle('nova:personal:connector-authorization', async (event, value) => {
+    if (event.sender !== mainWindow.webContents && event.sender !== settingsWindow?.webContents) throw new Error('authorization request rejected')
+    await shell.openExternal(connectorAuthorizationUrl(value))
+  })
+  ipcMain.handle('nova:personal:article', async (event, value) => {
+    if (event.sender !== mainWindow.webContents) throw new Error('article request rejected')
+    await shell.openExternal(newsArticleUrl(value))
+  })
+  ipcMain.handle('nova:personal:directory', async event => {
+    if (event.sender !== mainWindow.webContents && event.sender !== settingsWindow?.webContents) throw new Error('directory request rejected')
+    const result = await dialog.showOpenDialog(event.sender === settingsWindow?.webContents ? settingsWindow : mainWindow, {title:'选择允许 Nova 读取的目录', properties:['openDirectory']})
+    return result.canceled ? null : result.filePaths[0] ?? null
+  })
+  mainWindow.on('close', event => {
+    if (app.isQuitting) return
+    event.preventDefault()
+    requestPresentation('background')
+  })
+  const orbWindow = createOrbWindowController({
+    getBounds: () => personalCollapsed ? mainWindow.getBounds() : initialOrbBounds,
+    setBounds: bounds => { if (personalCollapsed) mainWindow.setBounds(bounds) },
     getZoomFactor: () => mainWindow.webContents.getZoomFactor(),
     getScaleFactor: () => screen.getDisplayNearestPoint(
       screen.getCursorScreenPoint(),
@@ -1107,7 +1391,8 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   // render reconciles it. Registered here rather than in the wake-word `show`
   // callback because that one can fire from configure() before `orbWindow` is
   // assigned, which would throw on a const in its temporal dead zone.
-  mainWindow.on('show', () => { orbWindow.setDormant(false) })
+  mainWindow.on('show', () => { if (personalCollapsed) orbWindow.setDormant(false) })
+  setPersonalCollapsed(false)
 
   const dragController = createDragController({
     getCursor: () => screen.getCursorScreenPoint(),
@@ -1118,6 +1403,17 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     setWindowPosition: position => mainWindow.setPosition(position.x, position.y),
     clamp: candidate => orbWindow.clampDragPosition(candidate),
   })
+  // The workbench strip drags through the same cursor-poll math but must not touch the orb's clamp or saved position.
+  const workbenchDragController = createDragController({
+    getCursor: () => screen.getCursorScreenPoint(),
+    getWindowPosition: () => {
+      const [x, y] = mainWindow.getPosition()
+      return { x, y }
+    },
+    setWindowPosition: position => mainWindow.setPosition(position.x, position.y),
+    clamp: candidate => ({ x: candidate.x, y: Math.max(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea.y, candidate.y) }),
+  })
+  let activeDrag = null
   mainWindow.webContents.on('zoom-changed', () => {
     setTimeout(() => orbWindow.sync(), 0)
   })
@@ -1181,11 +1477,28 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     phoneQueue = result.catch(() => {})
     return result
   })
-  ipcMain.on('nova:pairing:open', (event, ...args) => {
-    if (settingsWindow && event.sender === settingsWindow.webContents && args.length === 0) void openPairingWindow(launchId)
+  ipcMain.on('nova:setup:open', event => {
+    if (mainWindow && event.sender === mainWindow.webContents) void openSetupWindow()
   })
-  ipcMain.on('nova:settings:open', event => {
-    if (mainWindow && event.sender === mainWindow.webContents) openSettingsWindow(launchId)
+  ipcMain.handle('nova:setup:status', event => {
+    if (!setupWindow || event.sender !== setupWindow.webContents) throw new Error('setup request rejected')
+    return setupView()
+  })
+  ipcMain.handle('nova:setup:test-key', (event, key, value) => {
+    if (!setupWindow || event.sender !== setupWindow.webContents) throw new Error('setup request rejected')
+    if (!SETUP_KEYS.includes(key)) throw new Error('setup request rejected')
+    return probeApiKey(key, value)
+  })
+  ipcMain.handle('nova:setup:save', async (event, choice) => {
+    if (!setupWindow || event.sender !== setupWindow.webContents) throw new Error('setup request rejected')
+    const result = await applyDesktopSettings(setupCommit(choice), true)
+    return Object.freeze({
+      saved: result?.saved !== false,
+      rejectedSecrets: Array.isArray(result?.rejectedSecrets) ? result.rejectedSecrets.filter(key => SETUP_KEYS.includes(key)) : [],
+    })
+  })
+  ipcMain.on('nova:settings:open', (event, category) => {
+    if (mainWindow && event.sender === mainWindow.webContents) openSettingsWindow(launchId, isValidCategory(category) ? {category} : {})
   })
   ipcMain.handle('nova:memory-board:request', async (event, detail) => {
     if (!boardWindow || event.sender !== boardWindow.webContents) {
@@ -1267,12 +1580,90 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     }
     return { saved: filePath }
   })
+  ipcMain.on('nova:voiceprint:gate-ready', event => {
+    if (mainWindow && event.sender === mainWindow.webContents) voiceprintGateReady?.(true)
+  })
+  ipcMain.handle('nova:settings:voiceprint', async (event, input) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || !input || typeof input !== 'object') throw new Error('voiceprint request rejected')
+    if (input.action === 'health') return {healthy: await voiceprintHealth(input.uploadUrl, (url, init) => net.fetch(url, init))}
+    if (input.action === 'stop') {endVoiceprintRecording(); return {ok:true}}
+    if (input.action === 'start') {
+      if (voiceprintRecording || voiceprintBusy) return {error:'voiceprint_busy'}
+      const {secrets,uploadUrl} = await accessCredentials(() => {
+        const settings = currentSettings
+        return {secrets: decryptSecretsForSpawn(settings, secretCodec),uploadUrl: settings.voiceprintUploadUrl}
+      })
+      if (!(secrets.doubaoAsrApiKey || secrets.doubaoBigmodelApiKey) || !uploadUrl) return {error:'voiceprint_configuration_required'}
+      if (!await voiceprintHealth(uploadUrl, (url, init) => net.fetch(url, init))) return {error:'voiceprint_unhealthy'}
+      if (voiceprintRecording || voiceprintBusy || settingsWindow?.webContents !== event.sender) return {error:'voiceprint_busy'}
+      voiceprintRecording = true
+      voiceprintRecordingTimer = setTimeout(endVoiceprintRecording, 40000)
+      const ready = await new Promise(resolve => {
+        voiceprintGateReady = resolve
+        sendToOrb('nova:voiceprint:recording', true)
+        const timeout = setTimeout(() => resolve(false), 3000)
+        timeout.unref()
+      })
+      voiceprintGateReady = null
+      if (!ready || !voiceprintRecording) {endVoiceprintRecording(); return {error:'voiceprint_busy'}}
+      const permission = await resolveMicrophonePermission({platform:process.platform,systemPreferences})
+      if (['denied','restricted'].includes(permission.status)) {endVoiceprintRecording(); return {error:'voiceprint_microphone_denied'}}
+      return {ok:true}
+    }
+    if (input.action !== 'register' || voiceprintBusy) return {error:'voiceprint_busy'}
+    voiceprintBusy = true
+    const fetcher = (url, init) => net.fetch(url, init)
+    const speechKey = settings => {
+      const secrets = decryptSecretsForSpawn(settings, secretCodec)
+      return secrets.doubaoAsrApiKey || secrets.doubaoBigmodelApiKey
+    }
+    try {
+      // Main owns the upload target: only the saved URL receives audio.
+      const {uploadUrl,apiKey,previousId} = await accessCredentials(() => {
+        const settings = currentSettings
+        return {uploadUrl: settings.voiceprintUploadUrl,apiKey: speechKey(settings),previousId: settings.voiceprintId}
+      })
+      if (!uploadUrl || !apiKey) return {error:'voiceprint_configuration_required'}
+      if (!await voiceprintHealth(uploadUrl, fetcher)) return {error:'voiceprint_unhealthy'}
+      const result = await registerVoiceprint({audio:input.audio,uploadUrl,apiKey,fetcher})
+      // Discarding the new record must not lose it silently: a failed delete hands the ID back.
+      const discard = async error => {
+        try {await deleteVoiceprint({id:result.id,apiKey,fetcher}); return {error}} catch {return {error,orphanedId:result.id}}
+      }
+      // A key saved mid-registration moves to another Volcengine app; never keep an ID from the old one.
+      let currentKey
+      try { currentKey = await accessCredentials(() => speechKey(currentSettings)) }
+      catch { return discard('voiceprint_request_failed') }
+      if (currentKey !== apiKey) return discard('voiceprint_settings_changed')
+      // Commit before deleting the old record, so saved settings never name a deleted SpeakId.
+      // Saved preferences may differ from the running backend until restart.
+      // Always retire that backend before deleting a replaced voiceprint.
+      const committed = await applyDesktopSettings({settingsPatch:{voiceprintId:result.id,voiceprintName:result.name,voiceprintEnabled:false}}, Boolean(previousId))
+        .catch(() => null)
+      if (committed?.saved !== true || currentSettings.voiceprintId !== result.id) {
+        // saved:false can follow a successful disk write and failed rollback.
+        // Uncertain recovery must keep the record, including when the transaction throws.
+        if (!committed || committed.operationStatus === 'recovery_failed' || currentSettings.voiceprintId === result.id) {
+          return {error:'voiceprint_recovery_required',retainedId:result.id}
+        }
+        return discard('voiceprint_request_failed')
+      }
+      let previousDeleteFailed = false
+      if (previousId && previousId !== result.id) {
+        try {await deleteVoiceprint({id:previousId,apiKey,fetcher})} catch {previousDeleteFailed = true}
+      }
+      return {id:result.id,...(previousDeleteFailed ? {previousDeleteFailed:previousId} : {})}
+    } catch (error) {
+      const known = ['voiceprint_busy','voiceprint_configuration_required','voiceprint_audio_invalid','voiceprint_rate_limited','voiceprint_provider_failed','voiceprint_response_invalid','voiceprint_request_failed']
+      return {error:known.includes(error.message) ? error.message : 'voiceprint_request_failed'}
+    } finally {voiceprintBusy = false; endVoiceprintRecording()}
+  })
   ipcMain.handle('nova:settings:get', async event => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings request rejected')
     }
     await refreshManagedWorkspaceCapabilities()
-    capabilityEditorCache = null
+    await refreshSettingsCapabilities()
     // A cold open cannot be told which category to show by a push: the panel
     // subscribes only after its module evaluates, and this reply is the first
     // thing it is guaranteed to receive. Consumed once so a later plain open
@@ -1318,7 +1709,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (settingsRecoveryAvailable) {
       const applied = await applySettingsTransaction({
         coordinator: lifecycleCoordinator, patch: null,
-        write: async () => { await rollbackSettings(); return currentSettings },
+        write: async () => { await credentialQueue; credentialFailure = null; await rollbackSettings(); return currentSettings },
         publishCommitted: publishCommittedSettings,
         prepareConfiguration: prepareDesktopConfiguration,
         commitConfiguration: commitDesktopConfiguration,
@@ -1331,7 +1722,20 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     }
     const recovery = await coordinateBackendRetry({
       coordinator: lifecycleCoordinator,
-      retry: () => managedWorkspaceBackendRecovery.retry(),
+      retry: async () => {
+        await credentialQueue
+        credentialFailure = null
+        try {
+          if (!configurationReady) {
+            await paintStartup('configuration')
+            await refreshDesktopConfiguration()
+          }
+          return await managedWorkspaceBackendRecovery.retry()
+        } catch (error) {
+          publishStartup('failed', reportStartupFailure(error))
+          return {status: 'failed'}
+        }
+      },
     })
     return recovery.status === 'busy'
       ? {...settingsView(), operationStatus: 'busy'}
@@ -1380,6 +1784,39 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     }
     return workspaceActionReply(() => workspaceActions.clearAll())
   })
+  ipcMain.handle('nova:settings:feishu', async (event, payload) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) throw new Error('IM request rejected')
+    const allowed = ['feishu.status', 'feishu.app.start', 'feishu.app.status', 'feishu.app.cancel', 'feishu.app.bind', 'feishu.login', 'feishu.complete', 'feishu.chats', 'feishu.configure', 'feishu.consent', 'feishu.sync', 'feishu.pause', 'feishu.resume', 'feishu.disconnect', 'feishu.delete', 'feishu.bot.configure']
+    if (!payload || Object.getPrototypeOf(payload) !== Object.prototype || Object.keys(payload).sort().join(',') !== 'method,params'
+      || !allowed.includes(payload.method) || !payload.params || Object.getPrototypeOf(payload.params) !== Object.prototype
+      || JSON.stringify(payload.params).length > 16384) throw new Error('IM request rejected')
+    const owner = backendControl, generation = settingsGeneration
+    if (backendStatus.state === 'configuration_required' && !backend) {
+      const result = await feishuSetupOwner.request(payload.method, payload.params)
+      if (generation !== settingsGeneration || backendStatus.state !== 'configuration_required') throw new Error('IM connection changed')
+      return result
+    }
+    if (!owner) throw new Error('IM connection unavailable')
+    const result = await owner.request(payload.method, payload.params, {timeoutMs: 180000})
+    if (owner !== backendControl || generation !== settingsGeneration) throw new Error('IM connection changed')
+    return result
+  })
+  ipcMain.handle('nova:settings:personal', async (event, payload) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) throw new Error('connections request rejected')
+    const allowed = ['state', 'sources.add', 'sources.authorize_computer', 'sources.consent', 'sources.pause', 'sources.resume', 'sources.sync', 'sources.disconnect', 'sources.delete', 'connector.status', 'connector.link', 'connector.complete', 'connector.scopes', 'connector.configure', 'connector.consent', 'connector.sync', 'connector.pause', 'connector.resume', 'connector.disconnect', 'connector.delete', 'connector.local_status', 'connector.local_connect', 'connector.local_access', 'connector.mail_status', 'connector.mail_connect', 'connector.mail_access', 'discovery.configure']
+    if (!payload || Object.getPrototypeOf(payload) !== Object.prototype || Object.keys(payload).sort().join(',') !== 'method,params'
+      || !allowed.includes(payload.method) || !payload.params || Object.getPrototypeOf(payload.params) !== Object.prototype
+      || JSON.stringify(payload.params).length > 16384) throw new Error('connections request rejected')
+    if (['sources.add','sources.authorize_computer'].includes(payload.method) && payload.params.consent === true && runtimeCapabilities?.modules?.knowledge?.enabled !== true) {
+      const document = readCapabilityDocument(currentSettings, process.env)
+      await applyDesktopSettings({settingsPatch:{},capabilitiesDocument:{...document,modules:{...document.modules,knowledge:{...document.modules?.knowledge,enabled:true}}},capabilitiesBaseRevision:capabilityDocumentRevision(currentSettings, process.env)},true)
+    }
+    const owner = backendControl, generation = settingsGeneration
+    if (!owner) throw new Error('connections unavailable')
+    const result = await owner.request(payload.method, payload.params, {timeoutMs: 180000})
+    if (owner !== backendControl || generation !== settingsGeneration) throw new Error('connections changed')
+    return result
+  })
   ipcMain.handle('nova:knowledge:action', async (event, payload) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) throw new Error('knowledge action rejected')
     const owner = backendControl, generation = settingsGeneration
@@ -1398,7 +1835,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) throw new Error('capability probe rejected')
     try {
       if (!payload || typeof payload !== 'object' || Object.keys(payload).sort().join(',') !== 'document,server' || typeof payload.server !== 'string') throw new Error('invalid')
-      const secrets = decryptSecretsForSpawn(currentSettings, secretCodec)
+      const secrets = await accessCredentials(() => decryptSecretsForSpawn(currentSettings, secretCodec), {retry: true})
       assertEditorSafe(payload.document, Object.values(secrets))
       const environment = capabilityEnvironment(currentSettings, secrets, process.env, payload.document)
       const registry = parseCapabilityRegistry(payload.document, environment)
@@ -1412,20 +1849,20 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (event.sender === mainWindow?.webContents) wakeWord?.report(value)
   })
   ipcMain.on('nova:wake-word:audio', (event, value) => {
-    if (event.sender === mainWindow?.webContents) wakeWord?.accept(value)
+    if (presentationMode !== 'background' && event.sender === mainWindow?.webContents) wakeWord?.accept(value)
   })
   ipcMain.on('nova:wake-word:sleep', (event, ...args) => {
     if (mainWindow && event.sender === mainWindow.webContents && args.length === 0) sleepOrb()
   })
   ipcMain.on('nova:wake-word:wake', (event, ...args) => {
-    if (mainWindow && event.sender === mainWindow.webContents && args.length === 0) wakeWord?.wake()
+    if (presentationMode !== 'background' && mainWindow && event.sender === mainWindow.webContents && args.length === 0) wakeWord?.wake()
   })
   ipcMain.on('nova:wake-word:activity', event => {
     if (event.sender === mainWindow?.webContents || event.sender === settingsWindow?.webContents) wakeWord?.activity()
   })
   ipcMain.handle('nova:wake-word:retry', event => {
     if (event.sender !== settingsWindow?.webContents) throw new Error('wake word retry rejected')
-    wakeWord?.start()
+    if(!acceptance&&presentationMode!=='background')wakeWord?.start()
     return settingsView()
   })
   ipcMain.handle('nova:settings:set', async (event, payload, restart = false) => {
@@ -1444,25 +1881,28 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       wakeWord: wakeWord?.snapshot(),
       backend: backendStatus.connection,
       backendStatus: backendStatus.state,
+      startup,
     }
   })
   ipcMain.handle('nova:native-audio:capture', async (event, enabled) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('native capture request rejected')
     }
+    if (enabled === true && presentationMode === 'background') throw new Error('capture disabled in background')
     if (enabled !== true) {
       return nativeAudio?.deactivate() || Object.freeze({ audioMode: 'inactive' })
     }
+    if(acceptance)return Object.freeze({audioMode:'inactive'})
     return nativeAudio?.activate() || Object.freeze({ audioMode: 'browser_aec' })
   })
   ipcMain.handle('nova:native-audio:playback-muted', (event, muted) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('native playback mute request rejected')
     }
-    return nativeAudio?.setPlaybackMuted(muted === true) ?? true
+    return nativeAudio?.setPlaybackMuted(presentationMode === 'background' || muted === true) ?? true
   })
   ipcMain.on('nova:native-audio:play', (event, payload) => {
-    if (mainWindow && event.sender === mainWindow.webContents && payload) {
+    if (presentationMode !== 'background' && mainWindow && event.sender === mainWindow.webContents && payload) {
       nativeAudio?.play(payload.pcm, payload.utteranceId, payload.generationEpoch)
     }
   })
@@ -1531,9 +1971,17 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     Menu.buildFromTemplate(template).popup({window: mainWindow})
     return true
   })
+  ipcMain.on('nova:window:control', (event, action) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || personalCollapsed) return
+    if (action === 'minimize') mainWindow.minimize()
+    else if (action === 'toggleMaximize') workbenchFrame.toggleMaximize()
+    else if (action === 'close') requestPresentation('background')
+  })
   ipcMain.on('nova:window-drag:start', event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
-    dragController.start()
+    if (!personalCollapsed && workbenchFrame.maximized) return
+    activeDrag = personalCollapsed ? dragController : workbenchDragController
+    activeDrag.start()
   })
   ipcMain.on('nova:window-drag:move', (event, payload) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
@@ -1543,12 +1991,15 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // never from renderer-reported coordinates, which drift under mixed-DPI
     // scaling and don't exist at all on Wayland.
     if (!validDragDelta(payload?.dx, payload?.dy)) return
-    dragController.tick()
+    activeDrag?.tick()
   })
   ipcMain.on('nova:window-drag:end', event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
-    const { moved, position } = dragController.end()
-    if (!moved || !position) return
+    const finished = activeDrag
+    activeDrag = null
+    if (!finished) return
+    const { moved, position } = finished.end()
+    if (finished !== dragController || !moved || !position) return
     const naturalPosition = orbWindow.finishDrag(position)
     void saveWindowPosition(windowPositionFile(), naturalPosition).catch(error => {
       console.error(`[desktop-diagnostic] window_position_save_failure type=${error.name}`)
@@ -1560,7 +2011,23 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     cameraFile: camera.source === 'file' ? camera.file : undefined,
     fetchCameraFile: (url, init) => net.fetch(url, init),
   })
+  // Secondary windows share this session's protocol. Do not expose their
+  // launch id or open them until the asynchronous asset graph is registered.
+  await rendererLoaded
+  activeLaunchId = launchId
+  if (settingsReady) {
+    try { await lifecycleCoordinator.run('startup', async () => {
+      await paintStartup('configuration')
+      await refreshDesktopConfiguration()
+    }) }
+    catch (error) {
+      publishStartup('failed', reportStartupFailure(error))
+      if (sourceStartupSmoke || smokeChannel !== null || acceptance) throw error
+    }
+  } else publishStartup('failed', 'settings_recovery_failed')
   if (sourceStartupSmoke) {
+    await openSettingsWindow(launchId)
+    await verifySettingsRenderer()
     await Promise.all([rendererLoaded, windowShown])
     sourceSmokeStage('window_ready')
     process.stdout.write('[desktop-smoke] source_window_ready\n', () => {
@@ -1573,21 +2040,22 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (smokeChannel === null
       && backendStatus.state === 'connected' && backendStatus.connection) {
       sendToOrb('nova:backend-ready', backendStatus.connection)
-    } else if (backendStatus.state !== 'starting') sendToOrb('nova:backend-exit')
+    // 'stopped' also covers "never started yet" (the module's initial value);
+    // neither that nor 'starting' is a real exit, so neither raises the banner.
+    } else if (backendStatus.state !== 'starting' && backendStatus.state !== 'stopped') sendToOrb('nova:backend-exit')
   }).catch(() => {
     console.error('Nova Audio Agent Desktop renderer failed to load')
     app.quit()
   })
   tray = createTray()
   const shortcutRegistered = globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    mainWindow?.isVisible() ? hideOrb() : wakeWord?.wake()
+    mainWindow?.isVisible() ? hideOrb() : requestPresentation('workbench')
   })
   // Wayland/XWayland sessions may silently refuse global shortcuts; surface
   // that instead of leaving the user to wonder why the hotkey never fires.
   if (!shortcutRegistered) {
     console.warn('[nova-audio-agent-desktop] global shortcut unavailable on this session')
   }
-  if (currentSettings.phoneConnectionEnabled && !currentSettings.phoneServerTokenFile) void managedPhone.start().catch(() => {})
   for (const [key, action] of [
     ['Control+M', () => sendToOrb('nova:microphone:toggle')],
     ['Control+L', sleepOrb],
@@ -1595,7 +2063,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!globalShortcut.register(key, action)) console.warn(`[nova-audio-agent-desktop] shortcut unavailable: ${key}`)
   }
   backendSupervisor = createBackendSupervisor({
-    start: onExit => launchBackend(backendKind, smokeChannel, onExit),
+    start: onExit => launchBackend(smokeChannel, onExit),
     stopBackend: async child => {
       backendControl?.close()
       await shutdownBackend(child)
@@ -1603,6 +2071,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     },
     onStatus: status => {
       const previousConnection = backendStatus.connection
+      resetTrayUnreadForBackend(tray, backendStatus, status)
       backendStatus = status
       if (status.state === 'connected' && status.connection !== previousConnection) {
         backendGeneration += 1
@@ -1610,7 +2079,10 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       }
       if (runtimeCapabilities?.state === 'running' && status.state !== 'connected') runtimeCapabilities = {...runtimeCapabilities, state: 'stopped'}
       sendToSettings('nova:settings:changed', settingsView())
-      sendToOrb('nova:backend-status', status)
+      if (status.state === 'connected') { backendEverConnected = true; publishStartup('ready') }
+      else if (status.state === 'reconnecting') publishStartup(backendEverConnected ? 'reconnecting' : 'backend')
+      else if (!['starting', 'stopped'].includes(status.state)) publishStartup('failed', status.diagnostic)
+      sendToOrb('nova:backend-status', {...status, startup})
       if (smokeChannel === null && status.state === 'connected' && status.connection) {
         sendToOrb('nova:backend-ready', status.connection)
       } else if (status.state !== 'starting' && status.state !== 'stopped') {
@@ -1618,10 +2090,12 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       }
     },
   })
-  if (settingsReady) void managedWorkspaceBackendRecovery.start()
+  if (settingsReady && configurationReady) void managedWorkspaceBackendRecovery.start()
+    .catch(error => publishStartup('failed', startupFailureCode(error)))
   if (openSettingsRequested) {
     openSettingsRequested = false
-    openSettingsWindow(launchId)
+    await openSettingsWindow(launchId)
+    if (smokeChannel !== null) await verifySettingsRenderer()
   }
   if (!settingsReady) {
     void dialog.showMessageBox(mainWindow, {
@@ -1635,7 +2109,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
 }
 
 async function start() {
-  const backendKind = selectedBackend(process.env, { isPackaged: app.isPackaged })
+  selectedBackend(process.env, { isPackaged: app.isPackaged })
   releaseSmokeChannel = createReleaseSmokeChannel({
     environment: process.env,
     isPackaged: app.isPackaged,
@@ -1643,7 +2117,7 @@ async function start() {
   })
   return startWithSelectedCamera({
     environment: process.env,
-    start: camera => startSelectedCamera(camera, backendKind, releaseSmokeChannel),
+    start: camera => startSelectedCamera(camera, releaseSmokeChannel),
   })
 }
 
@@ -1704,9 +2178,9 @@ function finishInstalledFileCameraSmoke(result) {
 }
 
 const installedFileCameraSmoke = app.isPackaged
-  && process.env.NOVA_AUDIO_AGENT_RELEASE_CAMERA_SMOKE === RELEASE_CAMERA_SMOKE_MODE
+  && process.env.RELEASE_CAMERA_SMOKE === RELEASE_CAMERA_SMOKE_MODE
 const packagedSourceRollbackUnavailable = app.isPackaged
-  && process.env.NOVA_AUDIO_AGENT_BACKEND === 'python'
+  && process.env.BACKEND === 'python'
 const sourceStartupSmoke = !app.isPackaged
   && process.argv.includes('--nova-source-startup-smoke-v1')
 
@@ -1729,8 +2203,15 @@ if (packagedSourceRollbackUnavailable) {
     () => finishInstalledFileCameraSmoke('capture_failed'),
   )
 } else {
+  // macOS reopens the existing process through activate, not second-instance.
+  app.on('activate', () => {
+    if (!app.isQuitting && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) requestPresentation('workbench')
+  })
   app.on('second-instance', (_event, argv) => {
     wakeWord?.wake()
+    requestPresentation('workbench')
+    mainWindow?.show()
+    mainWindow?.focus()
     if (!shouldOpenSettings(argv)) return
     if (activeLaunchId === null) {
       openSettingsRequested = true
@@ -1738,19 +2219,30 @@ if (packagedSourceRollbackUnavailable) {
     }
     openSettingsWindow(activeLaunchId)
   })
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    if(acceptance){installAcceptanceSessionGate(session.defaultSession,assertAcceptanceUrl);await probeAcceptanceGate()}
     configureDevelopmentDockIcon({
       app,
       platform: process.platform,
       iconFile: resolve(packageRoot, 'resources/icon-source/1024x1024.png'),
     })
-    return start()
+    const started=start()
+    if(acceptance)void started.then(async()=>{
+      await waitForNativeWorkbench(mainWindow)
+      const initial=await captureNativeWorkbench(mainWindow,acceptance.outputDirectory,'initial')
+      await new Promise(resolve=>setTimeout(resolve,acceptance.runCapSeconds*1000))
+      const result=await captureNativeWorkbench(mainWindow,acceptance.outputDirectory)
+      result.screenshots.unshift(...initial.screenshots)
+      writeAcceptanceFile(resolve(acceptance.outputDirectory,'capture.json'),JSON.stringify(result),{mode:0o600})
+      app.quit()
+    }).catch(()=>{acceptanceFailure=true;appendAcceptanceCounts('capture_failed',{failed:1});app.quit()})
+    return started
   }).catch(async error => {
     // start() can fail before the language is applied; resolve the saved preference first so the
     // one message that matters most is not stuck in the default language. Never write here.
     try { setLanguage((await loadSettings(settingsFile(), app.getPreferredSystemLanguages(), {initialize: false})).language) } catch { /* keep the default */ }
     reportStartupFailure(error, {
-      showError: message => dialog.showErrorBox(t("向量服务配置不受支持"), t("{0}\n设置文件：{1}（如有 .recovery 文件也需检查）", message, settingsFile())),
+      showError: sourceStartupSmoke || acceptance || releaseSmokeChannel !== null ? undefined : message => dialog.showErrorBox(t("启动失败"), t("{0}\n设置文件：{1}（如有 .recovery 文件也需检查）", message, settingsFile())),
     })
     app.quit()
   })
@@ -1772,6 +2264,7 @@ app.on('before-quit', event => {
   wakeWord?.stop()
   void nativeAudio?.deactivate()
   if (quitDrain) { event.preventDefault(); return }
+  // Setup-only Feishu also owns subprocesses and must drain on quit.
   // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
   // kill would cut the session off mid-teardown, and on Windows there is no
   // graceful signal at all. Resume normal window shutdown after the drain;
@@ -1787,9 +2280,11 @@ app.on('before-quit', event => {
     await maintenance?.close()
     sourceSmokeStage('maintenance_closed')
   }), wait(3000).then(() => sourceSmokeStage('maintenance_deadline'))])
-  const drain = Promise.all([backendDrain, maintenanceDrain, cancelPhonePairing().then(() => managedPhone.stop())])
+  const drain = Promise.all([backendDrain, maintenanceDrain, feishuSetupOwner.release(), cancelPhonePairing().then(() => managedPhone.stop())])
   const resumeQuit = () => { quitDrained = true; sourceSmokeStage('quit_resumed'); app.quit() }
   quitDrain = drain.then(resumeQuit, resumeQuit)
 })
 
 app.on('window-all-closed', event => event.preventDefault?.())
+
+app.on('will-quit',()=>{if(acceptanceFailure)app.exit(1)})

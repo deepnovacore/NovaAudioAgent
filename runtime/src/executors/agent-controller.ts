@@ -1,3 +1,4 @@
+import type {TaskDispatchContext} from '../core/task-tools.js'
 /**
  * Host-owned agent control surface.
  *
@@ -16,6 +17,9 @@ export interface AgentDescriptor {
 }
 
 export interface AgentDispatchRequest {
+  readonly input_origin_ref?: string
+  readonly taskContext?: TaskDispatchContext
+  readonly continuationGrant?: TaskDispatchContext
   readonly sourceQuotes?: readonly string[]
   readonly conversationContext?: readonly {readonly role: 'user' | 'assistant'; readonly text: string; readonly sequence: number}[]
   readonly instruction: string
@@ -39,6 +43,7 @@ export interface AgentCancelRequest {
 export interface AgentRuntimeDispatchPort {
   cancelPendingDispatch?(delegateId: string): boolean
   dispatch(request: {
+    readonly taskContext?: TaskDispatchContext
     readonly channel: string
     readonly op: string
     readonly request: Readonly<Record<string, JsonValue>>
@@ -102,7 +107,6 @@ export const agentActionResultSchema = z.discriminatedUnion('code', [
 ])
 
 export type AgentActionResult = z.infer<typeof agentActionResultSchema>
-export type AgentActionCode = AgentActionResult['code']
 
 /** Parse controller output without invoking accessors or retaining caller-owned object graphs. */
 export function parseAgentActionResult(value: unknown): AgentActionResult | null {

@@ -490,6 +490,7 @@ function validateExecutorApprovalLocalDetail(
 export function captionMessage(frame: CaptionFrame, sequence: number): string {
   return unicodeJson({
     type: CAPTION,
+    ...(frame.turn_id===undefined?{}:{turn_id:frame.turn_id}),
     ...(frame.work_id === undefined ? {} : {work_id: frame.work_id}),
     ...(frame.executor === undefined ? {} : {executor: frame.executor}),
     ...(frame.project === undefined ? {} : {project: frame.project}),

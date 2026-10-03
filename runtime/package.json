@@ -1,6 +1,6 @@
 {
   "name": "@nova-audio-agent/runtime",
-  "version": "0.1.1",
+  "version": "0.3.0-preview.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -39,8 +39,6 @@
     "lint": "eslint src eval test",
     "smoke:qwen": "npm run build && node scripts/live-smoke.mjs --target=qwen",
     "smoke:cascaded": "npm run build && node scripts/live-smoke.mjs --target=cascaded",
-    "smoke:qwen:clarification": "npm run build && node scripts/live-smoke.mjs --target=qwen-clarification-legacy",
-    "smoke:qwen:routing": "npm run build && node scripts/live-smoke.mjs --target=qwen-routing-legacy",
     "smoke:qwen:surrogate": "npm run build && node scripts/live-smoke.mjs --target=qwen-surrogate",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:win": "npm run build && node scripts/test-windows.mjs",
@@ -48,7 +46,8 @@
     "smoke:search:mcp": "npm run build && node scripts/live-smoke.mjs --target=search-mcp",
     "smoke:knowledge": "npm run build && node scripts/live-smoke.mjs --target=knowledge",
     "test:live": "npm run build && node scripts/live-smoke.mjs",
-    "test:live:contract": "npm run build && node --test scripts/live/*contract.test.mjs"
+    "test:live:contract": "npm run build && node --test scripts/live/*contract.test.mjs",
+    "test:win:platform": "npm run build && node scripts/test-windows.mjs --platform-only"
   },
   "dependencies": {
     "@livekit/agents": "1.6.4",
@@ -62,6 +61,7 @@
     "pdfjs-dist": "6.2.108",
     "pg": "8.11.3",
     "qrcode": "1.5.4",
+    "saxes": "^6.0.0",
     "undici": "7.29.0",
     "voicemem": "0.0.1",
     "ws": "8.21.3",

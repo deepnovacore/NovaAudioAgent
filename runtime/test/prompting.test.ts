@@ -11,7 +11,7 @@ import {
   renderContextSnapshot,
 } from '../src/model/prompting.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/prompting/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/prompting/v1')
 
 function loadJson<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(fixtureRoot, name), 'utf8')) as T

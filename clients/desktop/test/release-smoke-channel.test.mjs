@@ -13,7 +13,7 @@ const TOKEN = '0123456789abcdef0123456789abcdef'
 
 test('release smoke source rollback uses an exact packaged-only exit code', () => {
   assert.equal(releaseSmokeSourceRollbackExitCode({
-    environment: {NOVA_AUDIO_AGENT_RELEASE_SMOKE: RELEASE_SMOKE_MODE},
+    environment: {RELEASE_SMOKE: RELEASE_SMOKE_MODE},
     isPackaged: true,
   }), SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE)
   assert.equal(releaseSmokeSourceRollbackExitCode({
@@ -26,7 +26,7 @@ test('release smoke control is packaged-only and inert during ordinary source la
   let opened = 0
   for (const input of [
     {environment: {}, isPackaged: true},
-    {environment: {NOVA_AUDIO_AGENT_RELEASE_SMOKE: RELEASE_SMOKE_MODE}, isPackaged: false},
+    {environment: {RELEASE_SMOKE: RELEASE_SMOKE_MODE}, isPackaged: false},
   ]) {
     assert.equal(createReleaseSmokeChannel({
       ...input,
@@ -45,7 +45,7 @@ test('release smoke channel privately reports readiness and accepts only one exa
   let quits = 0
   output.on('data', chunk => { written += chunk.toString('utf8') })
   const channel = createReleaseSmokeChannel({
-    environment: {NOVA_AUDIO_AGENT_RELEASE_SMOKE: RELEASE_SMOKE_MODE},
+    environment: {RELEASE_SMOKE: RELEASE_SMOKE_MODE},
     isPackaged: true,
     openOutput: () => output,
     openInput: () => input,
@@ -68,7 +68,7 @@ test('release smoke channel refuses malformed control and readiness without leak
   const input = new PassThrough()
   let quits = 0
   const channel = createReleaseSmokeChannel({
-    environment: {NOVA_AUDIO_AGENT_RELEASE_SMOKE: RELEASE_SMOKE_MODE},
+    environment: {RELEASE_SMOKE: RELEASE_SMOKE_MODE},
     isPackaged: true,
     openOutput: () => output,
     openInput: () => input,

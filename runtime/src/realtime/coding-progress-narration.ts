@@ -7,7 +7,7 @@ export class CodingProgressNarrationState {
   readonly #listeners = new Set<() => void>()
   constructor(mode: CodingProgressNarration = 'smart') { this.#mode = mode }
   get mode(): CodingProgressNarration { return this.#mode }
-  viaSurrogate(coding: boolean, manifestPolicy: boolean): boolean {
+  viaProactive(coding: boolean, manifestPolicy: boolean): boolean {
     return coding ? this.#mode === 'smart' && manifestPolicy : manifestPolicy
   }
   setMode(mode: CodingProgressNarration): void {

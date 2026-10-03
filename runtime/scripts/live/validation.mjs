@@ -32,3 +32,14 @@ export function summary(results) {
   }
   return {...counts, total:results.length, accepted:results.length > 0 && counts.passed === results.length}
 }
+
+// Exit zero is insufficient: selected modules must produce their own completed evidence.
+export function validateModuleReport(value,module,notBefore=0) {
+  const report=z.object({version:z.literal(1),module:z.literal(module),synthetic:z.literal(true),
+    layer:z.string().min(1),status:z.enum(['passed','failed','blocked']),checks:z.array(z.string().min(1)),
+    coverage:z.array(z.string().min(1)).min(1),started_at:z.string().datetime(),finished_at:z.string().datetime(),
+  }).passthrough().parse(value)
+  if(Date.parse(report.started_at)<notBefore||Date.parse(report.finished_at)<Date.parse(report.started_at))throw Error('stale_module_report')
+  if(report.status==='passed'&&report.checks.length===0)throw Error('missing_module_checks')
+  return report
+}

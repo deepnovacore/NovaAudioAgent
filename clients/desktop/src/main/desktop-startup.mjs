@@ -1,3 +1,4 @@
+import {stat} from 'node:fs/promises'
 import {t} from '../renderer/locale.mjs'
 import {
   codexCandidates,
@@ -133,6 +134,7 @@ export async function prepareDesktopStartup({
   canonicalizeInvocation,
   mkdir,
   inspectCodex,
+  inspectWorkspace = stat,
   ensureDirectories = config => ensureProductDirectories(config, { mkdir, pathApi }),
 }) {
   const config = resolveDesktopConfig({
@@ -143,6 +145,15 @@ export async function prepareDesktopStartup({
     pathApi,
     canonicalize: canonicalizePath,
   })
+  if (settings.codexWorkspace?.trim() || environment.CODEX_WORKSPACE?.trim()) {
+    let workspace
+    try { workspace = await inspectWorkspace(config.workspace) }
+    catch (error) {
+      if (['ENOENT', 'ENOTDIR'].includes(error?.code)) throw Object.assign(new Error('workspace_not_found'), {code: 'workspace_not_found'})
+      throw error
+    }
+    if (!workspace.isDirectory()) throw Object.assign(new Error('workspace_invalid'), {code: 'workspace_invalid'})
+  }
   await ensureDirectories(config)
   const { config: resolved, status } = await resolveDesktopCodex({
     config,
@@ -199,10 +210,11 @@ const MESSAGE_CODES = new Set([
 ])
 
 export function startupFailureCode(error) {
-  if (error?.code === 'embedding_provider_invalid') return error.code
+  if (['embedding_provider_invalid', 'credential_access_failed', 'credential_invalid', 'startup_presentation_required', 'filesystem_permissions', 'workspace_not_found', 'workspace_invalid', 'state_permissions', 'state_busy', 'state_lock_failed', 'personal_store_locked'].includes(error?.code)) return error.code
+  if (['EACCES', 'EPERM', 'EROFS'].includes(error?.code)) return 'filesystem_permissions'
   if (MESSAGE_CODES.has(error?.message)) return error.message
   if (error?.name === 'MainCameraConfigurationError') return 'camera_configuration_invalid'
-  if (error?.message === 'NOVA_AUDIO_AGENT_BACKEND must be node') {
+  if (error?.message === 'BACKEND must be node') {
     return 'backend_selection_invalid'
   }
   return 'startup_failed'
@@ -216,6 +228,6 @@ export function reportStartupFailure(error, {
   write(`[desktop-diagnostic] startup_failure code=${code}\n`)
   if (code === 'embedding_provider_invalid') {
     showError?.(t("embeddingProvider 仅支持 dashscope，后端未启动，原配置未修改。请在设置文件中明确选择云端服务后再重启。"))
-  }
+  } else showError?.(t("启动失败，请打开设置检查配置后重试。"))
   return code
 }

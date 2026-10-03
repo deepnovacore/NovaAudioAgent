@@ -41,6 +41,7 @@ interface GenerationState {
 }
 
 export interface PlaybackRegistryOptions {
+  readonly nextGenerationEpoch?:()=>number
   readonly idFactory: () => string
   readonly onFrame: (frame: PlaybackFrame) => void
   readonly onClear: (utteranceId: string, generationEpoch: number) => void
@@ -48,6 +49,7 @@ export interface PlaybackRegistryOptions {
 }
 
 export class PlaybackRegistry {
+  readonly #nextGenerationEpoch:(()=>number)|undefined
   readonly #idFactory: () => string
   readonly #onFrame: (frame: PlaybackFrame) => void
   readonly #onClear: (utteranceId: string, generationEpoch: number) => void
@@ -60,6 +62,7 @@ export class PlaybackRegistry {
   #currentProviderIdentity: string | null = null
 
   constructor(options: PlaybackRegistryOptions) {
+    this.#nextGenerationEpoch=options.nextGenerationEpoch
     this.#idFactory = options.idFactory
     this.#onFrame = options.onFrame
     this.#onClear = options.onClear
@@ -90,7 +93,7 @@ export class PlaybackRegistry {
     if (this.#currentProviderIdentity !== null) {
       throw new Error('another playback generation is active')
     }
-    this.#generationEpoch += 1
+    this.#generationEpoch = this.#nextGenerationEpoch?.() ?? this.#generationEpoch+1
     const identity = Object.freeze({
       session_epoch: input.sessionEpoch,
       generation_epoch: this.#generationEpoch,

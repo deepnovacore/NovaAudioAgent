@@ -8,7 +8,7 @@ import {
 } from '../src/core/events.js'
 
 test('event registry covers the Python spine table in the same order', () => {
-  assert.deepEqual(EVENT_KINDS, [
+  const pythonSpine = [
     'user_input',
     'handoff',
     'progress',
@@ -20,7 +20,10 @@ test('event registry covers the Python spine table in the same order', () => {
     'speak_start',
     'speak_end',
     'assistant_spoken',
-  ])
+  ]
+  assert.deepEqual(EVENT_KINDS.slice(0, pythonSpine.length), pythonSpine)
+  // Discovery scheduling is a Node host capability, outside the Python causal spine.
+  assert.deepEqual(EVENT_KINDS.slice(pythonSpine.length), ['discovery_tick'])
 })
 
 test('queue stamps timestamps and globally monotone sequences', () => {

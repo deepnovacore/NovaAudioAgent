@@ -7,12 +7,10 @@ import test from 'node:test'
 import {
   clampWindowPosition,
   confirmationWindowLayout,
-  createConfirmationWindowController,
   createOrbWindowController,
   DORMANT_ORB_WINDOW_SIZE,
   dormantWindowLayout,
   loadWindowPosition,
-  naturalWindowPositionAfterTemporaryDrag,
   saveWindowPosition,
   validDragDelta,
 } from '../src/main/window-position.mjs'
@@ -231,43 +229,6 @@ test('confirmation layout stays inside the selected negative-coordinate display 
   assert.ok(layout.bounds.x + layout.bounds.width <= workArea.x + workArea.width)
   assert.ok(layout.bounds.y >= workArea.y)
   assert.ok(layout.bounds.y + layout.bounds.height <= workArea.y + workArea.height)
-})
-
-test('a temporary confirmation drag persists the translated natural 160 square anchor', () => {
-  const natural = naturalWindowPositionAfterTemporaryDrag({
-    normalBounds: {x: 600, y: 740, width: 160, height: 160},
-    temporaryBounds: {x: 600, y: 660, width: 160, height: 240},
-    draggedPosition: {x: 500, y: 560},
-    workArea: {x: 0, y: 0, width: 1440, height: 900},
-  })
-
-  assert.deepEqual(natural, {x: 500, y: 640})
-})
-
-test('confirmation window controller restores bounds and persists only a dragged natural anchor', () => {
-  let bounds = {x: 600, y: 740, width: 160, height: 160}
-  const applied = []
-  const placements = []
-  const controller = createConfirmationWindowController({
-    getBounds: () => bounds,
-    setBounds: next => {
-      bounds = next
-      applied.push(next)
-    },
-    getZoomFactor: () => 1.5,
-    getWorkAreaForPoint: () => ({x: 0, y: 0, width: 1440, height: 900}),
-    onPlacement: placement => placements.push(placement),
-  })
-
-  controller.setMode(true)
-  assert.deepEqual(bounds, {x: 560, y: 659, width: 240, height: 240})
-  const dragged = controller.finishDrag({x: 500, y: 559})
-  assert.deepEqual(dragged, {x: 540, y: 640})
-  assert.deepEqual(bounds, {x: 500, y: 640, width: 240, height: 240})
-  controller.setMode(false)
-  assert.deepEqual(bounds, {x: 540, y: 640, width: 160, height: 160})
-  assert.deepEqual(placements, ['above', 'below', 'below'])
-  assert.equal(applied.length, 3)
 })
 
 test('returns null for a missing position file', async () => {

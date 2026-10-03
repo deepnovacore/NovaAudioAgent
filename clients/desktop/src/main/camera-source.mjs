@@ -1,7 +1,7 @@
 import { realpathSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 
-export const DESKTOP_VIDEO_FILE_ENV = 'NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE'
+export const DESKTOP_VIDEO_FILE_ENV = 'DESKTOP_VIDEO_FILE'
 
 export class MainCameraConfigurationError extends Error {
   constructor() {

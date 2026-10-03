@@ -1,3 +1,4 @@
+// Serialized slot names are stable across replay; surrogate.watch serves Proactive selection.
 import { z } from 'zod'
 import { routingClassSchema } from './ports.js'
 

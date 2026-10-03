@@ -1,6 +1,6 @@
 {
   "name": "nova-audio-agent",
-  "version": "0.1.1",
+  "version": "0.3.0-preview.1",
   "description": "Install and launch the Nova Audio Agent desktop client from the command line.",
   "type": "module",
   "bin": {
@@ -21,13 +21,14 @@
   },
   "publishConfig": {
     "access": "public",
+    "tag": "preview",
     "registry": "https://registry.npmjs.org/"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/deepnovacore/NovaAudioAgent.git"
   },
-  "homepage": "https://github.com/deepnovacore/NovaAudioAgent#readme",
+  "homepage": "https://deepnovacore.github.io/NovaAudioAgent/",
   "bugs": {
     "url": "https://github.com/deepnovacore/NovaAudioAgent/issues"
   },

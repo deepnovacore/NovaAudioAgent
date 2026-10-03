@@ -21,7 +21,7 @@ test('actual main prelaunch registry failures stop the supervisor without schedu
   for (const bytes of ['invalid json', ' '.repeat(256 * 1024 + 1), null]) {
     if (bytes === null) await rm(path)
     else await writeFile(path, bytes)
-    const context = vm.createContext({readCapabilityDocument, classifyBackendFailure, currentSettings: {capabilitiesConfigPath: path}, process: {env: {}}, desktopConfig: {}, codexStatus: {status: 'ready'}})
+    const context = vm.createContext({acceptance: null, readCapabilityDocument, classifyBackendFailure, currentSettings: {capabilitiesConfigPath: path}, process: {env: {}}, desktopConfig: {}, codexStatus: {status: 'ready'}})
     vm.runInContext(launch, context)
     let retries = 0
     const supervisor = createBackendSupervisor({start: () => context.launchBackend(), stopBackend: async () => {}, onStatus: () => {}, schedule: () => {retries++; return 1}})
@@ -32,55 +32,63 @@ test('actual main prelaunch registry failures stop the supervisor without schedu
     await supervisor.stop()
   }
 })
-test('actual main keeps invalid model configuration visible when Coding is disabled', async () => {
-  const context = vm.createContext({readCapabilityDocument: () => ({modules: {coding: {enabled: false}}}), classifyBackendFailure,
+for (const acceptance of [null, {}]) test(`actual main preserves model errors with Coding disabled (acceptance=${!!acceptance})`, async () => {
+  const context = vm.createContext({acceptance, readCapabilityDocument: () => ({modules: {coding: {enabled: false}}}), classifyBackendFailure,
     currentSettings: {}, process: {env: {}}, desktopConfig: {modelConfigurationError: 'model_base_url_invalid', codexConfigurationError: 'manual_path_required'}, codexStatus: {status: 'unavailable'}})
   vm.runInContext(launch, context)
   await assert.rejects(context.launchBackend(), error => error.kind === 'configuration_required' && error.code === 'model_base_url_invalid')
 })
-test('actual settings view decrypts only for an open panel and caches the public generation', () => {
+test('actual main turns Coding off instead of blocking on an unfinished manual Codex path', async () => {
+  const specs = []
+  const context = vm.createContext({acceptance: null, readCapabilityDocument: () => ({version: 1}), classifyBackendFailure,
+    accessCredentials: fn => fn(), refreshCapabilityEditor() {}, preferredLanguage: () => 'en', acceptanceBackendSettings: value => value,
+    currentSettings: {}, process: {env: {}, cwd: () => '/tmp'}, desktopConfig: {codexConfigurationError: 'manual_path_required'}, codexStatus: {status: 'ready'},
+    randomBytes: () => Buffer.alloc(16), createReadinessListener: () => ({endpoint: Promise.resolve('ep'), close() {}}), createBackendDiagnosticCollector: () => ({}),
+    decryptSecretsForSpawn: () => ({}), secretCodec: {}, settingsGeneration: 0, launchGeneration: 0, mainWindow: null, app: {isPackaged: false, getAppPath: () => '/app', getPreferredSystemLanguages: () => ['en']},
+    nodeRuntimeEntry: () => 'entry', packageRoot: '/pkg', resolve: (...parts) => parts.join('/'), openSetupWindow: () => {},
+    backendLaunchSpec: () => { const spec = {env: {}}; specs.push(spec); return spec },
+    // Stop right after the spawn environment is built; the fork itself is not under test.
+    describeMissingBlockingEnvironment: (_environment, textConversations) => {assert.equal(textConversations, true); return {pipeline: 'cascaded', missing: ['DASHSCOPE_API_KEY']}}})
+  vm.runInContext(launch, context)
+  await assert.rejects(context.launchBackend('node', {}), error => error.kind === 'configuration_required' && error.code !== 'manual_path_required')
+  assert.equal(specs[0].env.CODING_MODULE_ENABLED, 'false')
+})
+test('actual settings view never decrypts while projecting startup and panel state', () => {
   let decrypts = 0
   const context = vm.createContext({createManagedPhoneService: () => ({}), VISION_MODELS: {}, resolveSecretConfiguration, developmentEnv: {}, frontendUsage: {snapshot: () => ({})}, wakeWord: null, settingsWindow: null, capabilityEditorCache: null, settingsGeneration: 0, currentSettings: {}, process: {env: {}},
     readCapabilityDocument: () => ({version: 1}), decryptSecretsForSpawn: () => {decrypts++; return {}},
     readCapabilityEditor: () => ({document: {version: 1}, revision: 'test-revision', problems: []}), capabilityEnvironment: () => ({}), capabilityPath, statSync, capabilityDocumentRevision: () => 'fixed',
     runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
-    microphoneStatus: 'unknown', desktopConfig: null, secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})
+    startup: {}, keyringAvailable: true, microphoneStatus: 'unknown', desktopConfig: null, secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})
   vm.runInContext(view, context)
   context.settingsView(); context.settingsView()
   assert.equal(decrypts, 0)
   context.settingsWindow = {}
   context.settingsView(); context.settingsView()
-  assert.equal(decrypts, 1)
+  assert.equal(decrypts, 0)
   context.settingsGeneration++
   context.settingsView()
-  assert.equal(decrypts, 2)
+  assert.equal(decrypts, 0)
   context.settingsWindow = null
   context.settingsView()
-  assert.equal(decrypts, 2)
+  assert.equal(decrypts, 0)
 })
-
-test('actual main refreshes a hand-edited registry while the panel is open and on backend launch', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'nova-task4-cache-'))
+test('explicit settings refresh reads hand edits without IO in the public projection', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-task6-cache-'))
   t.after(() => rm(root, {recursive: true, force: true}))
   const path = join(root, 'capabilities.json')
-  const context = vm.createContext({createManagedPhoneService: () => ({}), VISION_MODELS: {}, resolveSecretConfiguration, developmentEnv: {}, frontendUsage: {snapshot: () => ({})}, wakeWord: null, settingsWindow: {show() {}, focus() {}}, refreshManagedWorkspaceCapabilities: () => Promise.resolve(), sendToSettings: () => {}, capabilityEditorCache: null, settingsGeneration: 0,
-    currentSettings: {capabilitiesConfigPath: path}, process: {env: {}}, readCapabilityDocument, classifyBackendFailure,
-    decryptSecretsForSpawn: () => ({}), capabilityEnvironment: () => ({}),
-    readCapabilityEditor: settings => ({document: readCapabilityDocument(settings, {}), revision: 'test-revision', problems: []}), capabilityPath, capabilityDocumentRevision,
-    // Windows can give consecutive same-size writes identical file timestamps.
-    statSync: () => ({dev: 1, ino: 1, size: 38, mtimeMs: 1, ctimeMs: 1}),
-    runtimeCapabilities: null, publicSettings: () => ({}), codexStatus: {}, backendStatus: {}, settingsApplyStatus: 'idle', settingsRecoveryAvailable: false, managedWorkspacesView: () => ({}),
-    microphoneStatus: 'unknown', desktopConfig: {modelConfigurationError: 'model_base_url_invalid'},
-    secretsPresent: () => ({}), secretCodec: {available: () => true}, hasPlaintextSecret: () => false})
-  const open = source.slice(source.indexOf('function openSettingsWindow('), source.indexOf('function createTray('))
-  vm.runInContext(view + '\n' + launch + '\n' + open, context)
-  await writeFile(path, JSON.stringify({version: 1, frontbrainToolBudget: 4}))
-  assert.equal(context.settingsView().capabilitiesDocument.frontbrainToolBudget, 4)
-  await writeFile(path, JSON.stringify({version: 1, frontbrainToolBudget: 5}))
-  context.openSettingsWindow()
-  assert.equal(context.settingsView().capabilitiesDocument.frontbrainToolBudget, 5)
-  await writeFile(path, JSON.stringify({version: 1, frontbrainToolBudget: 6}))
-  assert.equal(context.settingsView().capabilitiesDocument.frontbrainToolBudget, 6)
-  await assert.rejects(context.launchBackend(), error => error.code === 'model_base_url_invalid')
-  assert.equal(context.settingsView().capabilitiesDocument.frontbrainToolBudget, 6)
+  let credentials = 0
+  const context = vm.createContext({capabilityEditorCache: null, currentSettings: {capabilitiesConfigPath: path}, process: {env: {}},
+    readCapabilityDocument, capabilityEnvironment: () => ({}), readCapabilityEditor: settings => ({document: readCapabilityDocument(settings, {})}),
+    accessCredentials: operation => {credentials++; return operation()}, decryptSecretsForSpawn: () => ({}), secretCodec: {}, backendStatus: {state: 'connected'}, credentialFailure: null})
+  const helpers = source.slice(source.indexOf('async function refreshSettingsCapabilities('), source.indexOf('async function loadMemoryBoardExport('))
+  vm.runInContext(helpers, context)
+  for (const budget of [4, 5, 6]) {
+    await writeFile(path, JSON.stringify({version: 1, frontbrainToolBudget: budget}))
+    await context.refreshSettingsCapabilities()
+    assert.equal(context.capabilityEditorCache.view.document.frontbrainToolBudget, budget)
+  }
+  assert.equal(credentials, 3)
+  context.credentialFailure = {code: 'credential_access_failed'}
+  await context.refreshSettingsCapabilities(); assert.equal(credentials, 3)
 })

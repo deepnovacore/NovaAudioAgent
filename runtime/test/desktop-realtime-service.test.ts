@@ -722,6 +722,9 @@ test('entry construction emits only stable failure classes without raw messages'
     }), code: 'configuration_required'},
     {error: Object.assign(new Error('private credential'), {code: 'credential_missing'}), code: 'authentication_failed'},
     {error: Object.assign(new Error('private binary'), {code: 'codex_host_unavailable'}), code: 'backend_unavailable'},
+    ...['state_permissions', 'state_busy', 'state_lock_failed', 'workspace_not_found'].map(code => ({error: Object.assign(new Error('private path'), {code}), code})),
+    {error: new Error('personal_store_locked'), code: 'personal_store_locked'},
+    ...['EACCES', 'EPERM', 'EROFS'].map(code => ({error: Object.assign(new Error('private path'), {code}), code: 'filesystem_permissions'})),
     {error: new Error('private unknown'), code: 'assembly_failed'},
   ]) {
     const diagnostics: string[] = []
@@ -1023,9 +1026,12 @@ function waitDesktopClose(socket: WebSocket, label: string): Promise<number> {
 
 async function authenticateDesktop(socket: WebSocket, label: string): Promise<void> {
   // Even without a coding executor, authentication publishes an empty task snapshot.
-  const initial = receiveFrames(socket, 2, `${label} bootstrap`)
+  const initial = receiveFrames(socket, 3, `${label} bootstrap`)
   await sendDesktop(socket, JSON.stringify({type: 'hello', token: TOKEN}), `${label} hello`)
-  assert.deepEqual((await initial).map(frame => JSON.parse(text(frame)) as unknown), [
+  const bootstrap = (await initial).map(frame => JSON.parse(text(frame)) as Record<string, unknown>)
+  assert.equal(bootstrap[1]?.type, 'desktop.capabilities')
+  assert.equal(typeof bootstrap[1]?.input_instance_id, 'string')
+  assert.deepEqual(bootstrap.filter(frame => frame.type !== 'desktop.capabilities'), [
     {type: 'desktop.ready'},
     {type: 'executor.tasks', revision: 0, active_project: null, tasks: []},
   ])
@@ -1281,10 +1287,10 @@ test('selected integrated Qwen assembly uses the authenticated provider-neutral 
     buildRealtime: output => {
       callbacks = output
       return buildProductionRealtimeAssembly({
-        settings: loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-          NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+        settings: loadSettings({MEMORY_CONNECTION: 'disabled',
+          PIPELINE_MODE: 'integrated',
           DASHSCOPE_API_KEY: 'dash-key',
-          NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+          MODEL_API_KEY: 'model-key',
           TAVILY_API_KEY: 'search-key',
         }),
         connector: () => Promise.resolve(providerSocket),
@@ -1404,9 +1410,9 @@ test('selected cascaded production assembly falls back before ASR on the same au
     buildRealtime: output => {
       callbacks = output
       return buildProductionRealtimeAssembly({
-        settings: loadSettings({NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-          NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
-          NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+        settings: loadSettings({MEMORY_CONNECTION: 'disabled',
+          PIPELINE_MODE: 'cascaded',
+          CASCADE_LLM_PROVIDER: 'ark',
           ARK_API_KEY: 'ark-key',
           DOUBAO_BIGMODEL_API_KEY: 'doubao-key',
           TAVILY_API_KEY: 'search-key',
@@ -1634,6 +1640,10 @@ test('captured composition callbacks preserve clear alert Codex project clock an
   assert.equal(composition.realtime.runtime.clock, clock)
   assert.equal(composition.desktop.bridge.claim(), true)
   composition.desktop.bridge.markAuthenticated()
+  const inputCapabilities=JSON.parse(String(composition.desktop.bridge.takeNextDelivery()?.frame)) as {type:string;capabilities:string[];input_instance_id:string}
+  assert.equal(inputCapabilities.type,'desktop.capabilities')
+  assert.deepEqual(inputCapabilities.capabilities,['text_input','dictation'])
+  assert.match(inputCapabilities.input_instance_id,/^[a-f0-9-]{36}$/u)
   // No coding role: publish an empty task snapshot to clear any prior renderer state.
   assert.deepEqual(JSON.parse(String(composition.desktop.bridge.takeNextDelivery()?.frame)), {
     type: 'executor.tasks', revision: 0, active_project: null, tasks: [],

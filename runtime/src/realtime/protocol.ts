@@ -1,7 +1,7 @@
 import type {PromptLanguage} from './prompt-language.js'
 import { z } from 'zod'
 import { jsonValueSchema, type JsonValue } from '../core/events.js'
-import { MAX_PACKED_RECOVERY_CONTENT } from './history.js'
+import { MAX_PACKED_RECOVERY_CONTENT, type CommittedConversationPair } from './history.js'
 
 export const MAX_REALTIME_TEXT = 4_000
 export const MAX_REALTIME_PCM_BYTES = 64 * 1_024
@@ -206,12 +206,11 @@ export const workspaceContextInjectionSchema = workspaceContextDeliveryRecordSch
   },
 )
 
-export type WorkspaceContextDeliveryCapability = z.infer<typeof workspaceContextDeliveryCapabilitySchema>
-export type WorkspaceContextDelivery = z.infer<typeof workspaceContextDeliverySchema>
 export type WorkspaceContextDeliveryRecord = z.infer<typeof workspaceContextDeliveryRecordSchema>
 
 export const hostResponseKindSchema = z.enum([
   'host_fact',
+  'task_continuation',
   'tool_result',
   'delegation_acknowledgement',
 ])
@@ -222,6 +221,7 @@ export const hostResponseIntentSchema = z.object({
   task_summary: boundedText().nullable().default(null),
   origin_spoken: z.boolean().default(false),
 }).strict().superRefine((intent, context) => {
+  if(intent.kind==='task_continuation'&&intent.item.kind!=='recovery')context.addIssue({code:'custom',path:['item'],message:'task continuation requires recovery context'})
   if (intent.item.kind === 'workspace_context') {
     context.addIssue({
       code: 'custom',
@@ -333,7 +333,7 @@ export const userTranscriptFailedSchema = sessionEvent(z.literal('user_transcrip
 })
 export const userTranscriptFinalSchema = sessionEvent(
   z.literal('user_transcript_final'),
-  itemTextShape,
+  {...itemTextShape, input_kind:z.literal('text').optional()},
 )
 /** Provider evidence, never a host turn identity or an authorization decision.
  * Omission preserves automatic-provider legacy correlation; explicit unknown must not claim a user item.
@@ -445,6 +445,8 @@ export interface RealtimeProvider {
    */
   readonly userResponseMode?: 'automatic' | 'requested'
 
+  /** Fresh provider session only; rejects any attempt to replace an active conversation. */
+  restoreHistory?(history:readonly CommittedConversationPair[],signal:AbortSignal):Promise<void>
   submitText?(text: string, signal: AbortSignal): Promise<void>
   transcribeDraft?(pcm: Uint8Array, signal: AbortSignal): Promise<string>
   /** Absent and false both prohibit original-media injection. */

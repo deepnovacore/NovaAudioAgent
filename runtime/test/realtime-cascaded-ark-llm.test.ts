@@ -348,3 +348,19 @@ test('Ark original-image turn chains tools but the next turn uses text-only loca
   assert.match(JSON.stringify(requests[2]), /function_call_output/u)
   await llm.close()
 })
+
+test('Ark fresh seed uses independent committed history without provider continuation ids', async () => {
+  const requests:Record<string,unknown>[]=[]
+  const factory=createArkCascadedLlmFactory({baseUrl:'https://example.invalid',apiKey:'test',model:'test',instructions:'system',fetchImpl:(_url,init)=>{
+    requests.push(JSON.parse(init?.body as string) as Record<string,unknown>)
+    return Promise.resolve(sse({type:'response.created',response:{id:'r'}},{type:'response.output_text.delta',delta:'answer'},{type:'response.completed',response:{id:'r'}}))
+  }})
+  const session=factory.open({history:[{user:'old user',assistant:'old answer'}]}),signal=new AbortController().signal
+  try {
+    await collect(session.stream({inputs:[{kind:'user_text',text:'new question'}],tools:[],signal}))
+    assert.deepEqual(requests[0]?.input,[{role:'user',content:'old user'},{role:'assistant',content:'old answer'},{role:'user',content:'new question'}])
+    assert.equal(requests[0]?.previous_response_id,undefined)
+    assert(typeof session.restoreHistory==='function')
+    await assert.rejects(session.restoreHistory([{user:'replace',assistant:'bad'}],signal))
+  }finally{await session.close()}
+})

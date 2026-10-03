@@ -5,6 +5,19 @@ import {
   SensitivePathPolicy,
 } from '../src/memory/sensitivity.js'
 
+test('screens pasted private keys, including truncated blocks, without hiding public keys', () => {
+  const policy = new SensitiveContentPolicy()
+  for (const kind of ['PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'OPENSSH PRIVATE KEY', 'ENCRYPTED PRIVATE KEY']) {
+    const block = `-----BEGIN ${kind}-----\nfixture-private-material\n-----END ${kind}-----`
+    assert.deepEqual(policy.scrub('detail', block), {kind: 'rejected'})
+    assert.deepEqual(policy.scrub('detail', `-----BEGIN ${kind}-----\nfixture-private-material`), {kind: 'rejected'})
+    const mixed = policy.scrub('detail', `Deployment note\n${block}\nFollow up tomorrow`)
+    assert.equal(mixed.kind, 'redacted')
+    if (mixed.kind === 'redacted') assert.equal(mixed.value, 'Deployment note\n[redacted]\nFollow up tomorrow')
+  }
+  assert.deepEqual(policy.scrub('detail', '-----BEGIN PUBLIC KEY-----\nfixture-public-material\n-----END PUBLIC KEY-----'), {kind: 'clean'})
+})
+
 test('denies sensitive paths without returning their labels', () => {
   const policy = new SensitivePathPolicy()
   const path = '/repo/.env.production'
@@ -328,4 +341,21 @@ test('does not redact the safe line after empty authorization headers', () => {
 
   assert.deepEqual(policy.scrub('detail', 'Authorization:\nafter'), {kind: 'clean'})
   assert.deepEqual(policy.scrub('detail', 'Proxy-Authorization:\nafter'), {kind: 'clean'})
+})
+
+test('query-level URL redaction never exposes a credential that whole-URL screening would catch', async () => {
+  const {redactUrlQueryCredentials} = await import('../src/memory/sensitivity.js')
+  const policy = new SensitiveContentPolicy()
+  const screened = (text: string) => {
+    const pre = redactUrlQueryCredentials(text), result = policy.scrub('executor_observation', pre)
+    return result.kind === 'clean' ? pre : result.kind === 'redacted' ? result.value : '[redacted]'
+  }
+  assert.equal(screened('see https://example.test/read?token=abc&view=summary now'), 'see https://example.test/read?token=[REDACTED]&view=summary now')
+  assert.equal(screened('https://example.test/?token=a&token=second-secret&view=1'), 'https://example.test/?token=[REDACTED]&token=[REDACTED]&view=1')
+  for (const leaky of [
+    'https://example.test/?token=first#access%5Ftoken=second-secret',
+    'https://example.test/?view=1#token=second-secret',
+    'https://example.test/?access%5Ftoken=second-secret',
+    'https://user:second-secret@example.test/?token=first',
+  ]) assert.doesNotMatch(screened(`result ${leaky} done`), /second-secret/u, leaky)
 })

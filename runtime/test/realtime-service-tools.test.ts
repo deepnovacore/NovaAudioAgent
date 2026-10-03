@@ -15,7 +15,7 @@ import {dispatchTurn, hostFact, intakePorts, parkedStream, realtimeServiceHarnes
 test('intake failures reach exported telemetry without raw provider errors', async () => {
   const {service, telemetry} = realtimeServiceHarness('pipeline', {agent: true, intake: intakePorts({
     models: {assess: () => Promise.reject(new GatewayError('HTTPStatus401')),
-      plan: () => Promise.resolve({}), resolveCancelTarget: () => Promise.resolve(null)},
+      plan: () => Promise.resolve({}), targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)}},
   })})
   await service.connect()
   await dispatchTurn(service, 'dispatch', {executor: 'codex', instruction: 'Build a page', origin_ref: 'conversation:1'})
@@ -1171,7 +1171,7 @@ test('dispatch on the coordinated coding executor opens the intake; a committed 
         slots: {goal: {state: 'stated', note: 'Improve login'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
         readiness: .25, intent_to_proceed: true, candidate_question: {owner: 'user', text: 'Which observable behavior?'}, discovery: [], early_exit: false, abandon: false})),
       plan: () => { return Promise.reject(new Error('not ready')) },
-      resolveCancelTarget: () => Promise.resolve(null),
+      targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
     },
     dispatch: current => { dispatched.push(current); return {accepted: true, delegate_id: 'd1'} },
   })
@@ -1212,7 +1212,7 @@ for (const race of ['assess-steer'] as const) {
             slots: {goal: {state: 'stated', note: 'adjust task'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
             readiness: .25, intent_to_proceed: true, candidate_question: null, discovery: [], early_exit: false, abandon: false}
         },
-        plan: () => { throw new Error('unexpected plan') }, resolveCancelTarget: () => Promise.resolve(null),
+        plan: () => { throw new Error('unexpected plan') }, targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
       },
       steer: (_current, _project, text) => { effects.push(text); return {accepted: true, delegate_id: 'running'} },
     })
@@ -1250,7 +1250,7 @@ for (const terminal of ['failed', 'empty'] as const) {
           kind: 'unclear', project: null, project_evidence: null, session: {mode: 'latest'},
           slots: {goal: {state: 'stated', note: 'task'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
           readiness: .25, intent_to_proceed: false, candidate_question: null, discovery: [], early_exit: false, abandon: false}),
-        plan: () => { throw new Error('unexpected plan') }, resolveCancelTarget: () => Promise.resolve(null),
+        plan: () => { throw new Error('unexpected plan') }, targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
       },
       steer: (_current, _project, text) => { effects.push(text); return {accepted: true, delegate_id: 'd'} },
     })})
@@ -1287,7 +1287,7 @@ for (const terminal of ['failed', 'empty'] as const) {
 
 test('intake owns final queued-fact eligibility and workspace changes without service snapshot reads', async () => {
   const {service, injectedItems} = realtimeServiceHarness('pipeline', {projectTool: true, intake: intakePorts({
-    models: {assess: () => new Promise(() => undefined), plan: () => Promise.resolve(null), resolveCancelTarget: () => Promise.resolve(null)},
+    models: {assess: () => new Promise(() => undefined), plan: () => Promise.resolve(null), targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)}},
   })})
   await service.connect()
   await speak(service, 'u1', 'Discuss the layout')

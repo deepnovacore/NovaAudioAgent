@@ -47,8 +47,10 @@ interface ConnectionOwner {
 }
 
 export interface RealtimeProviderSessionOptions {
-  /** Synchronous host cache; failures are advisory and never delay audio indefinitely. */
-  readonly responseAdaptation?: () => ResponseAdaptationContext | undefined
+  /** A provider-specific asynchronous authorization refresh, or a legacy synchronous cache. */
+  readonly responseAdaptation?: (signal?:AbortSignal) => ResponseAdaptationContext | undefined | Promise<ResponseAdaptationContext | undefined>
+  /** New memory contexts must fail closed; legacy reply-style advice remains advisory. */
+  readonly responseAdaptationRequired?:()=>boolean
   readonly onResponseAdaptationApplied?: (context: ResponseAdaptationContext, epoch: number) => void
   readonly onDiagnostic?: (diagnostic: {
     readonly kind: 'response_adaptation'
@@ -70,7 +72,8 @@ export class RealtimeProviderSession {
   #connectionAbort: AbortController | null = null
   #reading: AbortController | null = null
   #closing: Promise<void> | null = null
-  readonly #responseAdaptation: (() => ResponseAdaptationContext | undefined) | undefined
+  readonly #responseAdaptation: RealtimeProviderSessionOptions['responseAdaptation']
+  readonly #responseAdaptationRequired:RealtimeProviderSessionOptions['responseAdaptationRequired']
   readonly #onResponseAdaptationApplied: RealtimeProviderSessionOptions['onResponseAdaptationApplied']
   readonly #onDiagnostic: RealtimeProviderSessionOptions['onDiagnostic']
   #responseAdaptationTail: Promise<void> = Promise.resolve()
@@ -89,6 +92,7 @@ export class RealtimeProviderSession {
   constructor(provider: RealtimeProvider, options: RealtimeProviderSessionOptions = {}) {
     this.#provider = provider
     this.#responseAdaptation = options.responseAdaptation
+    this.#responseAdaptationRequired=options.responseAdaptationRequired
     this.#onResponseAdaptationApplied = options.onResponseAdaptationApplied
     this.#onDiagnostic = options.onDiagnostic
   }
@@ -196,6 +200,9 @@ export class RealtimeProviderSession {
   async submitText(text: string, signal?: AbortSignal): Promise<void> {
     if (typeof text !== 'string' || !text.trim() || text.length > 4000 || !this.#provider.submitText) throw new RealtimeProtocolError('text input unavailable')
     const owner = this.#requiredConnectionOwner()
+    if (this.#responseAdaptationRequired?.() === true) await this.#refreshResponseAdaptation(owner, signal)
+    this.#assertCurrentConnection(owner)
+    signal?.throwIfAborted()
     await this.#provider.submitText(text, combinedSignal(owner.controller.signal, signal))
     this.#assertCurrentConnection(owner)
   }
@@ -218,7 +225,12 @@ export class RealtimeProviderSession {
     const owned = pcm.slice()
     const owner = this.#requiredConnectionOwner()
     try {
-      if (this.#audioAdaptationRefresh === undefined) {
+      // Requested-response providers only transcribe PCM here. Their model sees memory at
+      // createResponse/ensureResponse, which revalidate authorization before generating.
+      // Automatic providers can generate directly from PCM and still need the input fence.
+      if (this.userResponseMode === 'automatic' && this.#responseAdaptationRequired?.() === true) {
+        await this.#refreshResponseAdaptation(owner, signal)
+      } else if (this.userResponseMode === 'automatic' && this.#audioAdaptationRefresh === undefined) {
         const refresh = this.#refreshResponseAdaptation(owner, signal).catch(() => undefined).finally(() => {
           if (this.#audioAdaptationRefresh === refresh) this.#audioAdaptationRefresh = undefined
         })
@@ -449,23 +461,43 @@ export class RealtimeProviderSession {
   }
 
   async #refreshResponseAdaptation(owner: ConnectionOwner, signal?: AbortSignal, includeUserSources = true): Promise<void> {
-    if (this.#provider.replaceResponseAdaptation === undefined || this.#responseAdaptation === undefined) return
+    if (this.#provider.replaceResponseAdaptation === undefined || this.#responseAdaptation === undefined) {
+      if (this.#responseAdaptationRequired?.() === true && this.#isCurrentConnection(owner)) {
+        await this.close()
+        throw new InternalProtocolError('memory authorization refresh unavailable; session closed')
+      }
+      return
+    }
     const operation = this.#responseAdaptationTail.then(async () => {
       if (!this.#isCurrentConnection(owner)) return
+      const required=this.#responseAdaptationRequired?.()===true
+      const failClosed=async()=>{if(required&&this.#isCurrentConnection(owner)){await this.close();throw new InternalProtocolError('memory authorization refresh failed; session closed')}}
       let raw: unknown
+      const readSignal=AbortSignal.any([owner.controller.signal,...(signal?[signal]:[]),AbortSignal.timeout(10000)])
+      let aborted:(()=>void)|undefined
       try {
-        raw = this.#responseAdaptation?.()
+        readSignal.throwIfAborted()
+        raw=await Promise.race([Promise.resolve(this.#responseAdaptation?.(readSignal)),new Promise<never>((_,reject)=>{aborted=()=>reject(readSignal.reason instanceof Error ? readSignal.reason : new Error('memory read aborted'));readSignal.addEventListener('abort',aborted,{once:true});if(readSignal.aborted)aborted()})])
+        readSignal.throwIfAborted()
       } catch {
+        if(!this.#isCurrentConnection(owner))return
+        signal?.throwIfAborted()
         if (this.#responseAdaptationReadFailureDiagnosedEpoch !== owner.identity.epoch) {
           this.#responseAdaptationReadFailureDiagnosedEpoch = owner.identity.epoch
           this.#reportAdaptationDiagnostic('read_failed', owner.identity.epoch, null)
         }
+        await failClosed()
         return
+      }finally{
+        if(aborted)readSignal.removeEventListener('abort',aborted)
       }
-      if (raw === undefined) return
+      if(!this.#isCurrentConnection(owner))return
+      signal?.throwIfAborted()
+      if (raw === undefined) {await failClosed();return}
       const parsed = responseAdaptationContextSchema.safeParse(raw)
       if (!parsed.success) {
         this.#reportAdaptationDiagnostic('invalid', owner.identity.epoch, null)
+        await failClosed()
         return
       }
       const context = includeUserSources ? parsed.data : {revision: parsed.data.revision, content: parsed.data.content,
@@ -499,6 +531,9 @@ export class RealtimeProviderSession {
       } catch {
         // Guidance cannot grant execution authority. The owner is checked again before sending.
         this.#reportAdaptationDiagnostic('replace_failed', owner.identity.epoch, context.revision)
+        if(!this.#isCurrentConnection(owner))return
+        signal?.throwIfAborted()
+        await failClosed()
       }
     })
     this.#responseAdaptationTail = operation.then(() => undefined, () => undefined)

@@ -1,4 +1,8 @@
-import {createBackendControl, createBackendSupervisor, classifyBackendFailure, createBackendDiagnosticCollector} from '../src/main/backend-supervisor.mjs'
+import {createBackendControl, createBackendSupervisor, classifyBackendFailure, createBackendDiagnosticCollector, configWarnings, startupErrors} from '../src/main/backend-supervisor.mjs'
+import {describeMissingBlockingEnvironment, allowAcceptanceLoopback} from '@nova-audio-agent/runtime/desktop'
+import {resetTrayUnreadForBackend} from '../src/main/tray-unread.mjs'
+import {acceptanceBackendSettings} from '../src/main/workbench-native-acceptance.mjs'
+import {preferredLanguage} from '../src/renderer/locale.mjs'
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises'
@@ -17,6 +21,7 @@ import { WebSocket } from 'ws'
 import {generateSmokeCertificate} from './smoke-tls.mjs'
 import {
   backendLaunchSpec,
+  searchProxyUrlFromRules,
   createReadinessListener,
   shutdownBackend,
   shutdownBackendBestEffort,
@@ -261,16 +266,20 @@ async function runCapabilityStatus() {
       let finishExit
       const exited = new Promise(resolveExit => {finishExit = resolveExit})
       const environment = {PATH: process.env.PATH, HOME: root, USERPROFILE: root, TMPDIR: smokeTmp,
-        NOVA_AUDIO_AGENT_MODEL_API_KEY: 'dummy-model-key', NOVA_AUDIO_AGENT_MODEL_BASE_URL: `https://127.0.0.1:${port}`,
-        DASHSCOPE_API_KEY: 'dummy-dashscope-key', NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: `wss://127.0.0.1:${port}/qwen`,
-        NOVA_AUDIO_AGENT_BLACKBOARD_PATH: resolve(root, 'blackboard.sqlite'), NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID: 'utility-smoke',
+        MODEL_API_KEY: 'dummy-model-key', MODEL_BASE_URL: `https://127.0.0.1:${port}`,
+        DASHSCOPE_API_KEY: 'dummy-dashscope-key', QWEN_REALTIME_URL: `wss://127.0.0.1:${port}/qwen`,
+        BLACKBOARD_PATH: resolve(root, 'blackboard.sqlite'), BLACKBOARD_OWNER_ID: 'utility-smoke',
         NODE_EXTRA_CA_CERTS: certificate}
-      const context = vm.createContext({readCapabilityDocument, classifyBackendFailure, createBackendDiagnosticCollector, createBackendControl,
+      const context = vm.createContext({readCapabilityDocument, describeMissingBlockingEnvironment, classifyBackendFailure, createBackendDiagnosticCollector, createBackendControl,
         createReadinessListener: options => createReadinessListener({...options, onTimeout: () => {
           readinessTimeouts++; trace('readiness timeout requests child cleanup'); options.onTimeout?.()
         }}), shutdownBackend, shutdownBackendBestEffort, watchBackendExit, waitForBackendReadiness, validateBootstrap, backendLaunchSpec, randomBytes, resolve,
-        process: {env: environment, cwd: () => root}, app: {isPackaged: false, getAppPath: () => packageRoot}, packageRoot,
-        currentSettings: {capabilitiesConfigPath: path, pipelineMode: 'integrated'}, desktopConfig: {workspace: root, modelBaseUrl: `https://127.0.0.1:${port}`}, codexStatus: {status: 'ready'},
+        acceptance: null, acceptanceBackendSettings, allowAcceptanceLoopback, preferredLanguage, configWarnings, startupErrors, searchProxyUrlFromRules,
+        accessCredentials: action => action(), refreshCapabilityEditor: () => {}, feishuSetupOwner: {release: async () => {}},
+        tray: null, resetTrayUnreadForBackend, backendEverConnected: false, publishStartup: () => {}, startup: null,
+        frontendUsage: {add: () => false}, settingsWindow: null,
+        process: {env: environment, cwd: () => root}, app: {isPackaged: false, getAppPath: () => packageRoot, getPreferredSystemLanguages: () => ['en']}, packageRoot,
+        currentSettings: {capabilitiesConfigPath: path, pipelineMode: 'integrated', cascadedLlmProvider: 'qwen'}, desktopConfig: {workspace: root, modelBaseUrl: `https://127.0.0.1:${port}`}, codexStatus: {status: 'ready'},
         settingsGeneration: 9, launchGeneration: 0, runtimeCapabilities: null, backendControl: null, backend: null, backendGeneration: 0,
         mainWindow: null, secretCodec: {}, decryptSecretsForSpawn: () => ({}), nodeRuntimeEntry: () => resolve(packageRoot, '../../runtime/dist/src/desktop-entry.js'),
         backendKind: 'node', smokeChannel: null, settingsApplyStatus: 'idle', backendStatus: {state: 'stopped', connection: null}, backendSupervisor: null,
@@ -297,7 +306,7 @@ async function runCapabilityStatus() {
         await context.backendSupervisor.start()
         trace(`supervisor=${context.backendSupervisor.status().state}; events=${events.join(',')}`)
         const value = context.runtimeCapabilities
-        assert.equal(value.toolCount, 2)
+        assert.equal(value.toolCount, 3) // memory recall, evidence, and the fixture MCP tool.
         assert.equal(value.toolBudget, budget)
         assert.equal(value.diskGeneration, 9)
         let memoryClear
@@ -329,7 +338,7 @@ async function runCapabilityStatus() {
     }
     assert.equal(listed, 2)
     assert.equal(called, 0)
-    assert.equal(providerConnections, memoryClearMode ? 2 : 1)
+    assert.equal(providerConnections, memoryClearMode ? 2 : 0) // Workbench starts with text conversations.
     process.stdout.write(JSON.stringify({electron: process.versions.electron, outcomes, listed, toolCalls: called, providerConnections, dummyLoopbackOnly: true}) + '\n')
   } finally {
     for (const client of wss.clients) client.terminate()

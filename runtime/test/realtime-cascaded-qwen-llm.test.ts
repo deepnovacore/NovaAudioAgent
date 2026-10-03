@@ -614,7 +614,7 @@ test('Qwen bounds missing metering tail after terminal without changing complete
 
 
 test('captured Qwen null argument delta preserves a complete call but cannot supply missing JSON', async () => {
-  const captured = JSON.parse(readFileSync(new URL('../../../fixtures/realtime/qwen/v1/tool-null-delta.json', import.meta.url), 'utf8')) as Record<string, unknown>[]
+  const captured = JSON.parse(readFileSync(new URL('../../../tests/fixtures/realtime/qwen/v1/tool-null-delta.json', import.meta.url), 'utf8')) as Record<string, unknown>[]
   for (const nullOnly of [false, true]) {
     const chunks = nullOnly ? [{id: 'empty', choices: [{delta: {tool_calls: [{index: 0, id: 'empty',
       function: {name: 'search', arguments: null}}]}, finish_reason: 'tool_calls'}]}] : captured
@@ -635,7 +635,7 @@ test('captured Qwen null argument delta preserves a complete call but cannot sup
 })
 
 test('captured Max null id delta preserves the established id without accepting missing or changed ids', async () => {
-  const captured = JSON.parse(readFileSync(new URL('../../../fixtures/realtime/qwen/v1/tool-null-id-delta.json', import.meta.url), 'utf8')) as {choices?: {delta: {tool_calls?: {id?: string | null}[]}}[]}[]
+  const captured = JSON.parse(readFileSync(new URL('../../../tests/fixtures/realtime/qwen/v1/tool-null-id-delta.json', import.meta.url), 'utf8')) as {choices?: {delta: {tool_calls?: {id?: string | null}[]}}[]}[]
   for (const mode of ['captured', 'missing', 'changed'] as const) {
     const chunks = structuredClone(captured)
     for (const chunk of chunks) for (const choice of chunk.choices ?? []) for (const call of choice.delta.tool_calls ?? []) {
@@ -683,6 +683,25 @@ test('Qwen sends original pixels through tool continuations and strips them from
   assert.doesNotMatch(requests[2]!, /image_url|data:image/u)
   assert.match(requests[2]!, /call-1/u)
   await llm.close()
+})
+
+test('fresh sessions seed only committed pairs and reject reseeding after a pending tool', async () => {
+  const bodies:Record<string,unknown>[]=[]
+  const factory=createQwenCascadedLlmFactory({baseUrl:'https://example.invalid',apiKey:'test',model:'test',instructions:'system',fetchImpl:(_url,init)=>{
+    bodies.push(JSON.parse(init?.body as string) as Record<string,unknown>)
+    return Promise.resolve(sse([{id:'r',choices:[{delta:{tool_calls:[{index:0,id:'call',function:{name:'lookup',arguments:'{}'}}]},finish_reason:'tool_calls'}]}]))
+  }})
+  const first=factory.open(),second=factory.open(),signal=new AbortController().signal
+  try {
+    assert(typeof first.restoreHistory==='function');assert(typeof second.restoreHistory==='function')
+    await first.restoreHistory([{user:'first question',assistant:'first answer'}],signal)
+    await second.restoreHistory([{user:'other question',assistant:'other answer'}],signal)
+    await collect(first.stream({inputs:[{kind:'user_text',text:'next'}],tools:[],signal}))
+    await collect(second.stream({inputs:[{kind:'user_text',text:'other next'}],tools:[],signal}))
+    assert.match(JSON.stringify(bodies[0]),/first answer/u);assert.doesNotMatch(JSON.stringify(bodies[0]),/other answer/u)
+    assert.match(JSON.stringify(bodies[1]),/other answer/u);assert.doesNotMatch(JSON.stringify(bodies[1]),/first answer/u)
+    await assert.rejects(first.restoreHistory([{user:'bad',assistant:'overwrite'}],signal))
+  } finally {await first.close();await second.close()}
 })
 
 test('DeepSeek official stream keeps tool history, disables thinking and meters KV cache', async () => {
@@ -785,9 +804,10 @@ test('cascaded English translates conversation and narration prompts but preserv
   const requests: {messages: {role: string; content: string}[]}[] = []
   const {frontendInstructions} = await import('../src/realtime/frontend-instructions.js')
   const llm = createQwenCascadedLlmFactory({baseUrl: 'https://example.test', apiKey: 'test', model: 'test', instructions: frontendInstructions(),
-    fetchImpl: async (_url, init) => {
-      requests.push(JSON.parse(String(init?.body)))
-      return new Response('data: {"id":"r","choices":[{"delta":{"content":"Hello"}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {headers: {'content-type': 'text/event-stream'}})
+    fetchImpl: (_url, init) => {
+      assert.equal(typeof init?.body, 'string')
+      requests.push(JSON.parse(init!.body as string) as {messages: {role: string; content: string}[]})
+      return Promise.resolve(new Response('data: {"id":"r","choices":[{"delta":{"content":"Hello"}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {headers: {'content-type': 'text/event-stream'}}))
     },
   }).open()
   const signal = new AbortController().signal

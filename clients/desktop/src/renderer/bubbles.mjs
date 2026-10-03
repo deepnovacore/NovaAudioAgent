@@ -97,6 +97,9 @@ export function createProgressBubbleController({
 }) {
   let items = []
   let generation = 0
+  let conversationGeneration = 0
+  let latestConversationId = null
+  const interruptedConversations = new Set()
   let queue = Promise.resolve()
   const timers = new Map()
 
@@ -132,7 +135,7 @@ export function createProgressBubbleController({
     }
   }
 
-  async function update(next, version) {
+  async function update(next, version, conversationVersion = conversationGeneration) {
     const layout = await reserve(next.reduce((rows, item) => rows + (item.expanded ? 3 : 1), 0))
     if (layout === null || version !== generation) return false
     if (layout?.suppressed) {
@@ -140,6 +143,7 @@ export function createProgressBubbleController({
       onLayout(layout)
       return false
     }
+    if (conversationVersion !== conversationGeneration) next = next.filter(item => item.kind !== 'conversation')
     onLayout(layout)
     for (const item of items) {
       if (!next.some(nextItem => nextItem.key === item.key)) stop(item)
@@ -157,8 +161,14 @@ export function createProgressBubbleController({
       return false
     }
     const version = generation
+    const conversationVersion = conversationGeneration
+    if (value.kind === 'conversation') {
+      if (interruptedConversations.has(value.delegateId)) return false
+      latestConversationId = value.delegateId
+    }
     return enqueue(async () => {
-      if (version !== generation) return false
+      if (version !== generation || (value.kind === 'conversation'
+        && conversationVersion !== conversationGeneration)) return false
       const lifetime = value.level === 'milestone' ? MILESTONE_MS : DETAIL_MS
       const delegateId = value.delegateId || value.delegate_id || ''
       const existing = value.kind === 'conversation'
@@ -186,7 +196,8 @@ export function createProgressBubbleController({
         ? current.kind !== 'conversation'
         : !item.delegateId || current.kind !== 'progress' || current.delegateId !== item.delegateId)
       const next = [item, ...previous].slice(0, MAX_BUBBLES)
-      if (!await update(next, version)) return false
+      if (!await update(next, version, conversationVersion)) return false
+      if (!items.includes(item)) return false
       arm(item)
       return true
     })
@@ -230,7 +241,22 @@ export function createProgressBubbleController({
     })
   }
 
+  function clearConversation() {
+    conversationGeneration += 1
+    if (latestConversationId !== null) {
+      interruptedConversations.add(latestConversationId)
+      if (interruptedConversations.size > 64) interruptedConversations.delete(interruptedConversations.values().next().value)
+    }
+    for (const item of items) if (item.kind === 'conversation') stop(item)
+    items = items.filter(item => item.kind !== 'conversation')
+    // Hide immediately, even while native bounds are still being reserved.
+    render(items)
+    return enqueue(() => update(items, generation))
+  }
+
   function clear() {
+    latestConversationId = null
+    interruptedConversations.clear()
     generation += 1
     clearVisible()
     return enqueue(async () => {
@@ -253,6 +279,7 @@ export function createProgressBubbleController({
     push,
     dismiss,
     toggleExpanded,
+    clearConversation,
     pause,
     resume,
     clear,

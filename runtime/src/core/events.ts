@@ -13,6 +13,7 @@ export const EVENT_KINDS = [
   'speak_start',
   'speak_end',
   'assistant_spoken',
+  'discovery_tick',
 ] as const
 
 export const trustSchema = z.enum([
@@ -117,6 +118,7 @@ const payloadSchemas = {
     priority: z.number().int(),
   }).strict(),
   speak_end: z.object({utterance_id: z.string()}).strict(),
+  discovery_tick: z.object({local_date:z.string(),weekday:z.string(),timezone:z.string()}).strict(),
   assistant_spoken: z.object({
     text: z.string(),
     utterance_id: z.string(),
@@ -137,6 +139,7 @@ export const eventRecordSchema = z.discriminatedUnion('kind', [
   eventRecord(z.literal('speak_start'), payloadSchemas.speak_start),
   eventRecord(z.literal('speak_end'), payloadSchemas.speak_end),
   eventRecord(z.literal('assistant_spoken'), payloadSchemas.assistant_spoken),
+  eventRecord(z.literal('discovery_tick'), payloadSchemas.discovery_tick),
 ])
 
 export const eventInputSchema = z.discriminatedUnion('kind', [
@@ -151,6 +154,7 @@ export const eventInputSchema = z.discriminatedUnion('kind', [
   eventInput(z.literal('speak_start'), payloadSchemas.speak_start),
   eventInput(z.literal('speak_end'), payloadSchemas.speak_end),
   eventInput(z.literal('assistant_spoken'), payloadSchemas.assistant_spoken),
+  eventInput(z.literal('discovery_tick'), payloadSchemas.discovery_tick),
 ])
 
 export type EventRecord = z.infer<typeof eventRecordSchema>

@@ -22,7 +22,7 @@ xcodebuild test -project clients/ios/Nova/Nova.xcodeproj -scheme Nova \
   -derivedDataPath /private/tmp/nova-ios-build CODE_SIGNING_ALLOWED=NO
 ```
 
-`NovaTests` and the standalone Swift package share the protocol/playback checks; `NovaTests` also contains an iOS-only stop/connection lifecycle regression. After the review fixes, 9 Swift-package tests passed and all 10 iOS tests compiled successfully (not executed here without a simulator runtime). Unsigned device SDK compilation also passed. The former bundles the repository's shared `fixtures/client-protocol/v1/vectors.json`; the latter reads that exact file directly. No tests start audio or request microphone permission.
+`NovaTests` and the standalone Swift package share the protocol/playback checks; `NovaTests` also contains an iOS-only stop/connection lifecycle regression. After the review fixes, 9 Swift-package tests passed and all 10 iOS tests compiled successfully (not executed here without a simulator runtime). Unsigned device SDK compilation also passed. The former bundles the repository's shared `tests/fixtures/client-protocol/v1/vectors.json`; the latter reads that exact file directly. No tests start audio or request microphone permission.
 
 On this Mac (2026-09-05), Xcode 16.4 includes the 18.5 SDK but has no available simulator runtime. Destination-based builds report “iOS 18.5 is not installed.” Direct SDK compilation verifies both app and tests without a runnable simulator:
 
@@ -37,7 +37,7 @@ For a generic device build use `-target Nova -sdk iphoneos`. The parent handles 
 
 ## Mock and controls
 
-Have the runtime owner build the runtime, then start `node runtime/scripts/client-protocol-mock.mjs`. Connect a simulator to `ws://127.0.0.1:8787` with the Debug switch and public mock token documented in `docs/protocols/client-v1.md`. The mock is synthetic and does not use models or Codex. A native, microphone-free smoke check is also runnable against a mock started with `--port=18787`:
+Have the runtime owner build the runtime, then start `node runtime/scripts/client-protocol-mock.mjs`. Connect a simulator to `ws://127.0.0.1:8787` with the Debug switch and public mock token documented in `docs/en/protocols/client-v1.md`. The mock is synthetic and does not use models or Codex. A native, microphone-free smoke check is also runnable against a mock started with `--port=18787`:
 
 ```sh
 xcrun swiftc -D DEBUG -module-cache-path /private/tmp/nova-ios-clang \
@@ -86,7 +86,7 @@ AOQ requests a fresh credential only after Start voice and microphone permission
 
 所有连接模式（Relay、AOQ Chat、AOQ Runtime）共用同一套扫码配对。手机打开连接设置 → **扫码连接主机** → 确认二维码中的 WSS 地址；配对后自动连接，仍需点击“开始对话”才会请求麦克风并开始音频。
 
-Mac 启动本 worktree 的新版 headless 服务后，在使用相同 `NOVA_AUDIO_AGENT_SERVER_PORT`、`NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE` 环境配置的终端运行：
+Mac 启动本 worktree 的新版 headless 服务后，在使用相同 `SERVER_PORT`、`SERVER_TOKEN_FILE` 环境配置的终端运行：
 
 ```sh
 npm run server:pair --workspace @nova-audio-agent/runtime -- wss://你的主机.ts.net

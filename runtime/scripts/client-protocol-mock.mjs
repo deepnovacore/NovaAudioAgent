@@ -41,7 +41,7 @@ const server = new ClientServer({token, port,
   },
 })
 await server.start()
-console.log(`Mock only: ws://127.0.0.1:${port}/client/v1 (public mock credential in docs/protocols/client-v1.md)`)
+console.log(`Mock only: ws://127.0.0.1:${port}/client/v1 (public mock credential in docs/en/protocols/client-v1.md)`)
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
   clearTimeout(timer)
   void server.close().catch(() => { process.exitCode = 1 })

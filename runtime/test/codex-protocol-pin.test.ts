@@ -4,7 +4,7 @@ import {resolve} from 'node:path'
 import {test} from 'node:test'
 import Ajv from 'ajv'
 
-const fixtures = resolve(import.meta.dirname, '../../../fixtures/codex')
+const fixtures = resolve(import.meta.dirname, '../../../tests/fixtures/codex')
 
 test('01 launch and approval examples validate against the Codex 0.152.0 protocol snapshot', () => {
   // Ajv is already installed by the repository's pinned ESLint toolchain; this is test-only.

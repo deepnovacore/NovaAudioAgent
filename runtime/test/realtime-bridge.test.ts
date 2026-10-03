@@ -1,3 +1,5 @@
+import type {PersonalMemoryResource} from '../src/memory/personal-memory.js'
+import {UnifiedRetrieval} from '../src/memory/retrieval.js'
 import {PersonalMemoryError} from '../src/memory/personal-memory.js'
 /**
  * The Node leg of the realtime bridge parity suite.
@@ -24,7 +26,7 @@ import { RealtimeRuntimeBridge, validParams, type BridgeRuntime, type PersonalMe
 import type { WakeReason } from '../src/core/slots.js'
 import { compileToolSchema } from '../src/core/tool-schema.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/bridge/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/realtime/bridge/v1')
 
 function parseManifest(entry: unknown): ExecutorManifest {
   const raw = {...entry as Record<string, unknown>}
@@ -733,4 +735,25 @@ test('ordinary tools refuse a user turn superseded while durable admission is pe
   release({accepted: true, delegate_id: 'worker-1'})
   assert.equal((await acceptance).code, 'superseded')
   assert.equal((await acceptance).accepted, false)
+})
+
+
+test('joint recall uses the cancellable read lane and never dispatches retrieved text', async () => {
+  const memory=new Memory(),origin=memory.append('conversation',{ts:1,trust:'trusted_user',priority:100,content:{text:'评审进展'}})
+  let queried=0
+  const resource={
+    recall:()=>Promise.resolve({state:'ok',hits:[],contextHits:[],degraded:false}),
+    readEvidence:()=>Promise.resolve({evidence_id:'ev-review',source_kind:'file',locator:'review.md',text:'材料已准备，等待周五评审',observed_at:new Date().toISOString()}),
+  } as unknown as PersonalMemoryResource
+  const retrieval=new UnifiedRetrieval({memory:()=>resource,rawRecall:()=>{queried++;return Promise.resolve([{evidence_id:'ev-review'}])}})
+  const bridge=new RealtimeRuntimeBridge({runtime:{clock:new VirtualClock(),memory,executors:new Map(),ingestUserInput:()=>Promise.reject(Error('unused')),dispatchExternal:()=>{throw Error('retrieval_must_not_dispatch')}},tools:compileToolSchema([],{includeMemoryRecall:true}),idFactory:()=> 'joint-result',retrieval})
+  const call={kind:'tool_call_ready' as const,session_epoch:1,call_id:'joint',item_id:'tool',name:'memory__recall',arguments:{query:'评审进展',scope:'any'},response_id:'r-1'}
+  assert.equal((await bridge.acceptPersonalMemoryRecall(call)).code,'missing_origin_ref')
+  assert.equal(queried,0)
+  assert.equal((await bridge.acceptToolCall(call,{originRef:`${origin.channel}:${origin.seq}`})).code,'async_tool')
+  const accepted=await bridge.acceptPersonalMemoryRecall(call,{originRef:`${origin.channel}:${origin.seq}`})
+  assert.equal(accepted.inline_fulfilled,true)
+  assert.equal(accepted.code,'ok')
+  assert.equal(queried,1)
+  assert.match(accepted.host_item?.content??'',/等待周五评审/)
 })

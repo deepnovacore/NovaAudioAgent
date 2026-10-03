@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {spawn, spawnSync} from 'node:child_process'
 import {once} from 'node:events'
 import {createServer} from 'node:https'
-import {cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm} from 'node:fs/promises'
+import {cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises'
 import {basename, normalize, resolve} from 'node:path'
 import {parseArgs} from 'node:util'
 import {listPackage, statFile} from '@electron/asar'
@@ -10,6 +10,7 @@ import {WebSocket, WebSocketServer} from 'ws'
 import {generateSmokeCertificate} from './smoke-tls.mjs'
 import {expectedNativeResources} from './native-resource-contract.mjs'
 import {candidateScratchParent, prepareWindowsSmokeHomeOwnership} from './windows-smoke-home.mjs'
+import {normalizeSettings, saveSettings} from '../src/main/settings-store.mjs'
 
 const product = 'Nova Audio Agent Desktop'
 const native = /\.(node|dylib|dll|so(?:\.\d+)*)$/u
@@ -123,23 +124,35 @@ async function authenticate({endpoint, token}) {
   } finally { socket.terminate() }
 }
 
-async function smoke(executable, scratch) {
-  const home = resolve(scratch, 'home')
+export async function prepareSmokeHome(home) {
   await mkdir(home, {mode: 0o700})
   prepareWindowsSmokeHomeOwnership({home, environment: process.env})
+  await saveSettings(resolve(home, 'ambient-orb-settings.json'), normalizeSettings({pipelineMode: 'integrated', cascadedLlmProvider: 'qwen'}))
+}
+
+async function smoke(executable, scratch) {
+  const home = resolve(scratch, 'home')
+  await prepareSmokeHome(home)
+  // Installed-backend acceptance uses only the loopback provider, never a host Codex or external tools.
+  const capabilities = resolve(home, 'capabilities.json')
+  await writeFile(capabilities, JSON.stringify({version: 1, modules: {
+    coding: {enabled: false}, search: {enabled: false}, camera: {enabled: false}, knowledge: {enabled: false},
+  }}))
   const mock = await provider(scratch)
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|LANG|LC_.*|DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR)$/iu.test(key)))
   Object.assign(env, {
     HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home,
     XDG_CONFIG_HOME: home, XDG_DATA_HOME: home, XDG_CACHE_HOME: home,
     NODE_EXTRA_CA_CERTS: mock.certificate,
-    NOVA_AUDIO_AGENT_RELEASE_SMOKE: 'installed-candidate-v1',
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: mock.endpoint,
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: 'release-smoke-model',
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: 'release-smoke-voice',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: home,
-    NOVA_AUDIO_AGENT_EXECUTOR: 'fast_sim', NOVA_AUDIO_AGENT_EXECUTORS: 'fast_sim',
-    DASHSCOPE_API_KEY: 'public-release-smoke-key', NOVA_AUDIO_AGENT_MODEL_API_KEY: 'public-release-smoke-key',
+    RELEASE_SMOKE: 'installed-candidate-v1',
+    CAPABILITIES_CONFIG: capabilities,
+    CODEX_BIN: resolve(home, 'unavailable-codex'),
+    QWEN_REALTIME_URL: mock.endpoint,
+    QWEN_REALTIME_MODEL: 'release-smoke-model',
+    QWEN_REALTIME_VOICE: 'release-smoke-voice',
+    CODEX_WORKSPACE: home,
+    EXECUTOR: 'fast_sim', EXECUTORS: 'fast_sim',
+    DASHSCOPE_API_KEY: 'public-release-smoke-key', MODEL_API_KEY: 'public-release-smoke-key',
     TAVILY_API_KEY: 'public-release-smoke-key',
   })
   const child = spawn(executable, [`--user-data-dir=${home}`, '--open-settings', ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : [])], {
@@ -147,7 +160,15 @@ async function smoke(executable, scratch) {
     detached: process.platform !== 'win32',
   })
   let output = ''
-  for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8192) })
+  let settingsOutput = ''
+  let settingsReady
+  const settingsLoaded = new Promise(resolveReady => { settingsReady = resolveReady })
+  child.stdout.on('data', chunk => {
+    output = (output + chunk).slice(-8192)
+    settingsOutput = (settingsOutput + chunk).slice(-8192)
+    if (settingsOutput.includes('[desktop-smoke] settings_ready\n')) settingsReady()
+  })
+  child.stderr.on('data', data => { output = (output + data).slice(-8192) })
   const exited = once(child, 'exit')
   // Register rejection immediately, including failed spawn before readiness arrives.
   exited.catch(() => {})
@@ -155,7 +176,7 @@ async function smoke(executable, scratch) {
   try {
     await Promise.race([
       (async () => {
-        await authenticate(await readReadiness(child.stdio[3]))
+        await Promise.all([authenticate(await readReadiness(child.stdio[3])), settingsLoaded])
         child.stdio[4].end('quit\n')
         const [code, signal] = await exited
         assert.equal(code, 0, `application exit: ${signal}`)
@@ -195,6 +216,7 @@ async function findApp(directory, depth = 0) {
 export async function verifyRelease({app, artifact, distRoot, unsigned = false}) {
   const scratch = await realpath(await mkdtemp(resolve(candidateScratchParent(), 'nova-release-')))
   const install = resolve(scratch, 'install')
+  const mount = resolve(scratch, 'dmg')
   await mkdir(install)
   let mounted = false
   let uninstall
@@ -202,7 +224,11 @@ export async function verifyRelease({app, artifact, distRoot, unsigned = false})
     if (artifact) {
       artifact = resolve(artifact)
       if (artifact.endsWith('.dmg') && process.platform === 'darwin') {
-        run('/usr/bin/hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', install, artifact]); mounted = true
+        await mkdir(mount)
+        run('/usr/bin/hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', mount, artifact]); mounted = true
+        const bundled = await findApp(mount)
+        assert.ok(bundled, 'DMG application not found')
+        await cp(bundled, resolve(install, basename(bundled)), {recursive: true, verbatimSymlinks: true})
       } else if (artifact.endsWith('.zip')) {
         if (process.platform === 'darwin') run('/usr/bin/ditto', ['-x', '-k', artifact, install])
         else run('tar', ['-xf', artifact, '-C', install])
@@ -238,7 +264,7 @@ export async function verifyRelease({app, artifact, distRoot, unsigned = false})
     process.stdout.write('release verification passed: ASAR/native placement and installed backend handshake\n')
   } finally {
     try { if (uninstall) uninstall() } finally {
-      if (mounted) run('/usr/bin/hdiutil', ['detach', install])
+      if (mounted) run('/usr/bin/hdiutil', ['detach', mount])
       await rm(scratch, {recursive: true, force: true, maxRetries: 10, retryDelay: 100})
     }
   }

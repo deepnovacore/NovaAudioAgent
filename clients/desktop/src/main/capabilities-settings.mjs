@@ -51,7 +51,7 @@ export function validatePreparedSettings(patch, next) {
   compare(patch ?? {}, next)
 }
 export function capabilityPath(settings, environment = {}, home = homedir()) {
-  const raw = settings?.capabilitiesConfigPath?.trim() || environment.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG?.trim() || '~/.nova-audio-agent/capabilities.json'
+  const raw = settings?.capabilitiesConfigPath?.trim() || environment.CAPABILITIES_CONFIG?.trim() || '~/.nova-audio-agent/capabilities.json'
   return raw.startsWith('~/') ? join(home, raw.slice(2)) : resolve(raw)
 }
 export function readCapabilityDocument(settings, environment = {}) {
@@ -61,7 +61,7 @@ export function readCapabilityDocument(settings, environment = {}) {
     if (bytes.byteLength > MAX_BYTES) throw invalidCommit('file_too_large')
     return JSON.parse(bytes.toString('utf8'))
   } catch (error) {
-    if (error.code === 'ENOENT' && !settings?.capabilitiesConfigPath?.trim() && !environment.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG?.trim()) return {version: 1}
+    if (error.code === 'ENOENT' && !settings?.capabilitiesConfigPath?.trim() && !environment.CAPABILITIES_CONFIG?.trim()) return {version: 1}
     throw invalidCommit('file_unreadable_or_invalid_json')
   }
 }

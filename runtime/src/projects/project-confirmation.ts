@@ -88,6 +88,8 @@ export class ProjectConfirmationController {
   readonly #onChange: ((view: ProjectConfirmationView) => void) | undefined
   readonly #expiryObservers: (() => void)[] = []
 
+  #background = false
+  #heldProposalId: string | null = null
   #proposal: ProjectProposal | null = null
   /** Retained after settlement so the host can identify every fact from this proposal lifecycle. */
   #lifecycleId: string | null = null
@@ -103,6 +105,26 @@ export class ProjectConfirmationController {
     this.#idFactory = options.idFactory
     this.#onChange = options.onChange
   }
+
+  /** Human absence pauses proposals, not the authority of old voice turns. */
+  setBackground(value: boolean, options: {readonly awaitPresentation?: boolean} = {}): void {
+    const proposal=this.#proposal, wasHeld=this.#isHeld(proposal)
+    const heldId=value || options.awaitPresentation && wasHeld ? proposal?.proposal_id ?? null : null
+    if(value===this.#background&&heldId===this.#heldProposalId)return
+    this.#background=value
+    this.#heldProposalId=heldId
+    this.#reserved=null
+    if(proposal && this.#state==='pending'){
+      if(this.#isHeld(proposal))this.#decision.hold(proposal)
+      else if(wasHeld){
+        this.#decision.consume(proposal)
+        this.#proposal=Object.freeze({...proposal,expires_at:this.#clock.now()+PROJECT_CONFIRMATION_TTL_SECONDS})
+        this.#scheduleExpiry(this.#proposal)
+      }
+      this.#publish()
+    }
+  }
+  #isHeld(proposal: ProjectProposal | null): boolean {return this.#background || proposal !== null && proposal.proposal_id===this.#heldProposalId}
 
   get view(): ProjectConfirmationView {
     const proposal = this.#proposal !== null
@@ -127,7 +149,7 @@ export class ProjectConfirmationController {
       pending_action: publicProjectAction(proposal.action),
       pending_workspace_display_name: proposal.workspace_display_name,
       pending_session_title: proposal.session_title,
-      pending_expires_in_seconds: Math.max(0, proposal.expires_at - this.#clock.now()),
+      pending_expires_in_seconds: this.#isHeld(proposal) ? null : Math.max(0, proposal.expires_at - this.#clock.now()),
     }
   }
 
@@ -220,7 +242,7 @@ export class ProjectConfirmationController {
    */
   reserveUserItem(input: {readonly epoch: number; readonly itemId: string}): boolean {
     const proposal = this.#proposal
-    if (proposal === null || this.#state !== 'pending') return false
+    if (this.#isHeld(proposal) || proposal === null || this.#state !== 'pending') return false
     if (this.#isExpired(proposal)) {
       this.expire()
       return false
@@ -248,7 +270,8 @@ export class ProjectConfirmationController {
   }): ConfirmationOutcome {
     const proposal = this.#proposal
     if (
-      proposal === null
+      this.#isHeld(proposal)
+      || proposal === null
       || this.#state !== 'pending'
       || !this.#isReserved(input.epoch, input.itemId)
     ) {
@@ -356,7 +379,7 @@ export class ProjectConfirmationController {
     this.#commitAuthority = null
     this.#reserved = null
     this.#state = 'pending'
-    this.#decision.release(this.#proposal, this.#proposal.expires_at)
+    if (!this.#isHeld(this.#proposal)) this.#decision.release(this.#proposal, this.#proposal.expires_at)
     this.#publish()
     return true
   }
@@ -418,7 +441,7 @@ export class ProjectConfirmationController {
 
   #isExpired(proposal: ProjectProposal): boolean {
     // `>=` so the instant of expiry is expired, matching the oracle.
-    return this.#clock.now() >= proposal.expires_at
+    return !this.#isHeld(proposal) && this.#clock.now() >= proposal.expires_at
   }
 
   #expireDecision(): ConfirmationOutcome {
@@ -455,6 +478,7 @@ export class ProjectConfirmationController {
 
   #scheduleExpiry(proposal: ProjectProposal): void {
     this.#decision.offer('project', proposal, proposal.expires_at, () => { this.expire() })
+    if (this.#isHeld(proposal)) this.#decision.hold(proposal)
   }
 
   #publishExpiry(): void {

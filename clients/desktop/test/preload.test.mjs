@@ -16,6 +16,7 @@ async function loadPreload() {
   ipcRenderer.send = (channel, payload) => { sends.push({ channel, payload }) }
   let exposed
   vm.runInNewContext(source, {
+    process: {argv: []},
     require(name) {
       assert.equal(name, 'electron')
       return { contextBridge: { exposeInMainWorld(_name, value) { exposed = value } }, ipcRenderer }
@@ -63,10 +64,7 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   const { exposed, ipcRenderer, invokes } = await loadPreload()
 
   assert.deepEqual(Object.keys(exposed.settings).sort(), [
-    'clearAllManagedWorkspaces', 'clearCurrentManagedWorkspace', 'get', 'knowledgeAction', 'onChanged',
-    'openCurrentManagedWorkspace', 'openPairing',
-    'phoneAction', 'probeCapabilities', 'repairProjects', 'rescanCodex', 'restart', 'retryBackend',
-    'retryMicrophone', 'set',
+    'chooseDirectory', 'clearAllManagedWorkspaces', 'clearCurrentManagedWorkspace', 'feishuCommand', 'get', 'knowledgeAction', 'onChanged', 'openConnectorAuthorization', 'openCurrentManagedWorkspace', 'openFeishuVerification', 'personalCommand', 'phoneAction', 'probeCapabilities', 'repairProjects', 'rescanCodex', 'restart', 'retryBackend', 'retryMicrophone', 'set', 'voiceprint',
   ])
   assert.ok(Object.isFrozen(exposed.settings))
 
@@ -102,10 +100,31 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   assert.equal(typeof exposed.settings.onChanged(null), 'function')
 })
 
+test('preload exposes first-run setup as a fixed set of channels', async () => {
+  const { exposed, ipcRenderer, invokes, sends } = await loadPreload()
+
+  assert.deepEqual(Object.keys(exposed.setup).sort(), ['onChanged', 'open', 'save', 'status', 'testKey'])
+  assert.ok(Object.isFrozen(exposed.setup))
+  exposed.setup.open()
+  await exposed.setup.status()
+  await exposed.setup.testKey('dashscopeApiKey', 'sk-1')
+  await exposed.setup.save({pipelineMode: 'integrated'})
+  assert.deepEqual(sends, [{ channel: 'nova:setup:open', payload: undefined }])
+  assert.deepEqual(invokes.map(entry => entry.channel), ['nova:setup:status', 'nova:setup:test-key', 'nova:setup:save'])
+
+  const seen = []
+  const unsubscribe = exposed.setup.onChanged(next => seen.push(next))
+  ipcRenderer.emit('nova:setup:changed', {}, { backendStatus: 'starting' })
+  unsubscribe()
+  ipcRenderer.emit('nova:setup:changed', {}, { backendStatus: 'connected' })
+  assert.deepEqual(seen, [{ backendStatus: 'starting' }])
+  assert.equal(typeof exposed.setup.onChanged(null), 'function')
+})
+
 test('preload exposes a bounded microphone permission lifecycle', async () => {
   const { exposed, ipcRenderer, invokes, sends } = await loadPreload()
 
-  assert.deepEqual(Object.keys(exposed.microphone).sort(), ['onRetry', 'onToggle', 'report', 'requestPermission'])
+  assert.deepEqual(Object.keys(exposed.microphone).sort(), ['onRetry', 'onToggle', 'onVoiceprintRecording', 'report', 'requestPermission'])
   await exposed.microphone.requestPermission()
   exposed.microphone.report('device_busy')
   const retries = []
@@ -166,6 +185,20 @@ test('preload reports confirmation mode as a strict boolean and sanitizes placem
   assert.deepEqual(placements, ['above', 'below'])
 })
 
+test('preload window controls send only their three fixed actions', async () => {
+  const {exposed, sends} = await loadPreload()
+
+  assert.deepEqual(Object.keys(exposed.windowControls).sort(), ['close', 'minimize', 'toggleMaximize'])
+  exposed.windowControls.minimize()
+  exposed.windowControls.toggleMaximize()
+  exposed.windowControls.close()
+  assert.deepEqual(sends, [
+    {channel: 'nova:window:control', payload: 'minimize'},
+    {channel: 'nova:window:control', payload: 'toggleMaximize'},
+    {channel: 'nova:window:control', payload: 'close'},
+  ])
+})
+
 test('preload exposes board reads and explicit memory clear', async () => {
   const { exposed, invokes, sends } = await loadPreload()
 
@@ -190,7 +223,7 @@ test('preload exposes board reads and explicit memory clear', async () => {
 test('preload declares each bridge namespace exactly once', async () => {
   const { source } = await loadPreload()
 
-  for (const namespace of ['orbMenu', 'releaseCamera', 'microphone', 'memoryBoard', 'nativeAudio', 'windowDrag', 'windowLayout', 'settings']) {
+  for (const namespace of ['orbMenu', 'releaseCamera', 'microphone', 'memoryBoard', 'nativeAudio', 'windowDrag', 'windowControls', 'windowLayout', 'settings']) {
     const declarations = source.match(new RegExp(`^  ${namespace}: `, 'gm')) || []
     assert.equal(declarations.length, 1, `${namespace} is declared once`)
   }

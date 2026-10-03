@@ -1,19 +1,23 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-export const PRODUCT_VERSION = '0.1.1'
+export const PRODUCT_VERSION = '0.3.0-preview.1'
 export const RELEASE_REPOSITORY = 'deepnovacore/NovaAudioAgent'
 
-// Published 0.1.1 archives retain their original executable names; new builds use Desktop.
 const DEFINITIONS = Object.freeze({
+  'linux-x64': Object.freeze({
+    artifact: `nova-audio-agent-${PRODUCT_VERSION}-linux-x64.AppImage`,
+    executable: 'nova-audio-agent.AppImage',
+    archive: 'file',
+  }),
   'darwin-arm64': Object.freeze({
     artifact: `nova-audio-agent-${PRODUCT_VERSION}-macos-arm64-app.zip`,
-    executable: 'Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb',
+    executable: 'Nova Audio Agent Desktop.app/Contents/MacOS/Nova Audio Agent Desktop',
     archive: 'zip',
   }),
   'win32-x64': Object.freeze({
     artifact: `nova-audio-agent-${PRODUCT_VERSION}-windows-x64-portable.zip`,
-    executable: 'Nova Audio Agent Ambient Orb.exe',
+    executable: 'Nova Audio Agent Desktop.exe',
     archive: 'zip',
   }),
 })

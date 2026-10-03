@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_run_id:
-        description: Candidate run containing both successful platform build artifacts
+        description: Candidate run containing all successful platform build artifacts
         required: true
         type: string
       commit:
@@ -38,7 +38,6 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
-      - run: npm run check:release-gate
       - run: npm install --global npm@11.6.0
       - name: Verify candidate identity, platform builds, version, and release authority
         env:
@@ -52,17 +51,26 @@ jobs:
           node clients/desktop/scripts/check-release-version.mjs
           test "$EXPECTED_COMMIT" = "$(git rev-parse HEAD)"
           git merge-base --is-ancestor "$EXPECTED_COMMIT" origin/main
-          gh run view "$CANDIDATE_RUN_ID" --json headSha,jobs,name > candidate-run.json
+          gh run view "$CANDIDATE_RUN_ID" --json headSha,jobs,name,status,conclusion,event,url > candidate-run.json
           test "$(jq -r .name candidate-run.json)" = "Release candidate evidence"
+          test "$(jq -r .status candidate-run.json)" = "completed"
+          test "$(jq -r .conclusion candidate-run.json)" = "success"
+          test "$(jq -r .event candidate-run.json)" = "workflow_dispatch"
           test "$(jq -r .headSha candidate-run.json)" = "$EXPECTED_COMMIT"
           test "$(jq '[.jobs[] | select(.name | startswith("platform-candidate (macos-14, darwin, darwin-arm64")) | select(.conclusion == "success")] | length' candidate-run.json)" = "1"
           test "$(jq '[.jobs[] | select(.name | startswith("platform-candidate (windows-latest, win32, win32-x64")) | select(.conclusion == "success")] | length' candidate-run.json)" = "1"
+          test "$(jq '[.jobs[] | select(.name | startswith("platform-candidate (ubuntu-22.04, linux, linux-x64")) | select(.conclusion == "success")] | length' candidate-run.json)" = "1"
           npm whoami
           if npm view "nova-audio-agent@$RELEASE_VERSION" version > existing-version.txt 2> npm-view-error.txt; then
             echo "nova-audio-agent@$RELEASE_VERSION already exists" >&2
             exit 1
           fi
           grep -q 'E404' npm-view-error.txt
+          if npm view "nova-audio-agent-server@$RELEASE_VERSION" version > existing-server-version.txt 2> npm-server-view-error.txt; then
+            echo "nova-audio-agent-server@$RELEASE_VERSION already exists" >&2
+            exit 1
+          fi
+          grep -q 'E404' npm-server-view-error.txt
           if gh release view "v$RELEASE_VERSION" >/dev/null 2>&1; then
             echo "GitHub release v$RELEASE_VERSION already exists" >&2
             exit 1
@@ -80,9 +88,10 @@ jobs:
           set -euo pipefail
           gh run download "$CANDIDATE_RUN_ID" --name candidate-darwin-arm64 --dir downloaded/candidate-darwin-arm64
           gh run download "$CANDIDATE_RUN_ID" --name candidate-win32-x64 --dir downloaded/candidate-win32-x64
+          gh run download "$CANDIDATE_RUN_ID" --name candidate-linux-x64 --dir downloaded/candidate-linux-x64
           mkdir release-artifacts
-          cp downloaded/candidate-darwin-arm64/* downloaded/candidate-win32-x64/* release-artifacts/
-          test "$(find release-artifacts -maxdepth 1 -type f | wc -l)" -eq 8
+          cp downloaded/candidate-darwin-arm64/* downloaded/candidate-win32-x64/* downloaded/candidate-linux-x64/* release-artifacts/
+          RELEASE_VERSION="${{ inputs.release_version }}" node clients/desktop/scripts/verify-candidate-artifacts.mjs release-artifacts
       - name: Pack and audit the public npm package
         run: |
           set -euo pipefail
@@ -102,17 +111,24 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
+          npm_tag="$(node clients/desktop/scripts/release-channel.mjs "$RELEASE_VERSION")"
+          release_flags=(--latest)
+          if test "$npm_tag" = preview; then
+            release_flags=(--prerelease --latest=false)
+          fi
           gh release create "v$RELEASE_VERSION" release-artifacts/* \
             --target "$EXPECTED_COMMIT" \
             --title "Nova Audio Agent v$RELEASE_VERSION" \
-            --notes "Nova Audio Agent v$RELEASE_VERSION updates the project documentation and improves Windows Codex project reliability. This release includes unsigned macOS arm64 and Windows x64 portable applications plus installers; macOS Gatekeeper and Windows SmartScreen may display security warnings." \
-            --latest
+            --notes "Nova Audio Agent v$RELEASE_VERSION. Install with npm install --global nova-audio-agent@$npm_tag. Available for macOS arm64, Windows x64 and Ubuntu 22.04+ x64. Desktop applications are unsigned; macOS Gatekeeper and Windows SmartScreen may display security warnings. See the README for features and setup." \
+            "${release_flags[@]}"
           tarball="$(find npm-package -maxdepth 1 -name '*.tgz' -type f)"
           tarball="$(realpath "$tarball")"
-          npm publish "$tarball" --access public
+          npm publish "./release-artifacts/nova-audio-agent-server-$RELEASE_VERSION.tgz" --access public --tag "$npm_tag"
+          npm publish "$tarball" --access public --tag "$npm_tag"
           published=''
-          for attempt in $(seq 1 12); do
-            if test "$(npm view "nova-audio-agent@$RELEASE_VERSION" version 2>/dev/null || true)" = "$RELEASE_VERSION"; then
+          for attempt in $(seq 1 60); do
+            if test "$(npm view "nova-audio-agent@$npm_tag" version --registry https://registry.npmjs.org 2>/dev/null || true)" = "$RELEASE_VERSION" \
+              && test "$(npm view "nova-audio-agent-server@$npm_tag" version --registry https://registry.npmjs.org 2>/dev/null || true)" = "$RELEASE_VERSION"; then
               published=1
               break
             fi
@@ -120,9 +136,10 @@ jobs:
           done
           test "$published" = "1"
           prefix="$(mktemp -d)"
-          npm install --global --prefix "$prefix" "nova-audio-agent@$RELEASE_VERSION"
+          npm install --global --prefix "$prefix" "nova-audio-agent@$RELEASE_VERSION" "nova-audio-agent-server@$RELEASE_VERSION"
           test "$("$prefix/bin/novaaudio" --version)" = "$RELEASE_VERSION"
           "$prefix/bin/novaaudio" --help
+          "$prefix/bin/novaaudio-server" --help
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -130,3 +147,10 @@ jobs:
           path: |
             candidate-run.json
           if-no-files-found: warn
+
+  npm-platform-acceptance:
+    needs: publish
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      commit: ${{ inputs.commit }}
+      release_version: ${{ inputs.release_version }}

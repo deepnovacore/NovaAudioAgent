@@ -285,3 +285,23 @@ test('default project protection fails closed and closes a retained parent when 
   assert.equal(protectDefaultProjectDirectories(host, paths), false)
   assert.deepEqual(closed, [21])
 })
+
+test('headless Node loads a manifest-bound Node-API addon without pretending to be Electron', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-project-node-api-')))
+  const body = fakeMachAddon()
+  try {
+    await mkdir(join(root, 'native/project-native'), {recursive: true})
+    await writeFile(join(root, 'native/project-native/nova_project_native.node'), body)
+    const record = {logical_id: 'project_native_addon', relative_path: 'native/project-native/nova_project_native.node',
+      byte_size: body.length, sha256: createHash('sha256').update(body).digest('hex'), kind: 'node_addon',
+      platform: 'darwin', architecture: 'arm64', electron_abi: null, node_api_version: 10, build_contract_version: 1}
+    const save = async (): Promise<void> => { await writeFile(join(root, 'native-resources-v1.json'), JSON.stringify({schema_version: 1, target: 'darwin-arm64', resources: [record]})) }
+    await save()
+    const load = (): ProjectNativeHost | null => loadProjectNativeHostFromResources({resourcesPath: root, platform: 'darwin', arch: 'arm64', electronAbi: '137', moduleLoader: () => fakeAddon()})
+    assert.equal(load() !== null, Number(process.versions.napi ?? 0) >= 10)
+    record.node_api_version = 99; await save(); assert.equal(load(), null)
+    record.node_api_version = 10; await save()
+    await writeFile(join(root, 'native/project-native/nova_project_native.node'), Buffer.alloc(body.length))
+    assert.equal(load(), null)
+  } finally { await rm(root, {recursive: true, force: true}) }
+})

@@ -71,7 +71,7 @@ export interface ApprovalController {
   acceptDecision(input: {readonly approvalId: string; readonly decision: ApprovalDecision}): boolean
   invalidate(reason: string): boolean
   /** Park the head while something else holds the floor: its expiry timer stops, `pending` stays true. */
-  hold(): boolean
+  hold(reason?: 'project' | 'background'): boolean
   /** Un-park the head with a fresh full TTL, as if it had just become head. */
-  release(): boolean
+  release(reason?: 'project' | 'background', options?: {readonly awaitPresentation?: boolean}): boolean
 }

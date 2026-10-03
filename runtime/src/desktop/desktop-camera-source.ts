@@ -2,7 +2,7 @@ import {realpathSync, statSync} from 'node:fs'
 import {isAbsolute} from 'node:path'
 import {stripLikePython} from '../text/python-text.js'
 
-export const DESKTOP_VIDEO_FILE_ENV = 'NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE'
+export const DESKTOP_VIDEO_FILE_ENV = 'DESKTOP_VIDEO_FILE'
 
 export type DesktopCameraSelection =
   | {readonly source: 'local'}

@@ -24,7 +24,6 @@ const DEFAULT_COUNT = 240
 const MIN_COUNT = 120
 const FIELD_RADIUS = 44
 const CORE_RADIUS = 12
-const RING_RADIUS = 46
 const MAX_RADIUS = 52
 const MIN_RADIUS = 1.5
 

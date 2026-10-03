@@ -3,7 +3,7 @@
  *
  * `String.prototype.normalize` and `toLowerCase` both follow the host ICU, which is ahead of the
  * database CPython bundles. Measuring the gap rather than assuming it (see
- * `fixtures/runtime/unicode-nfkc-vectors.json` and `runtime/test/unicode-nfkc.test.ts`) found it to
+ * `tests/fixtures/runtime/unicode-nfkc-vectors.json` and `runtime/test/unicode-nfkc.test.ts`) found it to
  * be narrow and to have a single cause: code points **assigned in a Unicode version newer than the
  * pin**. The pinned database has never heard of them, so it does nothing to them at all -- neither
  * decomposition nor case mapping -- while ICU applies both.

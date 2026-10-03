@@ -1,0 +1,20 @@
+{
+  "evaluation": "deterministic host admission and rejection; provider quality and v0.2 comparison remain pending",
+  "positive": [
+    {"id":"demo","content":"I have a demo today, 2026-09-11; I want to check the slides.","summary":"Would you like to check the demo slides?"},
+    {"id":"interview","content":"My interview is today, 2026-09-11; I want to rehearse my introduction.","summary":"Would rehearsing your introduction help?"},
+    {"id":"trip","content":"I leave for a trip today, 2026-09-11, and need to check my packing list.","summary":"Would you like to review the packing list?"},
+    {"id":"application","content":"I plan to review my application today, 2026-09-11.","summary":"Would you like help reviewing the application?"},
+    {"id":"release","content":"I plan a release today, 2026-09-11, after checking the test report.","summary":"Would you like to check the release test report?"},
+    {"id":"reading","content":"I want to discuss the paper I read today, 2026-09-11.","summary":"Would you like to discuss the paper?"},
+    {"id":"meeting","content":"I want to review today's meeting agenda on 2026-09-11.","summary":"Would reviewing the agenda help?"},
+    {"id":"recipe","content":"I want to organize a recipe list today, 2026-09-11.","summary":"Would you like to organize your recipe list?"},
+    {"id":"backup","content":"I plan to check my backup report today, 2026-09-11.","summary":"Would you like to review the backup report?"},
+    {"id":"study","content":"I want to review my study notes today, 2026-09-11.","summary":"Would you like to review your study notes?"}
+  ],
+  "silence": [
+    "No evidence of any kind", "Empty summary", "Summary exceeds bound", "Why-now exceeds bound",
+    "Model requests execution kind", "Unknown memory entry", "Wrong memory version", "Evidence outside snapshot",
+    "Wrong user scope", "Model supplies priority or permission"
+  ]
+}

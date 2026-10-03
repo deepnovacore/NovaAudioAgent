@@ -123,7 +123,7 @@ for (const stop of ['ctrl-c', 'SIGHUP']) test(`the Linux CLI displays in a PTY w
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
   const command = 'stty cols 120; exec ' + [process.execPath, fileURLToPath(new URL('./pair-device.mjs', import.meta.url)), server].map(quote).join(' ')
   const child = spawn('script', ['-qec', command, '/dev/null'], {env: {...process.env, DISPLAY: '', WAYLAND_DISPLAY: '',
-    NOVA_AUDIO_AGENT_SERVER_PORT: String(f.config.port), NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: tokenFile}})
+    SERVER_PORT: String(f.config.port), SERVER_TOKEN_FILE: tokenFile}})
   t.after(() => {if (child.exitCode === null) child.kill('SIGTERM')})
   const exited = once(child, 'exit')
   let printed = '', interrupted = false

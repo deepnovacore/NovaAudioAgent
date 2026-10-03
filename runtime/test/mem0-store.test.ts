@@ -81,7 +81,12 @@ test('real mem0 persists admissions before inference, preserves provenance and i
   assert.equal((await store.inspect!({query: 'kiwi'})).entries.length, 0)
   await assert.rejects(store.inspect!({query: 'x'.repeat(201)}))
   assert.equal((await store.recall('kiwi', {scope: 'any'})).hits.some(hit => hit.text === 'slow kiwi'), false)
-  for (const name of ['ledger.db', 'vectors.db', 'vectors_entities.db']) assert.equal((await stat(join(userDirectory(path), name))).mode & 0o777, 0o600)
+  for (const name of ['ledger.db', 'vectors.db', 'vectors_entities.db']) {
+    const metadata = await stat(join(userDirectory(path), name))
+    assert.ok(metadata.isFile())
+    // Windows does not expose owner-only POSIX mode bits through stat().
+    if (process.platform !== 'win32') assert.equal(metadata.mode & 0o777, 0o600)
+  }
   await store.close()
   store = createMem0PersonalMemory(options)
   await store.open()
@@ -216,12 +221,16 @@ test('desktop and phone workers serialize learning and recover when the owner te
   const endpoint = await provider()
   const store = createMem0PersonalMemory({path: join(directory, 'personal.sqlite'), userId: 'host-user',
     embedding: {baseUrl: endpoint.baseUrl, apiKey: 'test', model: 'embedding', dimensions: 2}})
-  t.after(async () => {await store.close(); await endpoint.close(); await rm(directory, {recursive: true, force: true})})
-  await store.open()
   // Read-only SDK instances cannot admit sources; seed through a learning-capable worker.
   const writer = createMem0PersonalMemory({path: join(directory, 'personal.sqlite'), userId: 'host-user',
     embedding: {baseUrl: endpoint.baseUrl, apiKey: 'test', model: 'embedding', dimensions: 2}, extractionModel: 'extract'})
-  t.after(() => writer.close())
+  t.after(async () => {
+    await writer.close()
+    await store.close()
+    await endpoint.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await store.open()
   await writer.open()
   for (let i = 0; i < 12; i++) await writer.remember!(turn('page-' + i, 'slow kiwi ' + i))
   const first = await store.inspect!({})

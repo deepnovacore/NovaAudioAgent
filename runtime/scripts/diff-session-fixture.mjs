@@ -7,7 +7,7 @@ import { runSessionFixture } from '../dist/test/session-fixture-host.js'
 
 const scenario = process.argv[2]
 if (scenario === undefined) throw new Error('pass a scenario id')
-const directory = resolve(import.meta.dirname, '../../fixtures/realtime/session/v1', scenario)
+const directory = resolve(import.meta.dirname, '../../tests/fixtures/realtime/session/v1', scenario)
 
 const fixture = await loadSessionFixture(directory)
 const actual = await runSessionFixture(fixture)

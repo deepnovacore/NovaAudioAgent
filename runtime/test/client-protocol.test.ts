@@ -39,7 +39,7 @@ test('remote decoder rejects unknown controls, oversized JSON and unsafe integer
 })
 
 test('shared Swift and TypeScript wire vectors decode identically', () => {
-  const vectors = JSON.parse(readFileSync(new URL('../../../fixtures/client-protocol/v1/vectors.json', import.meta.url), 'utf8')) as {
+  const vectors = JSON.parse(readFileSync(new URL('../../../tests/fixtures/client-protocol/v1/vectors.json', import.meta.url), 'utf8')) as {
     name: string; hex: string; valid: boolean;
     expected?: {utterance_id: string; generation_epoch: number; sequence: number; pcm_hex: string};
   }[]

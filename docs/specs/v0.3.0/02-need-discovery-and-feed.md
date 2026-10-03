@@ -2,17 +2,19 @@
 
 > 轨道 A。目标：让 Nova 在有依据时主动提出建议或问题，没有依据时保持沉默；建议在首页"动态"
 > 以事项形式呈现，用户可以处理、稍后、忽略；同一事项在依据变化时更新或撤回。本卷延续
-> [PASK](https://github.com/xzf-thu/Pask) 讨论的最小方案：**扩展现有 Surrogate，复用现有 Suggestion
+> [PASK](https://github.com/xzf-thu/Pask) 讨论的最小方案：**扩展现有 Proactive，复用现有 Suggestion
 > Pool**，不引入独立需求模型或第二个对话 Agent。
 
-状态：待评审。本卷只定边界与验收；对应里程碑 M5-A、M6-B（见 [STATUS](STATUS.zh-CN.md)）。
+命名：原 Surrogate 角色现称 Proactive；`surrogate.watch` 槽位、`origin: 'surrogate'`、`SURROGATE_SYSTEM` 等序列化标识和提示词常量保留历史拼写。
+
+状态：待评审。本卷只定边界与验收；对应里程碑 M5-A、M6-B。
 
 ## 规划补充：从开口判断到需求发现
 
-v0.2 的 Surrogate 从候选建议中选择“什么值得说、何时说”；v0.3 增加“是否存在值得关心的需求”。
+v0.2 的 Surrogate（现称 Proactive）从候选建议中选择“什么值得说、何时说”；v0.3 增加“是否存在值得关心的需求”。
 两者仍在既有边界内协作：个人记忆（VoiceMem）提供用户侧的持续依据，主机提供当前项目与任务
 上下文，当前对话与获准来源补充新事实。先用有界 ContextView；信息不足时走主机
-拥有的有界记忆查询，Surrogate 自身不调用工具，也不另建无限循环的研究 Agent。
+拥有的有界记忆查询，Proactive 自身不调用工具，也不另建无限循环的研究 Agent。
 
 [Pask 官方说明](https://github.com/xzf-thu/Pask) 将 DD-MM-PAS 分为需求检测、记忆建模与主动执行；
 其 IntentFlow 描述了沉默、立即响应、先查记忆三类决策（核对日期：2026-09-10）。
@@ -31,9 +33,9 @@ Suggestion Pool、Host 与 Floor 是 Nova 的具体设计。
   （`fast_brain | surrogate | executor`）、`kind`（`question | notify | followup`）、`content`、
   `evidence_refs`、`condition_key`、`delivery_policy`（`once | while_condition_true`）、
   `cooldown_until`、`expires_at`、`status`（`pending | fired | withdrawn | expired`）。
-- Surrogate 输出契约（`runtime/src/core/ports.ts`、`runtime/src/model/model-adapters.ts`）：
+- Proactive 输出契约（`runtime/src/core/ports.ts`、`runtime/src/model/proactivity.ts`）：
   `{speak, suggestion_id, progress_class, reason}`。主机只接受本次提供给它的 suggestion ID。
-- `runtime/src/model/prompting.ts` 的 `SURROGATE_SYSTEM`：Surrogate 不生成给用户听的话、不调用工具，
+- `runtime/src/model/prompting.ts` 的 `SURROGATE_SYSTEM`：Proactive 不生成给用户听的话、不调用工具，
   只决定此刻是否值得开口、选桌上哪一条。coding progress 有专门的分类路径（`progress_class`）。
 - `runtime/src/realtime/floor.ts`：说话权仲裁 allow / preempt / defer，优先级 user 100、guard 90、
   active executors 50、ambient observation 40。
@@ -56,10 +58,10 @@ Suggestion Pool、Host 与 Floor 是 Nova 的具体设计。
 
 ### 2.2 输入：有界快照
 
-每次判断为 Surrogate 准备一个**快照**，包含：
+每次判断为 Proactive 准备一个**快照**，包含：
 
 - 当前 ContextView（现有）；
-- 少量相关个人记忆：通过 `PersonalMemoryResource.recall` 在适配层**异步**取回，形成有界列表，
+- 少量相关个人记忆：通过 06 卷 §5.1 统一回忆在适配层**异步**取回 B 当前条目与 A 原文节选，形成有界列表，
   每条带 03 卷定义的稳定 `entry_id` 与 `version`（即 06 卷 `revision`；后端不提供版本时标记为不可校验）；
   `kind = commitment` 的条目按 `due` 与 `direction` 优先进入快照；
 - 近期实际交付记录：最近 N 条已展示 / 已通知 / 已语音交付的事项摘要（N 待评审，建议 ≤ 8），
@@ -68,6 +70,7 @@ Suggestion Pool、Host 与 Floor 是 Nova 的具体设计。
 
 快照携带 `user_scope`（用户与作用域）和实际使用的记忆版本集合。ContextView 保持同步编译；
 异步检索在适配层完成后再组装快照，不改 `context-view.ts` 的同步契约。
+统一结果保留 `entries` 与低信任 `snippets` 两层，依据使用 A 的 canonical `evidence_id` 与 locator；会话 MemoryRef 仍独立。tick 不抽取、不让模型选择资料库。proposal 只能引用本次快照中的依据和修订，准入与交付前重新校验，失效则撤回。
 
 ### 2.3 输出：追加可空 proposal
 
@@ -96,7 +99,7 @@ proposal (nullable):
   都视为无效。
 - coding progress 走原 `progress_class` 路径，本卷不改其语义，也不让 proposal 混入该路径。
 
-这是接口内容，不是已发布 wire schema。落地时以 zod schema 与 `fixtures/` 下的 golden 向量钉住，
+这是接口内容，不是已发布 wire schema。落地时以 zod schema 与 `tests/fixtures/` 下的 golden 向量钉住，
 且 `SURROGATE_SYSTEM` 的增量文案在 Node 适配器测试里断言（沿用现有做法）。
 
 ### 2.4 主机准入：校验、去重、入池
@@ -131,7 +134,7 @@ proposal (nullable):
 |---|---|---|
 | 首页展示 | `feed_item` 进入用户可见列表 | `presented_at`；**不等于用户已读** |
 | 通知 | 主窗口收起且事项优先级达到通知阈值（阈值待评审） | `notified_at`、通知渠道 |
-| 语音 | Floor 允许且用户未静音且当前 suggestion 被 Surrogate 后续选中 | `spoken_at`；沿用现有 `fired` 路径 |
+| 语音 | Floor 允许且用户未静音且当前 suggestion 被 Proactive 后续选中 | `spoken_at`；沿用现有 `fired` 路径 |
 | IM | 用户开启了 04 卷 §2.5 的 bot 推送且事项优先级达到通知阈值 | `im_sent_at`、渠道标识；bot 发送成功不等于用户已读 |
 
 "入池""选择""实际交付"是三个状态，不合并。语音交付失败（被 preempt、静音、连接断开）不能记为成功。
@@ -202,10 +205,10 @@ Suggestion Pool 只负责候选与交付调度，不当首页数据库。
 
 编号沿用讨论稿 §9。
 
-- **4 任务内发现**：用户明确提过演示目标，当前任务出现关键失败。Surrogate 提出 `question` proposal，
+- **4 任务内发现**：用户明确提过演示目标，当前任务出现关键失败。Proactive 提出 `question` proposal，
   `evidence_refs` 同时包含用户陈述事件与失败事件；入池后 feed 出现一条事项，可追溯两类依据。
 - **5 无任务发现**：没有运行中的任务；低频 `tick` 到来，快照中有一条带明确日期的近期记忆，
-  Surrogate 提出一次相关提问。相同条件但记忆缺少日期或过于陈旧时，输出沉默。两种情形都在固定案例集中。
+  Proactive 提出一次相关提问。相同条件但记忆缺少日期或过于陈旧时，输出沉默。两种情形都在固定案例集中。
 - **6 不重复打扰**：同一事项在同一本地日期内第二次到达，主机记 `suppressed_duplicate`，不入池；
   用户忽略后同一事项再次到达同样被抑制；追加一条无关事件不改变结果；程序重启后重放同样事件，
   结果相同。语音交付被 preempt 时 `spoken_at` 保持空，事项仍在 feed。
@@ -224,3 +227,13 @@ Suggestion Pool 只负责候选与交付调度，不当首页数据库。
 检索/决策延迟、用户纠正后的失效传播；比较关闭需求发现的 v0.2 基线与 v0.3 proposal。
 另测无活动任务、用户忙碌/静默、过时记忆、冲突记忆及重启后的场景。
 未经授权的执行必须为零；其余发布阈值在基线测量后、验收前固定，不以建议数量增加代替效果。
+
+## 2026-09-12 修订：准备、简报与会话交付
+
+所有主动内容集中进入固定「主动提醒」会话，不插入其他主题的对话。仅该会话自身占用实时语音、客户端在前台、未静音且 Floor 允许时可以播报；其他会话正在语音时静默到达。消息呈现、未读、通知与实际播报分别记账。
+
+先准备再提醒：只允许读取已授权资料、检索、生成摘要和提纲。准备模型没有执行工具；材料保持低信任，发布及点击时复验来源与记忆修订。准备本身不授权发送消息、修改文件或启动 coding。具体行动按钮在用户点击后开启专题对话，外部执行仍走原审批机制。
+
+每日前瞻和回顾分别默认关闭，不改变用户原有 discovery 设置。开启时默认工作日 08:30 前瞻、18:30 回顾，22:00–08:00 免打扰；全部使用设置时区。简报按本地日期、类型、时区去重，事项另行去重。当前实现只考虑当天两小时内的时刻，不补发旧队列；夏令时不存在的时刻跳过、重复时刻只发一次。准备前持久化占用键，因此进程崩溃或准备失败不会在同一日重复准备；不承诺失败自动补发。
+
+验收包括跨重启去重、撤回失效材料、重复点击幂等、静音期间不播报、后台会话不抢焦点、菜单栏未读和并发已读确认。真实飞书投递与回调必须另行验收，不能用页面预览或模拟状态替代。

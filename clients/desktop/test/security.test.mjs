@@ -19,9 +19,9 @@ test('settings links open only fixed API key pages in the external browser', asy
   assert.deepEqual(opened, [allowed])
   const html = await readFile(new URL('../src/renderer/settings.html', import.meta.url), 'utf8')
   const links = [...html.matchAll(/<a class="key-link" href="([^"]+)" target="_blank" rel="noopener noreferrer"/g)]
-  assert.equal(links.length, 5)
+  assert.equal(links.length, 7)
   for (const [, href] of links) handler({url: href.replaceAll('&amp;', '&')})
-  assert.equal(opened.length, 6)
+  assert.equal(opened.length, 8)
 })
 
 test('accepts only loopback websocket bootstrap with a 128-bit token', () => {
@@ -55,6 +55,7 @@ test('pins BrowserWindow isolation sandbox and ephemeral partition', () => {
   assert.equal(options.maxHeight, undefined)
   assert.equal(options.transparent, true)
   assert.equal(options.frame, false)
+  assert.equal(options.acceptFirstMouse, true, 'an inactive macOS orb must receive the first click')
   assert.equal(options.webPreferences.contextIsolation, true)
   assert.equal(options.webPreferences.nodeIntegration, false)
   assert.equal(options.webPreferences.sandbox, true)
@@ -322,4 +323,9 @@ test('main microphone helper resolves macOS TCC only when the renderer requests 
     assert.deepEqual(calls, expectedCalls, name)
     assert.deepEqual(result, { status: expectedStatus }, name)
   }
+})
+
+test('connector authorization opens only Composio HTTPS link pages', () => {
+ assert.equal(securityModule.connectorAuthorizationUrl('https://connect.composio.dev/link/fixture'),'https://connect.composio.dev/link/fixture')
+ for(const url of ['https://connect.composio.dev.evil.test/link/x','http://connect.composio.dev/link/x','https://user@connect.composio.dev/link/x','https://connect.composio.dev/other'])assert.throws(()=>securityModule.connectorAuthorizationUrl(url))
 })

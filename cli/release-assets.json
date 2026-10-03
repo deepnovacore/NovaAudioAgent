@@ -3,14 +3,19 @@
   "repository": "deepnovacore/NovaAudioAgent",
   "targets": {
     "darwin-arm64": {
-      "artifact": "nova-audio-agent-0.1.1-macos-arm64-app.zip",
-      "executable": "Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb",
+      "artifact": "nova-audio-agent-0.3.0-preview.1-macos-arm64-app.zip",
+      "executable": "Nova Audio Agent Desktop.app/Contents/MacOS/Nova Audio Agent Desktop",
       "archive": "zip"
     },
     "win32-x64": {
-      "artifact": "nova-audio-agent-0.1.1-windows-x64-portable.zip",
-      "executable": "Nova Audio Agent Ambient Orb.exe",
+      "artifact": "nova-audio-agent-0.3.0-preview.1-windows-x64-portable.zip",
+      "executable": "Nova Audio Agent Desktop.exe",
       "archive": "zip"
+    },
+    "linux-x64": {
+      "artifact": "nova-audio-agent-0.3.0-preview.1-linux-x64.AppImage",
+      "executable": "nova-audio-agent.AppImage",
+      "archive": "file"
     }
   }
 }

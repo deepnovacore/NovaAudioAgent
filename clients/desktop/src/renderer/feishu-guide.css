@@ -1,0 +1,40 @@
+/* Shared by settings and the workbench connection panel. */
+.im-guide{--guide-ink:#242b35;--guide-accent:#376fd0;color:var(--guide-ink)}
+.im-guide>h3{font-size:20px!important;letter-spacing:-.3px;margin:0 0 8px!important}
+.im-guide>p{color:#7c8490;line-height:1.75;font-size:13px}
+.im-guide .im-steps{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;list-style:none;border:0;padding:24px 0 26px;margin:20px 0 0;text-align:center}
+.im-guide .im-steps::before{content:'';position:absolute;top:40px;left:16.66%;right:16.66%;height:1px;background:#e0e5ed}
+.im-guide .im-steps li{position:relative;display:flex;align-items:center;flex-direction:column;gap:8px;color:#9199a5;font-size:12px}
+.im-guide .im-step-dot{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:#f4f6f9;border:1px solid #e4e8ee;font-size:13px;font-weight:600;z-index:1}
+.im-guide .im-steps [data-state="current"] .im-step-dot{background:var(--guide-accent);color:#fff;border-color:var(--guide-accent);box-shadow:0 0 0 5px #edf3fc}
+.im-guide .im-steps [data-state="done"] .im-step-dot{color:#3a7b5f;background:#eef7f1;border-color:#e0eee5}
+.im-guide .im-steps [aria-current="step"]{color:var(--guide-ink);font-weight:600}
+.im-guide .im-steps small{font-size:10px;font-weight:400;color:#98a0aa}
+.im-guide-stage{background:#f7f9fc;border:1px solid #e8edf4;border-radius:18px;padding:24px;margin:2px 0 22px}
+.im-guide-stage .im-guide-kicker{font-size:10px;letter-spacing:1px;color:#7590b7;margin:0 0 8px}
+.im-guide-stage h4{font-size:18px;line-height:1.5;font-weight:600;margin:0 0 8px;color:var(--guide-ink)}
+.im-guide-stage>p{font-size:12px;line-height:1.8;color:#7c8490;margin:0}
+.im-guide-checklist{counter-reset:guide-step;list-style:none;padding:0;margin:22px 0 0;display:grid;gap:15px}
+.im-guide-checklist li{counter-increment:guide-step;position:relative;padding-left:31px;font-size:12px;line-height:1.8;color:#576171}
+.im-guide-checklist li::before{content:counter(guide-step);position:absolute;left:0;top:1px;display:grid;place-items:center;width:21px;height:21px;border:1px solid #e0e6ee;border-radius:7px;background:#fff;font-size:10px;color:#8392a5}
+.im-guide button{margin:6px 8px 6px 0!important;min-height:36px;border-radius:10px!important;font-size:12px!important;padding:9px 14px!important}
+.im-guide .im-guide-primary{background:var(--guide-accent)!important;color:#fff!important;border:1px solid var(--guide-accent)!important}
+.im-guide .im-guide-primary:hover:not(:disabled){background:#2c60b7!important}
+.im-guide .im-guide-waiting{background:#edf4ff;border:1px solid #dbe8fa;border-radius:11px;color:#476b9c;padding:12px 14px;font-size:12px}
+.im-guide .im-field{display:flex;flex-direction:column;gap:7px;margin:16px 0;font-size:12px;color:#5f6977}
+.im-guide fieldset{border:1px solid #e6ebf1;border-radius:14px;padding:16px;margin:18px 0}
+.im-guide fieldset legend{font-size:12px;padding:0 6px;color:#68788f}
+.im-guide details{border-top:1px solid #e9edf2;padding-top:16px;margin-top:22px}
+.im-guide summary{font-size:12px;color:#60728b;cursor:pointer}
+@media(max-width:700px){.im-guide-stage{padding:18px}.im-guide-stage h4{font-size:16px}}
+#im-section .im-card.im-guide{padding:20px;background:#fff}
+.im-guide .im-steps{padding:12px 0 18px;margin-top:12px}
+.im-guide .im-steps::before{top:28px}
+.im-guide-stage{padding:20px;margin-bottom:14px}
+.im-guide-actions{display:flex;flex-wrap:wrap;gap:4px;margin:16px 0 0}
+.im-guide-actions button{margin:0 6px 4px 0!important}
+body:has(#im-section:not([hidden]))>footer{display:none}
+.im-guide .im-chat-list{max-height:300px;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;display:flex;flex-direction:column;gap:8px;padding:8px 6px 8px 0}
+.im-guide .im-chat-list .personal-consent{flex-shrink:0;overflow-wrap:anywhere}
+.im-guide .im-chat-bulk{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid #e6ebf1;padding-bottom:6px}
+.im-guide .im-chat-list:focus-visible{outline:2px solid var(--guide-accent);outline-offset:3px}

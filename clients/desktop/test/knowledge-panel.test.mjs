@@ -7,6 +7,7 @@ function fixture(action) {
     constructor() {this.children = []; this.listeners = {}; this.checked = false; this.value = ''; this.textContent = ''}
     append(...children) {this.children.push(...children)}
     replaceChildren(...children) {this.children = children}
+    setAttribute(name, value) {this[name] = value}
     addEventListener(name, fn) {this.listeners[name] = fn}
   }
   const nodes = new Map()

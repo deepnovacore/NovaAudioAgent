@@ -16,6 +16,7 @@ interface Connection {
   readonly socket: WebSocket
   readonly id: string
   readonly commands: ClientCommands
+  clientId?: string
   authenticated: boolean
   pendingBytes: number
   pendingMessages: number
@@ -141,6 +142,7 @@ export class ClientServer {
           const hello = JSON.parse(raw) as {protocol_version?: unknown; media?: unknown; language?: unknown}
           if (hello.protocol_version !== 1 || !acceptsClientMedia(hello.media)) { this.#reject(connection, 4006); return }
           const language = parsePromptLanguage(hello.language)
+          connection.clientId=credential===undefined?'remote:master':this.#options.pairing!.clientIdentity(credential)
           connection.authenticated = true
           if (credential !== undefined) {
             const untrack = this.#options.pairing!.track(credential, () => this.#reject(connection, 4003))
@@ -160,7 +162,7 @@ export class ClientServer {
           const result = await connection.commands.receive(bytes.toString('utf8'), control => {
             if (this.#active !== connection) throw new Error('stale client')
             if (this.#options.onControl === undefined) throw new Error('control consumer unavailable')
-            return this.#options.onControl(control)
+            return this.#options.onControl(control,{client_id:connection.clientId!,can_takeover:connection.clientId!=='remote:master'})
           })
           if (this.#active !== connection) return
           await this.#send(connection, JSON.stringify(result))

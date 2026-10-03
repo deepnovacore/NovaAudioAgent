@@ -1,3 +1,4 @@
+import {onButton} from './button-action.mjs'
 import {t} from './locale.mjs'
 export const PHONE_STATES = {
   idle: [t("建立设备连接"), t("在 iPhone 上继续与这台电脑的 Nova 对话。首次连接只需扫码。"), t("启用手机连接"), 'enable'],
@@ -41,7 +42,7 @@ export function createPhonePanel({document, api, save}) {
       row.className = 'phone-device'
       const name = document.createElement('span'); name.textContent = device.name
       const button = document.createElement('button'); button.type = 'button'; button.textContent = t("撤销连接")
-      button.addEventListener('click', () => { void run('revoke', device.id) })
+      onButton(button, () => { return run('revoke', device.id) })
       row.append(name, button); devices.append(row)
     }
     devices.hidden = !(view.devices?.length)
@@ -60,10 +61,10 @@ export function createPhonePanel({document, api, save}) {
     } catch { if (epoch === generation) { busy = false; render({state: 'unavailable'}) } }
     finally { busy = false; if (epoch !== generation && active) void run('status') }
   }
-  node('phone-primary').addEventListener('click', () => { void run(action) })
-  node('phone-recheck').addEventListener('click', () => { void run('status') })
-  node('phone-disable').addEventListener('click', () => { void run('disable') })
-  node('phone-pairing-open').addEventListener('click', async () => { if (!busy && (await save()).saved) void run('enable') })
+  onButton(node('phone-primary'), () => { return run(action) })
+  onButton(node('phone-recheck'), () => { return run('status') })
+  onButton(node('phone-disable'), () => { return run('disable') })
+  onButton(node('phone-pairing-open'), async () => { if (!busy && (await save()).saved) return run('enable') })
   render({state: 'idle'})
   return {
     setActive(value) {

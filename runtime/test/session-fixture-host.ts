@@ -235,7 +235,7 @@ async function applyStep(
     case 'reconnect_for_guard': {
       const generation = session.currentGeneration
       if (generation === null) throw new Error('reconnect_for_guard needs a generation to retain')
-      return session.reconnectForGuard({
+      return session.reconnectForPreemptiveAlert({
         tools: tools(step.tools),
         oldGeneration: generation,
         confirmationTimeout: step.confirmation_timeout,

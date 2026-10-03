@@ -40,7 +40,7 @@ import {
   type SearchTransport,
 } from '../src/executors/search.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/executors/search/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/executors/search/v1')
 
 interface Case {
   readonly name: string

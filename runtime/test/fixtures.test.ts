@@ -17,7 +17,7 @@ import { canonicalJson } from '../src/core/trace.js'
 
 const fixtureParent = resolve(
   import.meta.dirname,
-  '../../../fixtures/runtime/v1',
+  '../../../tests/fixtures/runtime/v1',
 )
 const fixtureRoot = resolve(fixtureParent, 'deadline-handoff-wins')
 const redactionFixtureRoot = resolve(fixtureParent, 'deadline-sensitive-redaction')

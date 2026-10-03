@@ -1,3 +1,5 @@
+import type {CommittedConversationPair} from '../history.js'
+import type {PreparedMemoryContext} from './adapter.js'
 import type {PromptLanguage} from '../prompt-language.js'
 import type {Frame} from '../../executors/watcher.js'
 import type {
@@ -29,6 +31,7 @@ export interface CascadedRealtimeProviderOptions {
   readonly asrFactory: AsrFactory
   readonly llmFactory: CascadedLlmFactory
   readonly ttsFactory: TtsFactory
+  readonly prerecall?: (query: string, signal: AbortSignal) => Promise<PreparedMemoryContext | null>
   readonly captureFrame?: (signal: AbortSignal) => Promise<Frame>
   readonly telemetry?: RealtimeTelemetry
   readonly idFactory: () => string
@@ -45,6 +48,7 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
   readonly #asrFactory: AsrFactory
   readonly #llmFactory: CascadedLlmFactory
   readonly #ttsFactory: TtsFactory
+  readonly #prerecall: ((query: string, signal: AbortSignal) => Promise<PreparedMemoryContext | null>) | undefined
   readonly #captureFrame: ((signal: AbortSignal) => Promise<Frame>) | undefined
   readonly #telemetry: RealtimeTelemetry | undefined
   readonly #idFactory: () => string
@@ -63,6 +67,7 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
     this.#asrFactory = options.asrFactory
     this.#llmFactory = options.llmFactory
     this.#ttsFactory = options.ttsFactory
+    this.#prerecall = options.prerecall
     this.#captureFrame = options.captureFrame
     this.#telemetry = options.telemetry
     this.#idFactory = options.idFactory
@@ -105,6 +110,7 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
       adapter = new CascadedRealtimeAdapter({
         language: this.#language,
         ...(this.#captureFrame ? {captureFrame: this.#captureFrame} : {}),
+        ...(this.#prerecall ? {prerecall: this.#prerecall} : {}),
         endpointing,
         asr,
         llm,
@@ -139,6 +145,10 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
       if (this.#connectSettled === settled) this.#connectSettled = null
       settleConnect?.()
     }
+  }
+
+  restoreHistory(history:readonly CommittedConversationPair[],signal:AbortSignal):Promise<void> {
+    return this.#requiredAdapter().restoreHistory(history,signal)
   }
 
   transcribeDraft(pcm: Uint8Array, signal: AbortSignal): Promise<string> {

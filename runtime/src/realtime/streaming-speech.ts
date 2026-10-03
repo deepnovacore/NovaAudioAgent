@@ -41,7 +41,7 @@ export class StreamingSpeech {
           continue
         }
       }
-      if (text[0] === '`' || text.startsWith('~~~')) {
+      if (text.startsWith('`') || text.startsWith('~~~')) {
         const ticks = /^(?:`+|~+)/u.exec(text)![0]
         if (ticks.length === text.length && !final) break
         const end = text.indexOf(ticks, ticks.length)
@@ -50,7 +50,7 @@ export class StreamingSpeech {
         take(length, ticks.length >= 3 ? '（代码示例略）' : clean(text.slice(ticks.length, end < 0 ? undefined : end)))
         continue
       }
-      if (text[0] === '[' || text.startsWith('![') || text === '!') {
+      if (text.startsWith('[') || text.startsWith('![') || text === '!') {
         const close = text.indexOf(']')
         if ((close < 0 || close === text.length - 1) && !final) break
         if (close >= 0 && text[close + 1] === '(') {
@@ -64,7 +64,7 @@ export class StreamingSpeech {
           take(end, clean(text.slice(text.startsWith('![') ? 2 : 1, close)))
           continue
         }
-        if (close < 0 && final && text[0] === '[') {take(text.length, clean(text.slice(1))); continue}
+        if (close < 0 && final && text.startsWith('[')) {take(text.length, clean(text.slice(1))); continue}
         if (close >= 0) {take(close + 1, clean(text.slice(text.startsWith('![') ? 2 : 1, close))); continue}
       }
       if (!final && ['http://', 'https://'].some(prefix => prefix.startsWith(text))) break
@@ -74,7 +74,7 @@ export class StreamingSpeech {
         take(end < 0 ? text.length : end, '（链接略）')
         continue
       }
-      if (text[0] === '*' || text[0] === '_') {take(1, ''); continue}
+      if (text.startsWith('*') || text.startsWith('_')) {take(1, ''); continue}
       if (text === '~' && !final) break
       if (text.startsWith('~~')) {take(2, ''); continue}
       // Preserve a surrogate pair when an upstream stream splits UTF-16 units.

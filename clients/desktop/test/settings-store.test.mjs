@@ -22,8 +22,11 @@ import {
 } from '../src/main/settings-store.mjs'
 
 const ALL_SECRET_KEYS = Object.freeze([
+  'composioApiKey',
   'dashscopeApiKey',
+  'stepfunApiKey',
   'tavilyApiKey',
+  'openrouterApiKey',
   'modelApiKey',
   'codexApiKey',
   'arkApiKey',
@@ -75,6 +78,8 @@ async function withTempDirectory(run) {
 test('the default settings are the documented schema', () => {
   assert.deepEqual(DEFAULT_SETTINGS, {
     version: 4,
+    startupView: 'workbench',
+    lastPresentation: 'workbench',
     language: 'zh-CN',
     palette: 'ember',
     proactivity: 'balanced',
@@ -88,12 +93,13 @@ test('the default settings are the documented schema', () => {
     startListeningOnLaunch: false,
     wakeWordEnabled: false,
     autoHideSeconds: 60,
-    pipelineMode: 'integrated',
+    pipelineMode: 'cascaded',
     integratedProvider: 'qwen',
     integratedModel: 'qwen-audio-3.0-realtime-plus',
     integratedVoice: 'longanqian',
     cascadedEndpointingProvider: 'auto',
     cascadedAsrProvider: 'volcengine',
+    voiceprintEnabled: false, voiceprintId: '', voiceprintName: '', voiceprintUploadUrl: '',
     cascadedLlmProvider: 'deepseek',
     cascadedLlmModels: { qwen: 'qwen-plus', ark: 'doubao-seed-2-0-pro-260215', deepseek: 'deepseek-flash' },
     cascadedTtsProvider: 'volcengine',
@@ -108,6 +114,7 @@ test('the default settings are the documented schema', () => {
     embeddingModel: 'text-embedding-v4',
     capabilitiesConfigPath: '',
     knowledgePath: '',
+    memoryPrerecallEnabled: false,
     conversationVisionEnabled: false, monitorCameraDeviceId: '', watchModel: '',
     phoneConnectionEnabled: false, phoneServerPort: 0, phoneServerTokenFile: '', phoneServerUrl: '',
     secrets: {},
@@ -240,6 +247,7 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     integratedVoice: '  longxiaochun  ',
     cascadedEndpointingProvider: 'manual',
     cascadedAsrProvider: 'volcengine',
+    voiceprintEnabled: false, voiceprintId: '', voiceprintName: '', voiceprintUploadUrl: '',
     cascadedLlmProvider: 'ark',
     cascadedLlmModels: {
       qwen: '  qwen-plus  ',
@@ -251,6 +259,8 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
 
   assert.deepEqual(normalized, {
     version: 4,
+    startupView: 'workbench',
+    lastPresentation: 'workbench',
     language: 'zh-CN',
     palette: 'graphite',
     proactivity: 'balanced',
@@ -270,6 +280,7 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     integratedVoice: 'longxiaochun',
     cascadedEndpointingProvider: 'auto',
     cascadedAsrProvider: 'volcengine',
+    voiceprintEnabled: false, voiceprintId: '', voiceprintName: '', voiceprintUploadUrl: '',
     cascadedLlmProvider: 'ark',
     cascadedLlmModels: { qwen: 'qwen-plus', ark: 'doubao-custom', deepseek: 'deepseek-flash' },
     cascadedTtsProvider: 'volcengine',
@@ -284,6 +295,7 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     embeddingModel: 'text-embedding-v4',
     capabilitiesConfigPath: '',
     knowledgePath: '',
+    memoryPrerecallEnabled: false,
     conversationVisionEnabled: false, monitorCameraDeviceId: '', watchModel: '',
     phoneConnectionEnabled: false, phoneServerPort: 0, phoneServerTokenFile: '', phoneServerUrl: '',
     secrets: {},
@@ -355,6 +367,8 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'integratedVoice',
     'knowledgePath',
     'language',
+    'lastPresentation',
+    'memoryPrerecallEnabled',
     'modelBaseUrl',
     'monitorCameraDeviceId',
     'palette',
@@ -366,7 +380,9 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'progressBubbles',
     'secrets',
     'startListeningOnLaunch',
+    'startupView',
     'version',
+    'voiceprintEnabled', 'voiceprintId', 'voiceprintName', 'voiceprintUploadUrl',
     'wakeWordEnabled',
     'watchModel',
   ])
@@ -556,6 +572,7 @@ test('publicSettings never carries the secrets object', () => {
     'integratedVoice',
     'knowledgePath',
     'language',
+    'memoryPrerecallEnabled',
     'modelBaseUrl',
     'monitorCameraDeviceId',
     'palette',
@@ -566,7 +583,9 @@ test('publicSettings never carries the secrets object', () => {
     'proactivity',
     'progressBubbles',
     'startListeningOnLaunch',
+    'startupView',
     'version',
+    'voiceprintEnabled', 'voiceprintId', 'voiceprintName', 'voiceprintUploadUrl',
     'wakeWordEnabled',
     'watchModel',
   ])
@@ -591,8 +610,11 @@ test('secretsPresent reports booleans for every key and leaks no ciphertext', ()
   )
 
   assert.deepEqual(secretsPresent(settings), {
+    composioApiKey: false,
     dashscopeApiKey: true,
+    stepfunApiKey: false,
     tavilyApiKey: false,
+    openrouterApiKey: false,
     modelApiKey: false,
     codexApiKey: true,
     arkApiKey: false,
@@ -602,8 +624,11 @@ test('secretsPresent reports booleans for every key and leaks no ciphertext', ()
   })
   assert.doesNotMatch(JSON.stringify(secretsPresent(settings)), /sk-dash|sk-codex|sealed/)
   assert.deepEqual(secretsPresent(undefined), {
+    composioApiKey: false,
     dashscopeApiKey: false,
+    stepfunApiKey: false,
     tavilyApiKey: false,
+    openrouterApiKey: false,
     modelApiKey: false,
     codexApiKey: false,
     arkApiKey: false,
@@ -613,7 +638,7 @@ test('secretsPresent reports booleans for every key and leaks no ciphertext', ()
   })
 })
 
-test('all eight secret fields seal, report presence, round-trip, and clear independently', () => {
+test('all secret fields seal, report presence, round-trip, and clear independently', () => {
   const codec = fakeCodec()
   const values = Object.fromEntries(ALL_SECRET_KEYS.map(key => [key, `${key}-value`]))
   const stored = applySettingsUpdate(DEFAULT_SETTINGS, { secrets: values }, codec)
@@ -629,7 +654,7 @@ test('all eight secret fields seal, report presence, round-trip, and clear indep
     { secrets: Object.fromEntries(ALL_SECRET_KEYS.map(key => [key, ''])) },
     codec,
   )
-  assert.deepEqual(cleared.secrets, {})
+  assert.deepEqual(cleared.secrets, {composioApiKey:{enc:'cleared',data:''}})
   assert.deepEqual(secretsPresent(cleared), Object.fromEntries(ALL_SECRET_KEYS.map(key => [key, false])))
 })
 
@@ -1193,6 +1218,18 @@ test('native vision settings persist independently and device IDs have a bounded
   assert.equal(normalizeSettings({conversationVisionEnabled:'true'}).conversationVisionEnabled,false)
 })
 
+test('explicit integrated preference is preserved for existing users', () => {
+  assert.equal(normalizeSettings({version:4,pipelineMode:'integrated'}).pipelineMode, 'integrated')
+})
+
+test('memory prerecall defaults off and preserves explicit opt-in', () => {
+  assert.equal(normalizeSettings({}).memoryPrerecallEnabled,false)
+  const settings=normalizeSettings({memoryPrerecallEnabled:true})
+  assert.equal(publicSettings(settings).memoryPrerecallEnabled,true)
+  assert.equal(backendSettings(settings).memoryPrerecallEnabled,true)
+  assert.equal(normalizeSettings({memoryPrerecallEnabled:'false'}).memoryPrerecallEnabled,false)
+})
+
 test('phone pairing configuration persists but does not restart or leak into the voice backend', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'nova-phone-settings-'))
   t.after(() => rm(dir, {recursive: true, force: true}))
@@ -1225,4 +1262,34 @@ test('unsupported embedding settings never become cloud defaults during normaliz
       assert.equal(JSON.parse(await readFile(file, 'utf8')).embeddingProvider, embeddingProvider)
     }
   } finally {await rm(directory, {recursive: true, force: true})}
+})
+
+test('startup presentation persists, validates and does not restart the backend', async () => {
+  const {startupPresentation} = await import('../src/main/settings-store.mjs')
+  assert.equal(startupPresentation({}), 'workbench')
+  assert.equal(startupPresentation({startupView: 'orb'}), 'orb')
+  assert.equal(startupPresentation({startupView: 'last', lastPresentation: 'orb'}), 'orb')
+  assert.equal(startupPresentation({startupView: 'last', lastPresentation: 'background'}), 'workbench')
+  assert.equal(startupPresentation({startupView: 'orb'}, ['--workbench']), 'workbench')
+  const next = applySettingsUpdate(DEFAULT_SETTINGS, {startupView: 'last', lastPresentation: 'orb'}, fakeCodec())
+  assert.equal(next.startupView, 'last')
+  assert.equal(next.lastPresentation, 'orb')
+  assert.deepEqual(backendSettings(next), backendSettings(DEFAULT_SETTINGS))
+  await withTempDirectory(async directory => {
+    const file = join(directory, 'settings.json')
+    await saveSettings(file, next)
+    assert.equal(startupPresentation(await loadSettings(file)), 'orb')
+  })
+})
+
+test('presentation writes preserve secrets without opening the keychain and remain ordered', async () => {
+  let current = normalizeSettings({secrets: {modelApiKey: plaintextEntry('keep')}})
+  const original = current.secrets
+  const write = createSettingsWriter({getCurrent: () => current, commit: next => {current = next}, save: async () => {}, codec: {available() {assert.fail('presentation opened keychain')}}})
+  await Promise.all([
+    write({lastPresentation: 'orb'}, undefined, {preserveSecrets: true}),
+    write({lastPresentation: 'workbench'}, undefined, {preserveSecrets: true}),
+  ])
+  assert.equal(current.lastPresentation, 'workbench')
+  assert.deepEqual(current.secrets, original)
 })

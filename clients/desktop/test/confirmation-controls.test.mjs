@@ -216,3 +216,15 @@ test('Codex approval renderer schema is strict, bounded, and keeps detail local'
     },
   ]) assert.equal(parseCodexApprovalMessage(malformed), null)
 })
+
+test('decision authority retains the originating conversation independently of selection', () => {
+ const frames=[]
+ const project=new ConfirmationDecisionController({send:frame=>{frames.push(frame);return true}})
+ project.sync({pending:true,proposalId:'proposal',conversationId:'chat-a'})
+ assert.equal(project.decide(true),true)
+ assert.equal(frames[0].conversation_id,'chat-a')
+ const approval=new CodexApprovalDecisionController({send:frame=>{frames.push(frame);return true}})
+ approval.sync({pending:true,approvalId:'approval',executor:'codex',conversationId:'chat-b'})
+ assert.equal(approval.decide(false),true)
+ assert.equal(frames[1].conversation_id,'chat-b')
+})

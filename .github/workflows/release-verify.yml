@@ -1,0 +1,68 @@
+name: Verify published release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact published release commit
+        required: true
+        type: string
+      release_version:
+        description: Published version to verify without publishing again
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      release_version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  npm-platform-acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      RELEASE_VERSION: ${{ inputs.release_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Verify the published tag and requested version
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          node clients/desktop/scripts/check-release-version.mjs
+          test "$EXPECTED_COMMIT" = "$(git rev-parse HEAD)"
+          test "$EXPECTED_COMMIT" = "$(git rev-parse "refs/tags/v$RELEASE_VERSION^{commit}")"
+      - run: npm install --global npm@11.6.0
+      - run: npm ci --ignore-scripts
+      - name: Install Linux display dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb libasound2 libgtk-3-0 libnss3 libgbm1 libsecret-1-0
+      - name: Install the published desktop CLI
+        run: npm install --prefix npm-smoke nova-audio-agent@${{ inputs.release_version }}
+      - name: Verify public download and installed application
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }} node scripts/verify-npm-desktop.mjs npm-smoke/node_modules/nova-audio-agent
+      - name: Verify the published headless package
+        if: runner.os == 'Linux'
+        run: |
+          npm install --prefix server-smoke nova-audio-agent-server@${{ inputs.release_version }}
+          node scripts/verify-server-package.mjs server-smoke/node_modules/.bin/novaaudio-server

@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto'
 import {constants, realpathSync} from 'node:fs'
-import {open, type FileHandle} from 'node:fs/promises'
+import {open, realpath, type FileHandle} from 'node:fs/promises'
 import {basename, join} from 'node:path'
 import {stripLikePython} from '../text/python-text.js'
 import {
@@ -541,13 +541,6 @@ export class ProjectStore {
 
   async loadManagedMaintenanceJournal(): Promise<ManagedMaintenanceJournal | null> {
     return await this.#files.transaction(async () => [await this.#files.loadMaintenanceJournal(), false], {wait: true})
-  }
-
-  async clearManagedMaintenanceJournal(expectedOperationId: string): Promise<void> {
-    await this.#files.transaction(async () => {
-      await this.#files.clearMaintenanceJournal(expectedOperationId)
-      return [undefined, false]
-    }, {wait: true})
   }
 
   async cleanupManagedMaintenanceJournal(): Promise<{
@@ -1147,7 +1140,8 @@ export class ProjectStore {
     readonly threadId: string; readonly title: string; readonly home: string; readonly updatedAt: number
   }): Promise<ProjectSessionRecord> {
     const threadId = validateThreadId(input.threadId)
-    const home = realpathSync(input.home)
+    // Use native canonicalization, including Windows short-name aliases, like the catalog scanner.
+    const home = await realpath(input.home)
     const title = normalizeProjectSessionTitle([...input.title].slice(0, MAX_PROJECT_SESSION_TITLE).join(''))
     return await this.#files.transaction(state => {
       if (!state.workspaces.has(workspaceId)) throw new ProjectStateError('workspace_not_found')

@@ -2729,6 +2729,49 @@ test('session close fences a camera result arriving after its user turn was canc
   await watching.stop()
 })
 
+
+test('cascaded prerecall replaces changed partial text and injects only before the matching user reply', async () => {
+  const calls: string[] = [], signals: AbortSignal[] = []
+  const llm = new FakeLlm([{kind:'response_started',response_id:'recall-reply'},{kind:'response_completed',response_id:'recall-reply'}])
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing([{kind:'speech_start',pcm:new Uint8Array([0,0])}],[{kind:'speech_end',commit:true}]),
+    asr: new FakeAsrClient(new FakeAsrSession({text:'旧的项目部署说明',final:false},{text:'新的项目部署说明',final:true})),
+    llm, tts:new FakeTtsClient(), idFactory:ids('recall-session','speech','user-item'),
+    prerecall:(query,signal)=>{calls.push(query);signals.push(signal);return Promise.resolve(() => Promise.resolve('可能相关:'+query))},
+  })
+  await adapter.connect({tools:[],signal:new AbortController().signal})
+  const collecting=collectThroughTerminal(adapter)
+  await adapter.sendAudio(new Uint8Array([0,0]),new AbortController().signal)
+  await adapter.sendAudio(new Uint8Array([0,0]),new AbortController().signal)
+  await settleWithin('prerecall reply',collecting)
+  assert.deepEqual(calls,['旧的项目部署说明','新的项目部署说明'])
+  assert.equal(signals[0]?.aborted,true)
+  assert.match(llm.calls[0]?.responseAdaptation??'',/^可能相关:新的项目部署说明\n/u)
+  await adapter.close()
+})
+
+test('text-only response preserves transcripts and tools without opening any audio port', async () => {
+  const signal = new AbortController().signal
+  for (const tool of [false, true]) {
+    const llm = new FakeLlm([
+      {kind:'response_started',response_id:'r'},
+      ...(tool ? [{kind:'tool_call' as const,item_id:'c',call_id:'c',name:'lookup',arguments:{}}] : [{kind:'text_delta' as const,text:'text reply'}]),
+      {kind:'response_completed',response_id:'r'},
+    ])
+    const adapter = new CascadedRealtimeAdapter({textOnly:true,llm})
+    try {
+      await adapter.connect({tools:[{type:'function',function:{name:'lookup',parameters:{type:'object',properties:{}}}}],signal})
+      const collected = collectThroughTerminal(adapter,signal)
+      await adapter.submitText('hello',signal)
+      const events=await settleWithin('text-only completion',collected)
+      assert.equal(events.some(event=>event.kind==='provider_error'||event.kind==='response_audio_delta'),false)
+      assert.equal(events.some(event=>event.kind===(tool?'tool_call_ready':'response_transcript_final')),true)
+      assert.equal(events.at(-1)?.kind,'response_terminal')
+      await assert.rejects(adapter.sendAudio(new Uint8Array([0,0]),signal),CascadedRealtimeError)
+    } finally {await adapter.close()}
+  }
+})
+
 test('connect warms one silent TTS session without waiting and first response claims pending open', async () => {
   const opened = deferred<TtsSession>()
   const session = new FakeTtsSession(new Uint8Array([1, 2]))
@@ -2913,7 +2956,7 @@ test('streaming speech reaches TTS before completion and cleans split markup wit
       for (const text of formatted) yield {kind: 'text_delta', text}
       yield {kind: 'response_completed', response_id: 'streaming-format'}
     },
-    abandonPendingResponse: async () => {}, close: async () => {},
+    abandonPendingResponse: () => Promise.resolve(), close: () => Promise.resolve(),
   }
   const adapter = new CascadedRealtimeAdapter({endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
     llm, tts: new FakeTtsClient(tts), idFactory: ids('session-format', 'speech-format', 'item-format')})

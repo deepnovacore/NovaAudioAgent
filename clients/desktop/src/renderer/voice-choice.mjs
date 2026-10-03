@@ -9,6 +9,14 @@ export const QWEN_VOICES = Object.freeze([
   Object.freeze({ value: 'longanlufeng', label: 'Longan Lufeng' }),
 ])
 
+export const QWEN_31_VOICES = Object.freeze([
+  Object.freeze({ value: 'longanqian_v3.1', label: t("Longan Qian 3.1（默认）") }),
+])
+
+export const STEPFUN_VOICES = Object.freeze([
+  Object.freeze({value: 'default', label: t('StepFun 默认音色')}),
+])
+
 export const VOLCENGINE_TTS_VOICES = Object.freeze([
   Object.freeze({ value: 'zh_female_vv_uranus_bigtts', label: t("Vivi 2.0（默认）") }),
   Object.freeze({ value: 'zh_female_tianmeitaozi_mars_bigtts', label: t("甜美桃子") }),

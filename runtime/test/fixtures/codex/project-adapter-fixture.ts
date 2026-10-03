@@ -3,6 +3,7 @@
  * `ProjectConfirmationController`, and a recording fake transport factory (one fake per run).
  */
 import assert from 'node:assert/strict'
+import type {ManagedCodexMcp} from '../../../src/executors/codex/managed-mcp.js'
 import {
   chmodSync,
   fstatSync,
@@ -32,7 +33,6 @@ import {
   ProjectStore,
   hostManagedProjectRootForTest,
   hostProjectRootForTest,
-  ProjectStateError,
   type PublicProjectView,
 } from '../../../src/projects/project-store.js'
 import {hostWorkspaceForTest} from '../../../src/executors/codex/process-owner.js'
@@ -320,6 +320,7 @@ export class ProjectTransport implements CodexAppServerTransport {
     completionDeadline?: TransportDeadline | null,
   ): Promise<TransportOutcome> {
     assert.equal(completionDeadline, null, 'project transport must forward the explicit unbounded completion policy')
+    deadline.beforeWrite?.()
     this.workOrders.push(input.workOrder)
     this.runInputs.push(input)
     this.observers.push(observer)
@@ -339,7 +340,8 @@ export class ProjectTransport implements CodexAppServerTransport {
     })])
   }
 
-  steer(): Promise<SteerTransportResult> {
+  steer(_input:unknown,deadline:TransportDeadline): Promise<SteerTransportResult> {
+    deadline.beforeWrite?.()
     return Promise.resolve({code: 'accepted', written: true})
   }
 
@@ -397,6 +399,7 @@ export interface Fixture {
 }
 
 export async function fixture(options: {
+  readonly managedMcp?: ManagedCodexMcp
   readonly localCodexHome?: string
   readonly preexistingSession?: boolean
   readonly decorateStore?: (store: ProjectStore) => ProjectStore
@@ -408,10 +411,9 @@ export async function fixture(options: {
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(workspace, {mode: 0o700})
-  const identifiers = Array.from(
-    {length: 100},
-    (_unused, index) => `${index % 2 === 0 ? 'workspace' : 'session'}-${String(index).padStart(4, '0')}`,
-  )[Symbol.iterator]()
+  const identifiers = (function* () {
+    for (let index = 0; ; index++) yield `${index % 2 === 0 ? 'workspace' : 'session'}-${String(index).padStart(4, '0')}`
+  })()
   const store = await ProjectStore.open({
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
@@ -436,6 +438,7 @@ export async function fixture(options: {
   })
   const factory = new RecordingProjectTransportFactory()
   const adapter = new ProjectCodexAdapter({
+    ...(options.managedMcp?{managedMcp:options.managedMcp}:{}),
     ...(options.localCodexHome ? {localCodexHome: options.localCodexHome} : {}),
     store: options.decorateStore?.(store) ?? store,
     confirmation,
@@ -461,46 +464,6 @@ export function storeWithPersistentHomeHook(
       if (typeof value !== 'function') return value
       const bound: unknown = value.bind(target)
       return bound
-    },
-  })
-}
-
-export function storeWithManagedValidationHook(
-  store: ProjectStore,
-  beforeValidation: (attempt: number) => Promise<void>,
-): ProjectStore {
-  let attempts = 0
-  return new Proxy(store, {
-    get(target, property) {
-      if (property === 'validateManagedCreate') {
-        return async (displayName: string) => {
-          attempts += 1
-          await beforeValidation(attempts)
-          return await target.validateManagedCreate(displayName)
-        }
-      }
-      const value: unknown = Reflect.get(target, property, target)
-      if (typeof value !== 'function') return value
-      const bound: unknown = value.bind(target)
-      return bound
-    },
-  })
-}
-
-export function storeWithBusyPublicContext(
-  store: ProjectStore,
-  busy: () => boolean,
-): ProjectStore {
-  return new Proxy(store, {
-    get(target, property) {
-      if (property === 'publicContext') {
-        return async (pendingConfirmation: boolean) => {
-          if (busy()) throw new ProjectStateError('state_busy')
-          return await target.publicContext(pendingConfirmation)
-        }
-      }
-      const value: unknown = Reflect.get(target, property, target)
-      return typeof value === 'function' ? value.bind(target) as unknown : value
     },
   })
 }

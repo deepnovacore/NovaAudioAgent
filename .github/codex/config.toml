@@ -1,0 +1,12 @@
+# Trusted CI configuration. Never load this file from a PR checkout.
+approval_policy = "never"
+web_search = "disabled"
+model_context_window = 200000
+model_auto_compact_token_limit = 120000
+tool_output_token_limit = 8000
+
+[shell_environment_policy]
+inherit = "core"
+
+[features]
+multi_agent = false

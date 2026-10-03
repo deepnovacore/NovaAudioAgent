@@ -65,7 +65,7 @@ function signNative(path, options) {
   if (typeof options.keychain === 'string' && options.keychain !== '') {
     args.push('--keychain', options.keychain)
   }
-  args.push('--entitlements', inheritEntitlements, path)
+  args.push('--entitlements', path.endsWith('/native/macos_mail') ? resolve(packageRoot, 'resources/entitlements.mail.plist') : inheritEntitlements, path)
   runCodesign(args)
   runCodesign(['--verify', '--strict', '--verbose=2', path])
 }

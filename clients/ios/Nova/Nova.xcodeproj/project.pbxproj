@@ -48,7 +48,7 @@ C31564BCAF1102D64F4290B1 = { isa = PBXFileReference; lastKnownFileType = sourcec
 A0C585781DD314450EB8AA41 = { isa = PBXBuildFile; fileRef = C31564BCAF1102D64F4290B1; };
 E05FCB614AB36FDEE72EE1F2 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaTests/ProtocolTests.swift; sourceTree = SOURCE_ROOT; };
 80FAC02A0BD5812E2A00F339 = { isa = PBXBuildFile; fileRef = E05FCB614AB36FDEE72EE1F2; };
-51CFF3C1F0BC59F6187E7040 = { isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../fixtures/client-protocol/v1/vectors.json"; sourceTree = SOURCE_ROOT; };
+51CFF3C1F0BC59F6187E7040 = { isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../tests/fixtures/client-protocol/v1/vectors.json"; sourceTree = SOURCE_ROOT; };
 F0AA6E63368F7E11EBFCADF2 = { isa = PBXBuildFile; fileRef = 51CFF3C1F0BC59F6187E7040; };
 7D1043473D55BFA90E8530D3 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = Nova.app; sourceTree = BUILT_PRODUCTS_DIR; };
 4A19557DC1B96C20DFA19772 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = NovaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };

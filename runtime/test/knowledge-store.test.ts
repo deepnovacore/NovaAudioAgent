@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
-import {chmod, lstat, mkdir, mkdtemp, realpath, rm, symlink} from 'node:fs/promises'
+import {chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test, {type TestContext} from 'node:test'
@@ -199,6 +199,35 @@ test('maxSources refuses a second source but permits reindexing the existing sou
   })
   assert.deepEqual((await client.listSources()).map(item => item.id), ['source-a'])
   assert.equal((await client.recall('updated', [0, 1], 'embed-a', 1))[0]?.text, 'updated durable result')
+})
+
+test('a whole-computer store can open with a source limit above the generic default',async t=>{
+ const directory=await mkdtemp(join(await realpath(tmpdir()),'nova-knowledge-computer-limit-'))
+ const client=new KnowledgeStoreClient({path:join(directory,'knowledge.sqlite'),maxSources:2000})
+ t.after(async()=>{await client.close();await rm(directory,{recursive:true,force:true})})
+ await client.open()
+ assert.deepEqual(await client.listSources(),[])
+})
+
+test('transactionally replaces a source at capacity and preserves the old source on replacement failure', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-capacity-replace-'))
+  const client = new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite'), maxSources: 1})
+  t.after(async () => {await client.close(); await rm(directory, {recursive: true, force: true})})
+  await client.open()
+  const original = source(), replacement = {...source('source-b'), locator: original.locator, fingerprint: 'b'.repeat(64)}
+  await client.replaceSource({source: original, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Original', text: 'original durable text', token_estimate: 3, vector: [1, 0]}]})
+  await assert.rejects(client.replaceSource({source: replacement, replaces_source_id: original.id, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Broken', text: 'bad vector', token_estimate: 2, vector: [1]}]}),
+  (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'STORE_INVALID_INPUT')
+  await assert.rejects(client.replaceSource({source: {...replacement, locator: '/tmp/different-notes.md'}, replaces_source_id: original.id, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Mismatched', text: 'must not replace', token_estimate: 3, vector: [1, 0]}]}),
+  (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'STORE_INVALID_INPUT')
+  assert.deepEqual((await client.listSources()).map(item => item.id), [original.id])
+  await client.replaceSource({source: replacement, replaces_source_id: original.id, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Replacement', text: 'replacement durable text', token_estimate: 3, vector: [0, 1]}]})
+  assert.deepEqual((await client.listSources()).map(item => item.id), [replacement.id])
+  assert.equal((await client.recall('replacement', [0, 1], 'embed-a', 1))[0]?.text, 'replacement durable text')
 })
 
 test('reindex preserves chunk identity and detects content changes as stale', async t => {
@@ -577,4 +606,18 @@ test('FTS opens reuse a clean index and rebuild after lexical-only mutations', a
   const empty = temporaryClient(t, path)
   await empty.open()
   assert.deepEqual(await fixtureSql(path, 'SELECT text FROM chunks_fts', 'query'), {kind: 'rows', rows: []})
+})
+
+test('purge evidence removes only linked chunks and fences index reconstruction',async t=>{
+ const {client,path}=await storeWithPath(t)
+ const input={source:source(),provider_id:'fixture',dims:2,chunks:[{heading_path:'Synthetic',text:'selected private original',token_estimate:3,vector:[1,0],evidence_id:'ledger-a'},{heading_path:'Synthetic',text:'retained original',token_estimate:2,vector:[0,1],evidence_id:'ledger-b'}]}
+ await client.replaceSource(input)
+ const retainedId=(await client.listChunks('source-a')).find(row=>row.text==='retained original')!.chunk_id
+ await client.purgeEvidence(['ledger-a'])
+ assert.deepEqual((await client.listChunks('source-a')).map(row=>row.text),['retained original'])
+ await client.purgeEvidence(['ledger-a'])
+ await client.replaceSource(input)
+ assert.deepEqual((await client.listChunks('source-a')).map(row=>row.text),['retained original'])
+ assert.equal((await client.listChunks('source-a'))[0]!.chunk_id,retainedId)
+ await client.close();assert.equal((await readFile(path)).includes(Buffer.from('selected private original')),false)
 })

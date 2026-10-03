@@ -30,6 +30,7 @@ interface PendingApproval {
   readonly signal: AbortSignal
   readonly resolve: (resolution: ApprovalResolution) => void
   held: boolean
+  awaitingPresentation: boolean
   onSignalAbort: (() => void) | null
   state: 'pending' | 'responding'
   resolution: ApprovalResolution | null
@@ -54,6 +55,7 @@ export class HostApprovalController {
   readonly #idFactory: () => string
   readonly #onDiagnostic: ((code: string) => void) | undefined
   readonly #observers: ((view: ApprovalView) => void)[] = []
+  readonly #holds = new Set<'project' | 'background'>()
   #current: PendingApproval | null = null
   readonly #queue: PendingApproval[] = []
 
@@ -96,27 +98,36 @@ export class HostApprovalController {
   }
 
   /** Park the head (spec 08: it waits behind a project confirmation). The timer stops; a renderer click still decides. */
-  hold(): boolean {
+  hold(reason: 'project' | 'background' = 'project'): boolean {
+    if (this.#holds.has(reason)) return false
     const current = this.#current
-    if (current?.state !== 'pending' || current.held) return false
-    if (this.#clock.now() >= current.expiresAt) {
+    if (!current && reason === 'project') return false
+    if (current?.state === 'pending' && !current.held && this.#clock.now() >= current.expiresAt) {
       this.#drop(current)
-      return false
+      return this.hold(reason)
     }
-    current.held = true
-    this.#decision.hold(current)
-    this.#publish()
+    this.#holds.add(reason)
+    if(reason==='background')for(const entry of [this.#current,...this.#queue])if(entry)entry.awaitingPresentation=true
+    if (current?.state === 'pending') {
+      current.held = true
+      this.#decision.hold(current)
+      this.#publish()
+    }
     return true
   }
 
-  /** Un-park the head with a fresh full TTL, exactly as if it had just been promoted. */
-  release(): boolean {
+  /** Resume only after every independent pause owner has released its reason. */
+  release(reason: 'project' | 'background' = 'project', options: {readonly awaitPresentation?: boolean} = {}): boolean {
     const current = this.#current
-    if (current?.state !== 'pending' || !current.held) return false
-    current.held = false
-    current.expiresAt = this.#clock.now() + APPROVAL_TTL_SECONDS
-    this.#decision.release(current, current.expiresAt)
-    this.#publish()
+    const removed=this.#holds.delete(reason)
+    if(!removed&&!(reason==='background'&&current?.awaitingPresentation))return false
+    if(reason==='background'&&current&&!options.awaitPresentation)current.awaitingPresentation=false
+    if (this.#holds.size === 0 && current?.state === 'pending' && current.held && !current.awaitingPresentation) {
+      current.held = false
+      current.expiresAt = this.#clock.now() + APPROVAL_TTL_SECONDS
+      this.#decision.release(current, current.expiresAt)
+      this.#publish()
+    }
     return true
   }
 
@@ -157,6 +168,7 @@ export class HostApprovalController {
       signal,
       resolve,
       held: false,
+      awaitingPresentation: this.#holds.has('background'),
       onSignalAbort: null,
       state: 'pending',
       resolution: null,
@@ -205,6 +217,7 @@ export class HostApprovalController {
     const decision = resolution.decision
     this.#detach(current)
     this.#current = null
+    this.#holds.delete('project')
     this.#promoteNext()
     this.#publish()
     return decision
@@ -240,6 +253,7 @@ export class HostApprovalController {
       this.#diagnose('executor_approval_expired')
       this.#drop(expired)
     })
+    if (this.#holds.size || entry.awaitingPresentation) { entry.held = true; this.#decision.hold(entry) }
   }
 
   #promoteNext(): void {
@@ -251,6 +265,7 @@ export class HostApprovalController {
   #drop(entry: PendingApproval): void {
     if (this.#current === entry) {
       this.#current = null
+      this.#holds.delete('project')
       this.#promoteNext()
     } else {
       const index = this.#queue.indexOf(entry)
@@ -512,6 +527,10 @@ export class ApprovalHost {
         approvalId: view.pending_approval_id,
         sessionEpoch: this.#port.session.sessionEpoch,
         expiresAt: view.expires_at,
+      }
+      if (view.held && !this.#port.projectBlocking()) {
+        if (this.#executorApprovalAuthority !== null) this.#clearExecutorApprovalVoiceState()
+        return
       }
       if (this.#port.projectBlocking()) {
         // Spec 08: the approval keeps its queue place, its TTL is paused (`hold`) and it is not voice-armed
@@ -1265,13 +1284,16 @@ export class ApprovalHost {
       'function',
       telemetryOutcome,
       telemetryReason,
+      decision?.accepted === true && (telemetryOutcome === 'accepted' || telemetryReason === 'unsupported_scope')
+        ? decision.scope ?? 'once' : undefined,
     )
     await this.#port.session.injectToolOutput({
       kind: 'tool_output',
       host_item_id: this.#port.idFactory(),
       event_id: this.#port.idFactory(),
       call_id: event.call_id,
-      content: JSON.stringify({code, state}),
+      content: JSON.stringify({code, state,
+        ...(code === 'approval_accepted' && decision?.scope === 'session' ? {scope: 'session'} : {})}),
     })
   }
 
@@ -1280,10 +1302,10 @@ export class ApprovalHost {
     source: 'function' | 'renderer',
     outcome: 'accepted' | 'refused',
     reason?: ExecutorApprovalDecisionReason,
+    scope?: 'once' | 'session',
   ): void {
-    this.#port.telemetry?.record('approval.decision', reason === undefined
-      ? {session_epoch: sessionEpoch, source, outcome}
-      : {session_epoch: sessionEpoch, source, outcome, reason})
+    this.#port.telemetry?.record('approval.decision', {session_epoch: sessionEpoch, source, outcome,
+      ...(reason === undefined ? {} : {reason}), ...(scope === undefined ? {} : {requested_scope: scope})})
   }
 
   invalidateExecutorApproval(reason: string): void {

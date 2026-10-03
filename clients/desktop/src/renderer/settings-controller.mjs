@@ -48,6 +48,7 @@ export function settingsButtonState({
 const SECRET_KEY_NAMES = [
   'dashscopeApiKey',
   'tavilyApiKey',
+  'openrouterApiKey',
   'modelApiKey',
   'codexApiKey',
   'arkApiKey',
@@ -59,6 +60,7 @@ const SECRET_KEYS = new Set(SECRET_KEY_NAMES)
 const MAIN_LIVE_VIEW_FIELDS = [
   'codexStatus',
   'frontendUsage',
+  'startup',
   'backendStatus',
   'backendDiagnostic',
   'backendRetryInMs',
