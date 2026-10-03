@@ -21,6 +21,7 @@ import {join} from 'node:path'
 import type {MemoryInspectionQuery} from '../memory/personal-memory-inspection.js'
 import type {UsageReporter} from '../realtime/usage.js'
 import type {ApprovalController} from '../core/approval-port.js'
+import type {AgentController, AgentRuntimeDispatchPort} from '../executors/agent-controller.js'
 import {capabilityStatus, type CapabilityStatus} from '../config/capability-registry.js'
 import {recentDispatchSources} from '../realtime/history.js'
 import { randomUUID } from 'node:crypto'
@@ -207,6 +208,8 @@ export interface RealtimeAssemblyOptions {
   readonly sharedPersonal?: {host:PersonalAgentHost;memory:PersonalMemoryResource|undefined}
 
   readonly onUsage?: UsageReporter
+
+  readonly additionalAgentControllers?: (port: AgentRuntimeDispatchPort) => readonly AgentController[]
 
   readonly executorApproval?: ApprovalController
   readonly intake?: {readonly models: IntakeModels; readonly settings: IntakeSettings}
@@ -1000,7 +1003,8 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
         resolveCancelTarget,
       }),
   }
-  const agentControllers = core.visionController === undefined ? [] : [core.visionController]
+  const agentControllers = [...(core.visionController === undefined ? [] : [core.visionController]),
+    ...(options.additionalAgentControllers?.(agentDispatchPort) ?? [])]
   const service = new RealtimeService({
     ...((options.createPersonalMemory === undefined && options.sharedPersonal?.memory === undefined) ? {} : {onUserTranscriptAccepted: (turn: {
       readonly confirmed?: boolean; readonly text: string; readonly originRef: string; readonly sessionEpoch: number
@@ -1443,6 +1447,7 @@ export function composeRealtime(
       ? {}
       : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
     ...(options.executorApproval === undefined ? {} : {executorApproval: options.executorApproval}),
+    ...(options.additionalAgentControllers === undefined ? {} : {additionalAgentControllers: options.additionalAgentControllers}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
     ...(options.codingAgentControllerFactory === undefined
       ? {}

@@ -200,6 +200,7 @@ export class DesktopSocketBridge {
   #lastExecutorStateSent: ExecutorState | null = null
   #projectView: PublicProjectView | null
   #lastProjectViewSent: PublicProjectView | null = null
+  #approvalExecutor: ExecutorIdentity | null
   #approvalView: ExecutorApprovalView | null
   #lastApprovalViewSent: ExecutorApprovalView | null = null
   #uplinkFrames = 0
@@ -237,6 +238,7 @@ export class DesktopSocketBridge {
     this.#executorState = options.service.executorState
     this.#projectView = options.projectView ?? null
     this.#approvalView = options.approvalView ?? null
+    this.#approvalExecutor = options.approvalView?.executorIdentity ?? options.executor ?? null
     this.#progressMode = options.progressBubbles ?? 'milestones'
     this.#executor = options.executor ?? null
     this.tasks = new DesktopTasks(this.#executor?.executor ?? null)
@@ -356,7 +358,9 @@ export class DesktopSocketBridge {
   }
 
   onExecutorApproval(view: ExecutorApprovalView): void {
-    if (this.#executor !== null) executorApprovalMessage(view, this.#clock?.now() ?? 0, this.#executor)
+    const identity = view.executorIdentity ?? (view.pending_approval ? this.#executor : this.#approvalExecutor)
+    if (identity !== null) executorApprovalMessage(view, this.#clock?.now() ?? 0, identity)
+    this.#approvalExecutor = identity
     if (sameApprovalView(view, this.#approvalView)) return
     this.#telemetry?.record('approval.desktop_view', {
       pending: view.pending_approval,
@@ -679,7 +683,14 @@ export class DesktopSocketBridge {
       case 'executor_approval_decision': {
         const approvalId = command.payload.approval_id
         // A decision names its executor; one that names another executor is not ours to relay.
-        if (typeof approvalId !== 'string' || command.payload.executor !== this.#executor?.executor) return
+        // Conversation-owned coding approvals keep the fixed executor even after a phone approval was shown,
+        // but a decision naming the coding executor never answers the phone approval on the main surface.
+        const executor = command.payload.executor
+        const shown = this.#approvalView
+        const answersOther = shown?.pending_approval === true && shown.pending_approval_id === approvalId
+          && shown.executorIdentity !== undefined && shown.executorIdentity.executor !== executor
+        if (typeof approvalId !== 'string' || answersOther
+          || (executor !== this.#approvalExecutor?.executor && executor !== this.#executor?.executor)) return
         const target=typeof command.payload.conversation_id==='string'?this.#conversationService?.(command.payload.conversation_id):this.#service
         if(!target)return
         target.executorApprovalDecision(approvalId, command.payload.approved === true, command.payload.scope === 'session' ? 'session' : undefined)
@@ -738,8 +749,8 @@ export class DesktopSocketBridge {
       if (!sameApprovalView(view, this.#lastApprovalViewSent)) {
         this.#lastApprovalViewSent = view
         this.#syncApprovalDelivery()
-        if (this.#executor !== null) {
-          return {frame: executorApprovalMessage(view, this.#clock?.now() ?? 0, this.#executor), policy: 'latest'}
+        if (this.#approvalExecutor !== null) {
+          return {frame: executorApprovalMessage(view, this.#clock?.now() ?? 0, this.#approvalExecutor), policy: 'latest'}
         }
       }
     }
@@ -1265,6 +1276,8 @@ function sameApprovalView(
   return left.pending_approval === right.pending_approval
     && left.pending_approval_busy === right.pending_approval_busy
     && left.pending_approval_id === right.pending_approval_id
+    && left.executorIdentity?.executor === right.executorIdentity?.executor
+    && left.executorIdentity?.display_name === right.executorIdentity?.display_name
     && left.kind === right.kind
     && left.operation_summary === right.operation_summary
     && left.expires_at === right.expires_at

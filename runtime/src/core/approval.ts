@@ -14,6 +14,7 @@ import {MAX_HOST_FACT_CHARS, MAX_TRACKED_TOOL_CALLS, callKey, hostFactIntent} fr
 const APPROVAL_ID_LIMIT = 128
 
 export interface ApprovalOffer {
+  readonly executorIdentity?: ApprovalView['executorIdentity']
   readonly kind: ApprovalKind
   readonly local_detail: ApprovalLocalDetail
   readonly operation_summary: string
@@ -40,6 +41,8 @@ export interface HostApprovalControllerOptions {
   readonly clock: Clock
   readonly idFactory: () => string
   readonly onDiagnostic?: (code: string) => void
+  /** Shared controllers admit one extra head per non-coding executor; coding alone keeps MAX_CONCURRENT_WORK. */
+  readonly capacity?: number
 }
 
 /** What a transport needs from the approval FIFO; `forWork` binds it to one running work. */
@@ -54,6 +57,7 @@ export class HostApprovalController {
   readonly #decision: PendingDecision<'approval', PendingApproval>
   readonly #idFactory: () => string
   readonly #onDiagnostic: ((code: string) => void) | undefined
+  readonly #capacity: number
   readonly #observers: ((view: ApprovalView) => void)[] = []
   readonly #holds = new Set<'project' | 'background'>()
   #current: PendingApproval | null = null
@@ -64,6 +68,7 @@ export class HostApprovalController {
     this.#decision = new PendingDecision(options.clock)
     this.#idFactory = options.idFactory
     this.#onDiagnostic = options.onDiagnostic
+    this.#capacity = options.capacity ?? MAX_CONCURRENT_WORK
   }
 
   get view(): ApprovalView {
@@ -73,6 +78,7 @@ export class HostApprovalController {
       pending_approval: true,
       pending_approval_busy: current.state === 'responding',
       pending_approval_id: current.id,
+      ...(current.offer.executorIdentity === undefined ? {} : {executorIdentity: current.offer.executorIdentity}),
       kind: current.offer.kind,
       local_detail: current.offer.local_detail,
       operation_summary: current.offer.operation_summary,
@@ -154,7 +160,7 @@ export class HostApprovalController {
     // transport ever legitimately pipelines approvals.
     const pending = this.#current === null ? this.#queue : [this.#current, ...this.#queue]
     if (
-      pending.length >= MAX_CONCURRENT_WORK
+      pending.length >= this.#capacity
       || (work !== null && pending.some(entry => entry.work?.work_id === work.work_id))
     ) return Object.freeze({decision: 'decline'})
     const id = validateApprovalId(this.#idFactory())
@@ -550,7 +556,7 @@ export class ApprovalHost {
         kind: 'final',
         host_item_id: this.#port.idFactory(),
         event_id: `approval:${view.pending_approval_id}:requested`,
-        content: approvalFactText(view, view.pending_approval_id, this.#port.displayName()),
+        content: approvalFactText(view, view.pending_approval_id, view.executorIdentity?.display_name ?? this.#port.displayName()),
       }).item
       contextItem.speech_content = `${view.work === null ? this.#port.displayName() : view.work.project}需要你的授权：${view.operation_summary ?? '执行当前操作'}。是否允许？`
       const authority: ExecutorApprovalAuthorityState = {

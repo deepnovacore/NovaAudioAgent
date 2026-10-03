@@ -38,6 +38,7 @@ import {CredentialSnapshotter} from '../src/executors/codex/credential-snapshot.
 import {hostCodexHomeForTest} from '../src/executors/codex/process-owner.js'
 import {resolveCodexHostConfig, type CodexHostCatalog} from '../src/executors/codex/host-config.js'
 import {CodexHostConfigurationError} from '../src/executors/codex/host-config.js'
+import {HostApprovalController} from '../src/core/approval.js'
 import {VirtualClock} from '../src/core/clock.js'
 import {loadSettings} from '../src/config/config.js'
 import type {ProjectCodexAdapter} from '../src/executors/codex/adapter-project.js'
@@ -863,4 +864,61 @@ test('prewarm handoff: owned initial-failure cleanup retains the persistent home
     assert.equal(readFileSync(sentinel, 'utf8'), 'persistent fixture')
   } finally {await resource.close()}
   assert.equal(readFileSync(sentinel, 'utf8'), 'persistent fixture')
+})
+
+test('borrowed Codex approvals preserve another executor on close and failed construction', async t => {
+  const {config, stateRoot, managedRoot} = projectHostConfig(t)
+  const clock = new VirtualClock(100)
+  const shared = new HostApprovalController({clock, idFactory: () => 'phone-approval'})
+  const phone = shared.forWork({work_id: 'phone', project: 'device', title: 'Settings'})
+  const offered = phone.offer({kind: 'permissions', local_detail: {kind: 'permissions', scope: 'Tap'},
+    operation_summary: 'Confirm phone action', executorIdentity: {executor: 'autoglm', display_name: 'AutoGLM'}}, new AbortController().signal)
+  const options = {
+    config: {...config, prewarm: true}, composition: 'realtime' as const, clock, idFactory: () => 'codex-approval',
+    sharedApprovalController: shared,
+    projectHost: {nativeLocks: new DescriptorLockAuthority(), rootFiles: new DescriptorRootFileAuthority([stateRoot, managedRoot])},
+  }
+  const resource = await createCodexAssemblyResource({...options, transportFactory: {
+    available: true, create: binding => Object.assign(new RecordingTransport(), {
+      close: () => { binding.approvalController?.invalidate('transport_closed'); return Promise.resolve() },
+    }),
+  }})
+  assert.equal(resource.approvalController, shared)
+  await resource.close()
+  assert.equal(shared.view.pending_approval_id, 'phone-approval')
+  await assert.rejects(createCodexAssemblyResource({...options, transportFactory: {
+    available: true, create: () => { throw new Error('startup failed') },
+  }}))
+  assert.equal(shared.view.executorIdentity?.executor, 'autoglm')
+  assert.equal(shared.acceptDecision({approvalId: 'phone-approval', decision: 'accept'}), true)
+  assert.equal(phone.consume((await offered)!), 'accept')
+})
+
+
+test('reused Codex approval port remains owned after consume and ignores stale consumption', async t => {
+  const {config, stateRoot, managedRoot} = projectHostConfig(t)
+  const clock = new VirtualClock(100)
+  let id = 0
+  const shared = new HostApprovalController({clock, idFactory: () => `approval-${++id}`})
+  const factory = new RecordingTransportFactory()
+  const resource = await createCodexAssemblyResource({
+    config: {...config, prewarm: true}, composition: 'realtime', clock, idFactory: () => 'unused',
+    sharedApprovalController: shared, transportFactory: factory,
+    projectHost: {nativeLocks: new DescriptorLockAuthority(), rootFiles: new DescriptorRootFileAuthority([stateRoot, managedRoot])},
+  })
+  const port = factory.calls[0]!.approvalController!
+  const offer = {kind: 'permissions' as const, local_detail: {kind: 'permissions' as const, scope: 'test'}, operation_summary: 'Approve'}
+  const signal = new AbortController().signal
+  const first = port.offer(offer, signal)
+  shared.acceptDecision({approvalId: shared.view.pending_approval_id!, decision: 'accept'})
+  const firstResolution = (await first)!
+  assert.equal(port.consume(firstResolution), 'accept')
+  const second = port.offer(offer, signal)
+  assert.equal(port.consume(firstResolution), 'decline')
+  port.invalidate('turn_end')
+  assert.equal((await second)?.decision, 'decline')
+  const third = port.offer(offer, signal)
+  await resource.close()
+  assert.equal((await third)?.decision, 'decline')
+  assert.equal(shared.pending, false)
 })

@@ -1,6 +1,6 @@
 export type EnvironmentOwner =
   | 'core' | 'qwen' | 'stepfun' | 'ark' | 'deepseek' | 'volcengine' | 'codex' | 'search' | 'camera'
-  | 'telemetry' | 'host_private'
+  | 'mobile' | 'autoglm' | 'telemetry' | 'host_private'
 
 export interface EnvironmentVariableContract {
   readonly name: string
@@ -143,8 +143,30 @@ const rows: readonly Row[] = [
   ['DEV_START_MUTED', 'host_private', false, false, 'never', null, 'Start the unpackaged desktop with microphone muted.', '未打包桌面以闭麦状态启动。'],
   ['RELEASE_CAMERA_SMOKE', 'host_private', false, false, 'never', null, 'Packaged release camera capability sentinel.', '安装包发布相机能力哨兵。'],
   ['RELEASE_SMOKE', 'host_private', false, false, 'never', null, 'Authenticated packaged lifecycle smoke mode.', '安装包认证生命周期冒烟模式。'],
+  ['DEVELOPER_DIR', 'host_private', false, false, 'never', null, 'Host Xcode developer directory used when binding an iOS Simulator.', '绑定 iOS 模拟器时使用的宿主 Xcode 开发者目录。'],
   ['CODEX_HOME', 'host_private', false, false, 'never', null, 'Host Codex credential home.', '主机 Codex 凭据目录。'],
   ['HOME', 'host_private', false, false, 'never', null, 'Host home directory.', '主机用户目录。'],
+  ['MOBILE_ENGINE', 'mobile', false, true, 'never', 'midscene', 'Phone execution engine; currently midscene only.', '手机执行引擎；当前仅支持 midscene。'],
+  ['MOBILE_DEVICE_TYPE', 'mobile', false, true, 'never', 'ios-simulator', 'Phone platform: android, ios or ios-simulator; native execution supports Android ADB and iOS Simulator.', '手机平台：android、ios 或 ios-simulator；原生执行支持 Android ADB 和 iOS 模拟器。'],
+  ['MOBILE_DEVICE_ID', 'mobile', false, true, 'when_selected', null, 'Exact iOS device or Simulator UDID, or Android ADB serial.', '明确的 iOS 设备或模拟器 UDID，或 Android ADB 序列号。'],
+  ['MOBILE_WDA_URL', 'mobile', false, true, 'never', 'http://127.0.0.1:8100', 'WebDriverAgent endpoint for the configured iOS device.', '配置的 iOS 设备 WebDriverAgent 地址。'],
+  ['MOBILE_BASE_URL', 'mobile', false, true, 'when_selected', null, 'Phone model endpoint receiving screenshots.', '接收手机截图的模型服务地址。'],
+  ['MOBILE_MODEL', 'mobile', false, true, 'when_selected', null, 'Phone model identifier.', '手机操作模型名称。'],
+  ['MOBILE_MODEL_FAMILY', 'mobile', false, true, 'when_selected', null, 'Explicit model family used by the phone execution engine.', '手机执行引擎使用的明确模型系列。'],
+  ['MOBILE_API_KEY', 'mobile', true, true, 'when_selected', null, 'Phone model credential.', '手机操作模型凭据。'],
+  ['MOBILE_MAX_STEPS', 'mobile', false, true, 'never', '30', 'Supervised phone task step limit (1-100).', '受监督手机任务步骤上限（1-100）。'],
+  ['MOBILE_TIMEOUT_SECONDS', 'mobile', false, true, 'never', '600', 'Phone task deadline (1-1800 seconds).', '手机任务截止时间（1-1800 秒）。'],
+  ['MOBILE_SETTLE_MS', 'mobile', false, true, 'never', '4000', 'Screen settling delay before the first observation and after actions (0-30000 milliseconds).', '首次观察前及动作后等待画面稳定的时间（0-30000 毫秒）。'],
+  ['AUTOGLM_PYTHON', 'autoglm', false, true, 'when_selected', null, 'Absolute AutoGLM Python executable.', 'AutoGLM Python 可执行文件绝对路径。'],
+  ['AUTOGLM_SOURCE_PATH', 'autoglm', false, true, 'when_selected', null, 'Pinned Open-AutoGLM checkout.', '固定版本 Open-AutoGLM 目录。'],
+  ['AUTOGLM_DEVICE_ID', 'autoglm', false, true, 'when_selected', null, 'Exact iOS UDID or Android ADB serial.', '明确的 iOS UDID 或 Android ADB 序列号。'],
+  ['AUTOGLM_DEVICE_TYPE', 'autoglm', false, true, 'never', 'ios', 'Phone platform: ios, ios-simulator or android.', '手机平台：ios、ios-simulator 或 android。'],
+  ['AUTOGLM_WDA_URL', 'autoglm', false, true, 'never', 'http://127.0.0.1:8100', 'WebDriverAgent endpoint for the configured iOS device.', '配置的 iOS 设备 WebDriverAgent 地址。'],
+  ['AUTOGLM_BASE_URL', 'autoglm', false, true, 'when_selected', null, 'Phone model endpoint receiving screenshots.', '接收手机截图的模型服务地址。'],
+  ['AUTOGLM_MODEL', 'autoglm', false, true, 'when_selected', null, 'Phone model identifier.', '手机操作模型名称。'],
+  ['AUTOGLM_API_KEY', 'autoglm', true, true, 'when_selected', null, 'Phone model credential.', '手机操作模型凭据。'],
+  ['AUTOGLM_MAX_STEPS', 'autoglm', false, true, 'never', '30', 'Supervised phone task step limit (1-100).', '受监督手机任务步骤上限（1-100）。'],
+  ['AUTOGLM_TIMEOUT_SECONDS', 'autoglm', false, true, 'never', '600', 'Phone task deadline (1-1800 seconds).', '手机任务截止时间（1-1800 秒）。'],
   ['CODING_MODULE_ENABLED', 'codex', false, true, 'never', 'true', 'Enable the coding module; the desktop turns it off when no Codex CLI is available.', '启用编程模块；桌面端在找不到 Codex CLI 时自动关闭。'],
 ] as const
 

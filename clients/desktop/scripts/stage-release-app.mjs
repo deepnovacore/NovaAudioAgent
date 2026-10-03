@@ -51,7 +51,8 @@ export async function stageReleaseApplication({packageRoot}) {
           const local = relative(dependency, path).split(sep).join('/')
           if (/(^|\/)(node_modules|test|tests|__tests__|fixtures|coverage)(\/|$)/u.test(local)) return false
           if (/\.(map|ts|cts|mts|snap|png)$/u.test(local) || /\.test\.[cm]?js$/u.test(local)) return false
-          if (meta.name === '@nova-audio-agent/runtime') return local === '' || local === 'package.json' || local === 'dist' || /^dist\/(?:src|eval)(?:\/|$)/u.test(local)
+          if (meta.name === '@nova-audio-agent/runtime') return local === '' || local === 'package.json' || local === 'dist'
+            || local === 'scripts' || local === 'scripts/autoglm-bridge.py' || /^dist\/(?:src|eval)(?:\/|$)/u.test(local)
           if (meta.name === '@livekit/agents' && /^resources\/.*\.ogg$/u.test(local)) return false
           return true
         },

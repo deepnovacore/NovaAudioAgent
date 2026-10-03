@@ -42,9 +42,10 @@ import type {Clock} from '../../core/clock.js'
 import {CodexHostConfigurationError} from './host-config.js'
 import {ProjectCodexAdapter} from './adapter-project.js'
 import {ProjectConfirmationController} from '../../projects/project-confirmation.js'
-import {HostApprovalController, type ApprovalPort} from '../../core/approval.js'
-import {type ApprovalView} from '../../core/approval-port.js'
+import {HostApprovalController, type ApprovalPort, type ApprovalResolution} from '../../core/approval.js'
+import {type ApprovalView, type ApprovalWork} from '../../core/approval-port.js'
 import {basename} from 'node:path'
+import {randomUUID} from 'node:crypto'
 import {hostPersistentHomeFromConfig} from '../../projects/host-paths.js'
 import {hostCodexHomeValue} from './process-owner.js'
 import {
@@ -207,6 +208,7 @@ export interface CodexAssemblyResource extends CodingExecutorResource {
 }
 
 export interface CreateCodexAssemblyResourceOptions {
+  readonly sharedApprovalController?: HostApprovalController
   readonly managedMcp?: ManagedCodexMcp
   readonly config: ResolvedCodexHostConfig
   readonly composition: 'realtime'
@@ -260,19 +262,56 @@ async function createProjectResource(
   const launchProfile = resolveCodexLaunchProfile({
     approvalMode: options.config.codexApprovalMode,
     project: true,
-    foregroundBroker: options.codexApprovalBroker !== undefined,
+    foregroundBroker: options.codexApprovalBroker !== undefined || options.sharedApprovalController !== undefined,
   })
   const approvalController = launchProfile.controller === 'present'
-    ? new HostApprovalController({clock: options.clock, idFactory: options.idFactory,
+    ? options.sharedApprovalController ?? new HostApprovalController({clock: options.clock, idFactory: options.idFactory,
         ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic})})
     : null
   if (launchProfile.id === 'ask_headless') {
     try { options.onDiagnostic?.('ask_headless_no_broker') } catch { /* diagnostics are advisory */ }
   }
-  const unsubscribeApproval = approvalController === null
+  const ownsApproval = options.sharedApprovalController === undefined
+  const approvalScopes = new Map<string, {port: ApprovalPort; resolution: ApprovalResolution | null}>()
+  const scopedApproval = (work: ApprovalWork): ApprovalPort | null => {
+    if (approvalController === null) return null
+    const port = approvalController.forWork(work)
+    const scoped: ApprovalPort = {
+      offer: async (offer, signal) => {
+        const entry = {port: scoped, resolution: null as ApprovalResolution | null}
+        // A duplicate offer must not replace the active request's cleanup ownership.
+        if (!approvalScopes.has(work.work_id)) approvalScopes.set(work.work_id, entry)
+        try {
+          const resolution = await port.offer({...offer, executorIdentity: {executor: 'codex', display_name: 'Codex'}}, signal)
+          entry.resolution = resolution
+          if (resolution === null && approvalScopes.get(work.work_id) === entry) approvalScopes.delete(work.work_id)
+          return resolution
+        } catch (error) {
+          if (approvalScopes.get(work.work_id) === entry) approvalScopes.delete(work.work_id)
+          throw error
+        }
+      },
+      consume: resolution => {
+        const entry = approvalScopes.get(work.work_id)
+        if (entry?.port === scoped && entry.resolution === resolution) approvalScopes.delete(work.work_id)
+        return port.consume(resolution)
+      },
+      invalidate: reason => {
+        if (approvalScopes.get(work.work_id)?.port === scoped) approvalScopes.delete(work.work_id)
+        return port.invalidate(reason)
+      },
+    }
+    return scoped
+  }
+  const invalidateApprovals = (reason: string): void => {
+    for (const {port} of [...approvalScopes.values()]) port.invalidate(reason)
+    if (ownsApproval) approvalController?.invalidate(reason)
+  }
+  const unsubscribeApproval = approvalController === null || !ownsApproval
     ? null
     : approvalController.observe(view => { options.codexApprovalBroker?.publish(view) })
   if (host === undefined) {
+    unsubscribeApproval?.()
     throw new CodexHostConfigurationError('codex_project_host_unsupported')
   }
   const warmHome = options.config.prewarm && options.config.localCodexHome
@@ -296,7 +335,7 @@ async function createProjectResource(
       launchProfile: warmHome !== null ? launchProfile : resolveCodexLaunchProfile({
         approvalMode: options.config.codexApprovalMode, project: false, foregroundBroker: false,
       }),
-      approvalController: warmHome === null ? null : approvalController,
+      approvalController: warmHome === null ? null : scopedApproval({work_id: randomUUID(), project: '', title: 'Codex startup'}),
     }))
     if (!isCodexTransport(startupTransport)) {
       throw new CodexHostConfigurationError('codex_host_unavailable')
@@ -324,33 +363,39 @@ async function createProjectResource(
       ...(approvalController === null ? {} : {codexApproval: approvalController}),
       transportFactory: {
         create: binding => {
-          if (warmReady && warmHome !== null && startupTransport?.bindProject
-            && hostCodexHomeValue(binding.codexHome).path === hostCodexHomeValue(warmHome).path) {
-            warmReady = false
-            startupTransport.bindProject({workspace: binding.workspace, resumeThreadId: binding.resumeThreadId,
-              approvalController: approvalController?.forWork(binding.work) ?? null})
-            try { options.onDiagnostic?.('project_prewarm_reused') } catch { /* advisory */ }
-            return startupTransport
+          const approval = scopedApproval(binding.work)
+          try {
+            if (warmReady && warmHome !== null && startupTransport?.bindProject
+              && hostCodexHomeValue(binding.codexHome).path === hostCodexHomeValue(warmHome).path) {
+              warmReady = false
+              startupTransport.bindProject({workspace: binding.workspace, resumeThreadId: binding.resumeThreadId,
+                approvalController: approval})
+              try { options.onDiagnostic?.('project_prewarm_reused') } catch { /* advisory */ }
+              return startupTransport
+            }
+            const transport = options.transportFactory.create(Object.freeze({
+              ...(options.managedMcp === undefined ? {} : {managedMcp: options.managedMcp}),
+              preserveHome: binding.preserveHome ?? false,
+              mode: 'project',
+              binary: options.config.binary,
+              binaryPrefixArgs: options.config.binaryPrefixArgs,
+              workspace: binding.workspace,
+              codexHome: binding.codexHome,
+              credential: options.config.credential,
+              resumeThreadId: binding.resumeThreadId,
+              workingInterval: options.config.workingInterval,
+              eagerProgress: options.config.eagerProgress,
+              launchProfile,
+              approvalController: approval,
+            }))
+            if (!isCodexTransport(transport)) {
+              throw new CodexHostConfigurationError('codex_host_unavailable')
+            }
+            return transport
+          } catch (error) {
+            approval?.invalidate('transport_creation_failed')
+            throw error
           }
-          const transport = options.transportFactory.create(Object.freeze({
-            ...(options.managedMcp === undefined ? {} : {managedMcp: options.managedMcp}),
-            preserveHome: binding.preserveHome ?? false,
-            mode: 'project',
-            binary: options.config.binary,
-            binaryPrefixArgs: options.config.binaryPrefixArgs,
-            workspace: binding.workspace,
-            codexHome: binding.codexHome,
-            credential: options.config.credential,
-            resumeThreadId: binding.resumeThreadId,
-            workingInterval: options.config.workingInterval,
-            eagerProgress: options.config.eagerProgress,
-            launchProfile,
-            approvalController: approvalController?.forWork(binding.work) ?? null,
-          }))
-          if (!isCodexTransport(transport)) {
-            throw new CodexHostConfigurationError('codex_host_unavailable')
-          }
-          return transport
         },
       },
       ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
@@ -362,12 +407,13 @@ async function createProjectResource(
       launchProfile.thread.approvalPolicy,
       approvalController,
       unsubscribeApproval,
+      invalidateApprovals,
       warmHome !== null,
       () => { warmReady = false;try { options.onDiagnostic?.('project_prewarm_failed') } catch { /* advisory */ } },
       ready => { warmReady = ready },
     )
   } catch (error) {
-    approvalController?.invalidate('resource_creation_failed')
+    invalidateApprovals('resource_creation_failed')
     unsubscribeApproval?.()
     try { await startupTransport?.close('failure') } catch { /* Preserve the construction failure for malformed transports too. */ }
     await store?.close().catch(() => undefined)
@@ -396,6 +442,7 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
     readonly approvalPolicy: CodexApprovalPolicy,
     readonly approvalController: HostApprovalController | null,
     unsubscribeApproval: (() => void) | null,
+    readonly invalidateApprovals: (reason: string) => void,
     readonly prewarmConnection = false,
     readonly onPrewarmFailure: () => void = () => undefined,
     readonly onPrewarmReady: (ready: boolean) => void = () => undefined,
@@ -461,9 +508,14 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
   async #close(): Promise<void> {
     this.#closing = true
     this.onPrewarmReady(false)
-    this.approvalController?.invalidate('shutdown')
-    await this.#startupTransport.close('shutdown')
-    await this.adapter.close()
-    this.#unsubscribeApproval?.()
+    this.invalidateApprovals('shutdown')
+    try {
+      await this.#startupTransport.close('shutdown')
+      await this.adapter.close()
+    } finally {
+      // Approvals scoped to Codex work end with it even when shutdown fails; a borrowed controller stays open.
+      this.invalidateApprovals('shutdown')
+      this.#unsubscribeApproval?.()
+    }
   }
 }

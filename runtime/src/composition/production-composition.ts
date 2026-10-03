@@ -28,6 +28,8 @@ import type {DesktopRealtimeOptions} from '../desktop/desktop-session.js'
 import {selectDesktopCameraSource} from '../desktop/desktop-camera-source.js'
 import {ChromiumFrameSource} from '../executors/chromium-frame-source.js'
 import {RealClock} from '../core/clock.js'
+import {HostApprovalController} from '../core/approval.js'
+import {MAX_CONCURRENT_WORK} from '../core/work-tools.js'
 import {buildProductionRealtimeAssembly, type BuildProductionRealtimeAssemblyOptions} from './cascaded-realtime-assembly.js'
 import {createRealtimeTelemetry} from '../realtime/telemetry.js'
 import type {ApprovalView as ExecutorApprovalView} from '../core/approval-port.js'
@@ -79,6 +81,27 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     vision: settings.conversation_vision_enabled,
   })
   let publishExecutorApproval: (view: ExecutorApprovalView) => void = () => undefined
+  const phoneNames = settings.executors.filter(name => name === 'autoglm' || name === 'mobile')
+  // Each phone executor runs one task at a time, so it adds one approval slot instead of taking Codex's.
+  const sharedApproval = phoneNames.length > 0
+    ? new HostApprovalController({clock, idFactory: () => randomUUID(), capacity: MAX_CONCURRENT_WORK + phoneNames.length}) : undefined
+  let closeSharedApproval = () => { /* No shared resource when phone executors are disabled. */ }
+  if (sharedApproval !== undefined) {
+    const unsubscribe = sharedApproval.observe(view => publishExecutorApproval(view))
+    closeSharedApproval = () => { sharedApproval.invalidate('shutdown'); unsubscribe() }
+    ownership.own(closeSharedApproval)
+  }
+  const autoglm = !settings.executors.includes('autoglm') ? undefined : await (async () => {
+    const {AutoGlmExecutor, loadAutoGlmConfig} = await import('../executors/autoglm.js')
+    return new AutoGlmExecutor(loadAutoGlmConfig(environment), sharedApproval!)
+  })()
+  if (autoglm !== undefined) ownership.own(() => autoglm.close())
+  const mobile = !settings.executors.includes('mobile') ? undefined : await (async () => {
+    const {MobileExecutor, loadMobileConfig} = await import('../executors/mobile.js')
+    return new MobileExecutor(loadMobileConfig(environment), sharedApproval!)
+  })()
+  if (mobile !== undefined) ownership.own(() => mobile.close())
+  const phoneExecutors = [...(autoglm === undefined ? [] : [autoglm]), ...(mobile === undefined ? [] : [mobile])]
   const codexResource = !capabilities.modules.coding.enabled || !settings.executors.includes('codex')
     ? null
     : await (async () => {
@@ -95,6 +118,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
             managedMcp: prepareManagedCodexMcp(capabilities, knowledge?.codexEntries),
             config: codexConfig,
             composition: 'realtime',
+            ...(sharedApproval === undefined ? {} : {sharedApprovalController: sharedApproval}),
             transportFactory: codexHost.transportFactory,
             clock,
             idFactory: () => randomUUID().replaceAll('-', ''),
@@ -123,9 +147,9 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     ...(codexResource?.projectView === null || codexResource === null
       ? {}
       : {projectView: codexResource.projectView}),
-    ...(codexResource?.approvalController === null || codexResource === null
+    ...((sharedApproval ?? codexResource?.approvalController) == null
       ? {}
-      : {approvalView: codexResource.approvalController.view}),
+      : {approvalView: (sharedApproval ?? codexResource!.approvalController)!.view}),
     buildRealtime: (callbacks, transport) => {
       const frameSource = camera === null ? undefined : new ChromiumFrameSource({
         source: camera.source,
@@ -146,6 +170,8 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
         clock,
         ...(frameSource === undefined ? {} : {frameSource}),
         ...(codexResource === null ? {} : {codexResource}),
+        ...(phoneExecutors.length === 0 ? {} : {executors: phoneExecutors, agentDescriptors: phoneExecutors.map(phone => phone.descriptor),
+          additionalAgentControllers: port => phoneExecutors.map(phone => phone.controller(port)), executorApproval: sharedApproval!}),
         ...callbacks,
         ...(codexResource?.approvalController?{executorApproval:scopeApprovalController(codexResource.approvalController,view=>!view.work||!conversationOwner.host?.workConversation(view.work.work_id))}:{}),
       }
@@ -261,6 +287,8 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   publishExecutorApproval = view => { if(view.work&&host.workConversation(view.work.work_id))return;composition.desktop.bridge.onExecutorApproval(view) }
   return {
     ...composition,
-    closeAuxiliary: () => telemetry.close(),
+    closeAuxiliary: async () => {
+      try { await Promise.all(phoneExecutors.map(phone => phone.close())) } finally { closeSharedApproval(); telemetry.close() }
+    },
   }
 }

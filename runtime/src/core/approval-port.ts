@@ -47,6 +47,8 @@ export interface ApprovalWork {
  * once they become head.
  */
 export interface ApprovalView {
+  /** Host-bound source of the current approval, independent of the coding executor. */
+  readonly executorIdentity?: {readonly executor: string; readonly display_name: string}
   readonly pending_approval: boolean
   readonly pending_approval_busy: boolean
   readonly pending_approval_id?: string
