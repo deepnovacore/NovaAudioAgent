@@ -72,3 +72,5 @@ TypeScript API 变化：`Settings.surrogate_model` 改为 `support_model`；原�
 目标校验失败后，当前重试会重跑两个阶段；最多四次模型调用共用原来的两次尝试、30 秒评估预算。
 
 [返回上手指南](getting-started.md)
+
+OpenAI 与 Gemini 的模型选项、独立密钥、级联配置和协议限制见 [海外模型接入说明](global-providers.md)。

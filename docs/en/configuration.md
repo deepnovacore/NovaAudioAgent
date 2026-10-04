@@ -72,3 +72,5 @@ A normal assessment now makes two sequential calls under the existing shared ass
 A target-validation retry currently reruns both stages; at most four model calls share the same two-attempt, 30-second assessment budget.
 
 [Back to getting started](getting-started.md)
+
+See [OpenAI and Gemini providers](../en/global-providers.md) for model presets, credential routing and protocol limitations.

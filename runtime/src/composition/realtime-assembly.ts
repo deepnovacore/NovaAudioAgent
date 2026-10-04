@@ -858,7 +858,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       signal?.throwIfAborted()
       const conversation = core.runtime.memory.channels.get('conversation')
       const sources = recentDispatchSources(conversation?.items ?? [])
-      const recovery = sessionHolder.current?.deliveryRecoveryContext()
+      const recovery = provider.responseAdaptationMode === 'session_setup' ? undefined : sessionHolder.current?.deliveryRecoveryContext()
       const context = {
         content: [preferences?.content, recovery?.content].filter(Boolean).join('\n') || null,
         ...(recovery?.content ? {delivery_version: recovery.version} : {}),

@@ -438,6 +438,8 @@ export const responseAdaptationContextSchema = z.object({
 }).strict()
 
 export interface RealtimeProvider {
+  /** Session-setup guidance cannot carry rolling source/recovery catalogs without interrupting live turns. */
+  readonly responseAdaptationMode?: 'mutable' | 'session_setup'
   reportPlayback?(input: {readonly response_id:string; readonly played_ms:number | null; readonly disposition:string}, signal:AbortSignal):Promise<void>
   setLanguage?(language?: PromptLanguage): Promise<void>
 

@@ -511,7 +511,7 @@ export class RealtimeProviderSession {
         await failClosed()
         return
       }
-      const context = includeUserSources ? parsed.data : {revision: parsed.data.revision, content: parsed.data.content,
+      const context = includeUserSources && this.#provider.responseAdaptationMode !== 'session_setup' ? parsed.data : {revision: parsed.data.revision, content: parsed.data.content,
         ...(parsed.data.delivery_version === undefined ? {} : {delivery_version: parsed.data.delivery_version})}
       const signature = JSON.stringify({content: context.content, user_sources: context.user_sources})
       const previous = this.#responseAdaptationAttempt

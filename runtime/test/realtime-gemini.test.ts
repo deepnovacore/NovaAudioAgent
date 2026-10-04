@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
+import {RealtimeProviderSession} from '../src/realtime/provider-session.js'
 import {GeminiLiveAdapter} from '../src/realtime/gemini.js'
 import type {QwenSocket} from '../src/realtime/qwen.js'
 
@@ -62,5 +63,58 @@ test('Gemini rejects tool results for unknown or cancelled native call IDs',asyn
  const item={kind:'tool_output' as const,host_item_id:'h',event_id:'e',content:'result',call_id:'cancelled'}
  await h.adapter.injectHostItem(item,{confirmationTimeout:1,asUserActivation:false,signal:h.signal})
  await assert.rejects(h.adapter.createResponse({kind:'tool_result',item,task_summary:null,origin_spoken:false},h.signal))
+ await h.adapter.close()
+})
+test('Gemini wrapper does not rebuild the session for rolling dispatch source updates',async()=>{
+ const h=harness();let sources:{ref:string;text:string}[]=[]
+ const wrapper=new RealtimeProviderSession(h.adapter,{responseAdaptation:()=>({revision:sources.length,content:null,user_sources:sources})})
+ await wrapper.connect([],h.signal)
+ const events=wrapper.events(h.signal)[Symbol.asyncIterator]()
+ h.sockets[0]!.push({serverContent:{inputTranscription:{text:'hello'},outputTranscription:{text:'Hi'}}})
+ for(let i=0;i<6;i++)await events.next()
+ sources=[{ref:'conversation:1',text:'hello'}]
+ await wrapper.sendAudio(new Uint8Array([0,0]),h.signal)
+ assert.equal(h.sockets.length,1)
+ await wrapper.close()
+})
+test('Gemini refresh discards queued old user/tool authority and rejects its result',async()=>{
+ const h=harness();await h.adapter.connect({tools:[],signal:h.signal})
+ h.sockets[0]!.push({serverContent:{inputTranscription:{text:'old request'}},toolCall:{functionCalls:[{id:'old-call',name:'dispatch',args:{}}]}})
+ await new Promise<void>(r=>setImmediate(r))
+ const item={kind:'workspace_context' as const,host_item_id:'w',event_id:'e',content:'new workspace',call_id:null,session_epoch:1,workspace_instance_id:'new',revision:1}
+ await h.adapter.injectWorkspaceContext(item,{confirmationTimeout:1,signal:h.signal})
+ const result={kind:'tool_output' as const,host_item_id:'result',event_id:'result',content:'done',call_id:'old-call'}
+ await h.adapter.injectHostItem(result,{confirmationTimeout:1,asUserActivation:false,signal:h.signal})
+ await assert.rejects(h.adapter.createResponse({kind:'tool_result',item:result,task_summary:null,origin_spoken:false},h.signal))
+ h.sockets[1]!.push({serverContent:{outputTranscription:{text:'new reply'},turnComplete:true}})
+ const events=h.adapter.events(h.signal)[Symbol.asyncIterator]()
+ const first=await events.next()
+ assert.equal(first.value?.kind,'response_started')
+ await h.adapter.close()
+})
+test('Gemini native tool reply retains ID/name and never sends duplicate response activation',async()=>{
+ const h=harness();await h.adapter.connect({tools:[],signal:h.signal})
+ const events=h.adapter.events(h.signal)[Symbol.asyncIterator]()
+ h.sockets[0]!.push({toolCall:{functionCalls:[{id:'native',name:'search',args:{query:'hello'}}]}})
+ assert.equal((await events.next()).value?.kind,'response_started')
+ assert.equal((await events.next()).value?.kind,'tool_call_ready')
+ assert.equal((await events.next()).value?.kind,'response_terminal')
+ const item={kind:'tool_output' as const,host_item_id:'h',event_id:'e',content:'result',call_id:'native'}
+ await h.adapter.injectHostItem(item,{confirmationTimeout:1,asUserActivation:false,signal:h.signal})
+ const before=h.sockets[0]!.sent.length
+ await h.adapter.createResponse({kind:'tool_result',item,task_summary:null,origin_spoken:false},h.signal)
+ assert.equal(h.sockets[0]!.sent.length,before+1)
+ assert.deepEqual(h.sockets[0]!.sent.at(-1),{toolResponse:{functionResponses:[{id:'native',name:'search',response:{result:'result'}}]}})
+ await h.adapter.close()
+})
+test('Gemini drops cancelled native tool calls still waiting in the event queue',async()=>{
+ const h=harness();await h.adapter.connect({tools:[],signal:h.signal})
+ h.sockets[0]!.push({toolCall:{functionCalls:[{id:'cancelled',name:'dispatch',args:{}}]}})
+ h.sockets[0]!.push({toolCallCancellation:{ids:['cancelled']}})
+ h.sockets[0]!.push({serverContent:{outputTranscription:{text:'next'},turnComplete:true}})
+ await new Promise<void>(r=>setImmediate(r))
+ const events=h.adapter.events(h.signal)[Symbol.asyncIterator]()
+ assert.equal((await events.next()).value?.kind,'response_started')
+ assert.equal((await events.next()).value?.kind,'response_terminal')
  await h.adapter.close()
 })
