@@ -5,7 +5,7 @@ type Frame = Record<string, JsonValue>
 
 /** Provider-specific wire details; the realtime host and event ownership stay shared. */
 export interface IntegratedWireProfile {
-  readonly provider: 'qwen' | 'stepfun'
+  readonly provider: 'qwen' | 'stepfun' | 'openai'
   /** An empty voice selects the service default instead of failing construction. */
   readonly voiceOptional: boolean
   session(tools: readonly JsonObject[], voice: string, instructions: string, model: string): JsonObject

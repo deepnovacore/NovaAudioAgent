@@ -37,6 +37,8 @@ Set only what you need to change. Keep credentials out of Git.
 | `DASHSCOPE_API_KEY` | None | Qwen realtime credential. |
 | `QWEN_REALTIME_MODEL` | qwen-audio-3.0-realtime-plus | Qwen realtime model. |
 | `QWEN_REALTIME_VOICE` | longanqian | Qwen realtime voice. |
+| `OPENAI_API_KEY` | None | OpenAI API credential. |
+| `GEMINI_API_KEY` | None | Gemini API credential. |
 | `STEPFUN_API_KEY` | None | StepFun realtime credential. |
 | `DEEPSEEK_API_KEY` | None | Official DeepSeek cascaded LLM credential. |
 | `ARK_API_KEY` | None | Ark cascaded LLM credential. |

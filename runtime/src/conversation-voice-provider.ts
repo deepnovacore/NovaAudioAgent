@@ -19,7 +19,7 @@ export function buildCascadedVoiceProvider(options:ConversationVoiceProviderOpti
   const capabilities=capabilitiesFromSettings(options.settings)
   const metering=(endpoint:string)=>options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,endpoint)!}
   const instructions=frontendInstructions({search:capabilities.modules.search.enabled,camera:options.captureFrame!==undefined,coding:capabilities.modules.coding.enabled,knowledge:capabilities.modules.knowledge.enabled},options.executorApproval===true)
-  const llm=registry.llm[selected.llm.provider === 'deepseek' ? 'qwen' : selected.llm.provider]({config:selected.llm.config,clock:options.clock,ids,instructions,...metering(selected.llm.config.baseUrl)})
+  const llm=registry.llm[selected.llm.provider === 'ark' ? 'ark' : 'qwen']({config:selected.llm.config,clock:options.clock,ids,instructions,...metering(selected.llm.config.baseUrl)})
   return new CascadedRealtimeProvider({
     language:options.settings.language,
     endpointingFactory:registry.endpointing[selected.selection.endpointingProvider]({config:selected.endpointing,clock:options.clock}),

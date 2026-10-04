@@ -595,6 +595,8 @@ test('every API key is a password field with a badge, hint, and clear button', (
     'composioApiKey',
     'dashscopeApiKey',
     'stepfunApiKey',
+    'openaiApiKey',
+    'geminiApiKey',
     'tavilyApiKey',
     'openrouterApiKey',
     'arkApiKey',
@@ -612,7 +614,7 @@ test('every API key is a password field with a badge, hint, and clear button', (
   assert.match(html, /Codex/)
   assert.match(html, /Ark/)
   assert.match(html, /火山语音/)
-  assert.equal((html.match(/type="password"/g) || []).length, 8)
+  assert.equal((html.match(/type="password"/g) || []).length, 10)
 })
 
 test('API keys live in a collapsed semantic disclosure with a readable summary', () => {

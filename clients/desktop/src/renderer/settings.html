@@ -275,6 +275,8 @@
             <div class="field">
               <label for="integratedProvider">服务商</label>
               <select id="integratedProvider">
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Google Gemini</option>
                 <option value="qwen">Qwen（通义）</option>
                 <option value="stepfun">StepFun（阶跃星辰）· 预览</option>
               </select>
@@ -331,6 +333,8 @@
             <div class="field">
               <label for="cascadedLlmProvider">服务商</label>
               <select id="cascadedLlmProvider">
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Google Gemini</option>
                 <option value="qwen">Qwen（通义）</option>
                 <option value="ark">Ark（火山方舟）</option>
                 <option value="deepseek">DeepSeek（官方）</option>
@@ -398,6 +402,20 @@
             <input type="password" id="openrouterApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
             <button type="button" class="clear" data-key="openrouterApiKey">清除</button>
             <a class="key-link" href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+          </div>
+          <div class="secret" data-key="geminiApiKey">
+            <label for="geminiApiKey">Google Gemini</label>
+            <span class="badge" id="badge-geminiApiKey">未设置</span>
+            <span class="key-usage" id="usage-geminiApiKey">当前未使用</span>
+            <input type="password" id="geminiApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="geminiApiKey">清除</button>
+          </div>
+          <div class="secret" data-key="openaiApiKey">
+            <label for="openaiApiKey">OpenAI</label>
+            <span class="badge" id="badge-openaiApiKey">未设置</span>
+            <span class="key-usage" id="usage-openaiApiKey">当前未使用</span>
+            <input type="password" id="openaiApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="openaiApiKey">清除</button>
           </div>
           <div class="secret" data-key="deepseekApiKey">
             <label for="deepseekApiKey">DeepSeek（官方）</label>

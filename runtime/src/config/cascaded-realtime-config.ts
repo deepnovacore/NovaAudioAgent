@@ -1,7 +1,7 @@
 /** Pure normalization and validation for one selected cascaded provider graph. */
 
 import {
-  ConfigurationError,
+  ConfigurationError, OPENAI_BASE_URL, GEMINI_BASE_URL, cascadedCredentialField,
   DASHSCOPE_COMPATIBLE_BASE_URL,
   requireCascadedCredentials,
   resolveCascadedSelection,
@@ -31,7 +31,7 @@ export interface VolcengineAsrConfig {
 }
 
 export interface QwenCascadedLlmConfig {
-  readonly provider?: 'qwen' | 'deepseek'
+  readonly provider?: 'qwen' | 'deepseek' | 'openai' | 'gemini'
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
@@ -52,7 +52,7 @@ export interface VolcengineTtsConfig {
 }
 
 export type SelectedCascadedLlmConfig =
-  | {readonly provider: 'qwen' | 'deepseek'; readonly config: QwenCascadedLlmConfig}
+  | {readonly provider: 'qwen' | 'deepseek' | 'openai' | 'gemini'; readonly config: QwenCascadedLlmConfig}
   | {readonly provider: 'ark'; readonly config: ArkCascadedLlmConfig}
 
 export interface SelectedCascadedRealtimeConfig {
@@ -78,14 +78,15 @@ export function requireSelectedCascadedRealtimeConfig(
 /** Text sessions require only their selected LLM, independent of speech configuration. */
 export function requireSelectedCascadedLlmConfig(settings:Settings):SelectedCascadedLlmConfig {
   const selection=resolveCascadedSelection(settings)
-  const apiKey=stripLikePython((selection.llmProvider==='qwen'?settings.dashscope_api_key:selection.llmProvider==='deepseek'?settings.deepseek_api_key:settings.ark_api_key)??'')
-  if(!apiKey)throw new ConfigurationError(`缺少 ${selection.llmProvider==='qwen'?'DASHSCOPE_API_KEY':selection.llmProvider==='deepseek'?'DEEPSEEK_API_KEY':'ARK_API_KEY'}`)
+  const field = cascadedCredentialField(selection.llmProvider)
+  const apiKey=stripLikePython(settings[field]??'')
+  if(!apiKey)throw new ConfigurationError(`缺少 ${field.toUpperCase()}`)
   return selection.llmProvider !== 'ark'
     ? Object.freeze({
       provider: selection.llmProvider,
       config: Object.freeze({
-        baseUrl: selection.llmProvider === 'deepseek' ? 'https://api.deepseek.com' : DASHSCOPE_COMPATIBLE_BASE_URL,
-        ...(selection.llmProvider === 'deepseek' ? {provider: 'deepseek' as const} : {}),
+        baseUrl: selection.llmProvider === 'openai' ? OPENAI_BASE_URL : selection.llmProvider === 'gemini' ? GEMINI_BASE_URL : selection.llmProvider === 'deepseek' ? 'https://api.deepseek.com' : DASHSCOPE_COMPATIBLE_BASE_URL,
+        ...(selection.llmProvider !== 'qwen' ? {provider: selection.llmProvider} : {}),
         apiKey: apiKey,
         model: selection.llmModel,
       }),

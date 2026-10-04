@@ -37,6 +37,8 @@ DASHSCOPE_API_KEY=你的百炼密钥
 | `DASHSCOPE_API_KEY` | 无 | Qwen 实时凭据。 |
 | `QWEN_REALTIME_MODEL` | qwen-audio-3.0-realtime-plus | Qwen 实时模型。 |
 | `QWEN_REALTIME_VOICE` | longanqian | Qwen 实时音色。 |
+| `OPENAI_API_KEY` | 无 | OpenAI API 凭据。 |
+| `GEMINI_API_KEY` | 无 | Gemini API 凭据。 |
 | `STEPFUN_API_KEY` | 无 | StepFun 实时凭据。 |
 | `DEEPSEEK_API_KEY` | 无 | DeepSeek 官方级联 LLM 凭据。 |
 | `ARK_API_KEY` | 无 | 方舟级联 LLM 凭据。 |

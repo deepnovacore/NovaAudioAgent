@@ -16,6 +16,8 @@ export const RUNTIME_DEFAULTS = Object.freeze({
     qwen: 'qwen-plus',
     ark: 'doubao-seed-2-0-pro-260215',
     deepseek: 'deepseek-flash',
+    openai: 'gpt-6-luna',
+    gemini: 'gemini-3.5-flash-lite',
   }),
   cascadedTtsProvider: 'volcengine',
   cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',

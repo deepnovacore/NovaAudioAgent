@@ -16,6 +16,8 @@ export const SECRET_ENV_MAP = Object.freeze({
   composioApiKey: 'COMPOSIO_API_KEY',
   dashscopeApiKey: 'DASHSCOPE_API_KEY',
   stepfunApiKey: 'STEPFUN_API_KEY',
+  openaiApiKey: 'OPENAI_API_KEY',
+  geminiApiKey: 'GEMINI_API_KEY',
   tavilyApiKey: 'TAVILY_API_KEY',
   openrouterApiKey: 'OPENROUTER_API_KEY',
   modelApiKey: 'MODEL_API_KEY',
@@ -264,14 +266,16 @@ export function backendLaunchSpec({
         ?? SETTINGS_DEFAULTS.cascadedTtsVoice,
     })
   } else {
-    const stepfun = settings?.integratedProvider === 'stepfun'
+    const provider = settings?.integratedProvider ?? SETTINGS_DEFAULTS.integratedProvider
+    const prefix = provider.toUpperCase()
+    const providerDefaults = {openai: ['gpt-realtime-2.1-mini','marin'], gemini: ['gemini-3.8-live','Kore']}[provider]
     Object.assign(env, {
       INTEGRATED_PROVIDER: settings?.integratedProvider
         ?? SETTINGS_DEFAULTS.integratedProvider,
-      [stepfun ? 'STEPFUN_REALTIME_MODEL' : 'QWEN_REALTIME_MODEL']:
-        settings?.integratedModel ?? SETTINGS_DEFAULTS.integratedModel,
-      [stepfun ? 'STEPFUN_REALTIME_VOICE' : 'QWEN_REALTIME_VOICE']:
-        settings?.integratedVoice ?? SETTINGS_DEFAULTS.integratedVoice,
+      [`${prefix}_REALTIME_MODEL`]:
+        settings?.integratedModel ?? providerDefaults?.[0] ?? SETTINGS_DEFAULTS.integratedModel,
+      [`${prefix}_REALTIME_VOICE`]:
+        settings?.integratedVoice ?? providerDefaults?.[1] ?? SETTINGS_DEFAULTS.integratedVoice,
     })
   }
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
@@ -605,13 +609,14 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
     if (pipelineMode === 'cascaded') {
       const llmProvider = settings?.cascadedLlmProvider
         ?? SETTINGS_DEFAULTS.cascadedLlmProvider
-      activeSecretKeys.add(llmProvider === 'deepseek' ? 'deepseekApiKey' : llmProvider === 'ark' ? 'arkApiKey' : 'dashscopeApiKey')
+      activeSecretKeys.add(llmProvider === 'qwen' ? 'dashscopeApiKey' : `${llmProvider}ApiKey`)
       activeSecretKeys.add('doubaoBigmodelApiKey')
       // Optional override only. When absent, the runtime falls back to the
       // big-model key; Main does not synthesize a duplicate secret value.
       activeSecretKeys.add('doubaoAsrApiKey')
     } else {
-      activeSecretKeys.add(settings?.integratedProvider === 'stepfun' ? 'stepfunApiKey' : 'dashscopeApiKey')
+      const integrated = settings?.integratedProvider ?? 'qwen'
+      activeSecretKeys.add(integrated === 'qwen' ? 'dashscopeApiKey' : `${integrated}ApiKey`)
       if (settings?.integratedProvider === 'stepfun') activeSecretKeys.add('dashscopeApiKey')
     }
     const search = document?.modules?.search

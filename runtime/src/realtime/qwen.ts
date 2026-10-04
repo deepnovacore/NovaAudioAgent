@@ -114,6 +114,7 @@ export interface QwenSocket {
 }
 
 export interface QwenConnectorOptions {
+  readonly binaryJson?: boolean
   readonly endpoint: string
   readonly headers: Readonly<Record<string, string>>
   readonly openTimeout: number
@@ -252,6 +253,8 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
 
   readonly userResponseMode = 'automatic' as const
 
+  readonly #audioItems = new Map<string, {itemId:string; contentIndex:number; durationMs:number}>()
+
   readonly workspaceHeaderContextCapability = 'replace_provider_item' as const
   readonly turnRecallContextCapability = 'unavailable' as const
 
@@ -262,6 +265,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     if (this.#socket !== undefined) {
       throw new QwenRealtimeError('realtime session is already connected')
     }
+    this.#audioItems.clear()
     this.#wireProfile.reset()
     const separator = this.#url.includes('?') ? '&' : '?'
     const endpoint = `${this.#url}${separator}model=${this.#model}`
@@ -738,6 +742,17 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     await this.#sendJson({type: 'response.create', response: {modalities: ['audio', 'text']}})
   }
 
+  async reportPlayback(input: {response_id:string; played_ms:number | null; disposition:string}, signal:AbortSignal):Promise<void> {
+    if (this.#wireProfile.provider !== 'openai' || input.disposition === 'spoken') return
+    signal.throwIfAborted()
+    const item = this.#audioItems.get(input.response_id)
+    if (!item) return
+    const played = input.played_ms ?? 0
+    if (!Number.isFinite(played) || played < 0) throw new QwenRealtimeError('invalid playback position')
+    await this.#sendJson({type:'conversation.item.truncate',item_id:item.itemId,content_index:item.contentIndex,audio_end_ms:Math.floor(Math.min(played,item.durationMs))})
+    this.#audioItems.delete(input.response_id)
+  }
+
   async cancelResponse(responseId: string, signal: AbortSignal): Promise<void> {
     void signal
     if (typeof responseId !== 'string' || responseId === '') {
@@ -970,7 +985,6 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     event: Readonly<Record<string, JsonValue>>,
     epoch: number,
   ): RealtimeProviderEvent | undefined {
-    event = this.#wireProfile.inbound({...event})
     const type = event.type
     switch (type) {
       case 'input_audio_buffer.speech_started': {
@@ -1017,13 +1031,25 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
         }
         return {session_epoch: epoch, kind: 'response_started', response_id: id}
       }
-      case 'response.audio.delta':
+      case 'response.audio.delta': {
+        const pcm = requireAlignedPcm(decodeStrictBase64(eventText(event, 'delta')))
+        if (this.#wireProfile.provider === 'openai') {
+          const id = responseId(event)
+          const previous = this.#audioItems.get(id)
+          const itemId = eventId(event, 'item_id')
+          const contentIndex = event.content_index
+          if (!Number.isSafeInteger(contentIndex) || typeof contentIndex !== 'number' || contentIndex < 0) throw new QwenRealtimeError('invalid audio content index')
+          if (previous && (previous.itemId !== itemId || previous.contentIndex !== contentIndex)) throw new QwenRealtimeError('multiple audio items per response unsupported')
+          this.#audioItems.set(id, {itemId,contentIndex,durationMs:(previous?.durationMs ?? 0) + pcm.length / 48})
+          if (this.#audioItems.size > 256) this.#audioItems.delete(this.#audioItems.keys().next().value!)
+        }
         return {
           session_epoch: epoch,
           kind: 'response_audio_delta',
           response_id: responseId(event),
-          pcm: requireAlignedPcm(decodeStrictBase64(eventText(event, 'delta'))),
+          pcm,
         }
+      }
       case 'response.audio_transcript.delta':
       case 'response.text.delta':
         return {
@@ -1260,7 +1286,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     if (!result.success || typeof result.data.type !== 'string') {
       throw new QwenRealtimeError('qwen realtime returned malformed event')
     }
-    return result.data
+    return this.#wireProfile.inbound({...result.data})
   }
 
   /** Serialize writes; concurrent sends would interleave frames on one socket. */

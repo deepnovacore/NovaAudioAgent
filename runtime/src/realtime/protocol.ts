@@ -438,6 +438,7 @@ export const responseAdaptationContextSchema = z.object({
 }).strict()
 
 export interface RealtimeProvider {
+  reportPlayback?(input: {readonly response_id:string; readonly played_ms:number | null; readonly disposition:string}, signal:AbortSignal):Promise<void>
   setLanguage?(language?: PromptLanguage): Promise<void>
 
   /** Automatic providers may start before transcript final; requested providers wait for the host.

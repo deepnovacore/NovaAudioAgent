@@ -377,6 +377,17 @@ export class RealtimeProviderSession {
     }
   }
 
+  async reportPlayback(input: {readonly session_epoch:number; readonly response_id:string; readonly played_ms:number | null; readonly disposition:string}):Promise<void> {
+    if (!this.#provider.reportPlayback || this.#state !== 'connected' || this.#identity?.epoch !== input.session_epoch) return
+    const owner = this.#requiredConnectionOwner()
+    try {
+      await this.#provider.reportPlayback(input, owner.controller.signal)
+      this.#assertCurrentConnection(owner)
+    } catch {
+      if (this.#isCurrentConnection(owner)) await this.close()
+    }
+  }
+
   async cancelResponse(responseId: string, signal?: AbortSignal): Promise<void> {
     const parsed = realtimeIdentifierSchema.parse(responseId)
     const owner = this.#requiredConnectionOwner()

@@ -60,6 +60,7 @@ export interface HostResponseDelivery {
 
 /** Just enough of the provider port for the session; the adapter implements more. */
 export interface SessionProvider {
+  reportPlayback?(input: PlaybackCompletion):Promise<void>
   readonly userResponseMode?: 'automatic' | 'requested'
   connect(options: {readonly tools: readonly Record<string, unknown>[]}): Promise<{
     readonly epoch: number
@@ -1609,6 +1610,11 @@ export class RealtimeSession {
     return started
   }
 
+  #reportDelivery(completion: PlaybackCompletion):void {
+    void this.#provider.reportPlayback?.(completion).catch(() => undefined)
+    this.#onDelivery(completion)
+  }
+
   playbackDone(
     utteranceId: string,
     generationEpoch: number,
@@ -1627,7 +1633,7 @@ export class RealtimeSession {
     if (completion.disposition !== 'spoken') {
       this.#releaseInterruptedSuggestionAuthority(completion.response_id, completion.session_epoch)
       this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-      this.#onDelivery(completion)
+      this.#reportDelivery(completion)
       this.#floor = this.#floor.onSpeakEnd(utteranceId)
       this.#state.advanceSnapshot()
       return completion
@@ -1649,7 +1655,7 @@ export class RealtimeSession {
     if (answered && this.#latestQuestion?.id === answered.id) this.#latestQuestion = null
     this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
     this.#onSpoken(completion.text)
-    this.#onDelivery(completion)
+    this.#reportDelivery(completion)
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     this.#state.advanceSnapshot()
     return completion
@@ -1672,7 +1678,7 @@ export class RealtimeSession {
     if (completion === null) return null
     this.#releaseInterruptedSuggestionAuthority(completion.response_id, completion.session_epoch)
     this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-    this.#onDelivery(completion)
+    this.#reportDelivery(completion)
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     return completion
   }
@@ -1710,7 +1716,7 @@ export class RealtimeSession {
     const completion = this.#playback.recordCleared(utteranceId, generationEpoch, playedMs)
     if (completion !== null) {
       this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-      this.#onDelivery(completion)
+      this.#reportDelivery(completion)
     }
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     if (

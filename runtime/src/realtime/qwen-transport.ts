@@ -23,11 +23,11 @@ class WebSocketQwenSocket implements QwenSocket {
   #closed = false
   #failure: Error | undefined
 
-  constructor(socket: WebSocket) {
+  constructor(socket: WebSocket, binaryJson = false) {
     this.#socket = socket
     socket.on('message', (data: RawData, isBinary: boolean) => {
       // The Qwen realtime protocol is JSON text; audio arrives base64 inside it.
-      if (isBinary) return
+      if (isBinary && !binaryJson) return
       // Overflow is terminal. Letting frames back in once the consumer drains below
       // the bound would defer the failure indefinitely: a peer sending at the drain
       // rate would keep receive() succeeding and the adapter would never observe the
@@ -118,7 +118,7 @@ export const webSocketQwenConnector: QwenConnector = (
   })
   // Wrap before 'open' so frames a fast server sends immediately are buffered
   // rather than dropped between the handshake and the first receive().
-  const wrapped = new WebSocketQwenSocket(socket)
+  const wrapped = new WebSocketQwenSocket(socket, options.binaryJson)
   const settle = (outcome: () => void): void => {
     socket.off('open', onOpen)
     socket.off('error', onError)

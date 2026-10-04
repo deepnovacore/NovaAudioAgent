@@ -1,3 +1,6 @@
+import {createOpenAIWireProfile} from '../realtime/openai-wire-profile.js'
+import {GeminiLiveAdapter} from '../realtime/gemini.js'
+import {OPENAI_BASE_URL,GEMINI_BASE_URL} from '../config/config.js'
 import type {CommittedConversationPair} from '../realtime/history.js'
 import {transcribeDraft} from '../realtime/cascaded/transcribe.js'
 import type {PromptLanguage} from '../realtime/prompt-language.js'
@@ -401,7 +404,7 @@ function supportComposition(
   const gateway = new OpenAIModelGateway({
     baseUrl: connection.baseUrl,
     apiKey: connection.apiKey,
-    ...(connection.source !== 'generic' && provider === 'deepseek' ? {thinkingControl: 'deepseek' as const} : {}),
+    ...(connection.source !== 'generic' && (provider === 'deepseek'||provider === 'openai') ? {thinkingControl: provider} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
@@ -553,12 +556,13 @@ export function buildQwenRealtimeAssembly(
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const support = resolveSupportModelConnection(options.settings, {
-    baseUrl: stepfunOwnSupport ? STEPFUN_COMPATIBLE_BASE_URL : DASHSCOPE_COMPATIBLE_BASE_URL,
+    baseUrl: options.settings.integrated_provider === 'openai' ? OPENAI_BASE_URL : options.settings.integrated_provider === 'gemini' ? GEMINI_BASE_URL : stepfunOwnSupport ? STEPFUN_COMPATIBLE_BASE_URL : DASHSCOPE_COMPATIBLE_BASE_URL,
     apiKey: qwen.apiKey,
   })
   const gateway = new OpenAIModelGateway({
     baseUrl: support.baseUrl,
     apiKey: support.apiKey,
+    ...(support.source === 'selected_provider' && options.settings.integrated_provider === 'openai' ? {thinkingControl: 'openai' as const} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
@@ -617,6 +621,8 @@ export type IntegratedProviderRegistry = Readonly<Partial<Record<
 export const integratedProviderRegistry: Required<IntegratedProviderRegistry> = Object.freeze({
   qwen: input => buildQwenRealtimeAssembly(input),
   stepfun: input => buildIntegratedWireProvider(input, createStepFunWireProfile()),
+  openai: input => buildIntegratedWireProvider(input, createOpenAIWireProfile()),
+  gemini: input => new GeminiLiveAdapter({...input.config, ...input, connector:input.connector??webSocketQwenConnector}),
 })
 
 export function buildIntegratedRealtimeAssembly(

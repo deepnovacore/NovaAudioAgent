@@ -33,15 +33,15 @@ export class QwenCascadedLlmFailure extends Error {
 }
 
 export interface QwenCascadedLlmFactoryOptions {
-  readonly provider?: 'qwen' | 'deepseek'
+  readonly provider?: 'qwen' | 'deepseek' | 'openai' | 'gemini'
   readonly baseUrl: string; readonly apiKey: string; readonly model: string; readonly instructions: string
   readonly fetchImpl?: typeof globalThis.fetch; readonly idFactory?: () => string; readonly clock?: Clock
   readonly onUsage?: UsageReporter
   readonly idleTimeoutMs?: number; readonly closeTimeoutMs?: number
 }
-interface Call { readonly id: string; readonly type: 'function'; readonly function: {readonly name: string; readonly arguments: string} }
+interface Call { readonly id: string; readonly type: 'function'; readonly extra_content?: JsonObject; readonly function: {readonly name: string; readonly arguments: string} }
 interface Message { readonly role: 'system' | 'user' | 'assistant' | 'tool'; readonly content: string | readonly JsonObject[] | null; readonly tool_calls?: readonly Call[]; readonly tool_call_id?: string }
-interface Fragment { id: string | null; name: string; arguments: string }
+interface Fragment { extra_content?: JsonObject; id: string | null; name: string; arguments: string }
 interface Active { completion: Promise<void> | null; usageDeadline: number | null; readonly controller: AbortController; reader: ReadableStreamDefaultReader<Uint8Array> | null; failureCode: QwenCascadedLlmFailureCode | null }
 
 function fail(code: QwenCascadedLlmFailureCode, statusCode: number | null = null): QwenCascadedLlmFailure { return new QwenCascadedLlmFailure(code, statusCode) }
@@ -55,7 +55,7 @@ function schema(tool: CascadedLlmTool): JsonObject { return {type: 'function', f
 function size(units: readonly (readonly Message[])[]): {items: number; codepoints: number} { const all = units.flat(); return {items: all.length, codepoints: all.reduce((sum, item) => sum + codePointLengthLikePython(JSON.stringify(withoutImage(item))), 0)} }
 
 class Session implements CascadedLlmSession {
-  readonly #provider: 'qwen' | 'deepseek'
+  readonly #provider: 'qwen' | 'deepseek' | 'openai' | 'gemini'
   readonly #onUsage: UsageReporter | undefined
   readonly #endpoint: string; readonly #apiKey: string; readonly #model: string; readonly #instructions: string; readonly #fetch: typeof fetch
   readonly #idleTimeoutMs: number; readonly #closeTimeoutMs: number; readonly #active = new Set<Active>()
@@ -91,8 +91,9 @@ class Session implements CascadedLlmSession {
     const messages = [{role: 'system' as const, content: systemContent}, ...context]
     const body: Record<string, JsonValue> = {model: this.#model, messages: messages as unknown as JsonValue, stream: true, stream_options: {include_usage: true}}
     if (this.#provider === 'deepseek') body.thinking = {type: 'disabled'}
-    else body.enable_thinking = false
-    if (input.tools.length > 0) { body.tools = input.tools.map(schema); body.parallel_tool_calls = false }
+    else if (this.#provider === 'qwen') body.enable_thinking = false
+    else if (this.#provider === 'openai') body.reasoning_effort = 'none'
+    if (input.tools.length > 0) { body.tools = input.tools.map(schema); if (this.#provider !== 'gemini') body.parallel_tool_calls = false }
     const active: Active = {completion: null, usageDeadline: null, controller: new AbortController(), reader: null, failureCode: null}
     const stop = (): void => { active.failureCode ??= 'aborted'; active.controller.abort(); void this.#cancel(active.reader) }
     input.signal.addEventListener('abort', stop, {once: true}); this.#active.add(active)
@@ -207,9 +208,14 @@ class Session implements CascadedLlmSession {
     // DashScope may append arguments:null after complete JSON; that delta contributes no bytes.
     const fn = value.function
     if (fn !== undefined) { if (fn.name !== undefined) { if (typeof fn.name !== 'string') throw fail('protocol'); found.name += fn.name }; if (fn.arguments !== undefined && fn.arguments !== null) { if (typeof fn.arguments !== 'string') throw fail('protocol'); found.arguments += fn.arguments } }
+    if (this.#provider === 'gemini' && value.extra_content !== undefined) {
+      if (!jsonObject(value.extra_content) || JSON.stringify(value.extra_content).length > MAX_EVENT_BYTES) throw fail('protocol')
+      if (found.extra_content && JSON.stringify(found.extra_content) !== JSON.stringify(value.extra_content)) throw fail('protocol')
+      found.extra_content = structuredClone(value.extra_content)
+    }
     fragments.set(index, found)
   }
-  #calls(fragments: ReadonlyMap<number, Fragment>): Call[] { if (fragments.size !== 1 || !fragments.has(0)) throw fail('protocol'); return [...fragments.entries()].map(([, part]) => { if (!id(part.id) || !id(part.name)) throw fail('protocol'); let args: unknown; try { args = JSON.parse(part.arguments) } catch { throw fail('protocol') }; if (!jsonObject(args)) throw fail('protocol'); return {id: part.id, type: 'function', function: {name: part.name, arguments: JSON.stringify(copy(args))}} }) }
+  #calls(fragments: ReadonlyMap<number, Fragment>): Call[] { if (fragments.size !== 1 || !fragments.has(0)) throw fail('protocol'); return [...fragments.entries()].map(([, part]) => { if (!id(part.id) || !id(part.name)) throw fail('protocol'); let args: unknown; try { args = JSON.parse(part.arguments) } catch { throw fail('protocol') }; if (!jsonObject(args)) throw fail('protocol'); return {id: part.id, type: 'function', ...(part.extra_content ? {extra_content: part.extra_content} : {}), function: {name: part.name, arguments: JSON.stringify(copy(args))}} }) }
   #checkResults(inputs: readonly CascadedLlmInput[], unresolved: readonly Message[]): void {
     const calls = (unresolved.at(-1)?.tool_calls ?? []).map(item => item.id).sort(), results = inputs.filter((item): item is Extract<CascadedLlmInput, {kind: 'tool_result'}> => item.kind === 'tool_result').map(item => item.call_id).sort()
     if (calls.length === 0 || calls.length !== results.length || calls.some((call, index) => call !== results[index]) || inputs.slice(0, results.length).some(item => item.kind !== 'tool_result')) throw fail('protocol')

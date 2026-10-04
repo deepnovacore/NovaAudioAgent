@@ -39,12 +39,14 @@ const voiceprintPanel = createVoiceprintPanel({document, api, stage: patch => co
 const SECRET_KEYS = [
   'composioApiKey',
   'dashscopeApiKey', 'stepfunApiKey', 'tavilyApiKey', 'openrouterApiKey',
-  'arkApiKey', 'deepseekApiKey', 'doubaoBigmodelApiKey',
+  'arkApiKey', 'deepseekApiKey', 'openaiApiKey', 'geminiApiKey', 'doubaoBigmodelApiKey',
 ]
 const SECRET_LABELS = {
   composioApiKey: 'Composio',
   dashscopeApiKey: 'DashScope',
   stepfunApiKey: 'StepFun',
+  openaiApiKey: 'OpenAI',
+  geminiApiKey: 'Google Gemini',
   tavilyApiKey: 'Tavily',
   openrouterApiKey: 'OpenRouter · Jev',
   arkApiKey: 'Ark',
@@ -244,6 +246,8 @@ function keyUsage(view) {
       : view.pipelineMode === 'integrated' && view.integratedProvider === 'stepfun'
         ? t("仅本地记忆嵌入需要") : t("当前未使用"),
     stepfunApiKey: view.pipelineMode === 'integrated' && view.integratedProvider === 'stepfun' ? t("必需") : t("当前未使用"),
+    openaiApiKey: (view.pipelineMode === 'integrated' ? view.integratedProvider : view.cascadedLlmProvider) === 'openai' ? t('必需') : t('当前未使用'),
+    geminiApiKey: (view.pipelineMode === 'integrated' ? view.integratedProvider : view.cascadedLlmProvider) === 'gemini' ? t('必需') : t('当前未使用'),
     deepseekApiKey: view.pipelineMode === 'cascaded' && view.cascadedLlmProvider === 'deepseek' ? t("必需") : t("当前未使用"),
     arkApiKey: view.pipelineMode === 'cascaded'
       && view.cascadedLlmProvider === 'ark' ? t("必需") : t("当前未使用"),
@@ -434,7 +438,9 @@ function render(view, drafts, state) {
   integratedSection.hidden = view.pipelineMode !== 'integrated'
   cascadedSection.hidden = view.pipelineMode !== 'cascaded'
   integratedProvider.value = view.integratedProvider
-  const integratedModels = view.integratedProvider === 'stepfun'
+  const integratedModels = view.integratedProvider === 'openai' ? ['gpt-realtime-2.1-mini','gpt-realtime-2.1'].map(value=>({value,label:value}))
+    : view.integratedProvider === 'gemini' ? [{value:'gemini-3.8-live',label:'Gemini 3.8 Live'}]
+    : view.integratedProvider === 'stepfun'
     ? [{value: 'stepaudio-3-realtime-preview', label: 'StepAudio 3 Realtime Preview'}]
     : [{value: 'qwen-audio-3.1-realtime-plus', label: 'Qwen Audio 3.1 Plus'},
       {value: 'qwen-audio-3.0-realtime-plus', label: 'Qwen Audio 3.0 Plus'},
@@ -448,7 +454,9 @@ function render(view, drafts, state) {
     const option = document.createElement('option'); option.value = view.integratedModel; option.textContent = view.integratedModel; integratedModel.append(option)
   }
   integratedModel.value = view.integratedModel ?? ''
-  const voices = view.integratedProvider === 'stepfun' ? STEPFUN_VOICES
+  const voices = view.integratedProvider === 'openai' ? ['marin','cedar','alloy','coral'].map(value=>({value,label:value}))
+    : view.integratedProvider === 'gemini' ? ['Kore','Puck','Aoede','Charon','Fenrir'].map(value=>({value,label:value}))
+    : view.integratedProvider === 'stepfun' ? STEPFUN_VOICES
     : view.integratedModel?.startsWith('qwen3.5-omni-') ? [{value: 'Ethan', label: t("Ethan（默认）")}] : view.integratedModel === 'qwen-audio-3.1-realtime-plus' ? QWEN_31_VOICES : QWEN_VOICES
   populatePresetOptions(integratedVoicePreset, voices)
   renderPreset(integratedVoicePreset, integratedVoiceCustom, view.integratedVoice, voices)
@@ -462,6 +470,8 @@ function render(view, drafts, state) {
       {value: 'qwen3.8-max', label: t("qwen3.8-max · 第二档 · ★★★★☆")},
       {value: 'qwen-plus', label: t("qwen-plus · 第三档 · ★★★☆☆")},
     ],
+    openai: [{value:'gpt-6-luna',label:'GPT-6 Luna'}],
+    gemini: ['gemini-3.5-flash-lite','gemini-3.8-flash'].map(value=>({value,label:value})),
     deepseek: [{value: 'deepseek-flash', label: t("deepseek-flash · 第一档 · ★★★★★")}],
     ark: [{value: 'doubao-seed-2-0-pro-260215', label: 'doubao-seed-2-0-pro-260215'}],
   }[view.cascadedLlmProvider] ?? [])
@@ -575,13 +585,13 @@ bindStage(codexWorkspace, 'input', () => ({codexWorkspace: codexWorkspace.value}
 bindStage(codexManagedRoot, 'input', () => ({codexManagedRoot: codexManagedRoot.value}))
 bindStage(integratedProvider, 'change', () => ({
   integratedProvider: integratedProvider.value,
-  integratedModel: integratedProvider.value === 'stepfun' ? 'stepaudio-3-realtime-preview' : 'qwen-audio-3.0-realtime-plus',
-  integratedVoice: integratedProvider.value === 'stepfun' ? 'default' : 'longanqian',
+  integratedModel: integratedProvider.value === 'openai' ? 'gpt-realtime-2.1-mini' : integratedProvider.value === 'gemini' ? 'gemini-3.8-live' : integratedProvider.value === 'stepfun' ? 'stepaudio-3-realtime-preview' : 'qwen-audio-3.0-realtime-plus',
+  integratedVoice: integratedProvider.value === 'openai' ? 'marin' : integratedProvider.value === 'gemini' ? 'Kore' : integratedProvider.value === 'stepfun' ? 'default' : 'longanqian',
 }))
 bindStage(integratedModel, 'change', () => ({
   integratedModel: integratedModel.value,
   ...(integratedModel.value !== currentView?.integratedModel
-    ? {integratedVoice: integratedProvider.value === 'stepfun' ? 'default' : integratedModel.value.startsWith('qwen3.5-omni-') ? 'Ethan' : integratedModel.value === 'qwen-audio-3.1-realtime-plus' ? 'longanqian_v3.1' : 'longanqian'} : {}),
+    ? {integratedVoice: integratedProvider.value === 'openai' ? 'marin' : integratedProvider.value === 'gemini' ? 'Kore' : integratedProvider.value === 'stepfun' ? 'default' : integratedModel.value.startsWith('qwen3.5-omni-') ? 'Ethan' : integratedModel.value === 'qwen-audio-3.1-realtime-plus' ? 'longanqian_v3.1' : 'longanqian'} : {}),
 }))
 bindStage(cascadedAsrProvider, 'change', () => ({cascadedAsrProvider: cascadedAsrProvider.value}))
 bindStage(cascadedLlmProvider, 'change', () => ({cascadedLlmProvider: cascadedLlmProvider.value}))
