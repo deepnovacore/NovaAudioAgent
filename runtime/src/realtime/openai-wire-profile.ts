@@ -28,10 +28,8 @@ export function createOpenAIWireProfile(): IntegratedWireProfile {
       if (frame.type === 'session.update' && record(frame.session)) return {...frame,session:{type:'realtime',...frame.session}}
       return frame
     },
+    classifyError: error => error.code === 'response_cancel_not_active' ? 'no_active_response' : undefined,
     inbound: frame => {
-      if (frame.type === 'error' && record(frame.error) && frame.error.code === 'response_cancel_not_active') {
-        return {...frame,error:{...frame.error,code:'invalid_value',message:'no active response found to cancel'}}
-      }
       if (typeof frame.type === 'string' && eventNames[frame.type]) return {...frame,type:eventNames[frame.type]!}
       if (frame.type === 'response.done' && record(frame.response) && frame.response.status === 'incomplete') {
         return {...frame,response:{...frame.response,status:'failed'}}

@@ -28,7 +28,7 @@ test('intake failures reach exported telemetry without raw provider errors', asy
 })
 
 
-test('a tool call is admitted against the user turn that justifies it', async () => {
+for(const ending of ['completed','yielded'] as const) test(`a tool call retains user authority and continues after ${ending}`,  async () => {
   const {service, actions, session} = realtimeServiceHarness('pipeline')
   await service.connect()
 
@@ -78,7 +78,7 @@ test('a tool call is admitted against the user turn that justifies it', async ()
   assert.equal(service.executorState, 'running', 'the renderer is told Codex is working')
 
   // The response ends, so the batch becomes ready and the tool result reaches the provider.
-  await service.handleEvent({
+  await service.handleEvent(ending==='yielded'?{kind:'response_yielded',session_epoch:1,response_id:'r-1',reason:'tool_calls',call_ids:['call-1']}:{
     kind: 'response_terminal',
     session_epoch: 1,
     response_id: 'r-1',
@@ -1340,7 +1340,7 @@ test('explicit response evidence cannot claim the current user through host or m
   assert.deepEqual(service.boundOriginsForTest, [['1:response-exact', 'user-evidence']])
 })
 
-test('bound tool-result continuations retain the original user evidence across multiple steps', async () => {
+for(const ending of ['completed','yielded'] as const) test(`bound ${ending} tool continuations retain user evidence across multiple steps`, async () => {
   const {service, injectedItems, runtimeDispatches} = realtimeServiceHarness('pipeline', {agent: true})
   await service.connect()
   try {
@@ -1353,7 +1353,7 @@ test('bound tool-result continuations retain the original user evidence across m
         item_id: `chain-tool-${step}`, call_id: `chain-call-${step}`, name: 'dispatch',
         arguments: {executor: 'codex', instruction: `Step ${step}`}})
       assert.equal(runtimeDispatches(), step, `step ${step} must retain its real user origin`)
-      await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: responseId,
+      await service.handleEvent(ending==='yielded'?{kind:'response_yielded',session_epoch:1,response_id:responseId,reason:'tool_calls',call_ids:[`chain-call-${step}`]}:{kind: 'response_terminal', session_epoch: 1, response_id: responseId,
         status: 'completed', reason: ''})
       const output = injectedItems.find(item => item.kind === 'tool_output' && item.call_id === `chain-call-${step}`)
       assert.ok(output)

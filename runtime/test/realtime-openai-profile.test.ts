@@ -25,7 +25,7 @@ test('OpenAI PCM resampling retains phase across chunks and resets between conne
   profile.reset()
   assert.deepEqual(profile.inputPcm(pcm),whole)
 })
-test('OpenAI cancellation rejection is normalized by error code without relying on changing prose',()=>{
- const frame=createOpenAIWireProfile().inbound({type:'error',error:{code:'response_cancel_not_active',message:'Cancellation failed: no active response found.',event_id:'cancel'}})
- assert.deepEqual(frame,{type:'error',error:{code:'invalid_value',message:'no active response found to cancel',event_id:'cancel'}})
+test('OpenAI preserves structured cancellation errors without manufacturing legacy prose',()=>{
+ const input={type:'error',error:{code:'response_cancel_not_active',message:'任意服务端文案',event_id:'cancel'}}
+ assert.deepEqual(createOpenAIWireProfile().inbound(input),input)
 })

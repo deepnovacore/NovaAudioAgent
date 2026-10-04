@@ -1,4 +1,5 @@
 export const ENGLISH_MESSAGES = Object.freeze({
+  "Gemini Live 当前用于语音对话；语音执行任务请选择级联管线。": "Gemini Live currently supports voice conversation. Choose the cascaded pipeline for voice-driven tasks.",
   "已授权的来源列在下方；新增来源时单独确认读取和模型处理权限。": "Authorized sources are listed below. Confirm access and model processing separately when adding a source.",
   "添加授权来源": "Add a source",
   "已授权来源": "Authorized sources",

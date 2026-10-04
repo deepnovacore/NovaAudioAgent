@@ -437,6 +437,7 @@ function render(view, drafts, state) {
   renderCodexStatus(view)
   integratedSection.hidden = view.pipelineMode !== 'integrated'
   cascadedSection.hidden = view.pipelineMode !== 'cascaded'
+  document.getElementById('gemini-live-limit').hidden = view.integratedProvider !== 'gemini'
   integratedProvider.value = view.integratedProvider
   const integratedModels = view.integratedProvider === 'openai' ? ['gpt-realtime-2.1-mini','gpt-realtime-2.1'].map(value=>({value,label:value}))
     : view.integratedProvider === 'gemini' ? [{value:'gemini-3.8-live',label:'Gemini 3.8 Live'}]

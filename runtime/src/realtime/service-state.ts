@@ -148,7 +148,7 @@ export function toolCallState(input: {
 export interface ContinuationBatch {
   readonly provider_response_id: string
   call_keys: string[]
-  origin_status: 'active' | 'completed' | 'cancelled' | 'failed'
+  origin_status: 'active' | 'yielded' | 'completed' | 'cancelled' | 'failed'
   phase: 'collecting' | 'ready' | 'requested' | 'bound' | 'terminal' | 'abandoned'
   continuation_response_id: string | null
 }

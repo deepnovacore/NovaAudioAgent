@@ -1,3 +1,4 @@
+import {ProviderResponseRejectedError, realtimeProviderEventSchema} from '../src/realtime/protocol.js'
 /**
  * Session behavior the fixture goldens cannot reach.
  *
@@ -23,7 +24,7 @@ function noop(): void {
   // Intentionally empty: these tests do not observe frames or diagnostics.
 }
 
-function makeSession(options: {readonly ids?: readonly string[]; readonly requested?: boolean; readonly ensureResponse?: () => Promise<void | boolean>; readonly failCreate?: boolean} = {}): {
+function makeSession(options: {readonly ids?: readonly string[]; readonly requested?: boolean; readonly ensureResponse?: () => Promise<void | boolean>; readonly failCreate?: boolean; readonly rejectCreate?: boolean} = {}): {
   readonly session: RealtimeSession
   readonly actions: string[]
   readonly userOrigin: (itemId: string) => {kind: 'user_item'; item_id: string; request_id: string}
@@ -60,6 +61,7 @@ function makeSession(options: {readonly ids?: readonly string[]; readonly reques
     },
     createResponse: (intent: HostResponseIntent) => {
       actions.push(`create_response:${intent.kind}`)
+      if(options.rejectCreate)return Promise.reject(new ProviderResponseRejectedError('not sent'))
       return options.failCreate === true ? Promise.reject(new Error('create failed')) : Promise.resolve()
     },
     ensureResponse: (itemId, _signal, requestId) => {
@@ -1127,4 +1129,40 @@ test('captions carry only the structured host work source associated with their 
   session.registerDelegate('work-a', {summary: 'Task failed', state: 'failed', channel: 'coding'})
   assert.equal(session.snapshot().active_delegates.length, 0)
   assert.equal(session.delegateRecord('work-a')?.title, source.title)
+})
+
+test('tool yield reserves the provider for its exact continuation without recording completion',async()=>{
+ const {session}=makeSession();await session.connect({tools:[]})
+ await session.accept({kind:'user_transcript_final',session_epoch:1,item_id:'u',text:'search'})
+ await session.accept({kind:'response_started',session_epoch:1,response_id:'r',origin:{kind:'user_item',item_id:'u'}})
+ assert.equal(session.providerIdle,false)
+ const yielded=realtimeProviderEventSchema.parse({kind:'response_yielded',session_epoch:1,response_id:'r',reason:'tool_calls',call_ids:['call']})
+ assert.equal(await session.accept(yielded),true)
+ assert.equal(session.providerIdle,false)
+ assert.equal(session.activeProviderResponseId,null)
+ assert.equal(session.providerTurnPhase('r'),'yielded')
+ assert.equal(await session.accept(yielded),false)
+ const item={kind:'tool_output' as const,host_item_id:'output',event_id:'e',call_id:'call',content:'done'}
+ await session.injectToolOutput(item)
+ assert.equal(await session.requestToolContinuation([{kind:'tool_result',item,task_summary:null,origin_spoken:false}]),'requested')
+})
+
+test('an independent late transcript does not leave the session waiting for a phantom response',async()=>{
+ const {session}=makeSession();await session.connect({tools:[]})
+ await session.accept({kind:'response_started',session_epoch:1,response_id:'r',origin:{kind:'unknown'}})
+ await session.accept({kind:'response_terminal',session_epoch:1,response_id:'r',status:'completed',reason:'turn_complete'})
+ await session.accept({kind:'user_transcript_final',session_epoch:1,item_id:'late',text:'hello',response_expected:false})
+ assert.equal(session.providerIdle,true)
+})
+
+test('a rejected tool continuation explicitly cancels its reserved provider batch',async()=>{
+ const {session,actions}=makeSession({rejectCreate:true});await session.connect({tools:[]})
+ await session.accept({kind:'response_started',session_epoch:1,response_id:'r'})
+ await session.accept({kind:'response_yielded',session_epoch:1,response_id:'r',call_ids:['call'],reason:'tool_calls'})
+ const item={kind:'tool_output' as const,host_item_id:'out',event_id:'e',call_id:'call',content:'done'}
+ await session.injectToolOutput(item)
+ assert.equal(await session.requestToolContinuation([{kind:'tool_result',item,task_summary:null,origin_spoken:false}]),'rejected')
+ assert.ok(actions.includes('cancel:r'))
+ await session.accept({kind:'response_terminal',session_epoch:1,response_id:'r',status:'cancelled',reason:'cancelled'})
+ assert.equal(session.providerIdle,true)
 })

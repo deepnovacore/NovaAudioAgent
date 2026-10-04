@@ -969,9 +969,9 @@ test('a transport close surfaces a recoverable disconnect', async () => {
   stop.abort()
 })
 
-test('a cancel with no active response becomes response_cancel_rejected', async () => {
+for(const vendor of ['qwen','openai'] as const) test(`${vendor} cancel rejection retains request identity`, async () => {
   const scripted = scriptedSocket([...handshake])
-  const adapter = adapterFor(scripted)
+  const adapter = adapterFor(scripted,vendor==='openai'?{wireProfile:createOpenAIWireProfile()}:{})
   await adapter.connect({tools: [], signal: new AbortController().signal})
   const stop = new AbortController()
 
@@ -983,8 +983,8 @@ test('a cancel with no active response becomes response_cancel_rejected', async 
   scripted.push({
     type: 'error',
     error: {
-      code: 'invalid_value',
-      message: '  Conversation has no active response. ',
+      code: vendor==='openai'?'response_cancel_not_active':'invalid_value',
+      message: vendor==='openai'?'任意服务端文案':'  Conversation has no active response. ',
       event_id: cancelRequestId,
     },
   })

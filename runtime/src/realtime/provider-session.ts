@@ -10,6 +10,7 @@ import {
   realtimeProviderEventSchema,
   responseAdaptationContextSchema,
   RealtimeProtocolError,
+  ProviderResponseRejectedError,
   sessionIdentitySchema,
   workspaceContextInjectionSchema,
   type HostContextItem,
@@ -581,6 +582,6 @@ function combinedSignal(primary: AbortSignal, secondary?: AbortSignal): AbortSig
 }
 
 function protocolFailure(message: string, error: unknown): Error {
-  if (error instanceof InternalProtocolError) return error
+  if (error instanceof InternalProtocolError || error instanceof ProviderResponseRejectedError) return error
   return new RealtimeProtocolError(message)
 }

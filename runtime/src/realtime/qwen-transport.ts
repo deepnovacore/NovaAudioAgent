@@ -1,5 +1,5 @@
 /**
- * Real WebSocket transport for the Qwen adapter.
+ * Shared JSON WebSocket transport for integrated realtime adapters.
  *
  * Kept out of `qwen.ts` so the protocol stays testable without a socket, and so
  * nothing in the adapter's own tests can accidentally reach the network.
@@ -7,16 +7,16 @@
 
 import { WebSocket, type RawData } from 'ws'
 import {
-  QwenSocketClosedError,
-  type QwenConnector,
-  type QwenConnectorOptions,
-  type QwenSocket,
-} from './qwen.js'
+  RealtimeSocketClosedError,
+  type RealtimeConnector,
+  type RealtimeConnectorOptions,
+  type RealtimeSocket,
+} from './transport.js'
 
 /** Bounds the inbound backlog so a firehose cannot grow memory without limit. */
 export const MAX_QWEN_INBOUND_BACKLOG = 1_024
 
-class WebSocketQwenSocket implements QwenSocket {
+class WebSocketRealtimeSocket implements RealtimeSocket {
   readonly #socket: WebSocket
   readonly #inbound: string[] = []
   #waiter: (() => void) | undefined
@@ -54,7 +54,7 @@ class WebSocketQwenSocket implements QwenSocket {
   send(payload: string): Promise<void> {
     if (this.#failure !== undefined) return Promise.reject(this.#failure)
     if (this.#closed || this.#socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new QwenSocketClosedError())
+      return Promise.reject(new RealtimeSocketClosedError())
     }
     return new Promise<void>((resolve, reject) => {
       this.#socket.send(payload, error => {
@@ -70,7 +70,7 @@ class WebSocketQwenSocket implements QwenSocket {
       if (next !== undefined) return next
       if (this.#failure !== undefined) throw this.#failure
       // Drain before reporting EOF so frames already buffered are never lost.
-      if (this.#closed) throw new QwenSocketClosedError()
+      if (this.#closed) throw new RealtimeSocketClosedError()
       await new Promise<void>(resolve => { this.#waiter = resolve })
     }
   }
@@ -101,9 +101,9 @@ function textOf(data: RawData): string {
   return Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]).toString('utf8')
 }
 
-export const webSocketQwenConnector: QwenConnector = (
-  options: QwenConnectorOptions,
-): Promise<QwenSocket> => new Promise<QwenSocket>((resolve, reject) => {
+export const webSocketRealtimeConnector: RealtimeConnector = (
+  options: RealtimeConnectorOptions,
+): Promise<RealtimeSocket> => new Promise<RealtimeSocket>((resolve, reject) => {
   // Check before constructing anything. `addEventListener` does not replay an abort
   // that already happened, so a pre-aborted signal would otherwise open a socket,
   // resolve normally, and leave it live with no owner.
@@ -118,7 +118,7 @@ export const webSocketQwenConnector: QwenConnector = (
   })
   // Wrap before 'open' so frames a fast server sends immediately are buffered
   // rather than dropped between the handshake and the first receive().
-  const wrapped = new WebSocketQwenSocket(socket, options.binaryJson)
+  const wrapped = new WebSocketRealtimeSocket(socket, options.binaryJson)
   const settle = (outcome: () => void): void => {
     socket.off('open', onOpen)
     socket.off('error', onError)
@@ -144,3 +144,6 @@ export const webSocketQwenConnector: QwenConnector = (
   // have been missed by both, leaving the same unowned socket.
   if (options.signal.aborted) onAbort()
 })
+
+/** Compatibility name retained for existing clients. */
+export const webSocketQwenConnector = webSocketRealtimeConnector

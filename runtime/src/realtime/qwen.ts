@@ -14,7 +14,7 @@ import {dispatchSourceContext} from './history.js'
  * One intentional departure from Python is documented at `#readLoop`.
  */
 
-import {frontendInstructions, type FrontendModuleSelection} from './frontend-instructions.js'
+import {frontendInstructions} from './frontend-instructions.js'
 import {qwenWireProfile, type IntegratedWireProfile} from './integrated-wire-profile.js'
 export {frontendInstructions, FRONTEND_INSTRUCTIONS, CODEX_APPROVAL_FRONTEND_INSTRUCTIONS} from './frontend-instructions.js'
 export type {FrontendModuleSelection} from './frontend-instructions.js'
@@ -63,11 +63,6 @@ export const MAX_QWEN_EVENT_QUEUE = 4_096
 
 export {HOST_ACTIVATION_PREFIX} from './frontend-instructions.js'
 
-const NO_ACTIVE_RESPONSE_MESSAGES: ReadonlySet<string> = new Set([
-  'conversation has no active response',
-  'no active response found to cancel',
-])
-
 const PROVIDER_ERROR_PARAMS: ReadonlySet<string> = new Set([
   'conversation.item.create',
   'conversation.item.delete',
@@ -98,51 +93,11 @@ export class QwenRealtimeError extends Error {
   }
 }
 
-/** Raised by a transport when the peer closed; mapped to a recoverable disconnect. */
-export class QwenSocketClosedError extends Error {
-  constructor(message = 'qwen realtime socket closed') {
-    super(message)
-    this.name = 'QwenSocketClosedError'
-  }
-}
-
-export interface QwenSocket {
-  send(payload: string): Promise<void>
-  /** Resolves the next text frame, or throws QwenSocketClosedError at EOF. */
-  receive(): Promise<string>
-  close(): Promise<void>
-}
-
-export interface QwenConnectorOptions {
-  readonly binaryJson?: boolean
-  readonly endpoint: string
-  readonly headers: Readonly<Record<string, string>>
-  readonly openTimeout: number
-  readonly signal: AbortSignal
-}
-
-export type QwenConnector = (options: QwenConnectorOptions) => Promise<QwenSocket>
-
-export interface QwenAdapterOptions {
-  readonly history?:readonly CommittedConversationPair[]
-  readonly language?: PromptLanguage
-
-
-  readonly url: string
-  readonly apiKey: string
-  readonly model: string
-  readonly voice: string
-  readonly connector: QwenConnector
-  readonly onUsage?: UsageReporter
-  readonly idFactory?: () => string
-  readonly connectTimeout?: number
-  readonly itemConfirmationTimeout?: number
-  readonly closeTimeout?: number
-  readonly now?: () => number
-  readonly executorApproval?: boolean
-  readonly modules?: FrontendModuleSelection
-  readonly wireProfile?: IntegratedWireProfile
-}
+import {RealtimeSocketClosedError as QwenSocketClosedError} from './transport.js'
+import type {RealtimeSocket as QwenSocket, RealtimeConnector as QwenConnector, RealtimeAdapterOptions as QwenAdapterOptions} from './transport.js'
+// Compatibility exports for existing Qwen consumers. Native providers depend on transport.ts directly.
+export {RealtimeSocketClosedError as QwenSocketClosedError} from './transport.js'
+export type {RealtimeSocket as QwenSocket, RealtimeConnector as QwenConnector, RealtimeConnectorOptions as QwenConnectorOptions, RealtimeAdapterOptions as QwenAdapterOptions} from './transport.js'
 
 interface PendingItem {
   readonly hostItemId: string
@@ -1143,13 +1098,10 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   ): RealtimeProviderEvent | undefined {
     const error = event.error
     const raw = isJsonObject(error) ? error : {}
-    const rawMessage = raw.message
     const rawCode = raw.code ?? null
-    const message = typeof rawMessage === 'string'
-      ? pythonStrip(rawMessage).toLowerCase().replace(/\.+$/u, '')
-      : ''
+    const category = this.#wireProfile.classifyError(raw)
 
-    if (rawCode === 'invalid_value' && NO_ACTIVE_RESPONSE_MESSAGES.has(message)) {
+    if (category === 'no_active_response') {
       const pending = this.#pendingCancel
       const echoed = raw.event_id
       if (
@@ -1167,7 +1119,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       }
       return undefined
     }
-    if (typeof rawMessage === 'string' && /\bno active response\b/iu.test(rawMessage)) {
+    if (category === 'ignore') {
       return undefined
     }
 
@@ -1428,21 +1380,6 @@ function pythonStr(value: JsonValue | undefined): string {
   if (value === true) return 'True'
   if (value === false) return 'False'
   return typeof value === 'string' ? value : JSON.stringify(value)
-}
-
-const PYTHON_WHITESPACE = '\\u0009-\\u000d\\u001c-\\u0020\\u0085\\u00a0\\u1680'
-  + '\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000'
-const PYTHON_STRIP = new RegExp(`^[${PYTHON_WHITESPACE}]+|[${PYTHON_WHITESPACE}]+$`, 'gu')
-
-/**
- * Python `str.strip()`, whose whitespace set is not JavaScript's `String#trim`.
- *
- * The provider-error sentinels compared against this are ASCII, so `toLowerCase`
- * stands in for Python `casefold` at the call site; a non-ASCII sentinel would
- * need a real casefold and is a documented Unicode hazard, not a silent one.
- */
-function pythonStrip(value: string): string {
-  return value.replace(PYTHON_STRIP, '')
 }
 
 /** Python `base64.b64decode(..., validate=True)` accepts exactly this shape. */

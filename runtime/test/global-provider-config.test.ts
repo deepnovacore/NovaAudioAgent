@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {loadSettings, requireIntegratedRealtime, describeMissingBlockingCredentials} from '../src/config/config.js'
 import {requireSelectedCascadedLlmConfig} from '../src/config/cascaded-realtime-config.js'
-import {createQwenCascadedLlmFactory} from '../src/realtime/cascaded/qwen-llm.js'
+import {createChatCompletionsLlmFactory} from '../src/realtime/cascaded/chat-completions-llm.js'
 import {reportUsage} from '../src/realtime/usage.js'
 
 for (const provider of ['openai', 'gemini'] as const) {
@@ -24,7 +24,7 @@ for (const provider of ['openai', 'gemini'] as const) {
   })
   test(`${provider} streamed chat request omits domestic vendor parameters`, async () => {
     let body: Record<string, unknown> = {}
-    const session = createQwenCascadedLlmFactory({provider, baseUrl: 'https://example.test/v1', apiKey: 'synthetic', model: 'test', instructions: 'test', fetchImpl: (_url, init) => {
+    const session = createChatCompletionsLlmFactory({provider, baseUrl: 'https://example.test/v1', apiKey: 'synthetic', model: 'test', instructions: 'test', fetchImpl: (_url, init) => {
       assert.equal(typeof init?.body,'string')
       body = JSON.parse(init?.body as string) as Record<string,unknown>
       return Promise.resolve(new Response('data: {"id":"r","choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {headers: {'content-type':'text/event-stream'}}))
@@ -44,7 +44,7 @@ for (const provider of ['openai', 'gemini'] as const) {
 
 test('Gemini tool thought signatures survive the complete tool-result round trip', async()=>{
  const requests:{parallel_tool_calls?:boolean;messages:{tool_calls?:{extra_content?:unknown}[]}[]}[]=[]
- const session=createQwenCascadedLlmFactory({provider:'gemini',baseUrl:'https://example.test',apiKey:'synthetic',model:'gemini-3.5-flash-lite',instructions:'test',fetchImpl:(_url,init)=>{
+ const session=createChatCompletionsLlmFactory({provider:'gemini',baseUrl:'https://example.test',apiKey:'synthetic',model:'gemini-3.5-flash-lite',instructions:'test',fetchImpl:(_url,init)=>{
   assert.equal(typeof init?.body,'string')
   requests.push(JSON.parse(init?.body as string) as typeof requests[number])
   const chunk=requests.length===1?{id:'r1',choices:[{delta:{tool_calls:[{index:0,id:'call',type:'function',extra_content:{google:{thought_signature:'opaque-signature'}},function:{name:'dispatch',arguments:'{}'}}]},finish_reason:'tool_calls'}]}:{id:'r2',choices:[{delta:{content:'Done'},finish_reason:'stop'}]}

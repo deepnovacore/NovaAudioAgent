@@ -1,3 +1,4 @@
+import {stripLikePython} from '../text/python-text.js'
 import type {JsonValue} from '../core/events.js'
 import type {JsonObject} from './protocol.js'
 
@@ -11,6 +12,7 @@ export interface IntegratedWireProfile {
   session(tools: readonly JsonObject[], voice: string, instructions: string, model: string): JsonObject
   outbound(frame: Frame): Frame
   inbound(frame: Frame): Frame
+  classifyError(error: Frame): 'no_active_response' | 'ignore' | undefined
   inputPcm(pcm: Uint8Array): Uint8Array
   reset(): void
 }
@@ -32,6 +34,7 @@ export const qwenWireProfile: IntegratedWireProfile = Object.freeze({
   }),
   outbound: unchanged,
   inbound: unchanged,
+  classifyError: classifyLegacyCancellation,
   inputPcm: unchangedPcm,
   reset: () => undefined,
 })
@@ -79,6 +82,7 @@ export function createStepFunWireProfile(): IntegratedWireProfile {
   }
   return {
     provider: 'stepfun',
+    classifyError: classifyLegacyCancellation,
     voiceOptional: true,
     session: (tools, voice, instructions) => ({
       modalities: ['text', 'audio'], instructions,
@@ -123,4 +127,11 @@ export function createStepFunWireProfile(): IntegratedWireProfile {
     inputPcm: pcm => inputResampler.convert(pcm),
     reset: () => { inputResampler.reset(); seenToolCalls.clear() },
   }
+}
+
+/** Legacy services expose cancellation races only through prose; keep that quirk at their boundary. */
+function classifyLegacyCancellation(error: Frame): 'no_active_response' | 'ignore' | undefined {
+  const message = typeof error.message === 'string' ? stripLikePython(error.message).toLowerCase().replace(/\.+$/u, '') : ''
+  if (error.code === 'invalid_value' && (message === 'conversation has no active response' || message === 'no active response found to cancel')) return 'no_active_response'
+  return /\bno active response\b/iu.test(message) ? 'ignore' : undefined
 }
