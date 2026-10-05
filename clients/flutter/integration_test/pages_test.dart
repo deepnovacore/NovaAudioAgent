@@ -135,6 +135,47 @@ void main() {
     await shot('public-08-expired-approval');
     await session.end();
     await shot('public-09-disconnected-history');
+
+    session.personal.receive({
+      'type': 'personal.state',
+      'revision': 1,
+      'life': {
+        'todos': [
+          {
+            'id': 'screen-todo',
+            'kind': 'todo',
+            'title': 'Synthetic todo',
+            'status': 'open',
+            'version': 1,
+          },
+        ],
+        'ideas': [
+          {
+            'id': 'screen-idea',
+            'kind': 'idea',
+            'title': 'Synthetic idea',
+            'status': 'active',
+            'version': 1,
+          },
+        ],
+        'goals': [],
+        'profile': {'about': 'Synthetic profile', 'version': 1},
+      },
+      'tasks': [],
+      'feed': [],
+      'memory': {'entries': []},
+    });
+    for (final page in ['Feeds', 'Todos', 'Ideas', 'Goals']) {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(BottomAppBarTabs),
+          matching: find.text(page),
+        ),
+      );
+      await shot('public-workbench-${page.toLowerCase().replaceAll('·', '-')}');
+    }
+    await tester.tap(find.byTooltip('Profile'));
+    await shot('public-workbench-profile');
     await tester.pumpWidget(const SizedBox());
   });
 }

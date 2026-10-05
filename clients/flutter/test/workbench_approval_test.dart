@@ -56,15 +56,11 @@ void main() {
     final saving = sheet.save(credential);
     await tester.pump();
     await saved.entered.future;
-    tester.binding.handleAppLifecycleStateChanged(
-      AppLifecycleState.inactive,
-    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     saved.release.complete();
     await saving;
     expect(opened, isEmpty);
-    tester.binding.handleAppLifecycleStateChanged(
-      AppLifecycleState.resumed,
-    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(opened, [credential.server]);
     await tester.pumpWidget(const SizedBox());
@@ -107,6 +103,8 @@ void main() {
           },
       ],
     });
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pump();
     state(1, ['a', 'b']);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));

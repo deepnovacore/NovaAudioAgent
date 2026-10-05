@@ -33,7 +33,7 @@ void main() {
       await loader.load();
     }
   });
-  testWidgets('four workbench tabs render cached state at phone size', (
+  testWidgets('five workbench tabs render cached state at phone size', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -85,6 +85,27 @@ void main() {
           },
         ],
       },
+      'news': {
+        'items': [
+          {
+            'id': 'news',
+            'title': 'Designing a calmer workday',
+            'summary': 'Small routines that keep important work visible.',
+            'published_at': '2026-10-04',
+            'url': 'https://example.com/article',
+            'source_name': 'Example Daily',
+          },
+          {
+            'id': 'news-2',
+            'title': 'Notes on building a personal agent',
+            'summary': 'Why proactive suggestions need traceable evidence.',
+            'published_at': '2026-10-03',
+            'source_name': 'Field Notes',
+            'read': true,
+          },
+        ],
+        'saved': [],
+      },
       'life': {
         'todos': [
           {
@@ -94,6 +115,25 @@ void main() {
             'title': 'Prepare the demo',
             'note': 'Review the checklist',
             'status': 'open',
+            'due': null,
+            'goal_id': 'goal',
+          },
+          {
+            'id': 'todo-2',
+            'kind': 'todo',
+            'version': 1,
+            'title': 'Send the weekly update',
+            'note': '',
+            'status': 'doing',
+            'due': '2000-01-01',
+          },
+          {
+            'id': 'todo-3',
+            'kind': 'todo',
+            'version': 1,
+            'title': 'Book the review room',
+            'note': '',
+            'status': 'done',
             'due': null,
           },
         ],
@@ -115,6 +155,7 @@ void main() {
             'title': 'Ship mobile workbench',
             'note': '',
             'status': 'active',
+            'success_criteria': 'Daily use for two weeks',
             'progress': {'done': 2, 'total': 5},
           },
         ],
@@ -141,6 +182,39 @@ void main() {
           'delivery': {'presented_at': null},
         },
       ],
+      'workbench_context': {
+        'status': 'ready',
+        'recap': {
+          'text': 'Mostly polishing the mobile workbench this week.',
+          'projects': [
+            {'name': 'Mobile workbench', 'line': 'iOS-style layout pass'},
+          ],
+        },
+        'cards': [
+          {
+            'id': 'card-todo',
+            'tab': 'todos',
+            'title': 'Run the acceptance checklist',
+            'why': 'The demo is next week.',
+            'next': 'Open the checklist and tick the first item',
+            'source_count': 2,
+          },
+          {
+            'id': 'card-idea',
+            'tab': 'ideas',
+            'title': 'Morning summary by voice',
+            'body': 'Nova reads the day plan when you open the app.',
+            'source_count': 1,
+          },
+          {
+            'id': 'card-goal',
+            'tab': 'goals',
+            'title': 'Use Nova every day',
+            'body': 'Make the assistant part of the daily routine.',
+            'source_count': 3,
+          },
+        ],
+      },
       'memory': {
         'entries': [
           {
@@ -149,6 +223,9 @@ void main() {
             'kind': 'preference',
             'status': 'active',
             'content': 'Keep explanations concise.',
+            'origin': 'stated',
+            'observed_at': '2026-09-28T08:00:00Z',
+            'evidence_refs': ['e1'],
             'editable': true,
           },
         ],
@@ -156,16 +233,45 @@ void main() {
       },
     });
     await tester.pump(const Duration(milliseconds: 100));
-    for (final page in ['Nova', 'Today', 'Plan', 'Me']) {
+    for (final page in ['Nova', 'Feeds', 'Todos', 'Ideas', 'Goals']) {
       if (page != 'Nova') {
-        await tester.tap(find.widgetWithText(NavigationDestination, page));
+        await tester.tap(
+          find.descendant(
+            of: find.byType(BottomAppBarTabs),
+            matching: find.text(page),
+          ),
+        );
         await tester.pumpAndSettle();
       }
       expect(tester.takeException(), isNull);
       await expectLater(
         find.byType(NovaApp),
-        matchesGoldenFile('goldens/workbench-${page.toLowerCase()}.png'),
+        matchesGoldenFile(
+          'goldens/workbench-${page.toLowerCase().replaceAll('·', '-')}.png',
+        ),
       );
+    }
+
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
+    await expectLater(
+      find.byType(NovaApp),
+      matchesGoldenFile('goldens/workbench-profile.png'),
+    );
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    tester.view.physicalSize = const Size(320, 740);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    for (final page in ['Nova', 'Feeds', 'Todos', 'Ideas', 'Goals']) {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(BottomAppBarTabs),
+          matching: find.text(page),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
     }
     await tester.pumpWidget(const SizedBox());
   });

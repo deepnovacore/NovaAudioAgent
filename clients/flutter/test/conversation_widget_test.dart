@@ -88,4 +88,71 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+
+  testWidgets('latest-message control follows content growth and keeps drafts', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({'language': 'en'});
+    final session = Session(
+      audio: FakeAudio(),
+      requestMicrophone: () async => false,
+      openTransport: (_) async => FakeTransport(),
+    );
+    addTearDown(session.dispose);
+    await tester.pumpWidget(
+      NovaApp(
+        session: session,
+        store: MemoryCredentials(),
+        preferences: Preferences(await SharedPreferences.getInstance()),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await session.connect(Uri.parse('wss://example.com/client/v1'), 'a' * 32);
+    final ready = jsonDecode(handshake()) as Map<String, dynamic>;
+    ready['media'] = {
+      'pipeline': 'cascaded',
+      'transport': 'host_pcm_v1',
+      'path': 'relay',
+      'audio_owner': 'client',
+    };
+    ready['capabilities'] = [...ready['capabilities'] as List, 'text_input', 'dictation'];
+    await session.receive(jsonEncode(ready), session.generation);
+    Future<void> caption(int sequence, String text) => session.receive(
+      jsonEncode({
+        'type': 'caption',
+        'connection_id': session.connection,
+        'sequence': sequence,
+        'role': 'assistant',
+        'message_id': 'reply',
+        'text': text,
+        'final': false,
+      }),
+      session.generation,
+    );
+    await caption(1, 'Short');
+    await tester.pump(const Duration(milliseconds: 300));
+    final button = find.ancestor(
+      of: find.byTooltip('Latest messages'),
+      matching: find.byType(AnimatedOpacity),
+    );
+    expect(tester.widget<AnimatedOpacity>(button).opacity, 0);
+    await caption(2, List.filled(400, 'long reply').join(' '));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.widget<AnimatedOpacity>(button).opacity, 1);
+
+    final state = tester.state(find.byType(ConversationScreen)) as dynamic;
+    await tester.tap(find.text('Text chat'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byType(TextField), 'My own draft');
+    await state.prefill('Suggested request');
+    await tester.pump();
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'My own draft\n\nSuggested request');
+    await tester.pumpWidget(const SizedBox());
+  });
 }
