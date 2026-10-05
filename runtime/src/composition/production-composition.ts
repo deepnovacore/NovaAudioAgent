@@ -266,7 +266,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   let phoneQueue: Promise<unknown> = Promise.resolve()
   const closePhone = async () => { const endpoint=phone;phone=undefined;await endpoint?.server.close() }
   ownership.own(closePhone)
-  stop.signal.addEventListener('abort',()=>{void phoneQueue.then(closePhone).catch(()=>{})},{once:true})
+  stop.signal.addEventListener('abort',()=>{void phoneQueue.then(closePhone).catch(()=>{ /* shutdown close is best effort */ })},{once:true})
   const phoneControl = (method:string, params:unknown):Promise<unknown> => {
     const operation=phoneQueue.then(async()=>{
       if(process.platform!=='darwin'||remote)throw Error('unsupported')
@@ -276,7 +276,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
         if(!phone){
           const config=loadServerConfig({SERVER_PORT:String(input.port),SERVER_TOKEN_FILE:input.tokenFile})
           const media=remoteClientMedia(settings)
-          const endpoint=composition.createPhone({token:config.token,createServer:serverOptions=>new ClientServer({...serverOptions,sharedWorkbench:true,prepareLegacyVoice:composition.prepareLegacyPhoneVoice,media,pairing:new ClientPairing(config.token,input.tokenFile+'.devices.json'),port:config.port})})
+          const endpoint=composition.createPhone({token:config.token,createServer:serverOptions=>new ClientServer({...serverOptions,sharedWorkbench:true,prepareLegacyVoice:()=>composition.prepareLegacyPhoneVoice(),media,pairing:new ClientPairing(config.token,input.tokenFile+'.devices.json'),port:config.port})})
           try{await endpoint.server.start();phone=endpoint}catch(error){await endpoint.server.close();throw error}
         }
       }else{
@@ -286,7 +286,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
       }
       return {running:phone!==undefined}
     })
-    phoneQueue=operation.catch(()=>{})
+    phoneQueue=operation.catch(()=>{ /* the caller observes the failure through the returned operation */ })
     return operation
   }
   return {

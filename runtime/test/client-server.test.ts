@@ -293,7 +293,7 @@ for (const personal of [false,true]) test(`shared workbench enforces mobile priv
   const contexts:unknown[]=[]
   const controls:unknown[]=[]
   let pcmBytes=0
-  const server=new ClientServer({token,port:0,pairing,sharedWorkbench:true,prepareLegacyVoice:async()=>'legacy-chat',
+  const server=new ClientServer({token,port:0,pairing,sharedWorkbench:true,prepareLegacyVoice:()=>Promise.resolve('legacy-chat'),
     onAudio:pcm=>{pcmBytes+=pcm.length},onControl:(control,context)=>{controls.push(control);if(control.type==='personal.command')contexts.push(context)}})
   t.after(()=>server.close())
   const client=await peer((await server.start()).port);t.after(()=>client.socket.terminate())
@@ -333,7 +333,7 @@ test('a fresh result snapshot cancels an older coalesced snapshot', {timeout:500
 })
 
 test('legacy shared endpoint fails explicitly when voice cannot be acquired', {timeout:5000},async t=>{
-  const server=new ClientServer({token,port:0,sharedWorkbench:true,prepareLegacyVoice:async()=>{throw Error('voice_not_owned')}});t.after(()=>server.close())
+  const server=new ClientServer({token,port:0,sharedWorkbench:true,prepareLegacyVoice:()=>Promise.reject(Error('voice_not_owned'))});t.after(()=>server.close())
   const client=await peer((await server.start()).port)
   const closed=once(client.socket,'close')
   hello(client.socket)

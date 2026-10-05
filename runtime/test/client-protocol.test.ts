@@ -54,10 +54,11 @@ test('shared Swift and TypeScript wire vectors decode identically', () => {
 
 
 test('shared mobile capability fixture preserves legacy negotiation', () => {
-  const fixture=JSON.parse(readFileSync(new URL('../../../tests/fixtures/client-protocol/v1/vectors.json',import.meta.url),'utf8'))[0].personal_protocol as {hello:{capabilities:string[]};ready_capability:string;max_personal_json_bytes:number;reload:{revision:number;reload_required:boolean}}
+  interface PersonalFixture {hello:{capabilities:string[]};ready_capability:string;max_personal_json_bytes:number;reload:{revision:number;reload_required:boolean}}
+  const fixture=(JSON.parse(readFileSync(new URL('../../../tests/fixtures/client-protocol/v1/vectors.json',import.meta.url),'utf8')) as {personal_protocol:PersonalFixture}[])[0]!.personal_protocol
   assert.ok(fixture.hello.capabilities.includes('personal'))
-  assert.ok((JSON.parse(clientReady('server','connection',undefined,true)).capabilities as string[]).includes(fixture.ready_capability))
-  assert.equal((JSON.parse(clientReady('server','connection')).capabilities as string[]).includes(fixture.ready_capability),false)
+  assert.ok((JSON.parse(clientReady('server','connection',undefined,true)) as {capabilities:string[]}).capabilities.includes(fixture.ready_capability))
+  assert.equal((JSON.parse(clientReady('server','connection')) as {capabilities:string[]}).capabilities.includes(fixture.ready_capability),false)
   assert.equal(fixture.max_personal_json_bytes,1048576)
   assert.deepEqual(fixture.reload,{type:'personal.state',revision:9,reload_required:true})
 })

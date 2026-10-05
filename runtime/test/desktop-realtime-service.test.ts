@@ -1820,21 +1820,21 @@ test('shared phone endpoint publishes one host revision and cannot interrupt des
   const presentations:{mode:unknown;aggregate:unknown}[]=[]
   const listeners=new Set<()=>void>()
   const desktopFrames:string[]=[],phoneFrames:string[]=[]
-  const fakeServer=(frames:string[])=>({sendText:async(raw:string)=>{frames.push(raw)},sendBinary:async()=>{},disconnectClient:async()=>{},start:async()=>readiness(),close:async()=>{}})
+  const fakeServer=(frames:string[])=>({sendText:(raw:string)=>{frames.push(raw);return Promise.resolve()},sendBinary:()=>Promise.resolve(),disconnectClient:()=>Promise.resolve(),start:()=>Promise.resolve(readiness()),close:()=>Promise.resolve()})
   const composition=buildDesktopRealtimeComposition({token:TOKEN,stop,createServer:()=>fakeServer(desktopFrames),buildRealtime:callbacks=>{
-    const realtime=buildRealtimeAssembly({core,provider:new ScriptedProvider([]),...callbacks,onDiagnostic:()=>{}})
+    const realtime=buildRealtimeAssembly({core,provider:new ScriptedProvider([]),...callbacks,onDiagnostic:()=>{ /* diagnostics are not asserted here */ }})
     Object.defineProperties(realtime.personalAgent,{
       subscribe:{value:(listener:()=>void)=>{listeners.add(listener);return()=>listeners.delete(listener)}},
       snapshot:{value:()=>({type:'personal.state',revision})},
       conversationSnapshot:{value:()=>({voice_id:voice,selected_id:'chat',items:[{id:'chat'}]})},
       command:{value:async(command:{method:string;request_id:string;params?:{enabled?:boolean;mode?:string}},context?:{presentation_mode?:string})=>{if(command.method==='presentation.set')presentations.push({mode:command.params?.mode,aggregate:context?.presentation_mode});if(command.method==='conversations.voice'){if(voiceFailure)throw Error('voice_start_failed');if(command.params?.enabled)await voiceStart;voice=command.params?.enabled?'chat':null;}revision++;for(const listener of listeners)listener();return {type:'personal.result',request_id:command.request_id,ok:true}}},
       voiceService:{value:()=>realtime.service},
-      sendConversationAudio:{value:async(id:string)=>{assert.equal(id,'chat');conversationAudio++}},
+      sendConversationAudio:{value:(id:string)=>{assert.equal(id,'chat');conversationAudio++;return Promise.resolve()}},
     })
     Object.defineProperties(realtime.service,{
-      playbackDisconnected:{value:async()=>{disconnects++;return true}},
+      playbackDisconnected:{value:()=>{disconnects++;return Promise.resolve(true)}},
       discardInputAudio:{value:async()=>{discarded++;if(discardFailure)throw Error('discard_failed');await discardWaits.shift()}},
-      localSpeechOnset:{value:async()=>{onsets++}},
+      localSpeechOnset:{value:()=>{onsets++;return Promise.resolve()}},
     })
     return realtime
   }})

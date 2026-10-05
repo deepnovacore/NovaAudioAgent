@@ -249,7 +249,7 @@ export class ClientServer {
           const result = await connection.commands.receive(bytes.toString('utf8'), control => {
             if (this.#active !== connection) throw new Error('stale client')
             if (this.#options.onControl === undefined) throw new Error('control consumer unavailable')
-            const mobile = connection.personal || this.#options.sharedWorkbench
+            const mobile = connection.personal === true || this.#options.sharedWorkbench === true
             if (mobile && control.type === 'personal.command' && !MOBILE_METHODS.has(control.method)) throw new DesktopProtocolError('mobile command unavailable')
             if (connection.legacyConversationId && ['input.audio','input.text','input.dictation'].includes(control.type)) control = {...control,conversation_id:connection.legacyConversationId} as typeof control
             return this.#options.onControl(control, mobile ? {client_id:'remote:master',can_takeover:false} : {client_id:connection.clientId!,can_takeover:connection.clientId!=='remote:master'})

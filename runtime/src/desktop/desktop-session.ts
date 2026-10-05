@@ -1717,13 +1717,13 @@ export function buildDesktopRealtimeComposition(
         audioClosing++
         let released=false
         void (async()=>{
-          await voiceOperations.get(side)?.catch(()=>{})
+          await voiceOperations.get(side)?.catch(()=>{ /* the failed operation already reported its error */ })
           const id=realtime.personalAgent.conversationSnapshot().voice_id
           if(id){const result=await realtime.personalAgent.command({type:'personal.command',request_id:randomUUID(),method:'conversations.voice',params:{id,enabled:false}}) as {ok?:boolean};if(!result.ok)throw Error('voice_release_failed')}
           released=true
         })().catch(()=>{/* Keep owner if draining failed; that endpoint can reconnect and retry stop. */}).finally(()=>{if(released&&audioOwner===side)audioOwner=null;audioClosing--})
       }else if(audioOwner===side)audioOwner=null
-      if(hadPresentation&&presentation.size===0&&realtime.personalAgent.presentationMode!==null)void realtime.personalAgent.disconnectPresentation().catch(()=>{})
+      if(hadPresentation&&presentation.size===0&&realtime.personalAgent.presentationMode!==null)void realtime.personalAgent.disconnectPresentation().catch(()=>{ /* best-effort cleanup */ })
       else if(presentation.size>0)void realtime.personalAgent.command({type:'personal.command',request_id:randomUUID(),method:'presentation.set',params:{mode:'background'}},{client_id:side==='phone'?'remote:master':'desktop:local',can_takeover:false,presentation_mode:effectivePresentation()})
     },
     executor: codingExecutorIdentity(realtime) ?? options.approvalExecutor ?? null,
