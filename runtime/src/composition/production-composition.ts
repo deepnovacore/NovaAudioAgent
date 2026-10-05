@@ -222,7 +222,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     ingest: async message => {
       const memory = composition.realtime.personalMemory
       if (!(memory instanceof SubstrateMemoryResource)) throw Error('请先启用本地记忆')
-      await memory.ingestEvidence({sourceId:message.source_id,locator:message.locator,text:message.raw_text,observedAt:message.observed_at,kind:'im',...(message.processing_consent?{processingConsent:message.processing_consent}:{}),retentionUntil:message.retention_until,senderId:message.sender_id,accountId:message.account_id})
+      await memory.ingestEvidence({sourceId:message.source_id,locator:message.locator,text:message.raw_text,observedAt:message.observed_at,kind:'im',...(message.sender_id?{im:{sender_id:message.sender_id,account_id:message.account_id,provider:'feishu',message_id:message.message_id,chat_id:message.chat_id,recipient_id:message.recipient_id,sender_name:message.sender_name,source_url:message.source_url,mention:message.mention,auto_capture:message.auto_capture}}:{}),...(message.processing_consent?{processingConsent:message.processing_consent}:{}),retentionUntil:message.retention_until,senderId:message.sender_id,accountId:message.account_id})
       await host.sourceChanged()
     },
     deleteSource: async ref => {

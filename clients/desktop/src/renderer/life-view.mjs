@@ -1,5 +1,5 @@
 import {renderInterests,renderWarmup} from './profile-preferences.mjs'
-import {attachSources} from './source-popover.mjs'
+import {attachSources,attachSourceTags} from './source-popover.mjs'
 const el=(tag,text,className)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(className)n.className=className;return n}
 const labels={todo:'待办',idea:'想法',goal:'目标'}
 const statuses={todo:{open:'待办',doing:'进行中',waiting:'等待他人',done:'已完成',cancelled:'已取消'},idea:{active:'保留',archived:'已归档'},goal:{active:'推进中',paused:'已暂停',completed:'已达成',archived:'已归档'}}
@@ -25,6 +25,7 @@ export function renderLife(panel,{kind,state,command,button,local,rerender,deleg
  if(!visible.length&&state&&!rows.length&&suggested)group.append(el('p',{todo:'你自己记下的待办会放在这里；上面的建议不会自动加进来。',idea:'你自己记下的想法会放在这里；下面的建议不会自动加进来。',goal:'你自己定下的目标会放在这里；下面的方向不会自动加进来。'}[kind],'hint'))
  else if(!visible.length){const empty=el('section',undefined,'workbench-empty empty-state');const copy=!state?['正在读取已保存的内容','稍后会在这里显示你的记录。']:rows.length?{todo:['当前没有进行中的待办','已完成的记录可以从上方展开。'],idea:['当前没有保留的想法','已归档的想法可以从上方展开。'],goal:['当前没有推进中的目标','已归档的目标可以从上方展开。']}[kind]:{todo:['还没有待办','想起一件要做的事，可以随时记在这里。'],idea:['还没有保存想法','有个念头时，先用一句话记下来就好。'],goal:['还没有设定目标','可以先写下想推进的方向，以及怎样算达成。']}[kind];empty.append(el('h3',copy[0]),el('p',copy[1]));group.append(empty)}
  for(const row of visible){const card=el('article');card.className='personal-card life-card';card.dataset.lifeId=row.id;const note=el(clampable&&row.note?'button':'p',row.note,clampable&&row.note?'card-body':undefined);if(clampable&&row.note)clampable(note,`life:${kind}:${row.id}`,row.title);card.append(el('h3',row.title),note);group.append(card)
+  attachSourceTags(card,row.sources,{autoRecorded:row.auto_recorded===true,sourceChanged:row.source_changed===true,openArticle})
   const meta=el('div',undefined,'chips');card.append(meta)
   if(row.due)meta.append(el('span',`到期：${row.due}`))
   if(row.goal_id)meta.append(el('span',`目标：${state.goals.find(g=>g.id===row.goal_id)?.title??'不可用'}`))

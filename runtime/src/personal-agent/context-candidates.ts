@@ -1,12 +1,13 @@
 import {createHash} from 'node:crypto'
 import {basename,extname} from 'node:path'
 import {interleave} from './sampling.js'
+import type {MemoryEntry} from '../memory/entry.js'
 import type {ProjectDigest} from './project-digests.js'
 
 interface Ref {entry_id:string;version:string|number}
 export type ContextInput=
  | {kind:'file';id:string;version:string;content:string;source_id:string;file_id:string;root:string;rel_path:string;role:'document'|'code'|'config'|'cache';mtime_ms:number;priority:number;hidden_prefix_depth?:number;last_commit_ms?:number|null;own_commits?:number}
- | {kind:'memory';id:string;version:string|number;content:string;origin:'stated'|'inferred'}
+ | {kind:'memory';id:string;version:string|number;content:string;origin:'stated'|'inferred';sources?:MemoryEntry['sources']}
 /** `sources` lists every entry the candidate's text was derived from, including uncited digest inputs. */
 export interface ContextCandidate {sources?:readonly string[];candidate_id:string;id:string;version:string;content:string;tab:'todos'|'ideas'|'goals';primaryFileId:string|null;refs:Ref[];excerpt:string;reason_code:'document_action'|'document_idea'|'stated_idea'|'project_focus'|'project_direction';root:string;priority:number;mtime_ms:number}
 
