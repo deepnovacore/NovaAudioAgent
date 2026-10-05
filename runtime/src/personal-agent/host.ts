@@ -859,7 +859,9 @@ export class PersonalAgentHost {
         else if (command.method.startsWith('feishu.')) {
             if (!this.#feishu) throw Error('unsupported');
             data = await this.#feishu.command(command.method, p);
-            await this.sourceChanged();
+            // Ingestion/deletion callbacks refresh evidence. Connection controls must
+            // remain usable when the unrelated discovery model is unavailable.
+            this.connectionChanged();
         }
         else if (command.method === 'memory.evidence') {
             const q=z.object({evidence_id:z.string().min(1).max(600).refine(value=>!value.includes('\0'))}).strict().parse(p);
