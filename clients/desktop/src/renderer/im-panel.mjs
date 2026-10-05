@@ -26,7 +26,7 @@ export function createImPanel({document, api}) {
   busy=true;actionNeedsRender=actionPending;if(!quiet){error.textContent='';for(const input of root.querySelectorAll('button,input'))input.disabled=true}
   try{
    const result=await api.feishuCommand(method,params)
-   if(result?.error)throw new Error(result.error)
+   if(result?.error&&typeof result.available!=='boolean')throw new Error(result.error)
    state=method==='feishu.status'?result:await api.feishuCommand('feishu.status',{})
    const url=state?.app_setup?.verification_url
    if(openSetup&&url&&url!==openedSetupUrl){openedSetupUrl=url;await api.openFeishuVerification(url)}
