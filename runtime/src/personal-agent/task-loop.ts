@@ -34,7 +34,8 @@ export interface TaskLoopPorts {
 export class TaskExecutionRejected extends Error {
 }
 const KNOWN_WAIT = ['task_effect_unknown', 'task_initial_pending', 'task_input_reconciliation_required', 'task_input_reconciliation_stale'] as const
-function shortCode(value: string | undefined): string | undefined {
+/** Lowercase snake_case machine code, or undefined when the text is not safely reducible to one. */
+export function shortCode(value: string | undefined): string | undefined {
   if (!value) return undefined
   const cleaned = value
     .replace(/([a-z\d])([A-Z])/g, '$1_$2')
