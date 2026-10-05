@@ -604,13 +604,14 @@ export class CausalRuntime {
         return adapter.dispatch(delegate.op, structuredClone(delegate.request), context)
       },
       output => {this.#instructionReceipts.get(delegate.delegate_id)?.((output as {outcome?:unknown})?.outcome==='unknown'?'unknown':(output as {outcome?:unknown})?.outcome==='ok'?'accepted':'failed');this.#instructionReceipts.delete(delegate.delegate_id);this.core.postExecutorResult(dispatchIndex, output, this.#clock.now())},
-      () => {this.#instructionReceipts.get(delegate.delegate_id)?.('unknown');this.#instructionReceipts.delete(delegate.delegate_id);this.core.postExecutorCompletion(dispatchIndex, {
+      error => {this.#instructionReceipts.get(delegate.delegate_id)?.('unknown');this.#instructionReceipts.delete(delegate.delegate_id);this.core.postExecutorCompletion(dispatchIndex, {
         outcome: 'unknown',
         trust: 'trusted_system',
         content: {
           error: 'adapter_raised',
           exception: 'ExecutorFailure',
           detail: 'dispatch_failed',
+          ...dispatchFailureCause(error),
         },
         refs: [],
       }, this.#clock.now())},
@@ -631,7 +632,7 @@ export class CausalRuntime {
   #ownTask(
     run: (signal: AbortSignal) => Promise<unknown>,
     complete: (output: unknown) => void,
-    fail: () => void,
+    fail: (error: unknown) => void,
     publishAdmission = false,
   ): void {
     if (!this.#acceptCompletions) return
@@ -653,8 +654,8 @@ export class CausalRuntime {
         output => {
           if (started && this.#acceptCompletions && !controller.signal.aborted) complete(output)
         },
-        () => {
-          if (started && this.#acceptCompletions && !controller.signal.aborted) fail()
+        (error: unknown) => {
+          if (started && this.#acceptCompletions && !controller.signal.aborted) fail(error)
         },
       )
       .catch(error => {
@@ -716,4 +717,14 @@ export class CausalRuntime {
 
 function runtimeError(value: unknown): Error {
   return value instanceof Error ? value : new Error('causal runtime task failed', {cause: value})
+}
+
+/** Error class and machine code only; adapter messages may carry untrusted text. */
+function dispatchFailureCause(error: unknown): {cause: string; cause_code?: string} {
+  const name = error instanceof Error && /^[A-Za-z]{1,64}$/u.test(error.name) ? error.name : 'unknown'
+  const isCode = (value: unknown): value is string => typeof value === 'string' && /^[a-z_]{1,64}$/u.test(value)
+  const code = (error as {code?: unknown} | null)?.code
+  // Internal errors often use a bare snake_case code as the message; prose never matches.
+  const fallback = error instanceof Error ? error.message : undefined
+  return {cause: name, ...(isCode(code) ? {cause_code: code} : isCode(fallback) ? {cause_code: fallback} : {})}
 }

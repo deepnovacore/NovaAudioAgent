@@ -119,6 +119,52 @@ test('async model and executor completions re-enter through the causal event que
   }
 })
 
+test('a throwing executor adapter reports its error class and code, never its message', async () => {
+  const failure = Object.assign(new Error('SECRET adapter prose'), {name: 'ProjectResolutionError', code: 'unknown_session'})
+  const modelCalls: Parameters<ModelPort['complete']>[0][] = []
+  const fast: ModelPort = {complete: call => {
+    modelCalls.push(call)
+    return Promise.resolve(modelCalls.length === 1
+      ? {speak: {act: 'none'}, action: {act: 'delegate', delegate: {executor: 'slow_sim', op: 'set_light', request: {brightness: 30}, origin_ref: 'conversation:1'}}}
+      : {speak: {act: 'none'}, action: {act: 'none'}})
+  }}
+  const adapter: ExecutorAdapter = {manifest: fixtureSlowSimManifest, dispatch: () => Promise.reject(failure)}
+  const runtime = new CausalRuntime({clock: new RealClock(), ids: new MonotonicIdFactory(), models: {fast}, executors: [adapter]})
+  const stop = new AbortController()
+  const serving = runtime.serve(stop.signal)
+  try {
+    runtime.post({kind: 'user_input', payload: {text: 'dim the light'}})
+    await eventually(() => (runtime.memory.channels.get('slow_sim')?.items.length ?? 0) > 0)
+    const handoff = runtime.memory.channels.get('slow_sim')!.items[0]!
+    assert.equal(handoff.outcome, 'unknown')
+    assert.deepEqual(handoff.content, {error: 'adapter_raised', exception: 'ExecutorFailure', detail: 'dispatch_failed', cause: 'ProjectResolutionError', cause_code: 'unknown_session'})
+    assert.equal(JSON.stringify(handoff).includes('SECRET'), false)
+  } finally {
+    stop.abort()
+    await serving
+  }
+  const errors: Error[] = [new Error('session_busy'), new Error('Session is busy with SECRET')]
+  const seen: unknown[] = []
+  for (const error of errors) {
+    const calls: unknown[] = []
+    const model: ModelPort = {complete: () => Promise.resolve(calls.push(1) === 1
+      ? {speak: {act: 'none'}, action: {act: 'delegate', delegate: {executor: 'slow_sim', op: 'set_light', request: {brightness: 30}, origin_ref: 'conversation:1'}}}
+      : {speak: {act: 'none'}, action: {act: 'none'}})}
+    const plain = new CausalRuntime({clock: new RealClock(), ids: new MonotonicIdFactory(), models: {fast: model},
+      executors: [{manifest: fixtureSlowSimManifest, dispatch: () => Promise.reject(error)}]})
+    const halt = new AbortController(), running = plain.serve(halt.signal)
+    try {
+      plain.post({kind: 'user_input', payload: {text: 'dim the light'}})
+      await eventually(() => (plain.memory.channels.get('slow_sim')?.items.length ?? 0) > 0)
+      seen.push(plain.memory.channels.get('slow_sim')!.items[0]!.content)
+    } finally { halt.abort(); await running }
+  }
+  assert.deepEqual(seen, [
+    {error: 'adapter_raised', exception: 'ExecutorFailure', detail: 'dispatch_failed', cause: 'Error', cause_code: 'session_busy'},
+    {error: 'adapter_raised', exception: 'ExecutorFailure', detail: 'dispatch_failed', cause: 'Error'},
+  ])
+})
+
 test('shutdown aborts and awaits an in-flight owned model call', async () => {
   let started = false
   let aborted = false
