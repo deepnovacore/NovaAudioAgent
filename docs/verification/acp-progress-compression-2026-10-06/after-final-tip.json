@@ -1,0 +1,221 @@
+{
+  "variant": "after",
+  "baseline": "d425dcb5",
+  "root": "<isolated temporary directory>",
+  "scope": "Real OpenCode ACP, CodexLiveAdapter, CausalRuntime and GatewayCompressor. Synthetic retained context; qwen-flash on both sides. Token share covers Nova host gateway calls only, not backend-internal usage. No microphone/GUI acceptance.",
+  "progress": [
+    {
+      "at": 1.341423125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 1,
+      "elapsed": 0.397,
+      "summary": null
+    },
+    {
+      "at": 10.05336825,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 3,
+      "elapsed": 9.109,
+      "summary": null
+    },
+    {
+      "at": 15.06269125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 92,
+      "elapsed": 14.118,
+      "summary": null
+    },
+    {
+      "at": 20.089617792000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 286,
+      "elapsed": 19.145,
+      "summary": null
+    },
+    {
+      "at": 24.287573875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 446,
+      "elapsed": 23.343,
+      "summary": null
+    }
+  ],
+  "modelCalls": [
+    {
+      "purpose": "foreground-verification",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-a36c77cd-207f-9395-8562-a98787dc8591",
+      "latency": 0.6220706250000028,
+      "input_tokens": 616,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "error_type": null
+    }
+  ],
+  "compressorJobs": [],
+  "permissions": 4,
+  "scriptSha256": "c41971162a3aa151e4b38195bd3eee23dfc99a3f3355f059851916246c768323",
+  "provenance": {
+    "sourceRef": "fd09adada6f9c914c90c7f0b7708910b2755dfd9",
+    "diffSha256": "bca1010fac3cb1e37d855bc87f7142c9c3e9839ce600badd1079348bca18227e",
+    "distSha256": {
+      "core/runtime": "6cc26f851be068da36cf31dd3b3d83307a026426623303ae988968ba3bff0f7d",
+      "core/causal-runtime": "9e0db237365ec2f6386f8d65d40fac9edfa96d88539b4c220249decd1f03a70a",
+      "executors/acp/transport": "9140ab174c68aa5e575c5565a573a159d5e1296641248a6d3d8c3c73bebf353a"
+    }
+  },
+  "backendRequests": [
+    {
+      "at": 1791220130003,
+      "requestBytes": 3015,
+      "status": 200
+    },
+    {
+      "at": 1791220132538,
+      "requestBytes": 56492,
+      "status": 200
+    },
+    {
+      "at": 1791220138724,
+      "requestBytes": 57641,
+      "status": 200
+    },
+    {
+      "at": 1791220140355,
+      "requestBytes": 59186,
+      "status": 200
+    },
+    {
+      "at": 1791220155605,
+      "requestBytes": 64617,
+      "status": 200
+    },
+    {
+      "at": 1791220157380,
+      "requestBytes": 66162,
+      "status": 200
+    },
+    {
+      "at": 1791220159340,
+      "requestBytes": 66566,
+      "status": 200
+    }
+  ],
+  "retainedItems": 120,
+  "admission": {
+    "accepted": true,
+    "delegate_id": "delegate-1",
+    "problem": null
+  },
+  "sessionId": "<synthetic ACP session>",
+  "transport": {
+    "classification": "completed",
+    "code": "completed",
+    "activity": 446,
+    "process": {
+      "exit_code": null,
+      "stop": "terminate"
+    }
+  },
+  "artifactVerified": true,
+  "handoffOutcome": "ok",
+  "finalActivity": 446,
+  "adapterOutcome": {
+    "classification": "completed",
+    "code": "completed",
+    "turnStartWritten": true
+  },
+  "blackboardItems": 122,
+  "ok": true,
+  "backendModelUsage": [
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 14249,
+        "input": 13590,
+        "output": 659,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "finish": "tool-calls"
+    },
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 14330,
+        "input": 14267,
+        "output": 63,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "finish": "tool-calls"
+    },
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 17061,
+        "input": 15324,
+        "output": 1737,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "finish": "stop"
+    }
+  ],
+  "lifecycle": [
+    {
+      "step": "resume",
+      "ok": true,
+      "code": "completed",
+      "process": {
+        "exit_code": null,
+        "stop": "terminate"
+      }
+    },
+    {
+      "step": "cancel",
+      "ok": true,
+      "code": "adapter_timeout",
+      "process": {
+        "exit_code": null,
+        "stop": "terminate"
+      }
+    }
+  ],
+  "diagnostics": [],
+  "serveError": null,
+  "inputTokens": 616,
+  "compressorInputTokens": 0,
+  "compressorShare": 0,
+  "backendInputTokens": 43181,
+  "totalInputTokens": 43797,
+  "totalCompressorShare": 0
+}

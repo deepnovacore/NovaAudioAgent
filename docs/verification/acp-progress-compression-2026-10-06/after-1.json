@@ -1,0 +1,250 @@
+{
+  "variant": "after",
+  "baseline": "d425dcb5",
+  "root": "<isolated temporary directory>",
+  "scope": "Real OpenCode ACP, CodexLiveAdapter, CausalRuntime and GatewayCompressor. Synthetic retained context; qwen-flash on both sides. Token share covers Nova host gateway calls only, not backend-internal usage. No microphone/GUI acceptance.",
+  "progress": [
+    {
+      "at": 4.616224959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 1,
+      "elapsed": 1.821,
+      "summary": null
+    },
+    {
+      "at": 11.977869042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 3,
+      "elapsed": 9.183,
+      "summary": null
+    },
+    {
+      "at": 17.018802792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 52,
+      "elapsed": 14.224,
+      "summary": null
+    },
+    {
+      "at": 22.027044459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 169,
+      "elapsed": 19.232,
+      "summary": null
+    },
+    {
+      "at": 27.037102959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 284,
+      "elapsed": 24.242,
+      "summary": null
+    },
+    {
+      "at": 32.091450791999996,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 398,
+      "elapsed": 29.297,
+      "summary": null
+    },
+    {
+      "at": 37.127817834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 512,
+      "elapsed": 34.333,
+      "summary": null
+    },
+    {
+      "at": 38.691969875000005,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 545,
+      "elapsed": 35.897,
+      "summary": null
+    }
+  ],
+  "modelCalls": [
+    {
+      "purpose": "foreground-verification",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-ebea4a02-2b1c-9b6a-a8b3-6307c5f63af5",
+      "latency": 0.8284936250000001,
+      "input_tokens": 616,
+      "output_tokens": 72,
+      "finish_reason": "stop",
+      "error_type": null
+    }
+  ],
+  "compressorJobs": [],
+  "permissions": 4,
+  "provenance": {
+    "sourceRef": "8a9186ea574670135cc2a7c2b5f1f462ff86a19f",
+    "diffSha256": "48e4cfed3fb422777749fabe68473298f3599476190b21c7a7b5cd22412c45e2",
+    "distSha256": {
+      "core/runtime": "6cc26f851be068da36cf31dd3b3d83307a026426623303ae988968ba3bff0f7d",
+      "core/causal-runtime": "07f4ef7f7058c65e74c7bed83484f227f1236bdaa800d6368f77a7e48896d71c",
+      "executors/acp/transport": "682f27dbe67b880ba36a8cbb78ecdc164e3a369481f66c9ea6d307f8c947354c"
+    }
+  },
+  "backendRequests": [
+    {
+      "at": 1791219085176,
+      "requestBytes": 3025,
+      "status": 200
+    },
+    {
+      "at": 1791219086865,
+      "requestBytes": 56502,
+      "status": 200
+    },
+    {
+      "at": 1791219092561,
+      "requestBytes": 57651,
+      "status": 200
+    },
+    {
+      "at": 1791219094281,
+      "requestBytes": 59196,
+      "status": 200
+    },
+    {
+      "at": 1791219121994,
+      "requestBytes": 64860,
+      "status": 200
+    },
+    {
+      "at": 1791219123788,
+      "requestBytes": 66405,
+      "status": 200
+    },
+    {
+      "at": 1791219125889,
+      "requestBytes": 66809,
+      "status": 200
+    }
+  ],
+  "retainedItems": 120,
+  "admission": {
+    "accepted": true,
+    "delegate_id": "delegate-1",
+    "problem": null
+  },
+  "sessionId": "<synthetic ACP session>",
+  "transport": {
+    "classification": "completed",
+    "code": "completed",
+    "activity": 545,
+    "process": {
+      "exit_code": null,
+      "stop": "terminate"
+    }
+  },
+  "artifactVerified": true,
+  "handoffOutcome": "ok",
+  "finalActivity": 545,
+  "adapterOutcome": {
+    "classification": "completed",
+    "code": "completed",
+    "turnStartWritten": true
+  },
+  "blackboardItems": 122,
+  "ok": true,
+  "backendModelUsage": [
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 14253,
+        "input": 13593,
+        "output": 660,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "finish": "tool-calls"
+    },
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 14335,
+        "input": 12415,
+        "output": 64,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 1856
+        }
+      },
+      "finish": "tool-calls"
+    },
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 17466,
+        "input": 15330,
+        "output": 2136,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "finish": "stop"
+    }
+  ],
+  "lifecycle": [
+    {
+      "step": "resume",
+      "ok": true,
+      "code": "completed",
+      "process": {
+        "exit_code": null,
+        "stop": "terminate"
+      }
+    },
+    {
+      "step": "cancel",
+      "ok": true,
+      "code": "adapter_timeout",
+      "process": {
+        "exit_code": null,
+        "stop": "terminate"
+      }
+    }
+  ],
+  "diagnostics": [],
+  "serveError": null,
+  "inputTokens": 616,
+  "compressorInputTokens": 0,
+  "compressorShare": 0,
+  "backendInputTokens": 43194,
+  "totalInputTokens": 43810,
+  "totalCompressorShare": 0
+}

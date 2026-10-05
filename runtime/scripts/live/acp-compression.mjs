@@ -84,7 +84,10 @@ const transportOptions = {backendId: 'opencode', cwd: workspace, binaryPath: pro
   approvalController: {offer: async offer => {
     report.permissions++
     const scope = offer.local_detail?.scope ?? ''
-    const allowed = report.permissions <= 8 && scope.includes(workspace + '/') && !scope.includes('Kind: execute')
+    // OpenCode 1.18.31 omits paths on read approvals. Native external-directory denial
+    // remains responsible for read scope; writes must disclose this synthetic workspace.
+    const read = scope.startsWith('read\nKind: read\n')
+    const allowed = report.permissions <= 8 && (read || scope.includes(workspace + '/')) && !scope.includes('Kind: execute')
     return {decision: allowed && offer.allowed_decisions.includes('accept') ? 'accept' : 'decline'}
   }, consume: value => value.decision, invalidate: () => false},
 }

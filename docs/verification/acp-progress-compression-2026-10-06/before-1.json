@@ -1,0 +1,5240 @@
+{
+  "variant": "before",
+  "baseline": "d425dcb5",
+  "root": "<isolated temporary directory>",
+  "scope": "Real OpenCode ACP, CodexLiveAdapter, CausalRuntime and GatewayCompressor. Synthetic retained context; qwen-flash on both sides. Token share covers Nova host gateway calls only, not backend-internal usage. No microphone/GUI acceptance.",
+  "progress": [
+    {
+      "at": 3.2636497089999996,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 1,
+      "elapsed": 0.569,
+      "summary": null
+    },
+    {
+      "at": 5.694551792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 2,
+      "elapsed": 3,
+      "summary": null
+    },
+    {
+      "at": 10.396277208999999,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 3,
+      "elapsed": 7.702,
+      "summary": null
+    },
+    {
+      "at": 10.433263792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 4,
+      "elapsed": 7.739,
+      "summary": null
+    },
+    {
+      "at": 11.729540875000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 5,
+      "elapsed": 9.035,
+      "summary": null
+    },
+    {
+      "at": 12.127029584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 6,
+      "elapsed": 9.433,
+      "summary": null
+    },
+    {
+      "at": 12.137149459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 7,
+      "elapsed": 9.443,
+      "summary": null
+    },
+    {
+      "at": 13.438530292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 8,
+      "elapsed": 10.744,
+      "summary": null
+    },
+    {
+      "at": 13.438936374999999,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 9,
+      "elapsed": 10.744,
+      "summary": null
+    },
+    {
+      "at": 13.439945625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 10,
+      "elapsed": 10.745,
+      "summary": null
+    },
+    {
+      "at": 13.4541855,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 11,
+      "elapsed": 10.76,
+      "summary": null
+    },
+    {
+      "at": 13.5059715,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 12,
+      "elapsed": 10.811,
+      "summary": null
+    },
+    {
+      "at": 13.507996959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 13,
+      "elapsed": 10.814,
+      "summary": null
+    },
+    {
+      "at": 13.538956917,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 14,
+      "elapsed": 10.844,
+      "summary": null
+    },
+    {
+      "at": 13.545700209000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 15,
+      "elapsed": 10.851,
+      "summary": null
+    },
+    {
+      "at": 13.608480417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 16,
+      "elapsed": 10.914,
+      "summary": null
+    },
+    {
+      "at": 13.630246459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 17,
+      "elapsed": 10.936,
+      "summary": null
+    },
+    {
+      "at": 13.631093375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 18,
+      "elapsed": 10.937,
+      "summary": null
+    },
+    {
+      "at": 13.689026334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 19,
+      "elapsed": 10.995,
+      "summary": null
+    },
+    {
+      "at": 13.689470125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 20,
+      "elapsed": 10.995,
+      "summary": null
+    },
+    {
+      "at": 13.741257292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 21,
+      "elapsed": 11.047,
+      "summary": null
+    },
+    {
+      "at": 13.745411334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 22,
+      "elapsed": 11.051,
+      "summary": null
+    },
+    {
+      "at": 13.778182000000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 23,
+      "elapsed": 11.084,
+      "summary": null
+    },
+    {
+      "at": 13.77963675,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 24,
+      "elapsed": 11.085,
+      "summary": null
+    },
+    {
+      "at": 13.810305542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 25,
+      "elapsed": 11.116,
+      "summary": null
+    },
+    {
+      "at": 13.854852959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 26,
+      "elapsed": 11.16,
+      "summary": null
+    },
+    {
+      "at": 13.859411625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 27,
+      "elapsed": 11.165,
+      "summary": null
+    },
+    {
+      "at": 13.910844833999999,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 28,
+      "elapsed": 11.216,
+      "summary": null
+    },
+    {
+      "at": 13.919144125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 29,
+      "elapsed": 11.225,
+      "summary": null
+    },
+    {
+      "at": 13.941996542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 30,
+      "elapsed": 11.248,
+      "summary": null
+    },
+    {
+      "at": 13.989972042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 31,
+      "elapsed": 11.295,
+      "summary": null
+    },
+    {
+      "at": 13.990260667000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 32,
+      "elapsed": 11.296,
+      "summary": null
+    },
+    {
+      "at": 14.048247209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 33,
+      "elapsed": 11.354,
+      "summary": null
+    },
+    {
+      "at": 14.053942625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 34,
+      "elapsed": 11.359,
+      "summary": null
+    },
+    {
+      "at": 14.07646525,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 35,
+      "elapsed": 11.382,
+      "summary": null
+    },
+    {
+      "at": 14.109902792000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 36,
+      "elapsed": 11.415,
+      "summary": null
+    },
+    {
+      "at": 14.110175709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 37,
+      "elapsed": 11.416,
+      "summary": null
+    },
+    {
+      "at": 14.173729459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 38,
+      "elapsed": 11.479,
+      "summary": null
+    },
+    {
+      "at": 14.17421675,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 39,
+      "elapsed": 11.48,
+      "summary": null
+    },
+    {
+      "at": 14.205989292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 40,
+      "elapsed": 11.512,
+      "summary": null
+    },
+    {
+      "at": 14.240422124999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 41,
+      "elapsed": 11.546,
+      "summary": null
+    },
+    {
+      "at": 14.240641084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 42,
+      "elapsed": 11.546,
+      "summary": null
+    },
+    {
+      "at": 14.306178584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 43,
+      "elapsed": 11.612,
+      "summary": null
+    },
+    {
+      "at": 14.306408084000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 44,
+      "elapsed": 11.612,
+      "summary": null
+    },
+    {
+      "at": 14.329803667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 45,
+      "elapsed": 11.635,
+      "summary": null
+    },
+    {
+      "at": 14.368294834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 46,
+      "elapsed": 11.674,
+      "summary": null
+    },
+    {
+      "at": 14.373457917,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 47,
+      "elapsed": 11.679,
+      "summary": null
+    },
+    {
+      "at": 14.430227959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 48,
+      "elapsed": 11.736,
+      "summary": null
+    },
+    {
+      "at": 14.432059542000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 49,
+      "elapsed": 11.738,
+      "summary": null
+    },
+    {
+      "at": 14.454540834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 50,
+      "elapsed": 11.76,
+      "summary": null
+    },
+    {
+      "at": 14.508608749999999,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 51,
+      "elapsed": 11.814,
+      "summary": null
+    },
+    {
+      "at": 14.513344459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 52,
+      "elapsed": 11.819,
+      "summary": null
+    },
+    {
+      "at": 14.570645584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 53,
+      "elapsed": 11.876,
+      "summary": null
+    },
+    {
+      "at": 14.570903375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 54,
+      "elapsed": 11.876,
+      "summary": null
+    },
+    {
+      "at": 14.573834584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 55,
+      "elapsed": 11.879,
+      "summary": null
+    },
+    {
+      "at": 14.657877625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 56,
+      "elapsed": 11.963,
+      "summary": null
+    },
+    {
+      "at": 14.663640292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 57,
+      "elapsed": 11.969,
+      "summary": null
+    },
+    {
+      "at": 14.687855667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 58,
+      "elapsed": 11.993,
+      "summary": null
+    },
+    {
+      "at": 14.688107542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 59,
+      "elapsed": 11.994,
+      "summary": null
+    },
+    {
+      "at": 14.702222167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 60,
+      "elapsed": 12.008,
+      "summary": null
+    },
+    {
+      "at": 14.77249425,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 61,
+      "elapsed": 12.078,
+      "summary": null
+    },
+    {
+      "at": 14.791190542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 62,
+      "elapsed": 12.097,
+      "summary": null
+    },
+    {
+      "at": 14.7914495,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 63,
+      "elapsed": 12.097,
+      "summary": null
+    },
+    {
+      "at": 14.840131959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 64,
+      "elapsed": 12.146,
+      "summary": null
+    },
+    {
+      "at": 14.842027625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 65,
+      "elapsed": 12.148,
+      "summary": null
+    },
+    {
+      "at": 14.86606525,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 66,
+      "elapsed": 12.172,
+      "summary": null
+    },
+    {
+      "at": 14.921956834000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 67,
+      "elapsed": 12.227,
+      "summary": null
+    },
+    {
+      "at": 14.941695292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 68,
+      "elapsed": 12.247,
+      "summary": null
+    },
+    {
+      "at": 14.943894209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 69,
+      "elapsed": 12.249,
+      "summary": null
+    },
+    {
+      "at": 14.997803084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 70,
+      "elapsed": 12.303,
+      "summary": null
+    },
+    {
+      "at": 15.001266125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 71,
+      "elapsed": 12.307,
+      "summary": null
+    },
+    {
+      "at": 15.030056042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 72,
+      "elapsed": 12.336,
+      "summary": null
+    },
+    {
+      "at": 15.0660165,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 73,
+      "elapsed": 12.372,
+      "summary": null
+    },
+    {
+      "at": 15.077386292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 74,
+      "elapsed": 12.383,
+      "summary": null
+    },
+    {
+      "at": 15.130281334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 75,
+      "elapsed": 12.436,
+      "summary": null
+    },
+    {
+      "at": 15.139536334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 76,
+      "elapsed": 12.445,
+      "summary": null
+    },
+    {
+      "at": 15.169841959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 77,
+      "elapsed": 12.475,
+      "summary": null
+    },
+    {
+      "at": 15.171258625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 78,
+      "elapsed": 12.477,
+      "summary": null
+    },
+    {
+      "at": 15.202705167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 79,
+      "elapsed": 12.508,
+      "summary": null
+    },
+    {
+      "at": 15.262302625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 80,
+      "elapsed": 12.568,
+      "summary": null
+    },
+    {
+      "at": 15.273648375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 81,
+      "elapsed": 12.579,
+      "summary": null
+    },
+    {
+      "at": 15.2738505,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 82,
+      "elapsed": 12.579,
+      "summary": null
+    },
+    {
+      "at": 15.338269667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 83,
+      "elapsed": 12.644,
+      "summary": null
+    },
+    {
+      "at": 15.339555209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 84,
+      "elapsed": 12.645,
+      "summary": null
+    },
+    {
+      "at": 15.366405292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 85,
+      "elapsed": 12.672,
+      "summary": null
+    },
+    {
+      "at": 15.404176542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 86,
+      "elapsed": 12.71,
+      "summary": null
+    },
+    {
+      "at": 15.436918709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 87,
+      "elapsed": 12.742,
+      "summary": null
+    },
+    {
+      "at": 15.437237125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 88,
+      "elapsed": 12.743,
+      "summary": null
+    },
+    {
+      "at": 15.49643175,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 89,
+      "elapsed": 12.802,
+      "summary": null
+    },
+    {
+      "at": 15.496640542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 90,
+      "elapsed": 12.802,
+      "summary": null
+    },
+    {
+      "at": 15.505087374999999,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 91,
+      "elapsed": 12.811,
+      "summary": null
+    },
+    {
+      "at": 15.575180792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 92,
+      "elapsed": 12.881,
+      "summary": null
+    },
+    {
+      "at": 15.613029209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 93,
+      "elapsed": 12.919,
+      "summary": null
+    },
+    {
+      "at": 15.61339525,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 94,
+      "elapsed": 12.919,
+      "summary": null
+    },
+    {
+      "at": 15.646008209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 95,
+      "elapsed": 12.952,
+      "summary": null
+    },
+    {
+      "at": 15.648143667000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 96,
+      "elapsed": 12.954,
+      "summary": null
+    },
+    {
+      "at": 15.665754917000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 97,
+      "elapsed": 12.971,
+      "summary": null
+    },
+    {
+      "at": 15.725566666999999,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 98,
+      "elapsed": 13.031,
+      "summary": null
+    },
+    {
+      "at": 15.741740792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 99,
+      "elapsed": 13.047,
+      "summary": null
+    },
+    {
+      "at": 15.752021333999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 100,
+      "elapsed": 13.058,
+      "summary": null
+    },
+    {
+      "at": 15.792360709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 101,
+      "elapsed": 13.098,
+      "summary": null
+    },
+    {
+      "at": 15.805369542000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 102,
+      "elapsed": 13.111,
+      "summary": null
+    },
+    {
+      "at": 15.833758792000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 103,
+      "elapsed": 13.139,
+      "summary": null
+    },
+    {
+      "at": 15.869469666999999,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 104,
+      "elapsed": 13.175,
+      "summary": null
+    },
+    {
+      "at": 15.91002825,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 105,
+      "elapsed": 13.216,
+      "summary": null
+    },
+    {
+      "at": 15.911752834000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 106,
+      "elapsed": 13.217,
+      "summary": null
+    },
+    {
+      "at": 15.958162084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 107,
+      "elapsed": 13.264,
+      "summary": null
+    },
+    {
+      "at": 15.958404375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 108,
+      "elapsed": 13.264,
+      "summary": null
+    },
+    {
+      "at": 15.965873250000001,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 109,
+      "elapsed": 13.271,
+      "summary": null
+    },
+    {
+      "at": 16.006524584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 110,
+      "elapsed": 13.312,
+      "summary": null
+    },
+    {
+      "at": 16.007844584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 111,
+      "elapsed": 13.313,
+      "summary": null
+    },
+    {
+      "at": 16.046130125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 112,
+      "elapsed": 13.352,
+      "summary": null
+    },
+    {
+      "at": 16.046337459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 113,
+      "elapsed": 13.352,
+      "summary": null
+    },
+    {
+      "at": 16.067280209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 114,
+      "elapsed": 13.373,
+      "summary": null
+    },
+    {
+      "at": 16.127047125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 115,
+      "elapsed": 13.433,
+      "summary": null
+    },
+    {
+      "at": 16.151331959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 116,
+      "elapsed": 13.457,
+      "summary": null
+    },
+    {
+      "at": 16.154214917,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 117,
+      "elapsed": 13.46,
+      "summary": null
+    },
+    {
+      "at": 16.210504459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 118,
+      "elapsed": 13.516,
+      "summary": null
+    },
+    {
+      "at": 16.210760125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 119,
+      "elapsed": 13.516,
+      "summary": null
+    },
+    {
+      "at": 16.223066292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 120,
+      "elapsed": 13.529,
+      "summary": null
+    },
+    {
+      "at": 16.27402975,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 121,
+      "elapsed": 13.58,
+      "summary": null
+    },
+    {
+      "at": 16.301605834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 122,
+      "elapsed": 13.607,
+      "summary": null
+    },
+    {
+      "at": 16.3028645,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 123,
+      "elapsed": 13.608,
+      "summary": null
+    },
+    {
+      "at": 16.353331875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 124,
+      "elapsed": 13.659,
+      "summary": null
+    },
+    {
+      "at": 16.355448292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 125,
+      "elapsed": 13.661,
+      "summary": null
+    },
+    {
+      "at": 16.37787975,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 126,
+      "elapsed": 13.683,
+      "summary": null
+    },
+    {
+      "at": 16.423598542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 127,
+      "elapsed": 13.729,
+      "summary": null
+    },
+    {
+      "at": 16.451120749999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 128,
+      "elapsed": 13.757,
+      "summary": null
+    },
+    {
+      "at": 16.453394959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 129,
+      "elapsed": 13.759,
+      "summary": null
+    },
+    {
+      "at": 16.514068167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 130,
+      "elapsed": 13.82,
+      "summary": null
+    },
+    {
+      "at": 16.516983292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 131,
+      "elapsed": 13.823,
+      "summary": null
+    },
+    {
+      "at": 16.532410625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 132,
+      "elapsed": 13.838,
+      "summary": null
+    },
+    {
+      "at": 16.58404875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 133,
+      "elapsed": 13.89,
+      "summary": null
+    },
+    {
+      "at": 16.613840542000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 134,
+      "elapsed": 13.919,
+      "summary": null
+    },
+    {
+      "at": 16.614322834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 135,
+      "elapsed": 13.92,
+      "summary": null
+    },
+    {
+      "at": 16.657337542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 136,
+      "elapsed": 13.963,
+      "summary": null
+    },
+    {
+      "at": 16.6609875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 137,
+      "elapsed": 13.967,
+      "summary": null
+    },
+    {
+      "at": 16.687550292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 138,
+      "elapsed": 13.993,
+      "summary": null
+    },
+    {
+      "at": 16.73836325,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 139,
+      "elapsed": 14.044,
+      "summary": null
+    },
+    {
+      "at": 16.767522709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 140,
+      "elapsed": 14.073,
+      "summary": null
+    },
+    {
+      "at": 16.770672417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 141,
+      "elapsed": 14.076,
+      "summary": null
+    },
+    {
+      "at": 16.815784584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 142,
+      "elapsed": 14.121,
+      "summary": null
+    },
+    {
+      "at": 16.817329,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 143,
+      "elapsed": 14.123,
+      "summary": null
+    },
+    {
+      "at": 16.843431541999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 144,
+      "elapsed": 14.149,
+      "summary": null
+    },
+    {
+      "at": 16.896876292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 145,
+      "elapsed": 14.202,
+      "summary": null
+    },
+    {
+      "at": 16.89715275,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 146,
+      "elapsed": 14.203,
+      "summary": null
+    },
+    {
+      "at": 16.947394084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 147,
+      "elapsed": 14.253,
+      "summary": null
+    },
+    {
+      "at": 16.947638459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 148,
+      "elapsed": 14.253,
+      "summary": null
+    },
+    {
+      "at": 17.001062125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 149,
+      "elapsed": 14.307,
+      "summary": null
+    },
+    {
+      "at": 17.0055495,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 150,
+      "elapsed": 14.311,
+      "summary": null
+    },
+    {
+      "at": 17.024224625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 151,
+      "elapsed": 14.33,
+      "summary": null
+    },
+    {
+      "at": 17.0852195,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 152,
+      "elapsed": 14.391,
+      "summary": null
+    },
+    {
+      "at": 17.115029417000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 153,
+      "elapsed": 14.421,
+      "summary": null
+    },
+    {
+      "at": 17.115212292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 154,
+      "elapsed": 14.421,
+      "summary": null
+    },
+    {
+      "at": 17.156605125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 155,
+      "elapsed": 14.462,
+      "summary": null
+    },
+    {
+      "at": 17.156823292000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 156,
+      "elapsed": 14.462,
+      "summary": null
+    },
+    {
+      "at": 17.180346625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 157,
+      "elapsed": 14.486,
+      "summary": null
+    },
+    {
+      "at": 17.249186375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 158,
+      "elapsed": 14.555,
+      "summary": null
+    },
+    {
+      "at": 17.288405542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 159,
+      "elapsed": 14.594,
+      "summary": null
+    },
+    {
+      "at": 17.288645292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 160,
+      "elapsed": 14.594,
+      "summary": null
+    },
+    {
+      "at": 17.311547459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 161,
+      "elapsed": 14.617,
+      "summary": null
+    },
+    {
+      "at": 17.312421209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 162,
+      "elapsed": 14.618,
+      "summary": null
+    },
+    {
+      "at": 17.339965667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 163,
+      "elapsed": 14.646,
+      "summary": null
+    },
+    {
+      "at": 17.387544542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 164,
+      "elapsed": 14.693,
+      "summary": null
+    },
+    {
+      "at": 17.414597375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 165,
+      "elapsed": 14.72,
+      "summary": null
+    },
+    {
+      "at": 17.414928292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 166,
+      "elapsed": 14.72,
+      "summary": null
+    },
+    {
+      "at": 17.464442374999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 167,
+      "elapsed": 14.77,
+      "summary": null
+    },
+    {
+      "at": 17.46727525,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 168,
+      "elapsed": 14.773,
+      "summary": null
+    },
+    {
+      "at": 17.493756667000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 169,
+      "elapsed": 14.799,
+      "summary": null
+    },
+    {
+      "at": 17.551048542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 170,
+      "elapsed": 14.857,
+      "summary": null
+    },
+    {
+      "at": 17.551787625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 171,
+      "elapsed": 14.857,
+      "summary": null
+    },
+    {
+      "at": 17.592423999999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 172,
+      "elapsed": 14.898,
+      "summary": null
+    },
+    {
+      "at": 17.593473042000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 173,
+      "elapsed": 14.899,
+      "summary": null
+    },
+    {
+      "at": 17.651979334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 174,
+      "elapsed": 14.958,
+      "summary": null
+    },
+    {
+      "at": 17.65277825,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 175,
+      "elapsed": 14.958,
+      "summary": null
+    },
+    {
+      "at": 17.672316834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 176,
+      "elapsed": 14.978,
+      "summary": null
+    },
+    {
+      "at": 17.731238167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 177,
+      "elapsed": 15.037,
+      "summary": null
+    },
+    {
+      "at": 17.807034375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 178,
+      "elapsed": 15.113,
+      "summary": null
+    },
+    {
+      "at": 17.807285084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 179,
+      "elapsed": 15.113,
+      "summary": null
+    },
+    {
+      "at": 17.807301875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 180,
+      "elapsed": 15.113,
+      "summary": null
+    },
+    {
+      "at": 17.820829625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 181,
+      "elapsed": 15.126,
+      "summary": null
+    },
+    {
+      "at": 17.829814666999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 182,
+      "elapsed": 15.135,
+      "summary": null
+    },
+    {
+      "at": 17.888989209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 183,
+      "elapsed": 15.195,
+      "summary": null
+    },
+    {
+      "at": 17.901562875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 184,
+      "elapsed": 15.207,
+      "summary": null
+    },
+    {
+      "at": 17.91026775,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 185,
+      "elapsed": 15.216,
+      "summary": null
+    },
+    {
+      "at": 17.956368792000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 186,
+      "elapsed": 15.262,
+      "summary": null
+    },
+    {
+      "at": 17.956993167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 187,
+      "elapsed": 15.263,
+      "summary": null
+    },
+    {
+      "at": 17.987662,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 188,
+      "elapsed": 15.293,
+      "summary": null
+    },
+    {
+      "at": 18.035208542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 189,
+      "elapsed": 15.341,
+      "summary": null
+    },
+    {
+      "at": 18.056483125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 190,
+      "elapsed": 15.362,
+      "summary": null
+    },
+    {
+      "at": 18.0611085,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 191,
+      "elapsed": 15.367,
+      "summary": null
+    },
+    {
+      "at": 18.113389709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 192,
+      "elapsed": 15.419,
+      "summary": null
+    },
+    {
+      "at": 18.114885542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 193,
+      "elapsed": 15.42,
+      "summary": null
+    },
+    {
+      "at": 18.140600375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 194,
+      "elapsed": 15.446,
+      "summary": null
+    },
+    {
+      "at": 18.196526417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 195,
+      "elapsed": 15.502,
+      "summary": null
+    },
+    {
+      "at": 18.217433042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 196,
+      "elapsed": 15.523,
+      "summary": null
+    },
+    {
+      "at": 18.2181225,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 197,
+      "elapsed": 15.524,
+      "summary": null
+    },
+    {
+      "at": 18.26992875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 198,
+      "elapsed": 15.575,
+      "summary": null
+    },
+    {
+      "at": 18.271381417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 199,
+      "elapsed": 15.577,
+      "summary": null
+    },
+    {
+      "at": 18.29947875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 200,
+      "elapsed": 15.605,
+      "summary": null
+    },
+    {
+      "at": 18.35978225,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 201,
+      "elapsed": 15.665,
+      "summary": null
+    },
+    {
+      "at": 18.360002042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 202,
+      "elapsed": 15.666,
+      "summary": null
+    },
+    {
+      "at": 18.401532625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 203,
+      "elapsed": 15.707,
+      "summary": null
+    },
+    {
+      "at": 18.407137084000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 204,
+      "elapsed": 15.713,
+      "summary": null
+    },
+    {
+      "at": 18.456902334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 205,
+      "elapsed": 15.762,
+      "summary": null
+    },
+    {
+      "at": 18.458363917,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 206,
+      "elapsed": 15.764,
+      "summary": null
+    },
+    {
+      "at": 18.475315709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 207,
+      "elapsed": 15.781,
+      "summary": null
+    },
+    {
+      "at": 18.549787208999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 208,
+      "elapsed": 15.855,
+      "summary": null
+    },
+    {
+      "at": 18.552055874999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 209,
+      "elapsed": 15.858,
+      "summary": null
+    },
+    {
+      "at": 18.586453291999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 210,
+      "elapsed": 15.892,
+      "summary": null
+    },
+    {
+      "at": 18.587058499999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 211,
+      "elapsed": 15.893,
+      "summary": null
+    },
+    {
+      "at": 18.636541667000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 212,
+      "elapsed": 15.942,
+      "summary": null
+    },
+    {
+      "at": 18.639820084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 213,
+      "elapsed": 15.945,
+      "summary": null
+    },
+    {
+      "at": 18.660977374999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 214,
+      "elapsed": 15.967,
+      "summary": null
+    },
+    {
+      "at": 18.714411499999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 215,
+      "elapsed": 16.02,
+      "summary": null
+    },
+    {
+      "at": 18.755018959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 216,
+      "elapsed": 16.061,
+      "summary": null
+    },
+    {
+      "at": 18.756524709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 217,
+      "elapsed": 16.062,
+      "summary": null
+    },
+    {
+      "at": 18.791245334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 218,
+      "elapsed": 16.097,
+      "summary": null
+    },
+    {
+      "at": 18.791414459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 219,
+      "elapsed": 16.097,
+      "summary": null
+    },
+    {
+      "at": 18.820156792000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 220,
+      "elapsed": 16.126,
+      "summary": null
+    },
+    {
+      "at": 18.880767959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 221,
+      "elapsed": 16.186,
+      "summary": null
+    },
+    {
+      "at": 18.908775709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 222,
+      "elapsed": 16.214,
+      "summary": null
+    },
+    {
+      "at": 18.908938209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 223,
+      "elapsed": 16.215,
+      "summary": null
+    },
+    {
+      "at": 18.959539874999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 224,
+      "elapsed": 16.265,
+      "summary": null
+    },
+    {
+      "at": 18.959705999999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 225,
+      "elapsed": 16.265,
+      "summary": null
+    },
+    {
+      "at": 18.975468834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 226,
+      "elapsed": 16.281,
+      "summary": null
+    },
+    {
+      "at": 19.027846417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 227,
+      "elapsed": 16.333,
+      "summary": null
+    },
+    {
+      "at": 19.028308084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 228,
+      "elapsed": 16.334,
+      "summary": null
+    },
+    {
+      "at": 19.075245584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 229,
+      "elapsed": 16.381,
+      "summary": null
+    },
+    {
+      "at": 19.075420750000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 230,
+      "elapsed": 16.381,
+      "summary": null
+    },
+    {
+      "at": 19.132696417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 231,
+      "elapsed": 16.438,
+      "summary": null
+    },
+    {
+      "at": 19.140869667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 232,
+      "elapsed": 16.446,
+      "summary": null
+    },
+    {
+      "at": 19.162645334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 233,
+      "elapsed": 16.468,
+      "summary": null
+    },
+    {
+      "at": 19.220374334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 234,
+      "elapsed": 16.526,
+      "summary": null
+    },
+    {
+      "at": 19.227859334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 235,
+      "elapsed": 16.533,
+      "summary": null
+    },
+    {
+      "at": 19.258066334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 236,
+      "elapsed": 16.564,
+      "summary": null
+    },
+    {
+      "at": 19.258407416999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 237,
+      "elapsed": 16.564,
+      "summary": null
+    },
+    {
+      "at": 19.311593541999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 238,
+      "elapsed": 16.617,
+      "summary": null
+    },
+    {
+      "at": 19.311785584000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 239,
+      "elapsed": 16.617,
+      "summary": null
+    },
+    {
+      "at": 19.341085875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 240,
+      "elapsed": 16.647,
+      "summary": null
+    },
+    {
+      "at": 19.385420875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 241,
+      "elapsed": 16.691,
+      "summary": null
+    },
+    {
+      "at": 19.417470875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 242,
+      "elapsed": 16.723,
+      "summary": null
+    },
+    {
+      "at": 19.418131709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 243,
+      "elapsed": 16.724,
+      "summary": null
+    },
+    {
+      "at": 19.4592375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 244,
+      "elapsed": 16.765,
+      "summary": null
+    },
+    {
+      "at": 19.470391042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 245,
+      "elapsed": 16.776,
+      "summary": null
+    },
+    {
+      "at": 19.490533,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 246,
+      "elapsed": 16.796,
+      "summary": null
+    },
+    {
+      "at": 19.564719042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 247,
+      "elapsed": 16.87,
+      "summary": null
+    },
+    {
+      "at": 19.592319459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 248,
+      "elapsed": 16.898,
+      "summary": null
+    },
+    {
+      "at": 19.592515584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 249,
+      "elapsed": 16.898,
+      "summary": null
+    },
+    {
+      "at": 19.621902291999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 250,
+      "elapsed": 16.927,
+      "summary": null
+    },
+    {
+      "at": 19.63291675,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 251,
+      "elapsed": 16.938,
+      "summary": null
+    },
+    {
+      "at": 19.646673,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 252,
+      "elapsed": 16.952,
+      "summary": null
+    },
+    {
+      "at": 19.697324417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 253,
+      "elapsed": 17.003,
+      "summary": null
+    },
+    {
+      "at": 19.724916625000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 254,
+      "elapsed": 17.03,
+      "summary": null
+    },
+    {
+      "at": 19.725081666999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 255,
+      "elapsed": 17.031,
+      "summary": null
+    },
+    {
+      "at": 19.776763042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 256,
+      "elapsed": 17.082,
+      "summary": null
+    },
+    {
+      "at": 19.776963292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 257,
+      "elapsed": 17.083,
+      "summary": null
+    },
+    {
+      "at": 19.804628167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 258,
+      "elapsed": 17.11,
+      "summary": null
+    },
+    {
+      "at": 19.859125458999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 259,
+      "elapsed": 17.165,
+      "summary": null
+    },
+    {
+      "at": 19.876932542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 260,
+      "elapsed": 17.183,
+      "summary": null
+    },
+    {
+      "at": 19.910351042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 261,
+      "elapsed": 17.216,
+      "summary": null
+    },
+    {
+      "at": 19.922488,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 262,
+      "elapsed": 17.228,
+      "summary": null
+    },
+    {
+      "at": 19.960295291999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 263,
+      "elapsed": 17.266,
+      "summary": null
+    },
+    {
+      "at": 19.961513,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 264,
+      "elapsed": 17.267,
+      "summary": null
+    },
+    {
+      "at": 19.9870825,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 265,
+      "elapsed": 17.293,
+      "summary": null
+    },
+    {
+      "at": 20.046915667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 266,
+      "elapsed": 17.352,
+      "summary": null
+    },
+    {
+      "at": 20.047109959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 267,
+      "elapsed": 17.353,
+      "summary": null
+    },
+    {
+      "at": 20.097008542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 268,
+      "elapsed": 17.403,
+      "summary": null
+    },
+    {
+      "at": 20.097415375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 269,
+      "elapsed": 17.403,
+      "summary": null
+    },
+    {
+      "at": 20.137958917,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 270,
+      "elapsed": 17.444,
+      "summary": null
+    },
+    {
+      "at": 20.145927959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 271,
+      "elapsed": 17.451,
+      "summary": null
+    },
+    {
+      "at": 20.168251917000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 272,
+      "elapsed": 17.474,
+      "summary": null
+    },
+    {
+      "at": 20.223157125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 273,
+      "elapsed": 17.529,
+      "summary": null
+    },
+    {
+      "at": 20.240167084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 274,
+      "elapsed": 17.546,
+      "summary": null
+    },
+    {
+      "at": 20.244259292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 275,
+      "elapsed": 17.55,
+      "summary": null
+    },
+    {
+      "at": 20.290539292000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 276,
+      "elapsed": 17.596,
+      "summary": null
+    },
+    {
+      "at": 20.297269042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 277,
+      "elapsed": 17.603,
+      "summary": null
+    },
+    {
+      "at": 20.323588917000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 278,
+      "elapsed": 17.629,
+      "summary": null
+    },
+    {
+      "at": 20.380971624999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 279,
+      "elapsed": 17.687,
+      "summary": null
+    },
+    {
+      "at": 20.382296125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 280,
+      "elapsed": 17.688,
+      "summary": null
+    },
+    {
+      "at": 20.438458417000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 281,
+      "elapsed": 17.744,
+      "summary": null
+    },
+    {
+      "at": 20.438756625000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 282,
+      "elapsed": 17.744,
+      "summary": null
+    },
+    {
+      "at": 20.499351875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 283,
+      "elapsed": 17.805,
+      "summary": null
+    },
+    {
+      "at": 20.500104709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 284,
+      "elapsed": 17.806,
+      "summary": null
+    },
+    {
+      "at": 20.512551667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 285,
+      "elapsed": 17.818,
+      "summary": null
+    },
+    {
+      "at": 20.556610959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 286,
+      "elapsed": 17.862,
+      "summary": null
+    },
+    {
+      "at": 20.603013209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 287,
+      "elapsed": 17.909,
+      "summary": null
+    },
+    {
+      "at": 20.603094834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 288,
+      "elapsed": 17.909,
+      "summary": null
+    },
+    {
+      "at": 20.659898959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 289,
+      "elapsed": 17.965,
+      "summary": null
+    },
+    {
+      "at": 20.65999175,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 290,
+      "elapsed": 17.966,
+      "summary": null
+    },
+    {
+      "at": 20.696022792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 291,
+      "elapsed": 18.002,
+      "summary": null
+    },
+    {
+      "at": 20.719444375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 292,
+      "elapsed": 18.025,
+      "summary": null
+    },
+    {
+      "at": 20.7757695,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 293,
+      "elapsed": 18.081,
+      "summary": null
+    },
+    {
+      "at": 20.776829417000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 294,
+      "elapsed": 18.082,
+      "summary": null
+    },
+    {
+      "at": 20.789428166999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 295,
+      "elapsed": 18.095,
+      "summary": null
+    },
+    {
+      "at": 20.800144167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 296,
+      "elapsed": 18.106,
+      "summary": null
+    },
+    {
+      "at": 20.853710624999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 297,
+      "elapsed": 18.159,
+      "summary": null
+    },
+    {
+      "at": 20.873425625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 298,
+      "elapsed": 18.179,
+      "summary": null
+    },
+    {
+      "at": 20.874072792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 299,
+      "elapsed": 18.18,
+      "summary": null
+    },
+    {
+      "at": 21.096093209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 300,
+      "elapsed": 18.401,
+      "summary": null
+    },
+    {
+      "at": 21.096675083999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 301,
+      "elapsed": 18.402,
+      "summary": null
+    },
+    {
+      "at": 21.096743584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 302,
+      "elapsed": 18.402,
+      "summary": null
+    },
+    {
+      "at": 21.097204792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 303,
+      "elapsed": 18.403,
+      "summary": null
+    },
+    {
+      "at": 21.097329000000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 304,
+      "elapsed": 18.403,
+      "summary": null
+    },
+    {
+      "at": 21.097559792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 305,
+      "elapsed": 18.403,
+      "summary": null
+    },
+    {
+      "at": 21.097637917,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 306,
+      "elapsed": 18.403,
+      "summary": null
+    },
+    {
+      "at": 21.097782542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 307,
+      "elapsed": 18.403,
+      "summary": null
+    },
+    {
+      "at": 21.713073042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 308,
+      "elapsed": 19.019,
+      "summary": null
+    },
+    {
+      "at": 21.713623292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 309,
+      "elapsed": 19.019,
+      "summary": null
+    },
+    {
+      "at": 21.715853792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 310,
+      "elapsed": 19.021,
+      "summary": null
+    },
+    {
+      "at": 22.19865725,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 311,
+      "elapsed": 19.497,
+      "summary": null
+    },
+    {
+      "at": 22.199188792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 312,
+      "elapsed": 19.505,
+      "summary": null
+    },
+    {
+      "at": 22.199943542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 313,
+      "elapsed": 19.505,
+      "summary": null
+    },
+    {
+      "at": 22.200298375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 314,
+      "elapsed": 19.506,
+      "summary": null
+    },
+    {
+      "at": 22.20640425,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 315,
+      "elapsed": 19.512,
+      "summary": null
+    },
+    {
+      "at": 22.206691292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 316,
+      "elapsed": 19.512,
+      "summary": null
+    },
+    {
+      "at": 22.206931709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 317,
+      "elapsed": 19.513,
+      "summary": null
+    },
+    {
+      "at": 22.20702375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 318,
+      "elapsed": 19.513,
+      "summary": null
+    },
+    {
+      "at": 22.208157375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 319,
+      "elapsed": 19.514,
+      "summary": null
+    },
+    {
+      "at": 22.20839575,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 320,
+      "elapsed": 19.514,
+      "summary": null
+    },
+    {
+      "at": 22.208580167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 321,
+      "elapsed": 19.514,
+      "summary": null
+    },
+    {
+      "at": 22.2093035,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 322,
+      "elapsed": 19.515,
+      "summary": null
+    },
+    {
+      "at": 22.239939624999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 323,
+      "elapsed": 19.545,
+      "summary": null
+    },
+    {
+      "at": 22.240114375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 324,
+      "elapsed": 19.546,
+      "summary": null
+    },
+    {
+      "at": 22.2402985,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 325,
+      "elapsed": 19.546,
+      "summary": null
+    },
+    {
+      "at": 22.241074375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 326,
+      "elapsed": 19.547,
+      "summary": null
+    },
+    {
+      "at": 22.243175792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 327,
+      "elapsed": 19.549,
+      "summary": null
+    },
+    {
+      "at": 22.243362167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 328,
+      "elapsed": 19.549,
+      "summary": null
+    },
+    {
+      "at": 22.243919042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 329,
+      "elapsed": 19.55,
+      "summary": null
+    },
+    {
+      "at": 22.244023000000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 330,
+      "elapsed": 19.55,
+      "summary": null
+    },
+    {
+      "at": 22.244248458999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 331,
+      "elapsed": 19.55,
+      "summary": null
+    },
+    {
+      "at": 22.244367667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 332,
+      "elapsed": 19.55,
+      "summary": null
+    },
+    {
+      "at": 22.244490792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 333,
+      "elapsed": 19.55,
+      "summary": null
+    },
+    {
+      "at": 22.291285209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 334,
+      "elapsed": 19.597,
+      "summary": null
+    },
+    {
+      "at": 22.294258375000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 335,
+      "elapsed": 19.6,
+      "summary": null
+    },
+    {
+      "at": 22.326274249999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 336,
+      "elapsed": 19.6,
+      "summary": null
+    },
+    {
+      "at": 22.327028125000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 337,
+      "elapsed": 19.633,
+      "summary": null
+    },
+    {
+      "at": 22.327249584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 338,
+      "elapsed": 19.633,
+      "summary": null
+    },
+    {
+      "at": 22.332309834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 339,
+      "elapsed": 19.638,
+      "summary": null
+    },
+    {
+      "at": 22.3324065,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 340,
+      "elapsed": 19.638,
+      "summary": null
+    },
+    {
+      "at": 22.332528584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 341,
+      "elapsed": 19.638,
+      "summary": null
+    },
+    {
+      "at": 22.341931292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 342,
+      "elapsed": 19.647,
+      "summary": null
+    },
+    {
+      "at": 22.342092208999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 343,
+      "elapsed": 19.648,
+      "summary": null
+    },
+    {
+      "at": 22.342283167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 344,
+      "elapsed": 19.648,
+      "summary": null
+    },
+    {
+      "at": 22.342351709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 345,
+      "elapsed": 19.648,
+      "summary": null
+    },
+    {
+      "at": 22.342692292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 346,
+      "elapsed": 19.648,
+      "summary": null
+    },
+    {
+      "at": 22.345615333999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 347,
+      "elapsed": 19.651,
+      "summary": null
+    },
+    {
+      "at": 22.346004625000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 348,
+      "elapsed": 19.652,
+      "summary": null
+    },
+    {
+      "at": 22.346078624999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 349,
+      "elapsed": 19.652,
+      "summary": null
+    },
+    {
+      "at": 22.346189333999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 350,
+      "elapsed": 19.652,
+      "summary": null
+    },
+    {
+      "at": 22.346245834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 351,
+      "elapsed": 19.652,
+      "summary": null
+    },
+    {
+      "at": 22.346323584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 352,
+      "elapsed": 19.652,
+      "summary": null
+    },
+    {
+      "at": 22.391049084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 353,
+      "elapsed": 19.697,
+      "summary": null
+    },
+    {
+      "at": 22.391154125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 354,
+      "elapsed": 19.697,
+      "summary": null
+    },
+    {
+      "at": 22.391763834000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 355,
+      "elapsed": 19.697,
+      "summary": null
+    },
+    {
+      "at": 22.412973292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 356,
+      "elapsed": 19.719,
+      "summary": null
+    },
+    {
+      "at": 22.413111209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 357,
+      "elapsed": 19.719,
+      "summary": null
+    },
+    {
+      "at": 22.461787124999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 358,
+      "elapsed": 19.767,
+      "summary": null
+    },
+    {
+      "at": 22.47039375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 359,
+      "elapsed": 19.775,
+      "summary": null
+    },
+    {
+      "at": 22.593240834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 360,
+      "elapsed": 19.899,
+      "summary": null
+    },
+    {
+      "at": 22.598894875000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 361,
+      "elapsed": 19.904,
+      "summary": null
+    },
+    {
+      "at": 22.635156416999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 362,
+      "elapsed": 19.941,
+      "summary": null
+    },
+    {
+      "at": 22.930505833999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 363,
+      "elapsed": 20.236,
+      "summary": null
+    },
+    {
+      "at": 22.940549417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 364,
+      "elapsed": 20.246,
+      "summary": null
+    },
+    {
+      "at": 22.941099917,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 365,
+      "elapsed": 20.247,
+      "summary": null
+    },
+    {
+      "at": 22.941394959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 366,
+      "elapsed": 20.247,
+      "summary": null
+    },
+    {
+      "at": 22.942212083999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 367,
+      "elapsed": 20.248,
+      "summary": null
+    },
+    {
+      "at": 22.942328042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 368,
+      "elapsed": 20.248,
+      "summary": null
+    },
+    {
+      "at": 22.968566834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 369,
+      "elapsed": 20.274,
+      "summary": null
+    },
+    {
+      "at": 22.968746084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 370,
+      "elapsed": 20.274,
+      "summary": null
+    },
+    {
+      "at": 22.968988792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 371,
+      "elapsed": 20.275,
+      "summary": null
+    },
+    {
+      "at": 22.969134584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 372,
+      "elapsed": 20.275,
+      "summary": null
+    },
+    {
+      "at": 22.971680709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 373,
+      "elapsed": 20.277,
+      "summary": null
+    },
+    {
+      "at": 22.971952792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 374,
+      "elapsed": 20.277,
+      "summary": null
+    },
+    {
+      "at": 22.972956708999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 375,
+      "elapsed": 20.279,
+      "summary": null
+    },
+    {
+      "at": 22.974822959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 376,
+      "elapsed": 20.28,
+      "summary": null
+    },
+    {
+      "at": 22.975276333999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 377,
+      "elapsed": 20.281,
+      "summary": null
+    },
+    {
+      "at": 22.97536625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 378,
+      "elapsed": 20.281,
+      "summary": null
+    },
+    {
+      "at": 23.158971209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 379,
+      "elapsed": 20.465,
+      "summary": null
+    },
+    {
+      "at": 23.1647535,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 380,
+      "elapsed": 20.47,
+      "summary": null
+    },
+    {
+      "at": 23.190596417000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 381,
+      "elapsed": 20.496,
+      "summary": null
+    },
+    {
+      "at": 23.191872459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 382,
+      "elapsed": 20.497,
+      "summary": null
+    },
+    {
+      "at": 23.191977459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 383,
+      "elapsed": 20.498,
+      "summary": null
+    },
+    {
+      "at": 23.192097792000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 384,
+      "elapsed": 20.498,
+      "summary": null
+    },
+    {
+      "at": 23.19215575,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 385,
+      "elapsed": 20.498,
+      "summary": null
+    },
+    {
+      "at": 23.192358375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 386,
+      "elapsed": 20.498,
+      "summary": null
+    },
+    {
+      "at": 23.199101875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 387,
+      "elapsed": 20.505,
+      "summary": null
+    },
+    {
+      "at": 23.279790875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 388,
+      "elapsed": 20.585,
+      "summary": null
+    },
+    {
+      "at": 23.283420709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 389,
+      "elapsed": 20.589,
+      "summary": null
+    },
+    {
+      "at": 23.284815584,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 390,
+      "elapsed": 20.59,
+      "summary": null
+    },
+    {
+      "at": 23.731543959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 391,
+      "elapsed": 21.037,
+      "summary": null
+    },
+    {
+      "at": 23.731769917,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 392,
+      "elapsed": 21.037,
+      "summary": null
+    },
+    {
+      "at": 23.732081042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 393,
+      "elapsed": 21.038,
+      "summary": null
+    },
+    {
+      "at": 23.732191042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 394,
+      "elapsed": 21.038,
+      "summary": null
+    },
+    {
+      "at": 23.732723625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 395,
+      "elapsed": 21.038,
+      "summary": null
+    },
+    {
+      "at": 23.732952792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 396,
+      "elapsed": 21.039,
+      "summary": null
+    },
+    {
+      "at": 23.739296999999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 397,
+      "elapsed": 21.045,
+      "summary": null
+    },
+    {
+      "at": 23.790934833999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 398,
+      "elapsed": 21.097,
+      "summary": null
+    },
+    {
+      "at": 23.791546999999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 399,
+      "elapsed": 21.097,
+      "summary": null
+    },
+    {
+      "at": 23.791618959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 400,
+      "elapsed": 21.097,
+      "summary": null
+    },
+    {
+      "at": 23.79256525,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 401,
+      "elapsed": 21.098,
+      "summary": null
+    },
+    {
+      "at": 23.792675209000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 402,
+      "elapsed": 21.098,
+      "summary": null
+    },
+    {
+      "at": 23.792779292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 403,
+      "elapsed": 21.098,
+      "summary": null
+    },
+    {
+      "at": 23.793292375,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 404,
+      "elapsed": 21.099,
+      "summary": null
+    },
+    {
+      "at": 23.793585542000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 405,
+      "elapsed": 21.099,
+      "summary": null
+    },
+    {
+      "at": 23.794676875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 406,
+      "elapsed": 21.1,
+      "summary": null
+    },
+    {
+      "at": 23.794778875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 407,
+      "elapsed": 21.1,
+      "summary": null
+    },
+    {
+      "at": 23.795016709,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 408,
+      "elapsed": 21.101,
+      "summary": null
+    },
+    {
+      "at": 23.813084875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 409,
+      "elapsed": 21.119,
+      "summary": null
+    },
+    {
+      "at": 23.813845125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 410,
+      "elapsed": 21.119,
+      "summary": null
+    },
+    {
+      "at": 23.820046417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 411,
+      "elapsed": 21.125,
+      "summary": null
+    },
+    {
+      "at": 23.821355792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 412,
+      "elapsed": 21.127,
+      "summary": null
+    },
+    {
+      "at": 23.863227959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 413,
+      "elapsed": 21.169,
+      "summary": null
+    },
+    {
+      "at": 23.923225834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 414,
+      "elapsed": 21.229,
+      "summary": null
+    },
+    {
+      "at": 23.947673083999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 415,
+      "elapsed": 21.253,
+      "summary": null
+    },
+    {
+      "at": 23.948411,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 416,
+      "elapsed": 21.254,
+      "summary": null
+    },
+    {
+      "at": 23.969917249999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 417,
+      "elapsed": 21.275,
+      "summary": null
+    },
+    {
+      "at": 23.972268625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 418,
+      "elapsed": 21.278,
+      "summary": null
+    },
+    {
+      "at": 24.011480334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 419,
+      "elapsed": 21.317,
+      "summary": null
+    },
+    {
+      "at": 24.088488125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 420,
+      "elapsed": 21.394,
+      "summary": null
+    },
+    {
+      "at": 24.0886855,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 421,
+      "elapsed": 21.394,
+      "summary": null
+    },
+    {
+      "at": 24.130973125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 422,
+      "elapsed": 21.437,
+      "summary": null
+    },
+    {
+      "at": 24.131431042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 423,
+      "elapsed": 21.437,
+      "summary": null
+    },
+    {
+      "at": 24.14926175,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 424,
+      "elapsed": 21.455,
+      "summary": null
+    },
+    {
+      "at": 24.152767459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 425,
+      "elapsed": 21.458,
+      "summary": null
+    },
+    {
+      "at": 24.2143365,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 426,
+      "elapsed": 21.52,
+      "summary": null
+    },
+    {
+      "at": 24.270585542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 427,
+      "elapsed": 21.576,
+      "summary": null
+    },
+    {
+      "at": 24.271384417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 428,
+      "elapsed": 21.577,
+      "summary": null
+    },
+    {
+      "at": 24.287128458999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 429,
+      "elapsed": 21.593,
+      "summary": null
+    },
+    {
+      "at": 24.28909175,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 430,
+      "elapsed": 21.595,
+      "summary": null
+    },
+    {
+      "at": 24.355303417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 431,
+      "elapsed": 21.661,
+      "summary": null
+    },
+    {
+      "at": 24.356359417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 432,
+      "elapsed": 21.662,
+      "summary": null
+    },
+    {
+      "at": 24.376937042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 433,
+      "elapsed": 21.683,
+      "summary": null
+    },
+    {
+      "at": 24.423278625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 434,
+      "elapsed": 21.729,
+      "summary": null
+    },
+    {
+      "at": 24.441667667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 435,
+      "elapsed": 21.747,
+      "summary": null
+    },
+    {
+      "at": 24.442279875,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 436,
+      "elapsed": 21.748,
+      "summary": null
+    },
+    {
+      "at": 24.488047959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 437,
+      "elapsed": 21.794,
+      "summary": null
+    },
+    {
+      "at": 24.491630625000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 438,
+      "elapsed": 21.797,
+      "summary": null
+    },
+    {
+      "at": 24.529604209000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 439,
+      "elapsed": 21.835,
+      "summary": null
+    },
+    {
+      "at": 24.60911125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 440,
+      "elapsed": 21.915,
+      "summary": null
+    },
+    {
+      "at": 24.615436042000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 441,
+      "elapsed": 21.921,
+      "summary": null
+    },
+    {
+      "at": 24.616132292,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 442,
+      "elapsed": 21.922,
+      "summary": null
+    },
+    {
+      "at": 24.66392725,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 443,
+      "elapsed": 21.969,
+      "summary": null
+    },
+    {
+      "at": 24.66460825,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 444,
+      "elapsed": 21.97,
+      "summary": null
+    },
+    {
+      "at": 24.691536334000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 445,
+      "elapsed": 21.997,
+      "summary": null
+    },
+    {
+      "at": 24.75088775,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 446,
+      "elapsed": 22.056,
+      "summary": null
+    },
+    {
+      "at": 24.774933667000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 447,
+      "elapsed": 22.081,
+      "summary": null
+    },
+    {
+      "at": 24.776113084000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 448,
+      "elapsed": 22.082,
+      "summary": null
+    },
+    {
+      "at": 24.801657084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 449,
+      "elapsed": 22.107,
+      "summary": null
+    },
+    {
+      "at": 24.816963,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 450,
+      "elapsed": 22.123,
+      "summary": null
+    },
+    {
+      "at": 24.845202167,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 451,
+      "elapsed": 22.151,
+      "summary": null
+    },
+    {
+      "at": 24.886797084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 452,
+      "elapsed": 22.192,
+      "summary": null
+    },
+    {
+      "at": 24.914839667,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 453,
+      "elapsed": 22.22,
+      "summary": null
+    },
+    {
+      "at": 24.954730334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 454,
+      "elapsed": 22.26,
+      "summary": null
+    },
+    {
+      "at": 24.954836084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 455,
+      "elapsed": 22.26,
+      "summary": null
+    },
+    {
+      "at": 25.006888792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 456,
+      "elapsed": 22.312,
+      "summary": null
+    },
+    {
+      "at": 25.007307084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 457,
+      "elapsed": 22.313,
+      "summary": null
+    },
+    {
+      "at": 25.022052959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 458,
+      "elapsed": 22.328,
+      "summary": null
+    },
+    {
+      "at": 25.092080084000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 459,
+      "elapsed": 22.398,
+      "summary": null
+    },
+    {
+      "at": 25.092182417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 460,
+      "elapsed": 22.398,
+      "summary": null
+    },
+    {
+      "at": 25.233712500000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 461,
+      "elapsed": 22.539,
+      "summary": null
+    },
+    {
+      "at": 25.236219124999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 462,
+      "elapsed": 22.542,
+      "summary": null
+    },
+    {
+      "at": 25.25468475,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 463,
+      "elapsed": 22.56,
+      "summary": null
+    },
+    {
+      "at": 25.255451084,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 464,
+      "elapsed": 22.561,
+      "summary": null
+    },
+    {
+      "at": 25.255524334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 465,
+      "elapsed": 22.561,
+      "summary": null
+    },
+    {
+      "at": 25.297471291999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 466,
+      "elapsed": 22.603,
+      "summary": null
+    },
+    {
+      "at": 25.345278625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 467,
+      "elapsed": 22.651,
+      "summary": null
+    },
+    {
+      "at": 25.346806,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 468,
+      "elapsed": 22.652,
+      "summary": null
+    },
+    {
+      "at": 25.355458792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 469,
+      "elapsed": 22.661,
+      "summary": null
+    },
+    {
+      "at": 25.3560935,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 470,
+      "elapsed": 22.662,
+      "summary": null
+    },
+    {
+      "at": 25.387063042,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 471,
+      "elapsed": 22.693,
+      "summary": null
+    },
+    {
+      "at": 25.41196775,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 472,
+      "elapsed": 22.718,
+      "summary": null
+    },
+    {
+      "at": 25.415770917000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 473,
+      "elapsed": 22.721,
+      "summary": null
+    },
+    {
+      "at": 25.469058709000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 474,
+      "elapsed": 22.775,
+      "summary": null
+    },
+    {
+      "at": 25.471416459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 475,
+      "elapsed": 22.777,
+      "summary": null
+    },
+    {
+      "at": 25.514531041999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 476,
+      "elapsed": 22.82,
+      "summary": null
+    },
+    {
+      "at": 25.515771959000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 477,
+      "elapsed": 22.821,
+      "summary": null
+    },
+    {
+      "at": 25.553176209,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 478,
+      "elapsed": 22.859,
+      "summary": null
+    },
+    {
+      "at": 25.598869625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 479,
+      "elapsed": 22.904,
+      "summary": null
+    },
+    {
+      "at": 25.621278125,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 480,
+      "elapsed": 22.927,
+      "summary": null
+    },
+    {
+      "at": 25.643431,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 481,
+      "elapsed": 22.949,
+      "summary": null
+    },
+    {
+      "at": 25.664010959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 482,
+      "elapsed": 22.97,
+      "summary": null
+    },
+    {
+      "at": 25.680697417,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 483,
+      "elapsed": 22.986,
+      "summary": null
+    },
+    {
+      "at": 25.703857334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 484,
+      "elapsed": 23.009,
+      "summary": null
+    },
+    {
+      "at": 25.78051225,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 485,
+      "elapsed": 23.086,
+      "summary": null
+    },
+    {
+      "at": 25.796724834,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 486,
+      "elapsed": 23.102,
+      "summary": null
+    },
+    {
+      "at": 25.797542375000003,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 487,
+      "elapsed": 23.103,
+      "summary": null
+    },
+    {
+      "at": 25.838493334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 488,
+      "elapsed": 23.144,
+      "summary": null
+    },
+    {
+      "at": 25.839153334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 489,
+      "elapsed": 23.145,
+      "summary": null
+    },
+    {
+      "at": 25.864416249999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 490,
+      "elapsed": 23.17,
+      "summary": null
+    },
+    {
+      "at": 25.908034999999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 491,
+      "elapsed": 23.214,
+      "summary": null
+    },
+    {
+      "at": 25.90875575,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 492,
+      "elapsed": 23.214,
+      "summary": null
+    },
+    {
+      "at": 25.973462959,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 493,
+      "elapsed": 23.279,
+      "summary": null
+    },
+    {
+      "at": 25.973619624999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 494,
+      "elapsed": 23.279,
+      "summary": null
+    },
+    {
+      "at": 26.013254833999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 495,
+      "elapsed": 23.319,
+      "summary": null
+    },
+    {
+      "at": 26.015571124999997,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 496,
+      "elapsed": 23.321,
+      "summary": null
+    },
+    {
+      "at": 26.039750542,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 497,
+      "elapsed": 23.345,
+      "summary": null
+    },
+    {
+      "at": 26.107606,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 498,
+      "elapsed": 23.413,
+      "summary": null
+    },
+    {
+      "at": 26.123301792,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 499,
+      "elapsed": 23.429,
+      "summary": null
+    },
+    {
+      "at": 26.123937459,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 500,
+      "elapsed": 23.43,
+      "summary": null
+    },
+    {
+      "at": 26.187987625,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 501,
+      "elapsed": 23.494,
+      "summary": null
+    },
+    {
+      "at": 26.188682791999998,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 502,
+      "elapsed": 23.494,
+      "summary": null
+    },
+    {
+      "at": 26.193861334,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 503,
+      "elapsed": 23.499,
+      "summary": null
+    },
+    {
+      "at": 26.462003292000002,
+      "channel": "codex",
+      "delegate_id": "delegate-1",
+      "op": "run",
+      "phase": "working",
+      "internal_activity": 504,
+      "elapsed": 23.768,
+      "summary": null
+    }
+  ],
+  "modelCalls": [
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-0759ab3c-3d13-9c9a-8191-9a6d39a67d0a",
+      "latency": 4.281224625,
+      "input_tokens": 25424,
+      "output_tokens": 126,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-c4537b28-c45b-90ca-959d-0abdb70bb035",
+      "latency": 5.3237801670000025,
+      "input_tokens": 34225,
+      "output_tokens": 117,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-0100945a-f869-9e74-b209-8fe2b7982db6",
+      "latency": 5.320470915999998,
+      "input_tokens": 50680,
+      "output_tokens": 101,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-d7fa2986-05bd-931d-88e8-d384ebf0e83b",
+      "latency": 13.346689874999996,
+      "input_tokens": 68903,
+      "output_tokens": 78,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "foreground-verification",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-96f2a738-afba-97ba-bdb4-434a521d9917",
+      "latency": 0.49662899999999865,
+      "input_tokens": 616,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "error_type": null
+    }
+  ],
+  "compressorJobs": [
+    {
+      "channel": "codex",
+      "items": 125,
+      "at": 11.730718999999999
+    },
+    {
+      "channel": "codex",
+      "items": 231,
+      "at": 16.015159
+    },
+    {
+      "channel": "codex",
+      "items": 427,
+      "at": 21.359895959000003
+    },
+    {
+      "channel": "codex",
+      "items": 625,
+      "at": 26.7430275
+    }
+  ],
+  "permissions": 2,
+  "provenance": {
+    "sourceRef": "d425dcb5",
+    "diffSha256": "48e4cfed3fb422777749fabe68473298f3599476190b21c7a7b5cd22412c45e2",
+    "distSha256": {
+      "core/runtime": "29800b59e089669060b3a05077ac13c70ac4060b93a2f8ac56bd88b2430733e1",
+      "core/causal-runtime": "07f4ef7f7058c65e74c7bed83484f227f1236bdaa800d6368f77a7e48896d71c",
+      "executors/acp/transport": "c0a875262c51af8bdb569f32228ebbd412bff7f8bea25e94640b6168c2a4b3a2"
+    }
+  },
+  "backendRequests": [
+    {
+      "at": 1791219047427,
+      "requestBytes": 3026,
+      "status": 200
+    },
+    {
+      "at": 1791219048439,
+      "requestBytes": 56504,
+      "status": 200
+    },
+    {
+      "at": 1791219054496,
+      "requestBytes": 57654,
+      "status": 200
+    },
+    {
+      "at": 1791219056232,
+      "requestBytes": 59201,
+      "status": 200
+    }
+  ],
+  "retainedItems": 120,
+  "admission": {
+    "accepted": true,
+    "delegate_id": "delegate-1",
+    "problem": null
+  },
+  "sessionId": "<synthetic ACP session>",
+  "transport": {
+    "classification": "completed",
+    "code": "completed",
+    "activity": 504,
+    "process": {
+      "exit_code": null,
+      "stop": "terminate"
+    }
+  },
+  "artifactVerified": true,
+  "handoffOutcome": "ok",
+  "finalActivity": 504,
+  "adapterOutcome": {
+    "classification": "completed",
+    "code": "completed",
+    "turnStartWritten": true
+  },
+  "blackboardItems": 625,
+  "ok": true,
+  "backendModelUsage": [
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 14254,
+        "input": 13594,
+        "output": 660,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "finish": "tool-calls"
+    },
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 14336,
+        "input": 14272,
+        "output": 64,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "finish": "tool-calls"
+    },
+    {
+      "model": "qwen-flash",
+      "provider": "dashscope",
+      "tokens": {
+        "total": 17303,
+        "input": 15331,
+        "output": 1972,
+        "reasoning": 0,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "finish": "stop"
+    }
+  ],
+  "diagnostics": [],
+  "serveError": null,
+  "inputTokens": 179848,
+  "compressorInputTokens": 179232,
+  "compressorShare": 0.9965748854588319,
+  "backendInputTokens": 43197,
+  "totalInputTokens": 223045,
+  "totalCompressorShare": 0.803568786567733
+}
