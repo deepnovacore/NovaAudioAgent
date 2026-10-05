@@ -53,6 +53,19 @@ class ScriptedGateway implements ModelGateway {
   }
 }
 
+class QueuedGateway implements ModelGateway {
+  readonly completions: CompleteRequest[] = []
+  constructor(private readonly replies: string[], private readonly error?: Error) {}
+  async *stream(): AsyncIterable<GatewayDelta> { /* unused */ }
+  complete(request: CompleteRequest): Promise<GatewayCompletion> {
+    this.completions.push(request)
+    if (this.error && this.completions.length === 1) return Promise.reject(this.error)
+    const text = this.replies.shift()
+    if (text === undefined) return Promise.reject(new Error('no queued reply'))
+    return Promise.resolve({text})
+  }
+}
+
 const emptyView: ContextView = {
   channels: [], in_flight: [], affordances: [], floor: 'idle', now: 0, trigger_kind: null,
 }
@@ -431,4 +444,46 @@ test('a check observed in another session of the same task does not prove a work
   const ref=tasks.evidence(task.id)[0]!.ref
   assert.equal((await new GatewayTaskVerifier({gateway:new ScriptedGateway([],JSON.stringify({kind:'complete',evidence_refs:[ref]})),model:'test'}).evaluateTask(tasks.get(task.id),tasks.evidence(task.id),new AbortController().signal)).kind,'wait')
  }finally{await rm(dir,{recursive:true,force:true})}
+})
+
+test('verifier retries once with validation_feedback when the reply is unparsable, schema-invalid, or cites unknown/missing/out-of-range refs',async()=>{
+ const {TaskService}=await import('../src/personal-agent/tasks.js'),{TaskCheckError}=await import('../src/personal-agent/task-loop.js'),{GatewayError}=await import('../src/model/model-gateway.js')
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'task-verifier-retry-')),tasks=new TaskService(join(dir,'tasks.json'))
+ try{
+  await tasks.open();const task=await tasks.delegate('declare',{conversation_id:'c',execution_route:'codex',goal:'Fix',acceptance:['tests pass'],origin_ref:'user:1'}),fence={task_id:task.id,control_revision:0,goal_revision:0}
+  await tasks.bindWork(fence,'work','session')
+  await tasks.appendEvent({task_id:task.id,work_id:'work',session_id:'session',thread_id:'thread',turn_id:'turn',kind:'tool',stage:'completed',refs:[],item_id:'check',text:JSON.stringify({type:'commandExecution',status:'completed',command:'node --test',output:'ok',exit_code:0})},'check')
+  await tasks.recordWorkOutcome('work','ok',{worker:'codex',final_message:'Done'})
+  const current=tasks.get(task.id),ref=tasks.evidence(task.id)[0]!.ref
+  const good=JSON.stringify({kind:'complete',evidence_refs:[ref],criteria:[{index:0,evidence_refs:[ref]}]})
+  const cases:[string,string][]=[['not json','json_parse'],[JSON.stringify({kind:'wait',reason:'hold',evidence_refs:[],criteria:[{index:0,evidence_refs:[ref]}]}),'schema'],[JSON.stringify({kind:'correct',instruction:'retry',evidence_refs:['call_00_x']}),'evidence_ref'],[JSON.stringify({kind:'complete',evidence_refs:[],criteria:[{index:0,evidence_refs:[ref]}]}),'evidence_ref'],[JSON.stringify({kind:'complete',evidence_refs:[ref],criteria:[{index:1,evidence_refs:[ref]}]}),'evidence_ref']]
+  for(const [bad,stage] of cases){
+   const gateway=new QueuedGateway([bad,good]),actual=await new GatewayTaskVerifier({gateway,model:'test'}).evaluateTask(current,tasks.evidence(task.id),new AbortController().signal)
+   assert.equal(actual.kind,'complete');assert.equal(gateway.completions.length,2)
+   const first=JSON.parse(gateway.completions[0]!.prompt) as {valid_evidence_refs:string[]},second=JSON.parse(gateway.completions[1]!.prompt) as {validation_feedback:{stage:string;valid_evidence_refs:string[];previous_response:string}}
+   assert.deepEqual(first.valid_evidence_refs,[ref]);assert.equal(second.validation_feedback.stage,stage);assert.deepEqual(second.validation_feedback.valid_evidence_refs,[ref]);assert.ok(second.validation_feedback.previous_response.length<=2000)
+  }
+  // Live qwen-max shape: a bare string where an array is required; feedback must name the path and expected type.
+  const scalar=new QueuedGateway([JSON.stringify({kind:'complete',evidence_refs:[ref],criteria:[{index:0,evidence_refs:ref}]}),good])
+  assert.equal((await new GatewayTaskVerifier({gateway:scalar,model:'test'}).evaluateTask(current,tasks.evidence(task.id),new AbortController().signal)).kind,'complete')
+  const repair=(JSON.parse(scalar.completions[1]!.prompt) as {validation_feedback:{issues:{path:string;message:string}[]}}).validation_feedback
+  assert.equal(repair.issues[0]?.path,'criteria.0.evidence_refs');assert.match(repair.issues[0]?.message ?? '',/array/)
+  const indexed=new QueuedGateway([JSON.stringify({kind:'complete',evidence_refs:[ref],criteria:[{index:3,evidence_refs:[ref]}]}),good])
+  await new GatewayTaskVerifier({gateway:indexed,model:'test'}).evaluateTask(current,tasks.evidence(task.id),new AbortController().signal)
+  assert.match((JSON.parse(indexed.completions[1]!.prompt) as {validation_feedback:{hint:string}}).validation_feedback.hint,/\[0, 1\)/)
+  const twice=new QueuedGateway([JSON.stringify({kind:'complete',evidence_refs:[ref],criteria:[{index:1,evidence_refs:[ref]}]}),JSON.stringify({kind:'complete',evidence_refs:[ref],criteria:[{index:2,evidence_refs:[ref]}]})])
+  await assert.rejects(new GatewayTaskVerifier({gateway:twice,model:'test'}).evaluateTask(current,tasks.evidence(task.id),new AbortController().signal),error=>error instanceof TaskCheckError&&error.stage==='evidence_ref'&&error.code==='criterion_index')
+  assert.equal(twice.completions.length,2)
+  // First reply unknown ref retries; second has valid refs but only inspect-only observations so bound check fails.
+  const inspectDir=await mkdtemp(join(await realpath(tmpdir()),'task-verifier-nocheck-')),inspectTasks=new TaskService(join(inspectDir,'tasks.json'))
+  await inspectTasks.open();const inspectTask=await inspectTasks.delegate('declare',{conversation_id:'c',execution_route:'codex',goal:'Fix',acceptance:['tests pass'],origin_ref:'user:1'}),inspectFence={task_id:inspectTask.id,control_revision:0,goal_revision:0}
+  await inspectTasks.bindWork(inspectFence,'work','session');await inspectTasks.appendEvent({task_id:inspectTask.id,work_id:'work',session_id:'session',thread_id:'thread',turn_id:'turn',kind:'tool',stage:'completed',refs:[],item_id:'ls',text:JSON.stringify({type:'commandExecution',status:'completed',command:'ls',output:'a',exit_code:0})},'ls');await inspectTasks.recordWorkOutcome('work','ok',{worker:'codex'})
+  const inspectRef=inspectTasks.evidence(inspectTask.id)[0]!.ref
+  const inspectGateway=new QueuedGateway([JSON.stringify({kind:'complete',evidence_refs:[inspectRef],criteria:[{index:0,evidence_refs:['nope']}]}),JSON.stringify({kind:'complete',evidence_refs:[inspectRef],criteria:[{index:0,evidence_refs:[inspectRef]}]})])
+  assert.equal((await new GatewayTaskVerifier({gateway:inspectGateway,model:'test'}).evaluateTask(inspectTasks.get(inspectTask.id),inspectTasks.evidence(inspectTask.id),new AbortController().signal)).kind,'wait')
+  await inspectTasks.close();await rm(inspectDir,{recursive:true,force:true})
+  const transport=new QueuedGateway([],new GatewayError('TimeoutError'))
+  await assert.rejects(new GatewayTaskVerifier({gateway:transport,model:'test'}).evaluateTask(current,tasks.evidence(task.id),new AbortController().signal),error=>error instanceof TaskCheckError&&error.stage==='model_call'&&error.code==='timeout_error')
+  assert.equal(transport.completions.length,1)
+ }finally{await tasks.close();await rm(dir,{recursive:true,force:true})}
 })

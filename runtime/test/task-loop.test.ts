@@ -58,7 +58,7 @@ test('projection failure retries only the Todo and model failure waits without e
  // Linked Todo is captured at declaration, not reconstructed from the completion text.
  const linked=await f.tasks.delegate('linked',{conversation_id:'c',goal:'linked',acceptance:[],origin_ref:'conversation:1',todo_ref:{id:'todo',version:1}});await f.tasks.recordDelivery(fence(linked),'linked','answer')
  const projection=new TaskLoop(f.tasks,{evaluate:async()=>{evaluated++;return {kind:'complete',evidence_refs:['task-delivery:linked']}},execute:async()=>assert.fail('execution'),syncTodo:async()=>{synced++;if(synced===1)throw Error('lost');return 'synced'}});await projection.wake(linked.id);assert.equal(f.tasks.get(linked.id).todo_sync,'pending');await projection.wake(linked.id);assert.equal(f.tasks.get(linked.id).todo_sync,'synced');assert.equal(evaluated,1);await projection.close();await loop.close()
- const failed=new TaskLoop(f.tasks,{evaluate:async()=>{throw Error('model unavailable')},execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'});await failed.wake(f.task.id);assert.equal(f.tasks.get(f.task.id).waiting_reason,'task_check_unavailable');assert.equal(f.tasks.get(f.task.id).corrections,0);await failed.close()
+ const failed=new TaskLoop(f.tasks,{evaluate:async()=>{throw Error('model unavailable')},execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'});await failed.wake(f.task.id);assert.equal(f.tasks.get(f.task.id).waiting_reason,'task_check_unavailable');assert.equal(f.tasks.get(f.task.id).corrections,0);assert.equal(JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text).stage,'evaluate');await failed.close()
  }finally{await f.close()}
 })
 
@@ -182,5 +182,35 @@ test('unknown work arriving after effect admission fences the last dispatch boun
  const f=await setup();let executed=0;const mark=f.tasks.markEffectDispatching.bind(f.tasks)
  try{await f.tasks.recordDelivery(fence(f.task),'partial','incomplete');f.tasks.markEffectDispatching=async effect=>{await mark(effect);await f.tasks.bindWork(fence(f.tasks.get(f.task.id)),'late');await f.tasks.recordWorkOutcome('late','unknown',{})}
  const loop=new TaskLoop(f.tasks,{evaluate:async()=>({kind:'correct',instruction:'finish',evidence_refs:['task-delivery:partial']}),execute:async()=>{executed++},syncTodo:async()=> 'synced'});await loop.wake(f.task.id);assert.equal(executed,0);assert.equal(f.tasks.get(f.task.id).waiting_reason,'task_effect_unknown');await loop.close()
+ }finally{await f.close()}
+})
+
+test('verifier and apply failures keep task_check_unavailable and record only stage and code',async()=>{
+ const {TaskCheckError}=await import('../src/personal-agent/task-loop.js')
+ const f=await setup();try{await f.tasks.recordDelivery(fence(f.task),'reply','answer')
+  const schema=new TaskLoop(f.tasks,{evaluate:async()=>{throw new TaskCheckError('schema','strict_extra')},execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'})
+  await schema.wake(f.task.id);assert.equal(f.tasks.get(f.task.id).waiting_reason,'task_check_unavailable')
+  assert.deepEqual(JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text),{kind:'wait',reason:'task_check_unavailable',evidence_refs:[],stage:'schema',code:'strict_extra'})
+  await schema.close()
+  const badRef=new TaskLoop(f.tasks,{evaluate:async()=>({kind:'correct',instruction:'retry',evidence_refs:['nope']}),execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'})
+  await badRef.wake(f.task.id);const applyEvent=JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text)
+  assert.equal(applyEvent.stage,'apply');assert.equal(applyEvent.code,'invalid_evidence');assert.doesNotMatch(String(applyEvent.reason??''),/nope/u);await badRef.close()
+  const empty=new TaskLoop(f.tasks,{evaluate:async()=>({kind:'complete',evidence_refs:[]}),execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'})
+  await empty.wake(f.task.id);assert.equal(JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text).code,'missing_evidence');await empty.close()
+  const secret=new TaskLoop(f.tasks,{evaluate:async()=>{throw Error('SECRET_TOKEN_xyz')},execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'})
+  await secret.wake(f.task.id);const leaked=f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text
+  assert.equal(JSON.parse(leaked).stage,'evaluate');assert.doesNotMatch(leaked,/SECRET/u);await secret.close()
+ }finally{await f.close()}
+})
+
+test('work evidence keeps the newest completed tool observations under the byte budget',async()=>{
+ const f=await setup();try{await f.tasks.bindWork(fence(f.task),'work','session')
+  for(let i=0;i<20;i++)await f.tasks.appendEvent({task_id:f.task.id,work_id:'work',session_id:'session',thread_id:'thread',turn_id:'turn',item_id:'old-'+i,stage:'completed',kind:'tool',text:JSON.stringify({type:'commandExecution',status:'completed',command:'echo '+i,output:'x'.repeat(4000),exit_code:0}),refs:[]},'old-'+i)
+  await f.tasks.appendEvent({task_id:f.task.id,work_id:'work',session_id:'session',thread_id:'thread',turn_id:'turn',item_id:'final',stage:'completed',kind:'tool',text:JSON.stringify({type:'commandExecution',status:'completed',command:'npm test',output:'ALL_PASS',exit_code:0}),refs:[]},'final')
+  await f.tasks.recordWorkOutcome('work','ok',{final_message:'done'})
+  const evidence=f.tasks.evidence(f.task.id)[0]!
+  assert.equal(evidence.observations_truncated,true)
+  assert.ok(evidence.observations.some(item=>item.item_id==='final'&&item.text.includes('ALL_PASS')))
+  assert.ok(!evidence.observations.some(item=>item.item_id==='old-0'),'oldest oversized observations are dropped first')
  }finally{await f.close()}
 })

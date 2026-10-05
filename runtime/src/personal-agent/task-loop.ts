@@ -16,6 +16,14 @@ export const taskDecisionSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ])
 export type TaskDecision = z.infer<typeof taskDecisionSchema>
+export type TaskCheckStage = 'evaluate' | 'model_call' | 'json_parse' | 'schema' | 'evidence_ref' | 'apply'
+/** Tagged verifier/apply failure; waiting_reason stays task_check_unavailable for the desktop UI. */
+export class TaskCheckError extends Error {
+  constructor(readonly stage: TaskCheckStage, readonly code?: string) {
+    super('task_check_unavailable')
+    this.name = 'TaskCheckError'
+  }
+}
 export interface TaskLoopPorts {
   ready?(task: TaskRecord): boolean
   evaluate(task: TaskRecord, signal: AbortSignal): Promise<TaskDecision>
@@ -24,6 +32,15 @@ export interface TaskLoopPorts {
   syncTodo(task: TaskRecord): Promise<'synced' | 'conflict'>
 }
 export class TaskExecutionRejected extends Error {
+}
+const KNOWN_WAIT = ['task_effect_unknown', 'task_initial_pending', 'task_input_reconciliation_required', 'task_input_reconciliation_stale'] as const
+function shortCode(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const cleaned = value
+    .replace(/([a-z\d])([A-Z])/g, '$1_$2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .toLowerCase().replace(/[^a-z]+/g, '_').replace(/^_|_$/g, '').slice(0, 64)
+  return /^[a-z_]{1,64}$/.test(cleaned) ? cleaned : undefined
 }
 export class TaskLoop {
   #runs = new Map<string, Promise<void>>()
@@ -67,6 +84,7 @@ export class TaskLoop {
     if (task.phase === 'cancelled' || task.controller.kind !== 'nova' || this.tasks.activeWork(task.id).length)
       return
     const fence = { task_id: task.id, control_revision: task.control_revision, goal_revision: task.goal_revision }
+    let applying = false
     try {
       if (this.tasks.hasUnknownWork(task.id) || this.tasks.pendingEffect(task.id) || this.tasks.inputReceipts(task.id).some(receipt => receipt.status === 'unknown')) {
         await this.tasks.wait(fence, 'task_effect_unknown')
@@ -79,6 +97,7 @@ export class TaskLoop {
       }
       const decision = await this.ports.evaluate(task, this.#stop.signal)
       this.#stop.signal.throwIfAborted()
+      applying = true
       task = await this.tasks.applyDecision(fence, decision)
       if (decision.kind === 'reconcile') {
         this.#again.add(taskId)
@@ -104,7 +123,14 @@ export class TaskLoop {
       if (this.#stop.signal.aborted)
         return
       try {
-        await this.tasks.wait(fence, error instanceof Error && ['task_effect_unknown', 'task_initial_pending', 'task_input_reconciliation_required', 'task_input_reconciliation_stale'].includes(error.message) ? error.message : 'task_check_unavailable')
+        const msg = error instanceof Error ? error.message : ''
+        if ((KNOWN_WAIT as readonly string[]).includes(msg)) {
+          await this.tasks.wait(fence, msg)
+          return
+        }
+        const stage = error instanceof TaskCheckError ? error.stage : applying ? 'apply' : 'evaluate'
+        const code = shortCode(error instanceof TaskCheckError ? error.code : applying ? msg : undefined)
+        await this.tasks.wait(fence, 'task_check_unavailable', { stage, ...(code ? { code } : {}) })
       }
       catch { /* stale controller, goal or terminal state wins */ }
     }
