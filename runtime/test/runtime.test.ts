@@ -1971,3 +1971,62 @@ test('an explicitly unbounded delegate does not schedule a total deadline', () =
   }
   assert.equal(runtime.inFlightDelegate(admitted.delegate_id!) !== undefined, true)
 })
+
+for (const changing of [false, true]) for (const completeAt of [0, 1]) {
+  test(`completion at ${completeAt}: 1000 ${changing ? 'changing' : 'repeated'} progress events bound compression`, () => {
+    const {runtime, calls} = runtimeWithCalls({
+      manifest: testManifest({wake: 'none', compressWatermark: 1}),
+      delegateIds: ['d-1'], slots: ['compress'],
+    })
+    appendUserOrigin(runtime)
+    dispatchRoute(runtime, 'ambient')
+    runtime.queue.removeWhere(event => event.kind === 'deadline')
+    const drain = (at: number) => {
+      for (let event = runtime.queue.popReady(at); event; event = runtime.queue.popReady(at)) {
+        runtime.apply(event)
+      }
+    }
+    for (let i = 0; i < 1000; i++) {
+      const at = i / 1000
+      runtime.postExecutorProgress(0, {
+        phase: 'working', summary: changing ? `step ${i}` : null,
+        internal_activity: i + 1, elapsed: at,
+      }, at)
+      drain(at)
+      // Cover rows arriving both during compression and after completion.
+      if (i === completeAt) {
+        runtime.completeModelCall(calls[0]!.job_id, {channel: 'route_sim', summary: 'first'}, at)
+        drain(at)
+      }
+    }
+    assert.equal(calls.length, 1)
+    if (!changing) assert.equal(runtime.memory.channels.get('route_sim')!.items.length, 1)
+    drain(59.999)
+    assert.equal(calls.length, 1)
+    drain(60.001)
+    assert.equal(calls.length, changing ? 2 : 1)
+  })
+}
+
+test('progress phase and summary changes each append a new row', () => {
+  const runtime = dispatchedRuntime()
+  for (const [phase, summary] of [['started', null], ['working', null], ['working', 'done']] as const) {
+    runtime.postExecutorProgress(0, {phase, summary, internal_activity: phase === 'started' ? 0 : 1, elapsed: 1}, 1)
+    for (let event = runtime.queue.popReady(1); event; event = runtime.queue.popReady(1)) runtime.apply(event)
+  }
+  assert.equal(runtime.memory.channels.get('slow_sim')!.items.length, 3)
+})
+
+test('direct progress wakes only for phase or summary changes', () => {
+  const runtime = dispatchedRuntime()
+  const send = (summary: string, activity: number) => {
+    runtime.postExecutorProgress(0, {
+      phase: 'working', summary, internal_activity: activity, elapsed: activity,
+    }, 1)
+    return runtime.apply(runtime.queue.popReady(1)!)
+  }
+  assert.equal(send('first', 1)?.kind, 'progress')
+  assert.equal(send('first', 2), null)
+  assert.equal(send('next', 3)?.kind, 'progress')
+  assert.equal(runtime.memory.channels.get('slow_sim')!.items.length, 2)
+})

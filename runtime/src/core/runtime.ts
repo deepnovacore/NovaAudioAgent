@@ -181,6 +181,9 @@ export class CoreRuntime {
   readonly #latestProgressSuggestion = new Map<string, string>()
   readonly #latestProgressSummary = new Map<string, string>()
   readonly #latestObservationSuggestion = new Map<string, string>()
+  readonly #latestProgress = new Map<string, Extract<EventRecord, {kind: 'progress'}>['payload']>()
+  readonly #compressDeferred = new Set<string>()
+  readonly #compressNotBefore = new Map<string, number>()
   readonly #compressBacklog: string[] = []
   readonly #compressScheduled = new Set<string>()
   #jobSequence = 0
@@ -250,6 +253,9 @@ export class CoreRuntime {
     this.slots.clear()
     this.#compressBacklog.length = 0
     this.#compressScheduled.clear()
+    this.#compressNotBefore.clear()
+    this.#compressDeferred.clear()
+    this.#latestProgress.clear()
     this.#latestProgressSuggestion.clear()
     this.#latestProgressSummary.clear()
     this.#latestObservationSuggestion.clear()
@@ -883,6 +889,7 @@ export class CoreRuntime {
       this.#clearObservationCondition(delegate.delegate_id)
       this.#withdrawProgressSuggestion(delegate.delegate_id)
       this.#latestProgressSummary.delete(delegate.delegate_id)
+      this.#latestProgress.delete(delegate.delegate_id)
     }
     if (!record) {
       if (
@@ -940,6 +947,7 @@ export class CoreRuntime {
     this.#clearObservationCondition(delegate.delegate_id)
     this.#withdrawProgressSuggestion(delegate.delegate_id)
     this.#latestProgressSummary.delete(delegate.delegate_id)
+    this.#latestProgress.delete(delegate.delegate_id)
     if (record) {
       const policy = this.memory.policies.get(delegate.executor)
       const manifest = this.#manifests.get(delegate.executor)
@@ -975,6 +983,13 @@ export class CoreRuntime {
     }
     const policy = this.memory.policies.get(delegate.executor)
     if (policy === undefined) return undefined
+    const previous = this.#latestProgress.get(delegate.delegate_id)
+    this.#latestProgress.set(delegate.delegate_id, event.payload)
+    // Node-only heartbeat coalescing: oracle fixtures currently contain no repeated phase/summary.
+    // Retain the latest payload (including counters) without adding rows or model wakes.
+    if (previous?.phase === event.payload.phase && previous.summary === event.payload.summary) {
+      return undefined
+    }
     const content: Record<string, JsonValue> = {
       op: event.payload.op,
       phase: event.payload.phase,
@@ -1312,7 +1327,13 @@ export class CoreRuntime {
   }
 
   #applyCompress(event: Extract<EventRecord, {kind: 'compress'}>): void {
+    this.#compressDeferred.delete(event.payload.channel)
     if (!this.#wiredSlots.has('compress') || this.#compressScheduled.has(event.payload.channel)) return
+    const notBefore = this.#compressNotBefore.get(event.payload.channel) ?? event.ts
+    if (event.ts < notBefore) {
+      this.#deferCompression(event.payload.channel, notBefore)
+      return
+    }
     if (!this.memory.channels.has(event.payload.channel)) {
       throw new Error(`unknown compression channel: ${event.payload.channel}`)
     }
@@ -1333,6 +1354,9 @@ export class CoreRuntime {
       this.#results.delete(job.jobId)
       this.#jobs.delete(job.jobId)
       this.#compressScheduled.delete(event.payload.channel)
+      // ponytail: full retained windows are still compressed. A per-channel 60s cooldown
+      // bounds retries (including new appends); incremental compression is deliberately deferred.
+      this.#compressNotBefore.set(event.payload.channel, event.ts + 60)
       const parsed = compressorOutputSchema.safeParse(output)
       const summary = parsed.success && parsed.data.channel === event.payload.channel
         ? stripLikePython(parsed.data.summary)
@@ -1349,12 +1373,17 @@ export class CoreRuntime {
         if (!applied) this.diagnostics.push({code: 'stale_compressor_output'})
         const policy = this.memory.policies.get(event.payload.channel)
         if (policy !== undefined && channel.uncompressed >= policy.compress_watermark) {
-          this.#compressScheduled.add(event.payload.channel)
-          this.#compressBacklog.push(event.payload.channel)
+          this.#deferCompression(event.payload.channel, event.ts + 60)
         }
       }
     })
     this.#continueCompression()
+  }
+
+  #deferCompression(channel: string, at: number): void {
+    if (this.#compressDeferred.has(channel)) return
+    this.#compressDeferred.add(channel)
+    this.post({kind: 'compress', payload: {channel}}, at)
   }
 
   #continueCompression(): void {
@@ -1373,9 +1402,15 @@ export class CoreRuntime {
       && target.uncompressed >= policy.compress_watermark
       && !this.#compressScheduled.has(channel)
     ) {
-      this.#compressScheduled.add(channel)
-      this.#compressBacklog.push(channel)
-      this.post({kind: 'compress', payload: {channel}}, input.ts)
+      const notBefore = this.#compressNotBefore.get(channel) ?? input.ts
+      if (input.ts < notBefore) {
+        // Queue once even if no further input arrives after the cooldown.
+        this.#deferCompression(channel, notBefore)
+      } else {
+        this.#compressScheduled.add(channel)
+        this.#compressBacklog.push(channel)
+        this.post({kind: 'compress', payload: {channel}}, input.ts)
+      }
     }
     return item
   }
