@@ -7,6 +7,11 @@ export class FeishuAppNotConfigured extends Error { constructor() { super('Feish
 
 // Full command AND flag validation. No shell, arbitrary API, identity override or downloads.
 export function assertFeishuCommand(args: readonly string[]): void {
+  // The only raw endpoint allowed is read-only retrieval of one existing message.
+  if (args[0] === 'api') {
+    if (args.length !== 7 || args[1] !== 'GET' || !/^\/open-apis\/im\/v1\/messages\/om_[A-Za-z0-9_-]+$/u.test(args[2] ?? '') || args.slice(3).join(' ') !== '--as user --format json') throw new Error('Unsupported Feishu command');
+    return;
+  }
   const definitions: [string[], Record<string, string | true>][] = [
     [['--version'], {}],
     [['config', 'keychain-downgrade'], {}],

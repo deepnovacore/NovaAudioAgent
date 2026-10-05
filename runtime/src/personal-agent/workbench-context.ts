@@ -13,7 +13,7 @@ export const contextCardSchema=z.object({candidate_id:z.string().min(1).max(128)
 export const recapSchema=z.object({text:z.string().trim().min(1).max(160),refs:z.array(refSchema).min(1).max(8)}).strict()
 export const contextCardsSchema=z.object({recap:recapSchema.nullable().default(null),cards:z.array(contextCardSchema).max(9)}).strict()
 export type ContextCards=z.infer<typeof contextCardsSchema>
-export type ContextEntry=ContextInput | (Pick<MemoryEntry,'id'|'version'|'content'> & {origin?:'stated'|'inferred'})
+export type ContextEntry=ContextInput | (Pick<MemoryEntry,'id'|'version'|'content'|'sources'> & {origin?:'stated'|'inferred'})
 export type ContextGenerator=(candidates:readonly ContextCandidate[],signal:AbortSignal)=>Promise<z.input<typeof contextCardsSchema>>
 const keyOf=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const generationRevision='project-digest-v4'
@@ -62,8 +62,18 @@ export class WorkbenchContext{
  #key(){return keyOf([generationRevision,this.#candidates.map(candidate=>[candidate.candidate_id,candidate.version])])}
  /** Active own projects, one line each, straight from their digests; no model call. */
  #projects(){return (this.#digests??[]).filter(d=>d.role==='own').slice(0,4).map(d=>({name:d.name,line:d.focus??d.summary})).filter(p=>!leaksRawText(p.name+' '+p.line))}
+ #sources(refs:readonly {entry_id:string;version:string|number}[]):NonNullable<MemoryEntry['sources']>{
+  const sources=refs.flatMap(ref=>{
+   const input=this.#inputs.find(input=>input.id===ref.entry_id&&input.version===ref.version)
+   if(!input)return []
+   if(input.kind==='memory')return input.sources??[]
+   // Files are known from the host input type. Never invent a remote locator for local material.
+   return [{evidence_id:input.id,type:'file' as const,label:input.rel_path.split(/[\\/]/u).at(-1),observed_at:new Date(input.mtime_ms).toISOString()}]
+  })
+  return structuredClone([...new Map(sources.map(source=>[JSON.stringify(source),source])).values()])
+ }
  snapshot(){
-  const recap=this.#recapCurrent()?this.#state.recap!.text:null,cards=this.#state.cards.flatMap(card=>{const refs=this.#shownRefs(card);return refs&&!this.#state.dismissed.includes(card.candidate_id)?[{card,refs}]:[]}).map(({card,refs})=>({...structuredClone(card),id:card.candidate_id,refs:refs.map(ref=>({...ref,label:this.#inputs.find(input=>input.id===ref.entry_id)?.content.slice(0,700)??ref.entry_id}))}))
+  const recap=this.#recapCurrent()?this.#state.recap!.text:null,cards=this.#state.cards.flatMap(card=>{const refs=this.#shownRefs(card);return refs&&!this.#state.dismissed.includes(card.candidate_id)?[{card,refs}]:[]}).map(({card,refs})=>({...structuredClone(card),id:card.candidate_id,sources:this.#sources(refs),refs:refs.map(ref=>({...ref,label:this.#inputs.find(input=>input.id===ref.entry_id)?.content.slice(0,700)??'来源内容不可用'}))}))
   const empty_reasons={todos:this.#emptyReason('todos',cards.filter(card=>card.tab==='todos').length),ideas:this.#emptyReason('ideas',cards.filter(card=>card.tab==='ideas').length),goals:this.#emptyReason('goals',cards.filter(card=>card.tab==='goals').length)}
   return {status:this.#status,candidate_count:this.#candidates.length,recap:{text:recap,projects:this.#projects()},empty_reason:this.#candidates.length===0?this.#digestsPending?'digests_pending':'no_eligible_sources':cards.length===0&&this.#status==='ready'?'model_abstained':cards.length===0&&this.#status==='failed'?'generation_failed':null,empty_reasons,cards}
  }
@@ -74,7 +84,7 @@ export class WorkbenchContext{
   this.#inputs=entries.flatMap<ContextInput>(entry=>{
    if('kind' in entry&&entry.kind==='file')return [entry]
    if('kind' in entry&&entry.kind==='memory')return entry.version===null?[]:[entry]
-   if('origin' in entry&&entry.version!==null)return [{kind:'memory',id:entry.id,version:entry.version,content:entry.content,origin:entry.origin??'inferred'}]
+   if('origin' in entry&&entry.version!==null)return [{kind:'memory',id:entry.id,version:entry.version,content:entry.content,origin:entry.origin??'inferred',sources:entry.sources}]
    return []
   }).filter(entry=>entry.content.trim())
   this.#candidates=selectContextCandidates(this.#inputs,this.#digests)

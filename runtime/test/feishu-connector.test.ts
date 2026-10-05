@@ -18,7 +18,7 @@ test('unsupported CLI stays unavailable on subsequent status requests without ac
   } finally {await connector.close();await rm(directory,{recursive:true,force:true});}
 });
 import {abortable} from '../src/core/camera-session.js';
-import { FEISHU_SCOPES, FeishuConnector, type FeishuMessage } from '../src/connectors/feishu/index.js';
+import { structuredMention, FEISHU_SCOPES, FeishuConnector, type FeishuMessage } from '../src/connectors/feishu/index.js';
 
 test('expired Feishu authorization preserves app binding and clears after login', async () => {
   const directory=await mkdtemp(join(tmpdir(),'nova-feishu-expired-'));
@@ -183,7 +183,8 @@ test('selected chat ingestion, pagination, delete generations, private bot and d
     assert.equal(pageCalls, 2); assert.equal(messages.length, 2);
     assert(changes.length > 0);
     assert.equal(messages[1]!.raw_text, '评审\n周五前回复');
-    assert.equal(messages[0]!.sender_id, 'ou_other'); assert.equal(messages[1]!.sender_id, '');
+    assert.equal(messages[0]!.sender_id, 'ou_other'); assert.equal(messages[1]!.sender_id, 'ou_fixture');
+    assert.equal(messages[1]!.recipient_id,'ou_fixture');assert.equal(messages[1]!.chat_id,'oc_selected');assert.equal(messages[1]!.auto_capture,false);
     assert.equal(messages[0]!.source_kind, 'im');
     assert.equal(Date.parse(messages[0]!.retention_until) - Date.parse(messages[0]!.observed_at), 30 * 86400_000);
     await connector.command('feishu.bot.configure', { enabled: true });
@@ -359,3 +360,37 @@ test('Feishu read scope never grants model processing and settings reports curre
     assert.equal(connector.snapshot().processing_consent_required, true);
   } finally { await connector.close(); await rm(directory, {recursive: true, force: true}); }
 });
+
+test('direct mentions use structured identity, fall back to raw GET, and fence historical capture',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'nova-mention-')),messages:FeishuMessage[]=[]
+ let now=new Date('2026-10-04T02:00:00Z'),fallbacks=0
+ const connector=new FeishuConnector({executable:'fixture',credentialRoot:directory,statePath:join(directory,'state'),now:()=>now,
+ ingest:m=>{messages.push(m);return Promise.resolve()},deleteSource:()=>Promise.resolve(),onAction:()=>Promise.resolve(),run:async args=>{
+  await Promise.resolve()
+  assertFeishuCommand(args)
+  if(args[0]==='--version')return '1.0.69'
+  if(args[1]==='status')return JSON.stringify({appId:'fixture',identities:{user:{openId:'ou_me',status:'authenticated',scopes:FEISHU_SCOPES}}})
+  if(args[1]==='login')return JSON.stringify({verification_url:'https://accounts.feishu.cn/device',device_code:'fixture',expires_in:900})
+  if(args[1]==='+chat-list')return JSON.stringify({items:[{chat_id:'oc_test',name:'test'}],has_more:false})
+  if(args[0]==='api'){fallbacks++;return JSON.stringify({data:{items:[{message_id:'om_missing',message_type:'text',body:{content:JSON.stringify({text:'@_user_1 请提交'})},mentions:[{id:'ou_me',id_type:'open_id'}]}]}})}
+  if(args[1]==='+chat-messages-list')return JSON.stringify({has_more:false,items:[
+   {message_id:'om_direct',mentions:[{id:'ou_me',id_type:'open_id'}]},
+   {message_id:'om_all',mentions:[{id:'all'}]},
+   {message_id:'om_other',mentions:[{id:'ou_other',id_type:'open_id'}]},
+   {message_id:'om_old',create_time:'2026-10-03T02:00:00Z',mentions:[{id:'ou_me',id_type:'open_id'}]},
+   {message_id:'om_missing'},
+  ].map(row=>({msg_type:'text',content:'@_user_1 请提交',sender:{open_id:'ou_other'},create_time:now.toISOString(),...row}))})
+  return '{}'
+ }})
+ try{await connector.open();await connector.beginLogin();await connector.completeLogin();await connector.listChats();await connector.configure(['oc_test'],true);now=new Date('2026-10-04T02:01:00Z');await connector.sync()
+ const byId=new Map(messages.map(m=>[m.message_id,m]));assert.equal(byId.get('om_direct')?.mention,'direct');assert.equal(byId.get('om_direct')?.auto_capture,true)
+ assert.equal(byId.get('om_all')?.mention,'all');assert.equal(byId.get('om_other')?.mention,'none');assert.equal(byId.get('om_old')?.auto_capture,false);assert.equal(byId.get('om_missing')?.mention,'direct');assert.ok(fallbacks>0)
+ }finally{await connector.close();await rm(directory,{recursive:true,force:true})}
+})
+
+test('raw rich-text mention nodes identify users but text and forwarded content do not',()=>{
+ const raw={message_type:'post',body:{content:JSON.stringify({zh_cn:{content:[[{tag:'at',user_id:'ou_me'},{tag:'text',text:'处理'}]]}})}}
+ assert.equal(structuredMention(raw,'ou_me'),'direct')
+ assert.equal(structuredMention({...raw,message_type:'merge_forward'},'ou_me'),'unknown')
+ assert.equal(structuredMention({message_type:'text',content:'@ou_me 请处理'},'ou_me'),'unknown')
+})

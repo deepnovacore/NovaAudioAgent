@@ -177,3 +177,16 @@ test('the frameless workbench draws its own edge in both light and dark themes',
  const light=css.slice(0,css.indexOf('@media(prefers-color-scheme:dark)')),dark=css.slice(css.indexOf('@media(prefers-color-scheme:dark)'),css.indexOf('body[data-personal-collapsed="false"]'))
  assert.match(light,/--frame:rgba\(20,24,31,/);assert.match(dark,/--frame:rgba\(255,255,255,/)
 })
+
+test('Life and suggestion cards show only supplied source badges; old reference labels remain available',t=>{
+ const sources=[{type:'mail',evidence_id:'opaque',observed_at:'2026-10-04T00:00:00Z',summary:'确认的邮件'},{type:'im',provider:'feishu',mentioned_me:true,observed_at:'2026-10-04T00:00:00Z'}]
+ const h=harness(t)
+ renderLife(h.panel,{...h,kind:'todo',state:{todos:[{id:'t',title:'完成文档',note:'',version:1,status:'open',sources,auto_recorded:true,source_changed:true}],ideas:[],goals:[]}})
+ assert.deepEqual(all(h.panel).find(n=>n.className==='source-tags').children.map(n=>n.textContent),['邮件','飞书','@我','自动记录','来源有更新'])
+ const suggestions=harness(t)
+ renderSourceSuggestions(suggestions.panel,{...suggestions,tab:'ideas',context:{cards:[{id:'i',tab:'ideas',title:'讨论',body:'内容',sources,refs:[{entry_id:'opaque'}]},{id:'old',tab:'ideas',title:'旧建议',body:'内容',refs:[{entry_id:'private-id',label:'旧笔记'}]},{id:'unknown',tab:'ideas',title:'飞书邮件',body:'内容',refs:[{entry_id:'another-private-id'}]}]}})
+ const nodes=all(suggestions.panel)
+ assert.equal(nodes.filter(n=>n.className==='source-tags').length,1)
+ assert.match(text(suggestions.panel),/旧笔记/u)
+ assert.doesNotMatch(text(suggestions.panel),/opaque|private-id/u)
+})
