@@ -20,6 +20,32 @@ test('unsupported CLI stays unavailable on subsequent status requests without ac
 import {abortable} from '../src/core/camera-session.js';
 import { FEISHU_SCOPES, FeishuConnector, type FeishuMessage } from '../src/connectors/feishu/index.js';
 
+test('expired Feishu authorization preserves app binding and clears after login', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'nova-feishu-expired-'));
+  let expired=false;
+  const connector=new FeishuConnector({bootstrapOnly:true,executable:'fixture',credentialRoot:directory,statePath:join(directory,'state.json'),run:async(args)=>{
+    await Promise.resolve();
+    if(args[0]==='--version')return '1.0.97';
+    if(args[1]==='status')return JSON.stringify({appId:'cli_fixture',verified:true,identities:{user:{openId:'ou_fixture',userName:'Fixture',status:expired?'missing':'authenticated',tokenStatus:expired?'expired':'valid',scope:FEISHU_SCOPES.join(' ')}}});
+    throw Error('Unexpected command');
+  }});
+  try {
+    await connector.open();expired=true;
+    const status=await connector.command('feishu.status');
+    assert.equal(status.configured,true);assert.equal(status.state,'unauthorized');
+    assert.equal((status as unknown as {auth_issue:string}).auth_issue,'expired');
+    expired=false;
+    assert.equal((await connector.command('feishu.status') as unknown as {auth_issue?:string}).auth_issue,undefined);
+  } finally {await connector.close();await rm(directory,{recursive:true,force:true});}
+});
+
+test('verified automatic token refresh does not require another Feishu login', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'nova-feishu-refresh-'));
+  const connector=new FeishuConnector({bootstrapOnly:true,executable:'fixture',credentialRoot:directory,statePath:join(directory,'state.json'),run:(args)=>Promise.resolve(args[0]==='--version'?'1.0.97':JSON.stringify({appId:'cli_fixture',verified:true,identities:{user:{openId:'ou_fixture',status:'needs_refresh',available:true,verified:true,tokenStatus:'needs_refresh',scope:FEISHU_SCOPES.join(' ')}}}))});
+  try {await connector.open();const state=connector.snapshot();assert.equal(state.state,'disconnected');assert.equal(state.auth_issue,undefined);}
+  finally {await connector.close();await rm(directory,{recursive:true,force:true});}
+});
+
 test('Feishu runner rejects identity/flag/path expansion and malformed output', () => {
   assert.throws(() => createFeishuRunner('lark-cli', ''));
   assert.throws(() => assertFeishuCommand(['im', '+messages-send', '--as', 'user']));
