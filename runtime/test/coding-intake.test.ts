@@ -690,7 +690,7 @@ test('intake model ports use selected models, bounded JSON and explicit ownershi
       return Promise.resolve({text:JSON.stringify(value)})
     },
   }, 'cheap-assessor', 'chosen-planner')
-  await models.assess({intake_id: 'i1', revision: 1}, new AbortController().signal)
+  await models.assess({intake_id: 'i1', revision: 1, opening: 'Keep public API'}, new AbortController().signal)
   await models.plan({intake_id: 'i1', revision: 1}, new AbortController().signal)
   assert.deepEqual(requests.map(value => value.model), ['cheap-assessor', 'cheap-assessor', 'chosen-planner'])
   assert.match(requests[0]!.system, /ask only when the answer would change the implementation or the acceptance; otherwise prefer inferring and marking the inference\./)
@@ -1714,7 +1714,7 @@ test('a target result delayed across a new user revision cannot select or ask fo
  let targets=0
  const models=intakeModels({stream:()=>{throw Error('unused')},complete:request=>{
   const input=JSON.parse(request.prompt) as Record<string,unknown>
-  const requirements=requirementsSchema.strip().parse(assessment(input))
+  const requirements=requirementsSchema.strip().parse(assessment(input,{slots:{...slots,constraints:missing}}))
   return Promise.resolve({text:JSON.stringify(requirements)})
  }},'support','planner',{
   resolveIntake:async input=>{targets++;if(targets===1){started();await gate}
@@ -1735,7 +1735,7 @@ for(const stage of ['requirements','target'] as const){
   const requirementInputs:Record<string,unknown>[]=[],targetInputs:Readonly<Record<string,unknown>>[]=[]
   const models=intakeModels({stream:()=>{throw Error('unused')},complete:request=>{
    const input=JSON.parse(request.prompt) as Record<string,unknown>;requirementInputs.push(input)
-   const output=requirementsSchema.strip().parse(assessment(input,{execution_mode:'direct'}))
+   const output=requirementsSchema.strip().parse(assessment(input,{execution_mode:'direct',slots:{...slots,constraints:missing}}))
    return Promise.resolve({text:JSON.stringify(stage==='requirements'&&requirementInputs.length===1?{...output,kind:'work'}:output)})
   }},'support','planner',{
    resolveIntake:input=>{
@@ -1760,7 +1760,7 @@ test('stale requirements after a project question are discarded before confirmat
  let selections=0
  const models=intakeModels({stream:()=>{throw Error('unused')},complete:request=>{
   const input=JSON.parse(request.prompt) as Record<string,unknown>
-  return Promise.resolve({text:JSON.stringify(requirementsSchema.strip().parse(assessment({...input,revision:1})))})
+  return Promise.resolve({text:JSON.stringify(requirementsSchema.strip().parse(assessment({...input,revision:1},{slots:{...slots,constraints:missing}})))})
  }},'support','planner',{
   resolveIntake:input=>{selections++;return Promise.resolve({intake_id:input.intake_id,revision:input.revision,kind:'work',project:'blog',project_evidence:null,session:{mode:'new'},question:null})},
   resolveWork:()=>Promise.resolve(null),
@@ -1772,4 +1772,77 @@ test('stale requirements after a project question are discarded before confirmat
  assert.equal(h.dispatched.length,0)
  assert.ok(h.diagnostics.includes('intake_stale_result'))
  assert.ok(!h.diagnostics.includes('intake_assess_invalid_output'))
+})
+
+for (const text of ['继续原 Project 项目，添加暂停功能，不要新建工作区。','继续原 Project 项目和原 session，添加暂停功能，不安装依赖。','继续 Named task 会话，禁止联网，不要新建工作区。']) {
+ test(`live continuation keeps unrelated constraints separate: ${text}`,async()=>{
+  const named=text.includes('Named task')
+  const h=harness({roster:()=>[{name:'Project',last_used_at:1,last_session_title:'Named task',running:[],sessions:['Named task']}],
+   models:{assess:input=>Promise.resolve(assessment(input,{session:named?{mode:'named',title:'Named task'}:{mode:'latest'}}))}})
+  h.intake.open(request,text,'u1','e');await h.intake.settled()
+  assert.equal(h.decisions[0]?.session,'latest');assert.equal(h.dispatched.length,1)
+ })
+}
+
+test('requirement model cannot invent a stated constraint or quote an assistant as authority',async()=>{
+ for(const note of ['不执行 shell 命令','不安装依赖']) {
+  let targets=0
+  const models=intakeModels({stream:()=>{throw Error('unused')},complete:req=>{
+   const input=JSON.parse(req.prompt) as Record<string,unknown>
+   return Promise.resolve({text:JSON.stringify(requirementsSchema.strip().parse(assessment(input,{slots:{...slots,constraints:stated(note)}})))})
+  }},'support','planner',{resolveIntake:()=>{targets++;return Promise.resolve({})},resolveWork:()=>Promise.resolve(null)})
+  await assert.rejects(models.assess({intake_id:'i',revision:1,opening:'生成游戏并运行检查。',source_quotes:[],turns:[],conversation_context:[{role:'assistant',text:note}]},new AbortController().signal),/constraints/)
+  assert.equal(targets,0)
+ }
+})
+
+test('requirement model preserves exact user constraints from multiple selected turns',async()=>{
+ const models=intakeModels({stream:()=>{throw Error('unused')},complete:req=>{
+  const input=JSON.parse(req.prompt) as Record<string,unknown>
+  return Promise.resolve({text:JSON.stringify(requirementsSchema.strip().parse(assessment(input,{slots:{...slots,constraints:stated('不安装依赖\n不发布')}})))})
+ }},'support','planner',{resolveIntake:input=>Promise.resolve({intake_id:input.intake_id,revision:input.revision,kind:'work',project:null,project_evidence:null,session:{mode:'new'},question:null}),resolveWork:()=>Promise.resolve(null)})
+ const result=assessSchema.parse(await models.assess({intake_id:'i',revision:1,opening:'只在本项目实现，不发布。',source_quotes:['创建游戏，不安装依赖。'],turns:[]},new AbortController().signal))
+ assert.equal(result.slots.constraints.note,'不安装依赖\n不发布')
+})
+
+test('stated constraints reject single-character quotes that would match ordinary Chinese text', async () => {
+  let targets = 0
+  const models = intakeModels({stream: () => { throw Error('unused') }, complete: req => {
+    const input = JSON.parse(req.prompt) as Record<string, unknown>
+    return Promise.resolve({text: JSON.stringify(requirementsSchema.strip().parse(assessment(input, {slots: {...slots, constraints: stated('不')}})))})
+  }}, 'support', 'planner', {resolveIntake: () => { targets++; return Promise.resolve({}) }, resolveWork: () => Promise.resolve(null)})
+  await assert.rejects(models.assess({intake_id: 'i', revision: 1, opening: '不要新建工作区，继续实现。', source_quotes: [], turns: []}, new AbortController().signal), /constraints/)
+  assert.equal(targets, 0)
+})
+
+test('explicit original-session continuation accepts a named echo of the project latest title as latest', async () => {
+  const named = {assess: (input: Record<string, unknown>) => Promise.resolve(assessment(input, {project: 'Project', project_evidence: 'Project', session: {mode: 'named', title: 'Named task'}}))}
+  const roster = () => [{name: 'Project', last_used_at: 1, last_session_title: 'Named task', running: [], sessions: ['Named task', 'Older task']}]
+  const resumed = harness({roster, models: named})
+  resumed.intake.open(request, '请调用 dispatch，继续原 Project 项目的原会话，增加暂停与恢复。', 'u1', 'e'); await resumed.intake.settled()
+  assert.equal(resumed.dispatched.length, 1)
+  assert.equal(resumed.decisions[0]?.session, 'latest')
+  assert.equal(resumed.decisions[0]?.session_title, undefined)
+  const older = harness({roster, models: {assess: input => Promise.resolve(assessment(input, {project: 'Project', project_evidence: 'Project', session: {mode: 'named', title: 'Older task'}}))}})
+  older.intake.open(request, '请调用 dispatch，继续原 Project 项目的原会话，增加暂停与恢复。', 'u1', 'e'); await older.intake.settled()
+  assert.equal(older.dispatched.length, 0, 'a different named session still needs user evidence')
+  const vague = harness({roster, models: named})
+  vague.intake.open(request, '在 Project 里增加暂停与恢复。', 'u1', 'e'); await vague.intake.settled()
+  assert.equal(vague.dispatched.length, 0, 'without a continuation directive the named title still needs user evidence')
+})
+
+test('别的 before a session title is not a continuation negation', async () => {
+  const roster = () => [{name: 'Project', last_used_at: 1, last_session_title: 'Named task', running: [], sessions: ['Named task']}]
+  const named = {assess: (input: Record<string, unknown>) => Promise.resolve(assessment(input, {session: {mode: 'named', title: 'Named task'}}))}
+  const blocked = harness({roster, models: named})
+  blocked.intake.open(request, '不要继续 Named task 会话。', 'u1', 'e'); await blocked.intake.settled()
+  assert.equal(blocked.dispatched.length, 0)
+  const other = harness({roster, models: named})
+  other.intake.open(request, '继续别的 Named task 会话。', 'u1', 'e'); await other.intake.settled()
+  // 别的 must not trip the negation gate; without an exact "继续"+title adjacency this still asks.
+  assert.equal(other.dispatched.length, 0)
+  assert.ok(other.intake.view?.pending_question)
+  const exact = harness({roster, models: named})
+  exact.intake.open(request, '继续 Named task 会话。', 'u1', 'e'); await exact.intake.settled()
+  assert.equal(exact.dispatched.length, 1)
 })
