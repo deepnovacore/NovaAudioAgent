@@ -113,3 +113,70 @@ external phone server owns separate state and is not local-workbench sync.
 Public-history audit found no new company pilot integration, but an old deleted
 public document still has a real tailnet address in reachable history; see the
 progress record. That legacy history was not rewritten.
+
+
+### Five-tab UI update (2026-10-04)
+
+The intermediate Flutter navigation was Nova / Feeds / Todos / Ideas·Goals / Profile.
+The earlier four-tab screenshot checkpoint above describes the previous revision.
+Five replacement widget goldens and 320dp large-text layout checks passed; the
+full Flutter suite passed 86 tests with one existing opt-in socket skip. These are
+synthetic UI checks, not M5 phone-to-Mac acceptance. All unobserved live scenarios
+remain pending. Android package installation is preparation, not sync acceptance.
+
+
+### Topbar / independent Ideas and Goals (2026-10-04)
+
+Current bottom tabs: Nova / Feeds / Todos / Ideas / Goals. Profile moved to the
+new shared topbar. Feeds includes read-only desktop news recommendations and
+saved articles as well as reminders and task activity. Source/connector management
+remains unavailable. Six golden scenes cover the five tabs plus Profile, including
+320dp large-text navigation. Flutter analyzer passed; 87 tests passed with one
+existing opt-in socket skip. Runtime client-server tests: 20 passed. Independent
+Claude Sonnet review found no concrete P1/P2; producer limits were checked (at most
+100 saved articles and bounded recommendation list, 700-character summaries).
+
+Physical iPhone preparation: a signed Release package was installed and launched
+successfully after trusting the development identity. The user attempted QR pairing;
+agent-observed last state was Disconnected with empty credentials. Later the user
+reported a connection, which still needs on-screen verification. macOS iPhone
+Mirroring intermittently reports the phone in use/unavailable. USB CoreDevice
+reports connected. These observations do not establish the cause of the Nova
+connection issue, or implicate WireGuard. All nine live scenarios remain pending.
+
+The latest Topbar/independent-tab signed iPhone Release also built successfully
+(34.3 MB), passed strict/deep codesign verification, and was installed and launched
+on the connected iPhone 13 Pro. The Mac workbench was rebuilt and restarted with
+the news projection. Device screenshots and real data parity remain pending.
+
+
+### Physical follow-up (2026-10-04, 23:22 CST)
+
+- Xiaomi 14 (`<device-serial>`): installed the current debug APK over USB with
+  `adb install -r` (Success). The user confirmed that basic acceptance passed.
+  This is a user-reported basic pass, not an agent-observed pass of every M5
+  scenario. The app was then stopped to release the one-phone connection slot.
+- iPhone 13 Pro: current Release build succeeded (34.1 MB), strict/deep
+  codesign verification passed, and CoreDevice installation and launch succeeded.
+  Developer Mode was reported enabled. Mirroring showed the new Nova and Profile
+  UI, but the client was disconnected with empty connection fields. Real-data
+  synchronization and the remaining iPhone checks still require physical QR scan.
+- Desktop: started this worktree against the existing local profile. Full desktop
+  build failed during release-app dependency staging with ENOSPC; runtime
+  compilation succeeded. Removed only the incomplete generated release-app stage.
+  Source-mode launch later displayed real workbench suggestions.
+- Desktop outage investigated: captured `backend control unavailable` in settings
+  handlers and runtime process exit code 0. The two earlier telemetry runs at
+  22:20 and 22:23 recorded pipeline configuration but no successful provider
+  connection. Those logs do not establish the original exit trigger. A fresh
+  diagnostic run at 23:13:50 reached supervisor connected at 23:14:27 (about
+  37 seconds), restored the workbench and pairing UI, and remained connected
+  through 23:22. This is recovery evidence, not a root-cause fix or a long-duration
+  stability pass. Temporary source diagnostics were removed after collection.
+- Mac Tailscale was initially stopped; resumed the existing connection. A new QR
+  code was prepared for the iPhone. Mirroring cannot operate its camera, so scan
+  remains a physical user step.
+
+All unobserved conflict, bidirectional-write, approval, reconnect, live-voice and
+large-font checks remain pending; the Xiaomi basic confirmation does not close
+those individual gates. No commit or push was performed.

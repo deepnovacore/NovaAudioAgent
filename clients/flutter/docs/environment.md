@@ -49,16 +49,16 @@ cache to the external disk still requires the user's administrator command.
 
 ## Workbench build recovery (2026-10-04)
 
-On this machine the SDKs and acceptance Xcode are on `$NOVA_EXT`,
-not their default locations. Source
-`$NOVA_EXT/Environments/nova-flutter.sh` before
-validation. Other machines must configure equivalent paths themselves.
+If the SDKs and acceptance Xcode live outside their default locations (for
+example on an external disk exposed as `$NOVA_EXT`), source your own
+environment script, such as `$NOVA_EXT/Environments/nova-flutter.sh`, before
+validation. Every machine must configure equivalent paths itself.
 
 After a reboot the pre-existing runtime symlinks may point to unmounted images.
 The iOS 18.5 images were restored read-only with:
 
 ```sh
-hdiutil attach -readonly -nobrowse $NOVA_EXT/SDKs/ios-runtime-downloads/runtime/AssetData/044-89849-100.dmg
+hdiutil attach -readonly -nobrowse "$NOVA_EXT/SDKs/ios-runtime-downloads/runtime/AssetData/044-89849-100.dmg"
 hdiutil attach -readonly -nobrowse '/Volumes/iOS 18.5 Simulator Bundle/Restore/044-89417-100.dmg'
 ```
 
