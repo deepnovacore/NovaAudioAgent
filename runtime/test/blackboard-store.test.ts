@@ -357,3 +357,52 @@ test('store close budget starts after the in-flight commit receipt', async t => 
     await store.close().catch(() => undefined); await rm(directory, {recursive: true, force: true})
   }
 })
+
+test('noisy channel cannot starve a quiet one under maxItems', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-blackboard-'))
+  const options = {path: join(directory, 'memory.sqlite'), ownerId: 'local', conversationId: 'one',
+    channels: ['conversation', 'codex'], retention: {maxItems: 10}}
+  let store = new BlackboardStore(options)
+  try {
+    const {generation} = await store.open()
+    await store.commit({generation, revision: 1, mutations: [1, 2, 3].map(seq => ({kind: 'append' as const, item: {...item(seq, 'origin-'+seq)}}))})
+    // One protected row per commit so older executor rows stay evictable.
+    for (let seq = 1; seq <= 20; seq++) {
+      await store.commit({generation, revision: 1 + seq, mutations: [{
+        kind: 'append',
+        item: memoryItemSchema.parse({channel: 'codex', seq, ts: 1, trust: 'trusted_system', priority: 50, content: {phase: 'working', internal_activity: seq}, outcome: 'unknown'}),
+      }]})
+    }
+    const snapshot = await store.load()
+    const conversation = snapshot.channels.find(channel => channel.name === 'conversation')!
+    const codex = snapshot.channels.find(channel => channel.name === 'codex')!
+    assert.deepEqual(conversation.items.map(entry => entry.item.seq), [1, 2, 3])
+    assert.equal(conversation.items.length + codex.items.length, 10)
+    assert.deepEqual(codex.items.map(entry => entry.item.seq), [14, 15, 16, 17, 18, 19, 20])
+    await store.close()
+    store = new BlackboardStore(options)
+    const reopened = await store.open()
+    assert.deepEqual(reopened.channels.find(channel => channel.name === 'conversation')!.items.map(entry => entry.item.seq), [1, 2, 3])
+  } finally { await store.close(); await rm(directory, {recursive: true, force: true}) }
+})
+
+test('once a quiet channel holds the most rows it yields its own oldest', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-blackboard-'))
+  const store = new BlackboardStore({path: join(directory, 'memory.sqlite'), ownerId: 'local', conversationId: 'one',
+    channels: ['conversation', 'codex'], retention: {maxItems: 4}})
+  try {
+    const {generation} = await store.open()
+    await store.commit({generation, revision: 1, mutations: [
+      {kind: 'append', item: {...item(1, 'a')}},
+      {kind: 'append', item: memoryItemSchema.parse({channel: 'codex', seq: 1, ts: 1, trust: 'trusted_system', priority: 50, content: {n: 1}, outcome: 'unknown'})},
+    ]})
+    await store.commit({generation, revision: 2, mutations: [
+      {kind: 'append', item: {...item(2, 'b')}},
+      {kind: 'append', item: {...item(3, 'c')}},
+      {kind: 'append', item: {...item(4, 'd')}},
+    ]})
+    const snapshot = await store.load()
+    assert.deepEqual(snapshot.channels.find(channel => channel.name === 'conversation')!.items.map(entry => entry.item.seq), [2, 3, 4])
+    assert.deepEqual(snapshot.channels.find(channel => channel.name === 'codex')!.items.map(entry => entry.item.seq), [1])
+  } finally { await store.close(); await rm(directory, {recursive: true, force: true}) }
+})

@@ -91,3 +91,34 @@ test('empty recovered channels preserve high water and reject malformed recovery
   assert.throws(() => new Memory({recovery: [recovery, recovery]}), /duplicate/u)
   assert.throws(() => new Memory({recovery: [{...recovery, items: [{item: record('other', 1, 1, 'wrong scope'), recordedAtMs: 1, ordinal: 1}]}]}))
 })
+
+test('executor flood past maxItems keeps conversation origin for historical dispatch', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-recovery-'))
+  const options = {path: join(directory, 'board.sqlite'), ownerId: 'local', conversationId: 'one',
+    channels: ['conversation', 'codex'], retention: {maxItems: 10}}
+  let store = new BlackboardStore(options)
+  try {
+    const {generation} = await store.open()
+    await store.commit({generation, revision: 1, mutations: [
+      {kind: 'append', item: record('conversation', 1, 1, 'task origin')},
+      {kind: 'append', item: record('conversation', 2, 2, 'follow up')},
+      {kind: 'append', item: record('conversation', 3, 3, 'delegate now')},
+    ]})
+    for (let seq = 1; seq <= 20; seq++) {
+      await store.commit({generation, revision: 1 + seq, mutations: [{
+        kind: 'append', item: record('codex', seq, seq, 'activity '+seq),
+      }]})
+    }
+    await store.close()
+    store = new BlackboardStore(options)
+    const snapshot = await store.open()
+    let launches = 0
+    const runtime = new CoreRuntime({manifests: [manifest], ids: new MonotonicIdFactory(),
+      recovery: snapshot.channels, onExecutorDispatch: () => { launches += 1 }, onModelCall: () => { launches += 1 }})
+    assert.ok(runtime.memory.channels.get('conversation')?.getBySeq(3))
+    const admission = runtime.dispatchExternal({executor: 'worker', op: 'read', request: {}, origin_ref: 'conversation:3'}, reason)
+    assert.equal(admission.accepted, false)
+    assert.equal(admission.problem, 'historical_origin')
+    assert.notEqual(admission.problem, 'origin_not_found')
+  } finally { await store.close(); await rm(directory, {recursive: true, force: true}) }
+})
