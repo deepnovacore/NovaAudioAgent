@@ -4,7 +4,13 @@ final class PersonalSnapshot {
   PersonalSnapshot(Map<String, dynamic> value)
     : revision = Wire.integer(value['revision']),
       data = Map.unmodifiable(value) {
-    for (final key in ['life', 'conversations', 'memory', 'capabilities']) {
+    for (final key in [
+      'life',
+      'conversations',
+      'memory',
+      'capabilities',
+      'news',
+    ]) {
       if (value[key] != null && value[key] is! Map) {
         throw FormatException('Invalid $key');
       }
