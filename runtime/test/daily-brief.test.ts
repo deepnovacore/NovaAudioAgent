@@ -40,3 +40,25 @@ test('durable briefing claim survives restart independently from proposal dedupe
  assert.deepEqual(dueDailyBriefs(reopened.settings,now,reopened.dedupe),[])
  }finally{await rm(dir,{recursive:true,force:true})}
 })
+
+test('brief writer keeps empty distinct from malformed or failed model attempts',async()=>{
+ const {GatewayPersonalWriter}=await import('../src/model/personal-writer.js')
+ const snapshot={user_scope:'local',local_date:'2026-09-14',weekday:'Monday',timezone:'Asia/Shanghai',memory:[],evidence_refs:['allowed'],recent_delivery:[]}
+ const slot={kind:'outlook' as const,local_date:snapshot.local_date,timezone:snapshot.timezone,scheduled_at:'2026-09-14T00:30:00Z',dedupe_key:'brief:test'}
+ for(const text of ['null','not JSON',JSON.stringify({text:'invented',evidence_refs:['unknown'],memory_refs:[]})]){
+  const writer=new GatewayPersonalWriter({model:'m',gateway:{async *stream(){/* preparation never streams */},complete:()=>Promise.resolve({text})}})
+  if(text==='null')assert.equal(await writer.prepareBrief(snapshot,slot,new AbortController().signal),null)
+  else await assert.rejects(writer.prepareBrief(snapshot,slot,new AbortController().signal))
+ }
+ const writer=new GatewayPersonalWriter({model:'m',gateway:{async *stream(){/* preparation never streams */},complete:()=>Promise.reject(Error('offline'))}})
+ await assert.rejects(writer.prepareBrief(snapshot,slot,new AbortController().signal),/offline/)
+})
+
+
+test('brief schema is included in provider-visible prompt for JSON-object gateways',async()=>{
+ const {GatewayPersonalWriter}=await import('../src/model/personal-writer.js')
+ const writer=new GatewayPersonalWriter({model:'m',gateway:{async *stream(){/* preparation never streams */},complete:request=>{
+  assert.match(request.system,/用中文撰写简报/);assert.match(request.system,/以自然语言/);assert.match(request.system,/转换到 snapshot.timezone/);const body=JSON.parse(request.prompt) as {schema:unknown;snapshot:{memory:{evidence_refs?:string[]}[]}};assert.deepEqual(body.schema,request.jsonSchema);assert.ok(JSON.stringify(body.schema).includes('memory_refs'));assert.equal(body.snapshot.memory[0]?.evidence_refs,undefined);assert.ok(!request.prompt.includes('nested-not-approved'));assert.ok(!request.prompt.includes('chat:1'));return Promise.resolve({text:'null'})
+ }}})
+ await writer.prepareBrief({user_scope:'local',local_date:'2026-10-04',weekday:'Sunday',timezone:'Asia/Shanghai',memory:[{id:'m',version:1,content:'task',kind:'todo',origin:'stated',source_refs:[{type:'conversation',ref:'chat:1',observed_at:'2026-10-04T00:00:00Z'}],evidence_refs:['nested-not-approved'],observed_at:'2026-10-04T00:00:00Z',recorded_at:'2026-10-04T00:00:00Z',topic:'work',status:'active',corrected_to:null,confidence_note:null}],evidence_refs:['allowed'],recent_delivery:[]},{kind:'outlook',local_date:'2026-10-04',timezone:'Asia/Shanghai',scheduled_at:'2026-10-04T14:26:00Z',dedupe_key:'brief:test'},new AbortController().signal)
+})
