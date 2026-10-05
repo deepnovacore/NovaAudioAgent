@@ -256,6 +256,9 @@ export function backendLaunchSpec({
       DOUBAO_ASR_VOICEPRINT_NAME: settings?.voiceprintName ?? '',
       CASCADE_ENDPOINTING_PROVIDER: settings?.cascadedEndpointingProvider
         ?? SETTINGS_DEFAULTS.cascadedEndpointingProvider,
+      GEMINI_ASR_MODEL: settings?.geminiAsrModel ?? SETTINGS_DEFAULTS.geminiAsrModel,
+      GEMINI_TTS_MODEL: settings?.geminiTtsModel ?? SETTINGS_DEFAULTS.geminiTtsModel,
+      GEMINI_TTS_VOICE: settings?.geminiTtsVoice ?? SETTINGS_DEFAULTS.geminiTtsVoice,
       CASCADE_ASR_PROVIDER: settings?.cascadedAsrProvider
         ?? SETTINGS_DEFAULTS.cascadedAsrProvider,
       CASCADE_LLM_PROVIDER: llmProvider,
@@ -610,10 +613,11 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
       const llmProvider = settings?.cascadedLlmProvider
         ?? SETTINGS_DEFAULTS.cascadedLlmProvider
       activeSecretKeys.add(llmProvider === 'qwen' ? 'dashscopeApiKey' : `${llmProvider}ApiKey`)
-      activeSecretKeys.add('doubaoBigmodelApiKey')
+      activeSecretKeys.add((settings?.cascadedTtsProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoBigmodelApiKey')
       // Optional override only. When absent, the runtime falls back to the
       // big-model key; Main does not synthesize a duplicate secret value.
-      activeSecretKeys.add('doubaoAsrApiKey')
+      activeSecretKeys.add((settings?.cascadedAsrProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoAsrApiKey')
+      if ((settings?.cascadedAsrProvider ?? 'volcengine') === 'volcengine') activeSecretKeys.add('doubaoBigmodelApiKey')
     } else {
       const integrated = settings?.integratedProvider ?? 'qwen'
       activeSecretKeys.add(integrated === 'qwen' ? 'dashscopeApiKey' : `${integrated}ApiKey`)

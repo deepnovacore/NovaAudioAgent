@@ -1,6 +1,6 @@
 # OpenAI and Gemini providers
 
-The desktop Settings → Voice pipeline panel supports OpenAI and Google Gemini for integrated voice and for the LLM stage of a cascaded pipeline. Existing pipeline defaults are unchanged. These additions do not replace the cascaded ASR/TTS stages or the separate embedding provider.
+The desktop Settings → Voice pipeline panel supports OpenAI and Google Gemini for integrated voice and for the LLM stage of a cascaded pipeline. Existing pipeline defaults are unchanged. Gemini can also supply the ASR and TTS stages; the embedding provider remains separate.
 
 ## Models and configuration
 
@@ -11,7 +11,7 @@ The desktop Settings → Voice pipeline panel supports OpenAI and Google Gemini 
 | Cascaded LLM | OpenAI | `gpt-6-luna` | — | `OPENAI_API_KEY` |
 | Cascaded LLM | Gemini | `gemini-3.5-flash-lite` | `gemini-3.8-flash` | `GEMINI_API_KEY` |
 
-Set `PIPELINE_MODE=integrated` and `INTEGRATED_PROVIDER=openai` or `gemini`. Optional overrides are `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE` (default `marin`), `GEMINI_REALTIME_MODEL`, and `GEMINI_REALTIME_VOICE` (default `Kore`). Endpoint overrides must use WSS. For cascaded mode, set `CASCADE_LLM_PROVIDER=openai` or `gemini`; `CASCADE_LLM_MODEL` overrides its default. Speech still needs the selected ASR/TTS credentials.
+Set `PIPELINE_MODE=integrated` and `INTEGRATED_PROVIDER=openai` or `gemini`. Optional overrides are `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE` (default `marin`), `GEMINI_REALTIME_MODEL`, and `GEMINI_REALTIME_VOICE` (default `Kore`). Endpoint overrides must use WSS. For cascaded mode, set `CASCADE_LLM_PROVIDER=openai` or `gemini`; `CASCADE_LLM_MODEL` overrides its default. Speech needs the credentials for each selected ASR/TTS stage. Set `CASCADE_ASR_PROVIDER=gemini` and `CASCADE_TTS_PROVIDER=gemini` to use `GEMINI_API_KEY` for both; mixed-provider pipelines remain supported.
 
 Keys are vendor-specific. Selecting either provider never falls back to a DashScope or generic model key for the conversation. Separate support models follow the selected provider unless an explicit generic model connection is configured. Memory embeddings, external search and executors retain their own credentials; a global voice key does not grant those capabilities.
 
@@ -34,10 +34,18 @@ Adding another compatible provider requires configuration/credential routing, a 
 
 ## Why this first tier
 
-OpenAI provides a close fit to the existing acknowledged-item realtime transport and a low-latency cascaded option. Gemini adds an independent native voice implementation and Flash-family cost/latency options. Model names and documented API capabilities are selection criteria, not measured quality claims. xAI and new standalone ASR/TTS adapters are deferred to keep the first integration bounded. Compare real conversational latency, barge-in, Chinese/English speech and tool accuracy before changing defaults.
+OpenAI provides a close fit to the existing acknowledged-item realtime transport and a low-latency cascaded option. Gemini adds an independent native voice implementation and Flash-family cost/latency options. Model names and documented API capabilities are selection criteria, not measured quality claims. xAI adapters are deferred to keep the first integration bounded. Compare real conversational latency, barge-in, Chinese/English speech and tool accuracy before changing defaults.
 
 ## Validation
 
 Deterministic tests exercise configuration and credential isolation, GA event normalization, PCM resampling, playback truncation, binary JSON transport, Gemini setup/refresh/event fencing, tool thought-signature replay, settings persistence and usage projection. Live acceptance is separate: account access, billing, region, microphone echo cancellation and perceived audio quality cannot be established by these tests.
 
 Official references checked during implementation (2026-10-04): [OpenAI Realtime](https://developers.openai.com/api/docs/guides/realtime), [Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations), [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [Gemini Live API](https://ai.google.dev/api/live), [input transcription completion](https://googleapis.github.io/js-genai/release_docs/interfaces/types.Transcription.html), [Gemini Live capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities), [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai), [thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures).
+
+## Gemini cascaded speech
+
+Gemini ASR buffers one locally endpointed utterance (PCM16 mono, 16 kHz, up to 60 seconds plus bounded endpointing padding), then requests final transcription with `GEMINI_ASR_MODEL` (default `gemini-3.5-flash`). It does not emit partial transcripts or support Volcengine voiceprints. Dictation uses the same selected ASR stage.
+
+Gemini TTS synthesizes the speech segments supplied by the host in order with `GEMINI_TTS_MODEL` (default `gemini-3.8-flash-tts`) and `GEMINI_TTS_VOICE` (default `Kore`). WAV/PCM output is validated and converted to the host's PCM16 mono 24 kHz contract. The first synthesized segment is emitted before the whole response finishes; each segment still waits for one complete generateContent response, so this is not token-streaming TTS. Synthesis is sequential and applies backpressure to LLM text consumption, so longer replies may have gaps between segments. Cancellation aborts pending requests and fences late results. Provider errors are redacted; metering uses Gemini ASR/TTS service categories without inventing prices.
+
+The desktop ASR/TTS selectors expose Gemini independently, with separate model and voice settings. Existing defaults and Volcengine voice settings are preserved. An all-Gemini pipeline requires only `GEMINI_API_KEY` for conversation stages, though separately enabled tools or memory may need other credentials.

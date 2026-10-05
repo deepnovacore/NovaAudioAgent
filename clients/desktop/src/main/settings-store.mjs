@@ -30,9 +30,9 @@ export const PROACTIVITY_LEVELS = Object.freeze(['conservative', 'balanced', 'ea
 export const PIPELINE_MODES = Object.freeze(['integrated', 'cascaded'])
 export const INTEGRATED_PROVIDERS = Object.freeze(['qwen', 'stepfun', 'openai', 'gemini'])
 export const CASCADED_ENDPOINTING_PROVIDERS = Object.freeze(['auto'])
-export const CASCADED_ASR_PROVIDERS = Object.freeze(['volcengine'])
+export const CASCADED_ASR_PROVIDERS = Object.freeze(['volcengine','gemini'])
 export const CASCADED_LLM_PROVIDERS = Object.freeze(['qwen', 'ark', 'deepseek', 'openai', 'gemini'])
-export const CASCADED_TTS_PROVIDERS = Object.freeze(['volcengine'])
+export const CASCADED_TTS_PROVIDERS = Object.freeze(['volcengine','gemini'])
 export const HEARTBEAT_MIN_SECONDS = 15
 export const HEARTBEAT_MAX_SECONDS = 120
 export const MAX_MODEL_OR_VOICE_LENGTH = 64
@@ -266,6 +266,9 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
     integratedModel: pick(source.integratedModel, sameProvider ? fallback.integratedModel : undefined, selectedDefaults?.[0] ?? DEFAULT_SETTINGS.integratedModel, validModelOrVoice),
     integratedVoice: pick(source.integratedVoice, sameProvider ? fallback.integratedVoice : undefined, selectedDefaults?.[1] ?? DEFAULT_SETTINGS.integratedVoice, validModelOrVoice),
     cascadedEndpointingProvider: pick(source.cascadedEndpointingProvider, fallback.cascadedEndpointingProvider, DEFAULT_SETTINGS.cascadedEndpointingProvider, validCascadedEndpointingProvider),
+    geminiAsrModel: pick(source.geminiAsrModel, fallback.geminiAsrModel, DEFAULT_SETTINGS.geminiAsrModel, validModelOrVoice),
+    geminiTtsModel: pick(source.geminiTtsModel, fallback.geminiTtsModel, DEFAULT_SETTINGS.geminiTtsModel, validModelOrVoice),
+    geminiTtsVoice: pick(source.geminiTtsVoice, fallback.geminiTtsVoice, DEFAULT_SETTINGS.geminiTtsVoice, validModelOrVoice),
     cascadedAsrProvider: pick(source.cascadedAsrProvider, fallback.cascadedAsrProvider, DEFAULT_SETTINGS.cascadedAsrProvider, validCascadedAsrProvider),
     voiceprintEnabled: pick(source.voiceprintEnabled, fallback.voiceprintEnabled, false, validBoolean),
     voiceprintId: pick(source.voiceprintId, fallback.voiceprintId, '', value => typeof value === 'string' && (value === '' || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) ? value : null),
@@ -336,6 +339,9 @@ export function publicSettings(settings) {
     integratedModel: normalized.integratedModel,
     integratedVoice: normalized.integratedVoice,
     cascadedEndpointingProvider: normalized.cascadedEndpointingProvider,
+    geminiAsrModel: normalized.geminiAsrModel,
+    geminiTtsModel: normalized.geminiTtsModel,
+    geminiTtsVoice: normalized.geminiTtsVoice,
     cascadedAsrProvider: normalized.cascadedAsrProvider,
     voiceprintEnabled: normalized.voiceprintEnabled,
     voiceprintId: normalized.voiceprintId,

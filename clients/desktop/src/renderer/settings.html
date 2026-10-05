@@ -309,8 +309,10 @@
               <label for="cascadedAsrProvider">服务</label>
               <select id="cascadedAsrProvider">
                 <option value="volcengine">火山引擎 ASR</option>
+                <option value="gemini">Gemini ASR</option>
               </select>
             </div>
+            <div id="gemini-asr-settings" hidden><label for="geminiAsrModel">Gemini ASR 模型</label><input id="geminiAsrModel" type="text" maxlength="64" autocomplete="off"><p class="hint">说完一句后返回最终转录，不显示实时中间结果。</p></div>
             <section aria-label="声纹验证">
               <h4>声纹验证</h4>
               <p class="hint">声纹功能仅支持火山引擎 ASR。</p>
@@ -353,9 +355,11 @@
               <label for="cascadedTtsProvider">服务</label>
               <select id="cascadedTtsProvider">
                 <option value="volcengine">火山引擎 TTS</option>
+                <option value="gemini">Gemini TTS</option>
               </select>
             </div>
             <div class="field">
+              <div id="gemini-tts-settings" hidden><label for="geminiTtsModel">Gemini TTS 模型</label><input id="geminiTtsModel" type="text" maxlength="64" autocomplete="off"><p class="hint">按回复分段合成并播放，每段需等待一次语音生成。</p></div>
               <label for="cascadedTtsVoicePreset">音色</label>
               <div class="voice-picker">
                 <select id="cascadedTtsVoicePreset"></select>

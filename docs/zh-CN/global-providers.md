@@ -1,6 +1,6 @@
 # OpenAI 与 Gemini 接入
 
-桌面「设置 → 语音管线」支持选择 OpenAI 和 Google Gemini，分别用于集成语音或级联管线的 LLM 环节。现有默认选择保持不变；本轮没有新增 ASR、TTS 或 embedding 提供方。
+桌面「设置 → 语音管线」支持选择 OpenAI 和 Google Gemini，分别用于集成语音或级联管线的 LLM 环节。现有默认选择保持不变；Gemini 也可用于级联 ASR/TTS，embedding 提供方保持独立。
 
 | 管线 | 提供方 | 默认模型 | 其他预设 | 密钥 |
 | --- | --- | --- | --- | --- |
@@ -11,7 +11,7 @@
 
 集成模式设置 `PIPELINE_MODE=integrated`、`INTEGRATED_PROVIDER=openai` 或 `gemini`。可用 `OPENAI_REALTIME_MODEL`、`OPENAI_REALTIME_VOICE`、`GEMINI_REALTIME_MODEL`、`GEMINI_REALTIME_VOICE` 覆盖模型及音色，默认音色分别为 `marin` 和 `Kore`。自定义实时地址必须使用 WSS。
 
-级联模式设置 `PIPELINE_MODE=cascaded`、`CASCADE_LLM_PROVIDER=openai` 或 `gemini`，`CASCADE_LLM_MODEL` 可覆盖默认模型。ASR/TTS 仍使用原来选择的语音服务及其凭据。
+级联模式设置 `PIPELINE_MODE=cascaded`、`CASCADE_LLM_PROVIDER=openai` 或 `gemini`，`CASCADE_LLM_MODEL` 可覆盖默认模型。ASR/TTS 可独立选择 Gemini 或火山，分别使用所选服务的凭据。
 
 两家对话密钥严格独立，不会回退到 DashScope 或通用模型密钥。辅助模型默认跟随已选提供方，显式配置的通用模型连接优先。记忆 embedding、外部搜索及执行器仍有各自的凭据要求。用量会计入桌面统计，尚无核实的计价规则时显示费用未知，不套用其他厂商价格。
 
@@ -37,6 +37,14 @@ Gemini 输入转录只在 `inputTranscription.finished=true` 时结束，不从�
 
 扩展一个兼容提供方主要涉及配置和密钥路由、协议 profile、工厂注册、桌面选项及契约测试。原生实时协议的轮次或上下文语义不同，应单独实现适配器。当前规模不需要引入动态插件框架。
 
-本轮优先接入 OpenAI，原因是其确认式实时协议与现有实现接近；Gemini 则提供独立的原生语音协议及 Flash 系列级联选择。xAI 和独立海外 ASR/TTS 留到后续。上述选择依据文档能力和接入成本，不等同于已经测得的音质、延迟或性价比排名。
+本轮优先接入 OpenAI，原因是其确认式实时协议与现有实现接近；Gemini 则提供独立的原生语音协议及 Flash 系列级联选择。xAI 留到后续。上述选择依据文档能力和接入成本，不等同于已经测得的音质、延迟或性价比排名。
 
 自动测试覆盖协议、配置、打断、旧事件隔离及设置持久化。账户地区、余额、模型权限、真实麦克风、回声消除和听感需要另行实测。官方文档来源及详细技术说明见[英文版](../en/global-providers.md)。
+
+## Gemini 级联语音
+
+设置 `CASCADE_ASR_PROVIDER=gemini` 和 `CASCADE_TTS_PROVIDER=gemini`，两阶段均使用 `GEMINI_API_KEY`；也可与其他厂商混用。桌面设置提供独立的 ASR/TTS 服务、模型与音色选项，原有默认配置保持不变。
+
+ASR 默认 `GEMINI_ASR_MODEL=gemini-3.5-flash`，在本地断句后上传整句音频并返回最终转录，不提供实时中间结果，不支持火山声纹验证。输入为 16 kHz 单声道 PCM16，单句上限 60 秒，缓冲额外允许最多 4 秒断句边缘音频；听写同样使用所选 ASR。
+
+TTS 默认 `GEMINI_TTS_MODEL=gemini-3.8-flash-tts`、`GEMINI_TTS_VOICE=Kore`，按主机已有分句顺序合成，每段完成即可播放，无须等待整个回复；每段仍需等待一次完整 API 返回，不是原生流式 TTS。各段顺序合成期间会暂停消费 LLM 文本，长回复可能出现段间停顿。返回 WAV/PCM 经校验后输出 24 kHz 单声道 PCM16；取消会中止请求并丢弃迟到结果。用量按 Gemini ASR/TTS 记录，不虚构价格。全 Gemini 对话管线只需 Gemini key，独立工具及记忆配置仍可能需要其他凭据。

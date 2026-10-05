@@ -1,3 +1,5 @@
+import {createGeminiAsrFactory,createGeminiTtsFactory} from '../realtime/cascaded/gemini-speech.js'
+import type {GeminiSpeechConfig} from '../config/cascaded-realtime-config.js'
 import {createOpenAIWireProfile} from '../realtime/openai-wire-profile.js'
 import {GeminiLiveAdapter} from '../realtime/gemini.js'
 import {OPENAI_BASE_URL,GEMINI_BASE_URL} from '../config/config.js'
@@ -11,10 +13,8 @@ import {usageReporterForEndpoint, type UsageReporter} from '../realtime/usage.js
 import {
   capabilitiesFromSettings,
   resolveSupportModelConnection,
-  type CascadedAsrProviderName,
   type CascadedEndpointingProviderName,
   type CascadedLlmProviderName,
-  type CascadedTtsProviderName,
   type Settings,
   DASHSCOPE_COMPATIBLE_BASE_URL,
   STEPFUN_COMPATIBLE_BASE_URL,
@@ -176,18 +176,12 @@ export interface CascadedProviderRegistries {
     CascadedEndpointingProviderName,
     (input: AutoEndpointingFactoryInput) => EndpointingFactory
   >>
-  readonly asr: Readonly<Record<
-    CascadedAsrProviderName,
-    (input: VolcengineAsrFactoryInput) => AsrFactory
-  >>
+  readonly asr: Readonly<{volcengine:(input:VolcengineAsrFactoryInput)=>AsrFactory; gemini:(input:GeminiSpeechFactoryInput)=>AsrFactory}>
   readonly llm: Readonly<{
     readonly qwen: (input: QwenLlmFactoryInput) => CascadedLlmFactory
     readonly ark: (input: ArkLlmFactoryInput) => CascadedLlmFactory
   }>
-  readonly tts: Readonly<Record<
-    CascadedTtsProviderName,
-    (input: VolcengineTtsFactoryInput) => TtsFactory
-  >>
+  readonly tts: Readonly<{volcengine:(input:VolcengineTtsFactoryInput)=>TtsFactory; gemini:(input:GeminiSpeechFactoryInput)=>TtsFactory}>
 }
 
 export const cascadedProviderRegistries: CascadedProviderRegistries = Object.freeze({
@@ -208,6 +202,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     },
   }),
   asr: Object.freeze({
+    gemini:(input:GeminiSpeechFactoryInput)=>createGeminiAsrFactory({...input.config,...(input.onUsage?{onUsage:input.onUsage}:{})}),
     volcengine: (input: VolcengineAsrFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultAsrClient)({
         ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
@@ -235,6 +230,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     }),
   }),
   tts: Object.freeze({
+    gemini:(input:GeminiSpeechFactoryInput)=>createGeminiTtsFactory({...input.config,...(input.onUsage?{onUsage:input.onUsage}:{})}),
     volcengine: (input: VolcengineTtsFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultTtsClient)({
         ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
@@ -268,7 +264,7 @@ export function buildTextRealtimeAssembly(
     transcribeDraft:(pcm:Uint8Array,signal:AbortSignal)=>{
       signal.throwIfAborted()
       const config=requireSelectedCascadedAsrConfig(options.settings)
-      const factory=registry.asr.volcengine({config,ids,...(options.asrClient===undefined?{}:{clientFactory:options.asrClient}),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,config.endpoint)!})})
+      const factory=selectedAsrFactory(registry,{config,ids,...(options.asrClient===undefined?{}:{clientFactory:options.asrClient}),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,config.endpoint)!})})
       return transcribeDraft(factory.openClient(),pcm,signal)
     },
   })
@@ -306,7 +302,7 @@ export function buildCascadedRealtimeAssembly(
       : {capability: options.endpointingCapability}),
     ...(options.liveKitExecutor === undefined ? {} : {liveKitExecutor: options.liveKitExecutor}),
   })
-  const asrFactory = registry.asr[selection.asrProvider]({
+  const asrFactory = selectedAsrFactory(registry,{
     ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.asr.endpoint)!}),
     config: selected.asr,
     ids,
@@ -336,7 +332,7 @@ export function buildCascadedRealtimeAssembly(
     if (next !== instructions) { instructions = next; selectedLlmFactory = createLlmFactory() }
     return selectedLlmFactory.open()
   }}
-  const ttsFactory = registry.tts[selection.ttsProvider]({
+  const ttsFactory = selectedTtsFactory(registry,{
     ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.tts.endpoint)!}),
     config: selected.tts,
     ids,
@@ -710,4 +706,12 @@ function productionCodingComposition(
     codingAgentControllerFactory: factory,
     agentDescriptors: [...descriptors, descriptor],
   }
+}
+
+interface GeminiSpeechFactoryInput {readonly config:GeminiSpeechConfig;readonly onUsage?:UsageReporter}
+export function selectedAsrFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineAsrFactoryInput,'config'>&{config:VolcengineAsrConfig|GeminiSpeechConfig}):AsrFactory {
+  return input.config.provider==='gemini'?registry.asr.gemini({...input,config:input.config}):registry.asr.volcengine({...input,config:input.config})
+}
+export function selectedTtsFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineTtsFactoryInput,'config'>&{config:VolcengineTtsConfig|GeminiSpeechConfig}):TtsFactory {
+  return input.config.provider==='gemini'?registry.tts.gemini({...input,config:input.config}):registry.tts.volcengine({...input,config:input.config})
 }

@@ -122,6 +122,9 @@ const integratedProvider = document.querySelector('#integratedProvider')
 const integratedModel = document.querySelector('#integratedModel')
 const integratedVoicePreset = document.querySelector('#integratedVoicePreset')
 const integratedVoiceCustom = document.querySelector('#integratedVoiceCustom')
+const geminiAsrModel = document.querySelector('#geminiAsrModel')
+const geminiTtsModel = document.querySelector('#geminiTtsModel')
+const GEMINI_TTS_VOICES = ['Kore','Puck','Aoede','Charon','Fenrir'].map(value=>({value,label:value}))
 const cascadedAsrProvider = document.querySelector('#cascadedAsrProvider')
 const cascadedLlmProvider = document.querySelector('#cascadedLlmProvider')
 const cascadedLlmModelPreset = document.querySelector('#cascadedLlmModelPreset')
@@ -247,11 +250,11 @@ function keyUsage(view) {
         ? t("仅本地记忆嵌入需要") : t("当前未使用"),
     stepfunApiKey: view.pipelineMode === 'integrated' && view.integratedProvider === 'stepfun' ? t("必需") : t("当前未使用"),
     openaiApiKey: (view.pipelineMode === 'integrated' ? view.integratedProvider : view.cascadedLlmProvider) === 'openai' ? t('必需') : t('当前未使用'),
-    geminiApiKey: (view.pipelineMode === 'integrated' ? view.integratedProvider : view.cascadedLlmProvider) === 'gemini' ? t('必需') : t('当前未使用'),
+    geminiApiKey: (view.pipelineMode === 'integrated' ? view.integratedProvider === 'gemini' : [view.cascadedAsrProvider,view.cascadedLlmProvider,view.cascadedTtsProvider].includes('gemini')) ? t('必需') : t('当前未使用'),
     deepseekApiKey: view.pipelineMode === 'cascaded' && view.cascadedLlmProvider === 'deepseek' ? t("必需") : t("当前未使用"),
     arkApiKey: view.pipelineMode === 'cascaded'
       && view.cascadedLlmProvider === 'ark' ? t("必需") : t("当前未使用"),
-    doubaoBigmodelApiKey: view.pipelineMode === 'cascaded' ? t("必需") : t("当前未使用"),
+    doubaoBigmodelApiKey: view.pipelineMode === 'cascaded' && [view.cascadedAsrProvider,view.cascadedTtsProvider].includes('volcengine') ? t("必需") : t("当前未使用"),
     composioApiKey: t('应用连接；修改后重启运行时'),
     tavilyApiKey: t("可选"),
     openrouterApiKey: 'Jev',
@@ -463,6 +466,10 @@ function render(view, drafts, state) {
   renderPreset(integratedVoicePreset, integratedVoiceCustom, view.integratedVoice, voices)
   voiceprintPanel.render(view, drafts)
   cascadedAsrProvider.value = view.cascadedAsrProvider
+  geminiAsrModel.value = view.geminiAsrModel
+  geminiTtsModel.value = view.geminiTtsModel
+  document.querySelector('#gemini-asr-settings').hidden = view.cascadedAsrProvider !== 'gemini'
+  document.querySelector('#gemini-tts-settings').hidden = view.cascadedTtsProvider !== 'gemini'
   cascadedLlmProvider.value = view.cascadedLlmProvider
   const modelPresets = ({
     qwen: [
@@ -479,7 +486,9 @@ function render(view, drafts, state) {
   populatePresetOptions(cascadedLlmModelPreset, modelPresets, t("自定义模型 ID…"))
   renderPreset(cascadedLlmModelPreset, cascadedLlmModel, view.cascadedLlmModels?.[view.cascadedLlmProvider], modelPresets)
   cascadedTtsProvider.value = view.cascadedTtsProvider
-  renderPreset(cascadedTtsVoicePreset, cascadedTtsVoiceCustom, view.cascadedTtsVoice, VOLCENGINE_TTS_VOICES)
+  const ttsVoices = view.cascadedTtsProvider === 'gemini' ? GEMINI_TTS_VOICES : VOLCENGINE_TTS_VOICES
+  populatePresetOptions(cascadedTtsVoicePreset, ttsVoices)
+  renderPreset(cascadedTtsVoicePreset, cascadedTtsVoiceCustom, view.cascadedTtsProvider === 'gemini' ? view.geminiTtsVoice : view.cascadedTtsVoice, ttsVoices)
   renderBadges(view.secretsPresent, view.secretSources)
   renderKeyUsage(view)
   document.querySelector('#startup-status').dataset.stage = view.startup?.stage ?? ''
@@ -594,6 +603,8 @@ bindStage(integratedModel, 'change', () => ({
   ...(integratedModel.value !== currentView?.integratedModel
     ? {integratedVoice: integratedProvider.value === 'openai' ? 'marin' : integratedProvider.value === 'gemini' ? 'Kore' : integratedProvider.value === 'stepfun' ? 'default' : integratedModel.value.startsWith('qwen3.5-omni-') ? 'Ethan' : integratedModel.value === 'qwen-audio-3.1-realtime-plus' ? 'longanqian_v3.1' : 'longanqian'} : {}),
 }))
+bindStage(geminiAsrModel, 'input', () => ({geminiAsrModel: geminiAsrModel.value}))
+bindStage(geminiTtsModel, 'input', () => ({geminiTtsModel: geminiTtsModel.value}))
 bindStage(cascadedAsrProvider, 'change', () => ({cascadedAsrProvider: cascadedAsrProvider.value}))
 bindStage(cascadedLlmProvider, 'change', () => ({cascadedLlmProvider: cascadedLlmProvider.value}))
 cascadedLlmModelPreset.addEventListener('change', () => {
@@ -617,13 +628,13 @@ function bindVoicePicker(field, select, customInput) {
       customInput.focus()
       return
     }
-    controller.stage({[field]: select.value})
+    controller.stage({[typeof field === 'function' ? field() : field]: select.value})
   })
-  customInput.addEventListener('input', () => { controller.stage({[field]: customInput.value}) })
+  customInput.addEventListener('input', () => { controller.stage({[typeof field === 'function' ? field() : field]: customInput.value}) })
 }
 
 bindVoicePicker('integratedVoice', integratedVoicePreset, integratedVoiceCustom)
-bindVoicePicker('cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom)
+bindVoicePicker(() => cascadedTtsProvider.value === 'gemini' ? 'geminiTtsVoice' : 'cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom)
 
 for (const key of SECRET_KEYS) {
   secretInput(key).addEventListener('input', () => {

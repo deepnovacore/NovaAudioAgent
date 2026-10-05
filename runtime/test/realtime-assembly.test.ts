@@ -4678,7 +4678,7 @@ function recordingRegistries(calls: string[]): CascadedProviderRegistries {
       assert.equal(Object.isFrozen(input.config), true)
       return unusedEndpointing
     }},
-    asr: {volcengine: input => {
+    asr: {gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine: input => {
       calls.push('asr:volcengine')
       assert.equal(Object.isFrozen(input.config), true)
       return unusedAsr
@@ -4699,7 +4699,7 @@ function recordingRegistries(calls: string[]): CascadedProviderRegistries {
         return unusedLlm
       },
     },
-    tts: {volcengine: input => {
+    tts: {gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine: input => {
       calls.push('tts:volcengine')
       assert.equal(Object.isFrozen(input.config), true)
       return unusedTts

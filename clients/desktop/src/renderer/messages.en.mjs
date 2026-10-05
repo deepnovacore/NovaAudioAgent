@@ -1,4 +1,8 @@
 export const ENGLISH_MESSAGES = Object.freeze({
+  "Gemini ASR 模型": "Gemini ASR model",
+  "Gemini TTS 模型": "Gemini TTS model",
+  "说完一句后返回最终转录，不显示实时中间结果。": "Returns the final transcript after an utterance ends, without live partial transcripts.",
+  "按回复分段合成并播放，每段需等待一次语音生成。": "Synthesizes and plays reply segments in order; each segment waits for a speech generation request.",
   "Gemini Live 当前用于语音对话；语音执行任务请选择级联管线。": "Gemini Live currently supports voice conversation. Choose the cascaded pipeline for voice-driven tasks.",
   "已授权的来源列在下方；新增来源时单独确认读取和模型处理权限。": "Authorized sources are listed below. Confirm access and model processing separately when adding a source.",
   "添加授权来源": "Add a source",

@@ -8,7 +8,7 @@ test('desktop text graph connects without speech credentials or initializing aud
  let opens=0,audio=0,requests=0
  const unavailable=()=>{audio++;throw Error('audio factory must remain lazy')}
  const settings=loadSettings({PIPELINE_MODE:'integrated',CASCADE_LLM_PROVIDER:'qwen',DASHSCOPE_API_KEY:'test-only',TAVILY_API_KEY:'test-only'},true)
- const assembly=buildProductionRealtimeAssembly({settings,textOnly:true,registries:{...cascadedProviderRegistries,asr:{volcengine:unavailable},tts:{volcengine:unavailable},endpointing:{auto:unavailable},llm:{...cascadedProviderRegistries.llm,qwen:()=>({open:()=>{opens++;return {stream:()=>{requests++;throw Error('unexpected model request')},abandonPendingResponse:()=>Promise.resolve(),close:()=>Promise.resolve()}}})}}})
+ const assembly=buildProductionRealtimeAssembly({settings,textOnly:true,registries:{...cascadedProviderRegistries,asr:{gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:unavailable},tts:{gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:unavailable},endpointing:{auto:unavailable},llm:{...cascadedProviderRegistries.llm,qwen:()=>({open:()=>{opens++;return {stream:()=>{requests++;throw Error('unexpected model request')},abandonPendingResponse:()=>Promise.resolve(),close:()=>Promise.resolve()}}})}}})
  assert.equal(audio,0);assert.equal(requests,0)
  const signal=new AbortController().signal
  await assembly.provider.connect({tools:[],signal})

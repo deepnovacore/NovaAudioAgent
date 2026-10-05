@@ -57,3 +57,16 @@ test('Gemini tool thought signatures survive the complete tool-result round trip
  assert.equal(requests[0]!.parallel_tool_calls,undefined)
  await session.close()
 })
+
+test('Gemini speech stages need only the Gemini key and validate mixed-stage credentials independently', async () => {
+  const {requireSelectedCascadedRealtimeConfig} = await import('../src/config/cascaded-realtime-config.js')
+  const environment = {PIPELINE_MODE:'cascaded',CASCADE_ASR_PROVIDER:'gemini',CASCADE_LLM_PROVIDER:'gemini',CASCADE_TTS_PROVIDER:'gemini',GEMINI_API_KEY:'selected'}
+  const settings = loadSettings(environment)
+  assert.deepEqual(describeMissingBlockingCredentials(settings).missing, [])
+  const selected = requireSelectedCascadedRealtimeConfig(settings)
+  assert.equal(selected.asr.apiKey, 'selected')
+  assert.equal(selected.tts.apiKey, 'selected')
+  assert.deepEqual(describeMissingBlockingCredentials(loadSettings({...environment,GEMINI_API_KEY:''})).missing, ['GEMINI_API_KEY'])
+  assert.deepEqual(describeMissingBlockingCredentials(loadSettings({...environment,CASCADE_ASR_PROVIDER:'volcengine'})).missing, ['DOUBAO_ASR_API_KEY'])
+  assert.deepEqual(describeMissingBlockingCredentials(loadSettings({...environment,CASCADE_TTS_PROVIDER:'volcengine'})).missing, ['DOUBAO_BIGMODEL_API_KEY'])
+})

@@ -1,5 +1,5 @@
 import {committedConversationPairsSchema} from './realtime/history.js'
-import {cascadedProviderRegistries,type CascadedProviderRegistries} from './composition/cascaded-realtime-assembly.js'
+import {selectedAsrFactory,selectedTtsFactory,cascadedProviderRegistries,type CascadedProviderRegistries} from './composition/cascaded-realtime-assembly.js'
 import {requireSelectedCascadedRealtimeConfig} from './config/cascaded-realtime-config.js'
 import type {buildCascadedTextProvider} from './cascaded-text-provider.js'
 import {capabilitiesFromSettings,requireIntegratedRealtime} from './config/config.js'
@@ -23,8 +23,8 @@ export function buildCascadedVoiceProvider(options:ConversationVoiceProviderOpti
   return new CascadedRealtimeProvider({
     language:options.settings.language,
     endpointingFactory:registry.endpointing[selected.selection.endpointingProvider]({config:selected.endpointing,clock:options.clock}),
-    asrFactory:registry.asr[selected.selection.asrProvider]({config:selected.asr,ids,...metering(selected.asr.endpoint)}),
-    ttsFactory:registry.tts[selected.selection.ttsProvider]({config:selected.tts,ids,...metering(selected.tts.endpoint)}),
+    asrFactory:selectedAsrFactory(registry,{config:selected.asr,ids,...metering(selected.asr.endpoint)}),
+    ttsFactory:selectedTtsFactory(registry,{config:selected.tts,ids,...metering(selected.tts.endpoint)}),
     llmFactory:{open:()=>llm.open(history===undefined?undefined:{history})},
     idFactory:options.idFactory,
     ...(options.captureFrame===undefined?{}:{captureFrame:options.captureFrame}),

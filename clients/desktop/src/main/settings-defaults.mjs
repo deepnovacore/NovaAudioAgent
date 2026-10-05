@@ -11,6 +11,9 @@ export const RUNTIME_DEFAULTS = Object.freeze({
   integratedVoice: 'longanqian',
   cascadedEndpointingProvider: 'auto',
   cascadedAsrProvider: 'volcengine',
+  geminiAsrModel: 'gemini-3.5-flash',
+  geminiTtsModel: 'gemini-3.8-flash-tts',
+  geminiTtsVoice: 'Kore',
   cascadedLlmProvider: 'deepseek',
   cascadedLlmModels: Object.freeze({
     qwen: 'qwen-plus',

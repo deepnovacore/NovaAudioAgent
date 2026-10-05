@@ -99,6 +99,7 @@ test('the default settings are the documented schema', () => {
     integratedProvider: 'qwen',
     integratedModel: 'qwen-audio-3.0-realtime-plus',
     integratedVoice: 'longanqian',
+    geminiAsrModel: 'gemini-3.5-flash', geminiTtsModel: 'gemini-3.8-flash-tts', geminiTtsVoice: 'Kore',
     cascadedEndpointingProvider: 'auto',
     cascadedAsrProvider: 'volcengine',
     voiceprintEnabled: false, voiceprintId: '', voiceprintName: '', voiceprintUploadUrl: '',
@@ -280,6 +281,7 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     integratedProvider: 'qwen',
     integratedModel: 'qwen-realtime-custom',
     integratedVoice: 'longxiaochun',
+    geminiAsrModel: 'gemini-3.5-flash', geminiTtsModel: 'gemini-3.8-flash-tts', geminiTtsVoice: 'Kore',
     cascadedEndpointingProvider: 'auto',
     cascadedAsrProvider: 'volcengine',
     voiceprintEnabled: false, voiceprintId: '', voiceprintName: '', voiceprintUploadUrl: '',
@@ -363,6 +365,7 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'conversationVisionEnabled',
     'embeddingModel',
     'embeddingProvider',
+    'geminiAsrModel', 'geminiTtsModel', 'geminiTtsVoice',
     'generatePlan',
     'integratedModel',
     'integratedProvider',
@@ -568,6 +571,7 @@ test('publicSettings never carries the secrets object', () => {
     'conversationVisionEnabled',
     'embeddingModel',
     'embeddingProvider',
+    'geminiAsrModel', 'geminiTtsModel', 'geminiTtsVoice',
     'generatePlan',
     'integratedModel',
     'integratedProvider',
@@ -1298,4 +1302,11 @@ test('presentation writes preserve secrets without opening the keychain and rema
   ])
   assert.equal(current.lastPresentation, 'workbench')
   assert.deepEqual(current.secrets, original)
+})
+
+test('Gemini speech selections and independent model/voice settings survive persistence normalization',()=>{
+ const value=normalizeSettings({version:4,cascadedAsrProvider:'gemini',cascadedTtsProvider:'gemini',geminiAsrModel:'asr-custom',geminiTtsModel:'tts-custom',geminiTtsVoice:'Puck'})
+ const exposed=backendSettings(value)
+ assert.equal(exposed.cascadedAsrProvider,'gemini');assert.equal(exposed.cascadedTtsProvider,'gemini')
+ assert.equal(exposed.geminiAsrModel,'asr-custom');assert.equal(exposed.geminiTtsModel,'tts-custom');assert.equal(exposed.geminiTtsVoice,'Puck')
 })
