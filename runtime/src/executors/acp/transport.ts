@@ -1,8 +1,11 @@
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
+import {randomUUID} from 'node:crypto'
+import {SensitiveContentPolicy, SensitivePathPolicy, redactUrlQueryCredentials} from '../../memory/sensitivity.js'
 import {Readable, Writable} from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import type {ApprovalPort} from '../../core/approval.js'
 import type {ApprovalDecision} from '../../core/approval-port.js'
+import type {ExecutorDiagnostic} from '../../core/executor-diagnostic.js'
 import type {AcpBackendId, CodingBackendId} from '../../config/coding-backends.js'
 import type {CapabilityRegistry, McpServerConfig} from '../../config/capability-registry.js'
 import {parseCodingProfiles, runtimeCodingProfiles, type RuntimeCodingProfile} from '../../config/coding-profiles.js'
@@ -33,8 +36,17 @@ import {prepareAcpMcp, type PreparedAcpMcp} from './mcp.js'
 
 /** Final-text accumulation bound; evidence admits at most this many original characters. */
 const MAX_TEXT_UNITS = 65_536
-const MAX_STDOUT_BYTES = 8 * 1024 * 1024
+const MAX_FRAME_BYTES = 8 * 1024 * 1024
 const MAX_STDERR_BYTES = 256 * 1024
+const observationSensitivity = new SensitiveContentPolicy()
+const observationPathSensitivity = new SensitivePathPolicy()
+interface ToolObservation {
+  title: string; input: string; output: string; truncated: boolean; completed: boolean
+  kind?: string; command?: string; exitCode?: number; terminalId?: string; outputSeen?: boolean; background?: boolean
+}
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
 
 export interface AcpTransportOptions extends Omit<AcpLaunchInput, 'env'> {
   readonly env?: NodeJS.ProcessEnv
@@ -71,6 +83,8 @@ export class AcpTransport implements CodexAppServerTransport {
   #written = false
   #text = ''
   #activity = 0
+  #turnId = ''
+  readonly #tools = new Map<string, ToolObservation>()
   #started = 0
   readonly #lifetime = new AbortController()
   #failure: CodexTransportError | null = null
@@ -136,11 +150,15 @@ export class AcpTransport implements CodexAppServerTransport {
       streams.stderr.on('error', () => this.#fail('transport_lost'))
       let stderrBytes = 0
       streams.stderr.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; if (stderrBytes > MAX_STDERR_BYTES) this.#fail('stderr_too_large') })
-      let outputBytes = 0
+      // Bound the pending NDJSON frame, not lifetime traffic. Streaming agents
+      // repeatedly send growing tool arguments during ordinary project work.
+      let frameBytes = 0
       const input = (Readable.toWeb(streams.stdout) as ReadableStream<Uint8Array>).pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
         transform: (chunk, controller) => {
-          outputBytes += chunk.length
-          if (outputBytes > MAX_STDOUT_BYTES) { this.#fail('transport_lost'); controller.error(new CodexTransportError('transport_lost')); return }
+          for (const byte of chunk) {
+            if (++frameBytes > MAX_FRAME_BYTES) { this.#fail('transport_lost'); controller.error(new CodexTransportError('transport_lost')); return }
+            if (byte === 10) frameBytes = 0
+          }
           controller.enqueue(chunk)
         },
       }))
@@ -177,7 +195,10 @@ export class AcpTransport implements CodexAppServerTransport {
       return {protocol: 'acp', version: String(initialized.protocolVersion), backend: backend.id, connected: true, ...version}
     } catch (error) {
       this.#owner ??= takeUnconfirmedCodexProcessOwner(error)
-      const safe = error instanceof CodexTransportError ? error : new CodexTransportError(acpErrorCode(error, 'preflight_failed'))
+      const safe = error instanceof CodexTransportError ? error : new CodexTransportError(acpErrorCode(error, 'preflight_failed'),
+        error instanceof acp.RequestError ? acpDiagnostic('initialize', error) : undefined)
+      // Aborting the lifetime rejects awaiting callers with #failure; keep the diagnostic on it.
+      this.#failure ??= safe
       this.#fail(safe.code)
       await this.close('failure')
       throw safe
@@ -191,6 +212,7 @@ export class AcpTransport implements CodexAppServerTransport {
     this.#started = Date.now()
     let outcome: TransportOutcome
     let cleaned = false
+    let method = 'initialize'
     try {
       await this.preflight(deadline)
       this.#assertLive(deadline)
@@ -201,6 +223,7 @@ export class AcpTransport implements CodexAppServerTransport {
         try { validateThreadId(this.#resume) } catch { throw new CodexTransportError('resume_unavailable') }
         const capabilities = this.#initialized?.agentCapabilities
         this.#session = this.#resume
+        method = capabilities?.loadSession ? 'session/load' : 'session/resume'
         try {
           if (capabilities?.loadSession) await this.#bounded(connection.agent.request<acp.LoadSessionResponse, acp.LoadSessionRequest>('session/load', {...params, sessionId: this.#session}), deadline)
           else if (capabilities?.sessionCapabilities?.resume) await this.#bounded(connection.agent.request<acp.ResumeSessionResponse, acp.ResumeSessionRequest>('session/resume', {...params, sessionId: this.#session}), deadline)
@@ -213,6 +236,7 @@ export class AcpTransport implements CodexAppServerTransport {
         }
       } else {
         this.#pendingSessionUpdates = []
+        method = 'session/new'
         try {
           const created = await this.#bounded<acp.NewSessionResponse>(connection.agent.request<acp.NewSessionResponse, acp.NewSessionRequest>('session/new', params), deadline)
           // Validate with the store's rule before any prompt is written, so a session the store would refuse never runs.
@@ -229,25 +253,32 @@ export class AcpTransport implements CodexAppServerTransport {
       // History streamed by load is not the answer to the new prompt.
       this.#text = ''
       this.#activity = 0
+      this.#turnId = randomUUID()
+      this.#tools.clear()
       const promptDeadline = completionDeadline === undefined ? deadline : completionDeadline
       if (promptDeadline) this.#assertLive(promptDeadline)
       if (deadline.signal?.aborted) throw new CodexTransportError('adapter_timeout')
       // A superseded request throws here, before anything is written.
       deadline.beforeWrite?.()
+      method = 'session/prompt'
       const result = await this.#bounded<acp.PromptResponse>(connection.agent.request<acp.PromptResponse, acp.PromptRequest>('session/prompt', {
         sessionId, prompt: [{type: 'text', text: input.workOrder}],
       }), promptDeadline, deadline.signal)
       if (this.#failure) throw this.#failure
-      if (result.stopReason !== 'end_turn') throw new CodexTransportError('turn_failed')
+      if (result.stopReason !== 'end_turn') throw new CodexTransportError('turn_failed', {method, server_code: null, message: `stop_reason=${String(result.stopReason).replace(/[^a-z_]/gu, '').slice(0, 32)}`})
       // Match the existing public evidence format: bounded, NFC, printable text.
       const text = [...normalizeNfcPinned(this.#safeText(this.#text))]
         .map(character => isPythonSpace(character) || hasOtherCategory(character) ? ' ' : character)
         .join('')
+      if (!text) throw new CodexTransportError('turn_failed', {method, server_code: null, message: 'empty_final_text'})
       outcome = {classification: 'completed', code: 'completed', turnStartWritten: this.#written,
         completion: {status: 'completed', final_text: text || null, internal_activity: this.#activity}}
     } catch (error) {
       const code = acpErrorCode(error, 'server_rejected')
-      outcome = {classification: this.#written ? 'uncertain' : 'refused', code, turnStartWritten: this.#written, completion: null}
+      const diagnostic = error instanceof acp.RequestError ? acpDiagnostic(method, error)
+        : error instanceof CodexTransportError ? error.diagnostic : undefined
+      outcome = {classification: this.#written ? 'uncertain' : 'refused', code, turnStartWritten: this.#written, completion: null,
+        ...(diagnostic === undefined ? {} : {diagnostic})}
     } finally {
       try { await this.close('shutdown'); cleaned = true }
       catch { outcome = {classification: 'uncertain', code: 'transport_lost', turnStartWritten: this.#written, completion: null} }
@@ -277,6 +308,97 @@ export class AcpTransport implements CodexAppServerTransport {
     this.#activity++
     if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
       this.#text = (this.#text + this.#safeText(update.content.text)).slice(0, MAX_TEXT_UNITS)
+    }
+    // Loaded history and reasoning are not observations of the current work. ACP tool
+    // notifications use the same public activity channel as app-server tool results.
+    if (this.#written && this.#turnId && (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update')) {
+      const id = update.toolCallId
+      if (id.length <= 512 && (this.#tools.has(id) || this.#tools.size < 256)) {
+        const started = !this.#tools.has(id)
+        const tool: ToolObservation = this.#tools.get(id) ?? {title: '', input: '', output: '', truncated: false, completed: false}
+        const field = (value: unknown): string => {
+          const raw = this.#safeText(redactUrlQueryCredentials(typeof value === 'string' ? value : JSON.stringify(value)))
+          const scrubbed = observationSensitivity.scrub('executor_observation', raw)
+          const content = scrubbed.kind === 'clean' ? raw : scrubbed.kind === 'redacted' ? scrubbed.value : '[redacted]'
+          const paths = observationPathSensitivity.scrubText('executor_observation', content)
+          const safe = paths.kind === 'clean' ? content : paths.kind === 'redacted' ? paths.value : '[redacted]'
+          tool.truncated ||= safe.length > 6000
+          return safe.slice(0, 6000)
+        }
+        if (!tool.completed) {
+          if (update.title != null) tool.title = field(update.title)
+          if (update.kind != null) tool.kind = update.kind
+          const input = record(update.rawInput)
+          if (typeof input?.command === 'string') tool.command = field(input.command)
+          if (input?.run_in_background === true) tool.background = true
+          // OpenCode reports the real process exit code in rawOutput.metadata.
+          const rawOutput = record(update.rawOutput), metadata = record(rawOutput?.metadata)
+          if (this.#options.backendId === 'opencode' && tool.kind === 'execute' && Number.isInteger(metadata?.exit)) {
+            tool.exitCode = metadata!.exit as number
+            tool.truncated ||= metadata?.truncated === true
+          }
+          // pi-acp streams terminal deltas in its ACP extension, not rawOutput.
+          // Bind both output and exit to the terminal announced for this tool.
+          if (this.#options.backendId === 'pi' && tool.kind === 'execute') {
+            for (const part of update.content ?? []) if (part.type === 'terminal' && part.terminalId === id) {
+              tool.terminalId = part.terminalId; tool.command = tool.title
+            }
+            const meta = record(update._meta), output = record(meta?.terminal_output), exit = record(meta?.terminal_exit)
+            if (tool.terminalId && output?.terminal_id === tool.terminalId && typeof output.data === 'string') {
+              tool.output = field(tool.output + output.data); tool.outputSeen = true
+            }
+            if (tool.terminalId && exit?.terminal_id === tool.terminalId && Number.isInteger(exit.exit_code)
+              && (exit.signal === undefined || exit.signal === null)) tool.exitCode = exit.exit_code as number
+          }
+          if (update.rawInput !== undefined) tool.input = field(update.rawInput)
+          if (update.rawOutput !== undefined) {
+            tool.output = field(this.#options.backendId === 'opencode' && tool.kind === 'execute' && typeof rawOutput?.output === 'string' ? rawOutput.output : update.rawOutput)
+            tool.outputSeen = true
+          }
+          else if (update.content?.some(part => part.type === 'content' && part.content.type === 'text')) {
+            tool.output = field(update.content.filter(part => part.type === 'content' && part.content.type === 'text').map(part => part.type === 'content' && part.content.type === 'text' ? part.content.text : '').join('\n'))
+            tool.outputSeen = true
+          }
+          if (update.status === 'completed' && tool.command && tool.outputSeen) {
+            if (this.#options.backendId === 'codebuddy' && tool.kind === 'execute' && rawOutput?.type === 'text' && typeof rawOutput.text === 'string') {
+              // CodeBuddy's command result wrapper always ends with the process status.
+              const result = field(rawOutput.text), exit = /\nExit Code: (-?\d+)\nSignal: \(none\)\s*$/u.exec(result)
+              if (result.startsWith(`Command: ${tool.command}\n`) && exit) {
+                tool.exitCode = Number(exit[1]); tool.output = result
+              }
+            }
+            if (this.#options.backendId === 'deepseek' && tool.title === 'bash' && !tool.background) {
+              // dsh-tool-bash 0.1.5-rc.2 renderResult / dsh-shell parseExitStatus:
+              // a foreground completed result omits the exit marker only for exit 0.
+              // Failure, signal, timeout, sandbox denial and background acknowledgements
+              // must never become a successful check merely because ACP says completed.
+              const output = tool.output.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/u, '')
+              tool.truncated ||= /\[output truncated;|\[some output was dropped/u.test(output)
+              if (!/\[timed out |\[killed by signal:|\[sandbox:/u.test(output)) {
+                const exit = /\n\[exit code: (\d+)\]$/u.exec(output)
+                // Only the final exact marker counts; a forged earlier 0 with a later failure must not win.
+                if (exit) { tool.kind = 'execute'; tool.exitCode = Number(exit[1]); tool.output = output }
+                else if (!/\[exit code:|\nExit Code:|\nSignal:/u.test(output)) {
+                  tool.kind = 'execute'; tool.exitCode = 0; tool.output = output
+                }
+              }
+            }
+          }
+          this.#tools.set(id, tool)
+          // Text preceding a newly started or finished tool is interim narration.
+          // Mid-tool deltas after the final reply must not wipe that reply.
+          if (started || update.status === 'completed' || update.status === 'failed') this.#text = ''
+          if (update.status === 'completed' || update.status === 'failed') {
+            tool.completed = true
+            const text = JSON.stringify(tool.kind === 'execute' && tool.command && tool.exitCode !== undefined && tool.outputSeen
+              ? {type:'commandExecution', command:tool.command, status:update.status, output:tool.output, exit_code:tool.exitCode}
+              : {type:'acpToolCall', title:tool.title, kind:tool.kind, status:update.status, input:tool.input, output:tool.output})
+            try { this.#observer?.onActivity?.({thread_id:params.sessionId, turn_id:this.#turnId, item_id:id,
+              stage:'completed', kind:'tool', text:text.slice(0,16000), refs:[],
+              ...(tool.truncated || text.length > 16000 ? {text_truncated:true} : {})}) } catch { /* display callback is advisory */ }
+          }
+        }
+      }
     }
     if (update.sessionUpdate === 'session_info_update' && update.title !== undefined) {
       this.#observer?.onThreadNamed?.(params.sessionId, update.title === null ? null : this.#safeText(update.title).slice(0, 200))
@@ -436,6 +558,17 @@ export class AcpTransport implements CodexAppServerTransport {
     child.stderr.destroy()
     this.#child = null
   }
+}
+
+/** Descriptive hint only: agent prose never leaves the transport and never decides a code. */
+function acpDiagnostic(method: string, error: acp.RequestError): ExecutorDiagnostic {
+  const text = String(error.message)
+  const kind = /insufficient.?balance|quota|billing|payment|\b402\b/iu.test(text) ? 'quota_exhausted'
+    : /rate.?limit|too many requests|\b429\b/iu.test(text) ? 'rate_limited'
+      : /context.{0,20}(?:length|window|too long)|maximum.{0,20}tokens/iu.test(text) ? 'context_overflow'
+        : /unauthori[sz]ed|forbidden|auth|api.?key|\b40[13]\b/iu.test(text) ? 'auth'
+          : /time.?out|timed out/iu.test(text) ? 'timeout' : 'unclassified'
+  return {method, server_code: error.code, message: `class=${kind}`}
 }
 
 function acpErrorCode(error: unknown, fallback: 'preflight_failed' | 'server_rejected'): CodexTransportCode {

@@ -36,6 +36,27 @@ test('startup reconstructs original task generation before admission and preserv
   await second.open();await second.wakeTask(task.id);assert.deepEqual(generations,[0]);assert.equal(evaluate,1);assert.equal(second.tasks.get(task.id).phase,'completed');assert.equal(second.conversationSnapshot().items.find(item=>item.id==='chat:main')!.generation,1);assert.deepEqual(second.conversationSnapshot().messages,[])
  }finally{await first.close();await second?.close();await rm(root,{recursive:true,force:true})}
 })
+
+test('live-generation recovery restores the persisted coding_target; retired generation stays unbound',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'task-recovery-')),path=join(root,'host.json')
+ const target={workspace_id:'ws',session_id:'sess',project:'Demo',title:'Demo session',executor:'codex' as const}
+ const make=()=>new PersonalAgentHost({path,userScope:'test',pool:new SuggestionPool(),memory:()=>undefined,evidence:()=>null})
+ let first=make(),second:PersonalAgentHost|undefined,third:PersonalAgentHost|undefined
+ try{
+  await first.open();await first.rememberCodingTarget('chat:main',0,target,()=>true)
+  const task=await first.tasks.delegate('first',input);await first.tasks.bindWork(fence(task.id),'work:1');await first.close()
+  const seen:unknown[]=[];second=make();second.setConversationRuntime(async conversation=>{seen.push(conversation.coding_target);second!.attachTaskRuntime(conversation.id,conversation.generation,{recover:async()=>null,input:async()=>'failed' as const,cancel:()=>{},dispatch:async()=>{throw Error('must not execute')},evaluate:async()=>({kind:'complete' as const,evidence_refs:second!.tasks.evidence(task.id).map(item=>item.ref)})});return {runTurn:async()=>{throw Error('no fabricated user turn')},close:async()=>{}}},()=>{})
+  await second.open();assert.deepEqual(seen[0],target)
+  await second.command({type:'personal.command',request_id:'clear',method:'conversations.clear',params:{id:'chat:main'}},{client_id:'client'})
+  const cleared=second.conversationSnapshot().items.find(item=>item.id==='chat:main')!
+  assert.equal(cleared.generation,1);assert.deepEqual(cleared.coding_target,target)
+  // Unfinished gen-0 task still needs recovery; retired runtime must not inherit the live target.
+  const unfinished=await second.tasks.delegate('old',{...input,conversation_generation:0});await second.tasks.bindWork({task_id:unfinished.id,control_revision:0,goal_revision:0},'work:old');await second.close()
+  const recovered:unknown[]=[];third=make();third.setConversationRuntime(async conversation=>{if(conversation.generation===0)recovered.push(conversation.coding_target);third!.attachTaskRuntime(conversation.id,conversation.generation,{recover:async()=>'task_work_recovery_unavailable',input:async()=>'failed' as const,cancel:()=>{},dispatch:async()=>{throw Error('must not execute')}});return {runTurn:async()=>{throw Error('no fabricated user turn')},close:async()=>{}}},()=>{})
+  await third.open();assert.ok(recovered.includes(null));assert.deepEqual(third.conversationSnapshot().items.find(item=>item.id==='chat:main')!.coding_target,target)
+ }finally{await first.close().catch(()=>{});await second?.close().catch(()=>{});await third?.close().catch(()=>{});await rm(root,{recursive:true,force:true})}
+})
+
 import {McpExecutorAdapter,mcpToolAlias} from '../src/executors/mcp.js'
 import type {McpConnection} from '../src/executors/mcp-client.js'
 import type {McpServerConfig} from '../src/config/capability-registry.js'

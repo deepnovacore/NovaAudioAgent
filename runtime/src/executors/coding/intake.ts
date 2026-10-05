@@ -122,6 +122,20 @@ function failureReason(error: unknown): string {
   return 'internal_error'
 }
 
+/** Schema paths, issue codes and error classes only: never model text, values or messages. */
+function failureDetail(error: unknown): string | null {
+  const safe = (value: string): string => value.replace(/[^A-Za-z0-9_.:>|-]/gu, '_').slice(0, 300)
+  if (error instanceof z.ZodError) {
+    return safe(error.issues.slice(0, 6).map(issue => `${issue.path.join('.') || '$'}:${issue.code}`
+      + (issue.code === 'invalid_type' ? `>${String(issue.expected)}` : '')).join('|'))
+  }
+  if (error instanceof SyntaxError) return 'json_parse'
+  if (error instanceof TypeError && error.message === 'intake_output_too_large') return 'output_too_large'
+  if (error instanceof GatewayError) return ['authentication', 'rate_limit', 'timeout', 'transport'].includes(failureReason(error)) ? null : safe(error.classification)
+  if (error instanceof Error && failureReason(error) === 'internal_error') return safe(`error:${error.name}`)
+  return null
+}
+
 /**
  * The quoted span must occur in an utterance *and* overlap (one contains the other) exactly one roster
  * name, which must be the selected one: a filler like "改" vouches for nothing, and a shared prefix like
@@ -157,7 +171,7 @@ const continuationIntent = (texts: readonly string[]): 'none' | 'new' | 'latest'
   if (/(?:不要|别|不再|不是|不)(?:再)?继续|(?:新开|重新开|另开).{0,6}会话|新会话|\b(?:new|fresh) (?:session|thread)\b|\b(?:do not|don't) (?:continue|resume)\b/iu.test(plain)) return 'new'
   if (/继续|接着|先(?:问|确认)|不确定|\b(?:continue|resume)\b/iu.test(plain)) {
     return !/[?？]|之前|先(?:问|确认)|不允许|不确定|是否/iu.test(plain)
-      && /(?:^|[，,。.!！;；\n])\s*(?:请|现在|那就)?(?:在(?:当前项目|当前工作区|本项目|这个项目)(?:里|中)?\s*)?(?:(?:继续|接着)(?=[^，,。.!！;；\n]*(?:任务|会话|工作区))|(?:continue|resume)\b)/iu.test(plain) ? 'latest' : 'unclear'
+      && /(?:^|[，,。.!！;；\n])\s*(?:请|现在|那就)?(?:在(?:当前项目|当前工作区|本项目|这个项目)(?:里|中)?\s*)?(?:(?:继续|接着)(?=[^，,。.!！;；\n]*(?:任务|会话|工作区|项目|session\b|thread\b))|(?:continue|resume)\b)/iu.test(plain) ? 'latest' : 'unclear'
   }
   return 'none'
 }
@@ -452,7 +466,7 @@ export class IntakeController {
       if (result === null) return
       let current = this.#current(snapshot.intake_id, snapshot.revision)
       if (current === null) return
-      const sessionTitle = result.session.mode === 'named' ? result.session.title : null
+      let sessionTitle = result.session.mode === 'named' ? result.session.title : null
       if (result.intake_id !== snapshot.intake_id || result.revision !== snapshot.revision) {
         this.#options.diagnostic('intake_stale_result'); return
       }
@@ -503,7 +517,14 @@ export class IntakeController {
         projectQuestion = project
       }
       const continuation = continuationIntent([current.opening, ...current.turns.map(turn => turn.answer)])
-      if ((kind === 'work' && ((continuation === 'unclear' && result.session.mode !== 'new' && !namedSessionEvidence) || (continuation === 'latest' && result.session.mode === 'new')))
+      // An explicit "continue the original session" may come back named with that project's latest title: same session.
+      // Literal title text in the user's words stays a named claim that needs evidence.
+      const latestNamed = continuation === 'latest' && sessionTitle !== null && !namedSessionEvidence
+        && this.#options.roster().find(entry => entry.name === project)?.last_session_title === sessionTitle
+        && ![current.opening, ...current.turns.map(turn => turn.answer)].some(text => text.includes(sessionTitle!))
+      if (latestNamed) sessionTitle = null
+      const sessionMode = latestNamed ? 'latest' : result.session.mode
+      if ((kind === 'work' && ((continuation === 'unclear' && sessionMode !== 'new' && !namedSessionEvidence) || (continuation === 'latest' && sessionMode === 'new')))
         || (sessionTitle && project !== null && (continuation === 'new' || !namedSessionEvidence))) {
         kind = 'unclear'
         question = '请明确要继续的项目和会话名称。'
@@ -537,7 +558,7 @@ export class IntakeController {
           : `code=steer_failed：追加要求未送达：${admission.problem ?? admission.code ?? 'runtime_rejected'}。`)
         return
       }
-      const decision: CoordinatorDecision = {kind: kind === 'switch' ? 'switch' : kind === 'create' ? 'create' : 'work', project, session: sessionTitle || (result.session.mode === 'latest' && continuation === 'latest') ? 'latest' : 'new', ...(sessionTitle ? {session_title: sessionTitle} : {})}
+      const decision: CoordinatorDecision = {kind: kind === 'switch' ? 'switch' : kind === 'create' ? 'create' : 'work', project, session: sessionTitle || (sessionMode === 'latest' && continuation === 'latest') ? 'latest' : 'new', ...(sessionTitle ? {session_title: sessionTitle} : {})}
       let target: IntakeTarget
       stage = 'resolve'
       try {
@@ -601,7 +622,8 @@ export class IntakeController {
     if (!namedProject && roster.filter(entry => entry.sessions?.includes(title)).length !== 1) return false
     const text = latestSessionDirective(evidence), index = text.indexOf(title)
     if (!roster.some(entry => entry.name === project && entry.sessions?.includes(title))
-      || index < 0 || /[?？]|不允许|不要|别|不准|禁止|不确定|是否|之前|先(?:问|确认)|\b(?:do not|don't|not sure|before)\b/iu.test(text)) return false
+      || index < 0 || /[?？]|不确定|是否|之前|先(?:问|确认)|\b(?:not sure|before)\b/iu.test(text)
+      || /(?:不允许|不要|别(?!的)|不准|禁止|\bdo not|\bdon't)[^，,。.!！;；\n]*$/iu.test(text.slice(0, index))) return false
     const before = text.slice(0, index).trimEnd(), after = text.slice(index + title.length).trimStart()
     return /(?:继续|接着|\bcontinue|\bresume)\s*$/iu.test(before)
       || (/(?:在|用|使用|切换到|\bin(?: the)?)\s*$/iu.test(before) && /^(?:(?:这个)?会话|session\b)/iu.test(after))
@@ -771,6 +793,7 @@ export class IntakeController {
     const current = this.#live(snapshot.intake_id, snapshot.revision)
     if (current === null) return
     const reason = failureReason(error)
+    const detail = failureDetail(error)
     const unknown = stage === 'dispatch' || stage === 'steer'
     if (!retrying) {
       if (!unknown && current.proposal_id !== null) {
@@ -781,8 +804,9 @@ export class IntakeController {
       this.#assessPending = false
       this.#planPending = false
     }
-    this.#options.record(current, 'intake.failure', {stage, reason, attempt, retrying})
+    this.#options.record(current, 'intake.failure', {stage, reason, attempt, retrying, ...(detail === null ? {} : {detail})})
     this.#options.diagnostic(`intake_${stage}_${reason}`)
+    if (detail !== null) this.#options.diagnostic(`intake_failure_detail stage=${stage} attempt=${attempt} detail=${detail}`)
     if (retrying) return
     this.#options.onStateChanged?.()
     this.#options.fact(current, unknown

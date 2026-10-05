@@ -253,9 +253,22 @@ function maintain(at: number, affected: Pruned = new Map(), protectedOrdinal = I
   let bytes = number(row('SELECT COALESCE(SUM(bytes),0) AS n FROM records WHERE scope=?', scope), 'n')
     + number(row('SELECT COALESCE(SUM(summary_bytes),0) AS n FROM channels WHERE scope=?', scope), 'n')
   const selected = new Map<string, {scope: string; channel: string; through: number}>()
+  // ponytail: fair by row count, not bytes; a quiet channel yields once it holds the most rows.
+  const queues = new Map<string, Row[]>()
   for (const entry of rows('SELECT scope,channel,seq,ordinal,bytes FROM records WHERE scope=? ORDER BY ordinal', scope)) {
-    if (count <= options.retention.maxItems && bytes <= options.retention.maxBytes) break
-    if (number(entry, 'ordinal') >= protectedOrdinal) throw new BlackboardStoreError('capacity')
+    const channel = string(entry, 'channel')
+    const queue = queues.get(channel) ?? []
+    queue.push(entry)
+    queues.set(channel, queue)
+  }
+  while (count > options.retention.maxItems || bytes > options.retention.maxBytes) {
+    let victim: Row[] | undefined
+    for (const queue of queues.values()) {
+      if (queue.length === 0 || number(queue[0]!, 'ordinal') >= protectedOrdinal) continue
+      if (victim === undefined || queue.length > victim.length) victim = queue
+    }
+    if (victim === undefined) throw new BlackboardStoreError('capacity')
+    const entry = victim.shift()!
     const conversation = string(entry, 'scope'), channel = string(entry, 'channel')
     const key = `${conversation}\0${channel}`
     if (!selected.has(key)) bytes -= number(row('SELECT summary_bytes FROM channels WHERE scope=? AND channel=?', conversation, channel), 'summary_bytes')

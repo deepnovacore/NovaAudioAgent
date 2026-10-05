@@ -532,7 +532,7 @@ export class TaskService {
         throw Error('work_fence_unavailable')
       const observed = next.events.filter(event => event.work_id === workId && event.task_id === task.id && event.kind === 'tool' && event.stage === 'completed')
       let bytes = 0
-      const observations = observed.slice(-32).filter(event => { bytes += Buffer.byteLength(JSON.stringify(event)); return bytes <= 65536; })
+      const observations = observed.slice(-32).reverse().filter(event => { bytes += Buffer.byteLength(JSON.stringify(event)); return bytes <= 65536; }).reverse()
       next.outcomes.push(evidenceSchema.parse({
         observations, observations_truncated: observations.length < observed.length || observations.some(event => event.text_truncated) || !!next.truncated[task.id] || this.#incompleteReplay.has(task.id) || next.replay_incomplete.includes(task.id), ref, task_id: task.id, goal_revision: workFence.goal_revision, kind: next.instruction_work_ids.includes(workId) ? 'input' : 'work', work_id: workId, outcome, content: JSON.stringify(content).slice(0, 131072), refs
       }))
@@ -613,8 +613,10 @@ export class TaskService {
     const task = this.get(taskId)
     return task.phase === 'waiting' && (this.hasUnknownWork(taskId) || this.pendingEffect(taskId) !== null || this.inputReceipts(taskId).some(receipt => receipt.status === 'unknown'))
   }
-  wait(fence: TaskFence, reason: string): Promise<TaskRecord> { return this.applyDecision(fence, { kind: 'wait', reason, evidence_refs: [] }); }
-  applyDecision(fence: TaskFence, raw: TaskDecision): Promise<TaskRecord> {
+  wait(fence: TaskFence, reason: string, diag?: { readonly stage?: string; readonly code?: string }): Promise<TaskRecord> {
+    return this.applyDecision(fence, { kind: 'wait', reason, evidence_refs: [] }, diag)
+  }
+  applyDecision(fence: TaskFence, raw: TaskDecision, diag?: { readonly stage?: string; readonly code?: string }): Promise<TaskRecord> {
     const decision = taskDecisionSchema.parse(raw)
     return this.#mutate(next => {
       this.assertWritable(fence, { kind: 'nova' })
@@ -681,8 +683,12 @@ export class TaskService {
           id: effectId, task_id: task.id, fence, instruction: decision.instruction, status: 'pending', write_started: false
         }
       }
+      const stage = typeof diag?.stage === 'string' && /^[a-z_]{1,64}$/.test(diag.stage) ? diag.stage : undefined
+      const code = typeof diag?.code === 'string' && /^[a-z_]{1,64}$/.test(diag.code) ? diag.code : undefined
       next.events.push({
-        seq: ++next.event_seq, task_id: task.id, kind: 'verification', text: JSON.stringify(decision), refs: decision.evidence_refs
+        seq: ++next.event_seq, task_id: task.id, kind: 'verification',
+        text: JSON.stringify(stage || code ? { ...decision, ...(stage ? { stage } : {}), ...(code ? { code } : {}) } : decision),
+        refs: decision.evidence_refs
       })
       return structuredClone(task) as TaskRecord
     })

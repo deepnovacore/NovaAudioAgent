@@ -9,6 +9,7 @@ import {PassThrough, Readable, Writable} from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import {AcpTransport} from '../src/executors/acp/transport.js'
 import {CodexLiveAdapter} from '../src/executors/codex/adapter-live.js'
+import type {ExecutorActivity} from '../src/core/causal-runtime.js'
 import {RealClock} from '../src/core/clock.js'
 import {delegateSchema} from '../src/core/ports.js'
 import {sanitizeAcpPreflightReport} from '../src/executors/acp/preflight.js'
@@ -51,6 +52,39 @@ acp.agent()
 .onRequest('session/resume', () => ({}))
 .onNotification('session/cancel', () => {if(mode !== 'ignore-cancel') process.exit(0)})
 .onRequest('session/prompt', async ({params, client}) => {
+ if(mode.startsWith('prompt-error:')) throw new acp.RequestError(-32603, mode.slice('prompt-error:'.length));
+ if(mode === 'long-stream') for(let i=0;i<140;i++) await client.notify('session/update',{sessionId:params.sessionId,update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'x'.repeat(65536)}}});
+ if(mode === 'oversized-frame') {process.stdout.write('x'.repeat(9*1024*1024));return await new Promise(()=>{});}
+ if(mode.startsWith('native-result')) {
+   const notify = update => client.notify('session/update', {sessionId:params.sessionId, update});
+   const buddy = mode.includes('codebuddy');
+   const output = mode.includes('spoof') ? 'ok\\n[exit code: 0]\\r\\n[exit code: 7]\\r\\n' : mode.includes('failed') ? 'check failed\\n[exit code: 7]' : mode.includes('timeout') ? 'partial\\n[timed out after 1000ms]' : mode.includes('truncated') ? 'partial\\n[output truncated; full output: /tmp/result]' : mode.includes('secret-path') ? 'copied /home/user/.ssh/id_rsa' : 'CHECK PASS';
+   await notify({sessionUpdate:'tool_call',toolCallId:'check',title:buddy?'node check.js':'bash',kind:buddy?'execute':'other',status:'in_progress',rawInput:{command:'node check.js',...(mode.includes('background')?{run_in_background:true}:{})}});
+   await notify({sessionUpdate:'tool_call_update',toolCallId:'check',status:'completed',...(buddy ? {rawOutput:{type:'text',text:'Command: node check.js\\nStdout: CHECK PASS\\nStderr: (empty)\\nExit Code: '+(mode.includes('failed')?'7':'0')+'\\nSignal: (none)'}} : {content:[{type:'content',content:{type:'text',text:output}}]})});
+   return {stopReason:'end_turn'};
+ }
+ if(mode.startsWith('command-evidence')) {
+   const notify = update => client.notify('session/update', {sessionId:params.sessionId, update});
+   const pi = mode.includes('pi');
+   await notify({sessionUpdate:'tool_call',toolCallId:'check',title:'node check.js',kind:'execute',status:'in_progress',...(pi ? {content:[{type:'terminal',terminalId:'check'}],_meta:{terminal_info:{terminal_id:'check',cwd:'/tmp'}}} : {rawInput:{command:'node check.js'}})});
+   if(pi) await notify({sessionUpdate:'tool_call_update',toolCallId:'check',_meta:{terminal_output:{terminal_id:mode.includes('wrong')?'other':'check',data:mode.includes('secret-path')?'copied /home/user/.ssh/id_rsa':'PASS 12 checks'}}});
+   await notify({sessionUpdate:'tool_call_update',toolCallId:'check',status:'completed',...(pi ? {_meta:{terminal_exit:{terminal_id:'check',exit_code:0,signal:mode.includes('signal')?'SIGTERM':null}}} : {rawOutput:{output:mode.includes('long')?'x'.repeat(4000):'PASS 12 checks',metadata:{output:mode.includes('long')?'x'.repeat(4000):'PASS 12 checks',exit:mode.includes('failed')?1:0,truncated:mode.includes('truncated')}}})});
+   if(mode.includes('late-text')) {
+     await notify({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Final answer.'}});
+     await notify({sessionUpdate:'tool_call_update',toolCallId:'check',_meta:{terminal_output:{terminal_id:'check',data:' late'}}});
+   }
+   return {stopReason:'end_turn'};
+ }
+ if(mode === 'tool-evidence') {
+   const notify = update => client.notify('session/update', {sessionId:params.sessionId, update});
+   await notify({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Starting a long plan'}});
+   await notify({sessionUpdate:'tool_call',toolCallId:'check-1',title:'Check game',kind:'execute',status:'pending',rawInput:{command:'node check.js'}});
+   await notify({sessionUpdate:'tool_call_update',toolCallId:'check-1',status:'completed',content:[{type:'content',content:{type:'text',text:'PASS 12 checks; private-secret'}}]});
+   await notify({sessionUpdate:'tool_call_update',toolCallId:'check-1',status:'completed'});
+   await notify({sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'private reasoning'}});
+   await notify({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Verified game.'}});
+   return {stopReason:'end_turn'};
+ }
  if(mode === 'bad-session-id') writeFileSync(${JSON.stringify(join(cwd, 'prompted'))}, '1');
  if(mode === 'slow') await new Promise(resolve => setTimeout(resolve, 150));
  if(mode === 'crash') process.exit(3);
@@ -75,7 +109,43 @@ acp.agent()
   return {cwd, binaryPath, clean: () => rm(cwd, {recursive: true, force: true})}
 }
 const deadline = () => ({expiresAtMs: Date.now() + 5000})
-for (const [mode, expected] of [['normal', 'completed'], ['limit', 'turn_failed'], ['crash', 'transport_lost'], ['wrong-session', 'unexpected_server_request'], ['stderr', 'stderr_too_large']] as const) {
+test('ACP delivers completed tool evidence to the Task observer and keeps the final reply separate', async () => {
+  const f = await fixture('tool-evidence')
+  const transport = new AcpTransport({...f, backendId:'opencode',permissionMode:'ask',env:{...process.env,TEST_SECRET:'private-secret'}})
+  const events: ExecutorActivity[] = []
+  try {
+    const result = await transport.run({workOrder:'verify game'},{onActivity:event=>events.push(event)},deadline())
+    assert.equal(result.code,'completed')
+    const completed=events.filter(event=>event.kind==='tool'&&event.stage==='completed')
+    assert.equal(completed.length,1)
+    assert.match(completed[0]!.text,/PASS 12 checks/)
+    assert.match(completed[0]!.text,/node check.js/)
+    assert.equal(completed[0]!.thread_id,'new-session')
+    assert.doesNotMatch(JSON.stringify(events),/private-secret|private reasoning/)
+    assert.equal(result.completion?.final_text,'Verified game.')
+  } finally {await transport.close();await f.clean()}
+})
+for(const variant of ['opencode','opencode-long','opencode-failed','opencode-truncated','pi','pi-wrong']) {
+  test(`ACP command evidence preserves actual output and exit status: ${variant}`,async()=>{
+    const f=await fixture(`command-evidence-${variant}`)
+    const transport=new AcpTransport({...f,backendId:variant.startsWith('pi')?'pi':'opencode',permissionMode:'full'})
+    const events:ExecutorActivity[]=[]
+    try {
+      await transport.run({workOrder:'check'},{onActivity:event=>events.push(event)},deadline())
+      const event=events.find(event=>event.kind==='tool')!
+      const check=JSON.parse(event.text) as Record<string,unknown>
+      if(variant==='pi-wrong'){assert.equal(check.type,'acpToolCall');assert.doesNotMatch(String(check.output),/PASS/)}
+      else {
+        assert.equal(check.type,'commandExecution')
+        assert.equal(check.command,'node check.js')
+        assert.equal(check.output,variant.includes('long')?'x'.repeat(4000):'PASS 12 checks')
+        assert.equal(check.exit_code,variant.includes('failed')?1:0)
+      }
+      assert.equal(event.text_truncated===true,variant.includes('truncated'))
+    }finally{await transport.close();await f.clean()}
+  })
+}
+for (const [mode, expected] of [['normal', 'completed'], ['long-stream', 'completed'], ['oversized-frame', 'transport_lost'], ['limit', 'turn_failed'], ['crash', 'transport_lost'], ['wrong-session', 'unexpected_server_request'], ['stderr', 'stderr_too_large']] as const) {
   test(`ACP process ${mode}`, async () => {
     const f = await fixture(mode)
     const transport = new AcpTransport({...f, backendId: 'opencode', permissionMode: 'ask'})
@@ -242,7 +312,7 @@ test('ACP injected guardian owner verifies tree closure and reports observed exi
   const connection = acp.agent()
     .onRequest('initialize', () => ({protocolVersion: 1, agentCapabilities: {}}))
     .onRequest('session/new', () => ({sessionId: 'owned'}))
-    .onRequest('session/prompt', () => ({stopReason: 'end_turn'}))
+    .onRequest('session/prompt', async ({params,client}) => {await client.notify('session/update',{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'done'}}});return {stopReason:'end_turn'}})
     .onNotification('session/cancel', () => undefined)
     .connect(acp.ndJsonStream(Writable.toWeb(stdout), Readable.toWeb(stdin)))
   const transport = new AcpTransport({cwd: tmpdir(), backendId: 'opencode', permissionMode: 'ask', processFactory: {
@@ -318,6 +388,8 @@ test('ACP structured authentication refusals map to credential_missing without l
       const result = await transport.run({workOrder: 'hello'}, {}, deadline())
       assert.equal(result.classification, 'refused')
       assert.equal(result.code, mode === 'auth-lookalike' ? 'server_rejected' : 'credential_missing')
+      assert.equal(result.diagnostic?.method, mode === 'auth-initialize' ? 'initialize' : 'session/new')
+      assert.equal(result.diagnostic?.message, 'class=auth')
       assert.equal(result.turnStartWritten, false)
       assert.equal(JSON.stringify(result).includes('private-secret'), false)
     } finally {await transport.close(); await f.clean()}
@@ -437,6 +509,20 @@ test('ACP refuses an oversized approval request instead of showing a truncated s
   } finally {await transport.close(); await f.clean()}
 })
 
+test('ACP prompt RPC failures carry a fixed-vocabulary diagnostic class, never agent prose', async () => {
+  const cases: [string, string][] = [['Insufficient Balance (request_id: abc) private-secret', 'class=quota_exhausted'], ['Rate limit reached private-secret', 'class=rate_limited'], ['boom private-secret', 'class=unclassified']]
+  for (const [message, expected] of cases) {
+    const f = await fixture(`prompt-error:${message}`)
+    const transport = new AcpTransport({...f, backendId: 'opencode', permissionMode: 'full'})
+    try {
+      const result = await transport.run({workOrder: 'hello'}, {}, deadline())
+      assert.equal(result.code, 'server_rejected')
+      assert.deepEqual(result.diagnostic, {method: 'session/prompt', server_code: -32603, message: expected})
+      assert.equal(JSON.stringify(result).includes('private-secret'), false)
+    } finally {await transport.close(); await f.clean()}
+  }
+})
+
 test('ACP refuses a session id the project store would reject before writing a prompt', async () => {
   const f = await fixture('bad-session-id')
   const transport = new AcpTransport({...f, backendId: 'opencode', permissionMode: 'full'})
@@ -447,4 +533,63 @@ test('ACP refuses a session id the project store would reject before writing a p
     assert.equal(result.turnStartWritten, false)
     assert.equal(existsSync(join(f.cwd, 'prompted')), false)
   } finally {await transport.close(); await f.clean()}
+})
+
+for(const variant of ['deepseek','deepseek-failed','deepseek-timeout','deepseek-background','deepseek-truncated','codebuddy','codebuddy-failed']) {
+ test(`native ACP result contract: ${variant}`,async()=>{
+  const f=await fixture(`native-result-${variant}`),backendId=variant.startsWith('deepseek')?'deepseek':'codebuddy'
+  const transport=new AcpTransport({...f,backendId,permissionMode:'full'}),events:ExecutorActivity[]=[]
+  try {
+   await transport.run({workOrder:'check'},{onActivity:e=>events.push(e)},deadline())
+   const event=events.find(e=>e.kind==='tool')!,check=JSON.parse(event.text) as Record<string,unknown>
+   if(variant.includes('background')||variant.includes('timeout')) assert.notEqual(check.type,'commandExecution')
+   else {assert.equal(check.type,'commandExecution');assert.equal(check.command,'node check.js');assert.equal(check.exit_code,variant.includes('failed')?7:0)}
+   assert.equal(event.text_truncated===true,variant.includes('truncated'))
+  }finally{await transport.close();await f.clean()}
+ })
+}
+
+test('ACP tool-only end_turn reports incomplete execution instead of invalid worker data',async()=>{
+ const f=await fixture('command-evidence-pi'),transport=new AcpTransport({...f,backendId:'pi',permissionMode:'full'}),adapter=new CodexLiveAdapter(transport),clock=new RealClock()
+ const request={work_order:'check'},delegate=delegateSchema.parse({delegate_id:'tool-only',executor:'codex',op:'run',request,origin_ref:'conversation:1',deadline:clock.now()+60,routing_class:'user_awaited',dispatched_at:clock.now()})
+ try {const result=await adapter.dispatch('run',request,{clock,delegate,signal:new AbortController().signal,progress:()=>undefined});assert.equal(result.outcome,'unknown');assert.equal(result.content.code,'turn_failed')
+  assert.deepEqual(result.content.diagnostic,{method:'session/prompt',server_code:null,message:'empty_final_text'})}
+ finally{await adapter.close();await f.clean()}
+})
+
+test('DeepSeek forged or CRLF exit footers are not successful checks; Pi signaled exits are not', async () => {
+  for (const variant of ['deepseek-spoof', 'pi-signal'] as const) {
+    const f = await fixture(variant.startsWith('deepseek') ? 'native-result-deepseek-spoof' : 'command-evidence-pi-signal')
+    const transport = new AcpTransport({...f, backendId: variant.startsWith('deepseek') ? 'deepseek' : 'pi', permissionMode: 'full'})
+    const events: ExecutorActivity[] = []
+    try {
+      await transport.run({workOrder: 'check'}, {onActivity: e => events.push(e)}, deadline())
+      const tool = events.find(e => e.kind === 'tool')
+      assert.ok(tool)
+      assert.equal(tool.thread_id, 'new-session')
+      assert.ok(tool.turn_id)
+      assert.equal(tool.item_id, 'check')
+      const check = JSON.parse(tool.text) as Record<string, unknown>
+      if (variant.includes('spoof')) { assert.equal(check.type, 'commandExecution'); assert.equal(check.exit_code, 7) }
+      else assert.notEqual(check.type, 'commandExecution')
+    } finally { await transport.close(); await f.clean() }
+  }
+})
+
+test('ACP observation text redacts sensitive paths and keeps a late tool delta from wiping the final reply', async () => {
+  const pathCase = await fixture('native-result-deepseek-secret-path')
+  const pathTransport = new AcpTransport({...pathCase, backendId: 'deepseek', permissionMode: 'full'})
+  const pathEvents: ExecutorActivity[] = []
+  try {
+    await pathTransport.run({workOrder: 'check'}, {onActivity: e => pathEvents.push(e)}, deadline())
+    assert.doesNotMatch(JSON.stringify(pathEvents), /\.ssh\/id_rsa/)
+    assert.match(pathEvents.find(e => e.kind === 'tool')!.text, /\[redacted\]/)
+  } finally { await pathTransport.close(); await pathCase.clean() }
+  const late = await fixture('command-evidence-pi-late-text')
+  const lateTransport = new AcpTransport({...late, backendId: 'pi', permissionMode: 'full'})
+  try {
+    const result = await lateTransport.run({workOrder: 'check'}, {}, deadline())
+    assert.equal(result.code, 'completed')
+    assert.equal(result.completion?.final_text, 'Final answer.')
+  } finally { await lateTransport.close(); await late.clean() }
 })

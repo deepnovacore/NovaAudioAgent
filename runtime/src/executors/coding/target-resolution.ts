@@ -1,6 +1,7 @@
 import {z} from 'zod'
 import type {ModelGateway} from '../../model/model-gateway.js'
 import type {RunningWork} from '../coding-executor.js'
+import {MAX_PROJECT_SESSION_TITLE} from '../../projects/project-state.js'
 import {completeJson} from './json-completion.js'
 
 export const intakeKindSchema = z.enum(['work', 'steer', 'switch', 'create', 'unclear'])
@@ -20,7 +21,7 @@ export const targetSelectionSchema = z.object({
   session: z.discriminatedUnion('mode', [
     z.object({mode: z.literal('latest')}).strict(),
     z.object({mode: z.literal('new')}).strict(),
-    z.object({mode: z.literal('named'), title: z.string().trim().min(1).max(80)}).strict(),
+    z.object({mode: z.literal('named'), title: z.string().trim().min(1).max(MAX_PROJECT_SESSION_TITLE)}).strict(),
   ]),
   question: z.string().trim().min(1).max(300).nullable(),
 }).strict()
