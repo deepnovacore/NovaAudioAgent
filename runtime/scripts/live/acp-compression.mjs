@@ -23,7 +23,8 @@ await mkdir(workspace); await mkdir(join(configHome, 'opencode'), {recursive: tr
 const baseline = process.env.NOVA_ACP_BASELINE_REF ?? 'd425dcb5'
 const report = {variant, baseline, root, scope: 'Real OpenCode ACP, CodexLiveAdapter, CausalRuntime and GatewayCompressor. Synthetic retained context; qwen-flash on both sides. Token share covers Nova host gateway calls only, not backend-internal usage. No microphone/GUI acceptance.', progress: [], modelCalls: [], compressorJobs: [], permissions: 0}
 const moduleUrl = path => pathToFileURL(path).href
-const dist = variant === 'before' ? process.env.NOVA_ACP_BASELINE_DIST : resolve(repo, 'runtime/dist')
+const dist = variant === 'before' ? process.env.NOVA_ACP_BASELINE_DIST : (process.env.NOVA_ACP_AFTER_DIST ?? resolve(repo, 'runtime/dist'))
+report.scriptSha256 = createHash('sha256').update(await readFile(import.meta.filename)).digest('hex')
 if (!dist) throw Error('before requires NOVA_ACP_BASELINE_DIST from an independently built baseline checkout')
 const [{AcpTransport}, {CausalRuntime}, {RealClock}, {MonotonicIdFactory}, {CodexLiveAdapter}, {OpenAIModelGateway}, {GatewayCompressor}] = await Promise.all([
   'executors/acp/transport', 'core/causal-runtime', 'core/clock', 'core/ids', 'executors/codex/adapter-live', 'model/model-gateway', 'model/model-adapters',
@@ -46,7 +47,8 @@ const proxy = createServer(async (request, response) => {
     for await (const chunk of request) {body += chunk; if (body.length > 1000000) throw Error('request too large')}
     const payload = JSON.parse(body)
     assert.equal(payload.model, 'qwen-flash')
-    payload.max_tokens = Math.min(payload.max_tokens ?? 4096, 4096)
+    payload.max_tokens = Math.min(payload.max_tokens ?? payload.max_completion_tokens ?? 4096, 4096)
+    delete payload.max_completion_tokens
     const record = {at: Date.now(), requestBytes: Buffer.byteLength(body)}
     report.backendRequests.push(record)
     const upstream = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
@@ -79,7 +81,12 @@ const transportOptions = {backendId: 'opencode', cwd: workspace, binaryPath: pro
   permissionMode: 'ask', workingInterval: 5,
   env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, OPENCODE_CONFIG: configPath, OPENCODE_CONFIG_DIR: join(configHome, 'opencode'), XDG_CONFIG_HOME: configHome,
     XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CACHE_HOME: join(root, 'cache')},
-  approvalController: {offer: async offer => {report.permissions++; return {decision: offer.allowed_decisions.includes('accept') ? 'accept' : 'decline'}}, consume: value => value.decision, invalidate: () => false},
+  approvalController: {offer: async offer => {
+    report.permissions++
+    const scope = offer.local_detail?.scope ?? ''
+    const allowed = report.permissions <= 8 && scope.includes(workspace + '/') && !scope.includes('Kind: execute')
+    return {decision: allowed && offer.allowed_decisions.includes('accept') ? 'accept' : 'decline'}
+  }, consume: value => value.decision, invalidate: () => false},
 }
 const transport = new AcpTransport(transportOptions)
 const runTransport = transport.run.bind(transport)
@@ -112,7 +119,7 @@ try {
     if (event.kind === 'handoff') handoff = event.payload
   })
   serving = runtime.serve(stop.signal).catch(error => {serveError = error.name})
-  const workOrder = `This is an isolated acceptance test. Use only the write and read tools, no shell. Create ${join(workspace, 'squares.csv')} with the header n,square and exactly 80 data rows for integers 1 through 80 and their squares. Use a shell or code tool and verify every row by reading the file back. Do not access other directories or network services. In your final answer, explain all 80 rows as 80 separate numbered one-sentence bullets. Do not abbreviate this final answer; streaming output is part of the test.`
+  const workOrder = `This is an isolated acceptance test. Use only the write and read tools, no shell. Create ${join(workspace, 'squares.csv')} with the header n,square and exactly 80 data rows for integers 1 through 80 and their squares. Verify every row by reading the file back with the read tool. Do not access other directories or network services. In your final answer, explain all 80 rows as 80 separate numbered one-sentence bullets. Do not abbreviate this final answer; streaming output is part of the test.`
   const origin = await runtime.ingestUserInput({text: workOrder})
   const admission = await runtime.dispatchExternal({executor: 'codex', op: 'run', request: {work_order: workOrder}, origin_ref: origin},
     {kind: 'user_input', priority: 100, routing_class: 'user_awaited'})
