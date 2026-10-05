@@ -30,6 +30,56 @@
         "request_id": "mutate-1",
         "ok": true,
         "reload_required": true
+      },
+      "news_projection": {
+        "enabled": true,
+        "refreshing": false,
+        "items": [
+          {
+            "id": "article-1",
+            "title": "Example article",
+            "summary": "Summary",
+            "url": "https://example.com/article",
+            "read": false,
+            "saved": false
+          }
+        ],
+        "saved": []
+      },
+      "workbench_context_projection": {
+        "status": "ready",
+        "recap": {
+          "text": "Recently busy",
+          "projects": [
+            {
+              "name": "Nova",
+              "line": "Workbench"
+            }
+          ]
+        },
+        "cards": [
+          {
+            "id": "card-1",
+            "tab": "todos",
+            "title": "Try one task",
+            "body": "Body",
+            "why": "Why now",
+            "next": "Next step",
+            "source_count": 2
+          }
+        ]
+      },
+      "profile_preparation_projection": {
+        "status": "ready",
+        "draft": {
+          "about": "Draft about",
+          "work": [
+            {
+              "title": "Project",
+              "text": "What it does"
+            }
+          ]
+        }
       }
     }
   },

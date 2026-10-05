@@ -177,8 +177,8 @@ budget is 1 MiB, measured as UTF-8 bytes. Other JSON output keeps its old budget
 
 Mobile snapshots allow only `type`, `revision`, `reload_required`, `life`,
 `tasks`, `conversations`, `feed`, `memory`, `pending_approvals`,
-`pending_confirmations`, and task/memory capabilities. Desktop sources, Feishu,
-connectors, news, profile preparation and other desktop-only projections are
+`pending_confirmations`, a read-only `news` projection, and task/memory capabilities. Desktop sources, Feishu,
+connectors, profile preparation and other desktop-only projections are
 omitted, including snapshots nested in a command result.
 
 State changes coalesce in a fixed 250 ms window; the newest snapshot wins.
@@ -223,3 +223,7 @@ For negotiated personal clients, authenticated protocol faults close with 1002;
 4003 denotes authentication rejection or explicit device revocation. This prevents
 a malformed frame or transient host initialization failure from erasing pairing
 credentials. Legacy clients retain the previous close-code behavior.
+
+Mobile `news` contains `enabled`, `refreshing`, `items` and `saved`. Articles retain only id, source_id, title, summary, url, published_at, read and saved, plus `source_name` for built-in sources; source configuration and ranking internals are omitted. News mutations remain unavailable on mobile.
+
+Mobile `workbench_context` contains `status`, `recap {text, projects[{name, line}]}` and `cards[{id, tab, title, body, why, next, source_count}]`. Mobile `profile_preparation` contains `status` and `draft {about, work[{title, text}]}` or null. Source excerpts, labels and references are omitted; only the number of supporting sources is shared. `context.adopt` and `context.dismiss` are available to mobile clients.

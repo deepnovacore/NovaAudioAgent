@@ -7,17 +7,48 @@ import {
   validateDesktopToken, type DesktopReadiness, type DesktopServerOptions,
 } from '../desktop.js'
 import {MAX_DESKTOP_PCM_BYTES, validateInputPcm} from '../desktop/desktop-wire.js'
+import {NEWS_SOURCES} from '../news/feeds.js'
 import {CLIENT_PATH, ClientCommands, clientReady, decodeClientAudioFrame, acceptsClientMedia, clientMediaSchema, type ClientMedia} from './client-protocol.js'
 
 const MAX_BUFFERED_BYTES = 256 * 1024
 const MAX_PENDING_SENDS = 128
 const MAX_PERSONAL_BYTES = 1024 * 1024
-const MOBILE_METHODS = new Set(['state', 'life.mutate', 'feed.action', 'memory.list', 'memory.evidence', 'memory.correct', 'memory.forget', 'memory.purge', 'conversations.read', 'conversations.create', 'conversations.select', 'conversations.open_work', 'conversations.clear', 'conversations.confirm', 'conversations.open_feed', 'conversations.voice', 'conversations.approve', 'presentation.set', 'presentation.seen', 'tasks.list', 'tasks.get', 'tasks.delegate', 'tasks.control', 'tasks.input', 'tasks.cancel', 'tasks.continue', 'tasks.reconcile', 'tasks.complete_todo'])
+const MOBILE_METHODS = new Set(['state', 'life.mutate', 'feed.action', 'memory.list', 'memory.evidence', 'memory.correct', 'memory.forget', 'memory.purge', 'conversations.read', 'conversations.create', 'conversations.select', 'conversations.open_work', 'conversations.clear', 'conversations.confirm', 'conversations.open_feed', 'conversations.voice', 'conversations.approve', 'presentation.set', 'presentation.seen', 'tasks.list', 'tasks.get', 'tasks.delegate', 'tasks.control', 'tasks.input', 'tasks.cancel', 'tasks.continue', 'tasks.reconcile', 'tasks.complete_todo', 'context.adopt', 'context.dismiss'])
 
 /** Explicit mobile projection: new desktop fields are private by default. */
 function mobileSnapshot(value: Record<string, unknown>): Record<string, unknown> {
   const keys = ['type', 'revision', 'reload_required', 'life', 'tasks', 'conversations', 'feed', 'memory', 'pending_approvals', 'pending_confirmations']
   const result = Object.fromEntries(keys.filter(key => key in value).map(key => [key, value[key]]))
+  // Mobile displays the same ranked/saved articles without source configuration.
+  if (value.news && typeof value.news === 'object' && !Array.isArray(value.news)) {
+    const news = value.news as Record<string, unknown>
+    const articleKeys = ['id', 'source_id', 'title', 'summary', 'url', 'published_at', 'read', 'saved']
+    const articles = (rows: unknown) => Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object').map(row => {
+      const article = row as Record<string, unknown>
+      const name = NEWS_SOURCES.find(source => source.id === article.source_id)?.name
+      return {...Object.fromEntries(articleKeys.filter(key => key in article).map(key => [key, article[key]])), ...(name ? {source_name: name} : {})}
+    }) : []
+    result.news = {enabled: news.enabled === true, refreshing: news.refreshing === true,
+      items: articles(news.items), saved: articles(news.saved)}
+  }
+  // Suggestions and the Profile draft carry no source excerpts: mobile shows how many sources back them.
+  const record = (input: unknown) => input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : null
+  const text = (input: unknown) => typeof input === 'string' ? input : null
+  const list = (input: unknown) => Array.isArray(input) ? input.map(record).filter(item => item !== null) : []
+  const context = record(value.workbench_context)
+  if (context) {
+    const recap = record(context.recap)
+    result.workbench_context = {status: text(context.status),
+      recap: {text: text(recap?.text), projects: list(recap?.projects).map(project => ({name: text(project.name), line: text(project.line)}))},
+      cards: list(context.cards).map(card => ({id: text(card.id), tab: text(card.tab), title: text(card.title), body: text(card.body),
+        why: text(card.why), next: text(card.next), source_count: Array.isArray(card.refs) ? card.refs.length : 0}))}
+  }
+  const preparation = record(value.profile_preparation), draft = record(preparation?.draft)
+  if (preparation) {
+    result.profile_preparation = {status: text(preparation.status), draft: draft ? {
+      about: text(record(draft.about)?.text),
+      work: list(draft.work).map(item => ({title: text(item.title), text: text(item.text)}))} : null}
+  }
   if (value.capabilities && typeof value.capabilities === 'object') {
     const caps = value.capabilities as Record<string, unknown>
     result.capabilities = Object.fromEntries(['tasks', 'memory'].filter(key => key in caps).map(key => [key, caps[key]]))

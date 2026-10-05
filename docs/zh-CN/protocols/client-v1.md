@@ -162,7 +162,7 @@ Swift 客户端把字幕累积为内存中的会话列表，按 `message_id`／�
 
 移动快照只保留 `type`、`revision`、`reload_required`、`life`、`tasks`、
 `conversations`、`feed`、`memory`、`pending_approvals`、`pending_confirmations`
-和任务/记忆能力。sources、feishu、connectors、news、profile preparation 等
+、只读 `news` 投影和任务/记忆能力。sources、feishu、connectors、profile preparation 等
 桌面专用投影不下发；命令结果中嵌套的状态也使用同一投影。
 
 状态变化在固定的 250 ms 窗口内合并，只发送最新快照。断开连接会清除待发送状态。
@@ -195,3 +195,7 @@ Mac 内置共享端点对未声明 personal 的客户端也执行手机命令允
 
 对已协商 personal 的客户端，认证后的协议错误以 1002 关闭；4003 表示认证拒绝或
 明确撤销设备，避免坏帧或宿主初始化错误触发手机删除配对凭据。旧客户端关闭码保持原行为。
+
+移动端 `news` 仅含 `enabled`、`refreshing`、`items`、`saved`。文章只保留 id、source_id、title、summary、url、published_at、read、saved，内置来源另附 `source_name`；不下发数据源配置和排序内部信息。手机暂不开放资讯修改命令。
+
+移动端 `workbench_context` 含 `status`、`recap {text, projects[{name, line}]}` 和 `cards[{id, tab, title, body, why, next, source_count}]`。移动端 `profile_preparation` 含 `status` 和 `draft {about, work[{title, text}]}`（或 null）。不下发来源原文、标签和引用，只提供支撑来源的条数。手机可以使用 `context.adopt` 和 `context.dismiss`。

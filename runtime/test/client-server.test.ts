@@ -229,7 +229,7 @@ test('personal clients receive a compact coalesced snapshot with a 1 MiB budget'
   t.after(() => client.socket.terminate())
   client.socket.send(JSON.stringify({type:'hello',token,protocol_version:1,capabilities:['personal']}))
   assert.ok((await client.next()).capabilities instanceof Array)
-  const snapshot = {type:'personal.state',revision:1,life:{profile:{about:'x'.repeat(300_000)}},sources:['private'],feishu:{secret:true},connectors:{secret:true},news:{},capabilities:{sources:true,memory:{list:true}}}
+  const snapshot = {type:'personal.state',revision:1,life:{profile:{about:'x'.repeat(300_000)}},sources:['private'],feishu:{secret:true},connectors:{secret:true},news:{enabled:true,items:[{id:'n',title:'Article',summary:'Summary',url:'https://example.com',private_field:'secret'}],sources:[{token:'secret'}]},capabilities:{sources:true,memory:{list:true}},workbench_context:{status:'ready',candidate_count:3,recap:{text:'Busy',projects:[{name:'Nova',line:'Workbench',path:'/private'}]},cards:[{id:'c',candidate_id:'c',tab:'todos',title:'Try it',body:'Body',why:'Why',next:'Next',refs:[{entry_id:'source:1',version:'v',label:'private excerpt'}]}]},profile_preparation:{status:'ready',draft:{about:{text:'About',refs:[{entry_id:'p'}]},work:[{title:'W',text:'T',refs:[{entry_id:'p'}]}]},sources:[{id:'p',label:'private label'}]}}
   await server.sendText(JSON.stringify(snapshot))
   await server.sendText(JSON.stringify({...snapshot,revision:2}))
   const state = await client.next()
@@ -237,8 +237,11 @@ test('personal clients receive a compact coalesced snapshot with a 1 MiB budget'
   assert.equal(state.sources,undefined)
   assert.equal(state.feishu,undefined)
   assert.equal(state.connectors,undefined)
-  assert.equal(state.news,undefined)
+  assert.deepEqual(state.news,{enabled:true,refreshing:false,items:[{id:'n',title:'Article',summary:'Summary',url:'https://example.com'}],saved:[]})
   assert.deepEqual(state.capabilities,{memory:{list:true}})
+  assert.deepEqual(state.workbench_context,{status:'ready',recap:{text:'Busy',projects:[{name:'Nova',line:'Workbench'}]},cards:[{id:'c',tab:'todos',title:'Try it',body:'Body',why:'Why',next:'Next',source_count:1}]})
+  assert.deepEqual(state.profile_preparation,{status:'ready',draft:{about:'About',work:[{title:'W',text:'T'}]}})
+  assert.doesNotMatch(JSON.stringify(state),/private/)
   await server.sendText(JSON.stringify({...snapshot,revision:3,life:{profile:{about:'x'.repeat(1_048_576)}}}))
   assert.deepEqual(await client.next(),{type:'personal.state',revision:3,reload_required:true})
 })
