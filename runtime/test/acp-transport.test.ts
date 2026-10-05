@@ -48,9 +48,15 @@ acp.agent()
  if(mode === 'bad-session-id') return {sessionId: 'bad\\u0007session'};
  return {sessionId: 'new-session'};
 })
-.onRequest('session/load', () => {if(mode === 'missing-resume') throw acp.RequestError.resourceNotFound('private-session'); if(mode === 'reject-resume') throw new Error('private secret'); return {}})
+.onRequest('session/load', async ({params, client}) => {if(mode === 'progress-history') for(let i = 0; i < 20; i++) await client.notify('session/update', {sessionId: params.sessionId, update: {sessionUpdate: 'agent_message_chunk', content: {type: 'text', text: 'history'}}}); if(mode === 'missing-resume') throw acp.RequestError.resourceNotFound('private-session'); if(mode === 'reject-resume') throw new Error('private secret'); return {}})
 .onRequest('session/resume', () => ({}))
-.onNotification('session/cancel', () => {if(mode !== 'ignore-cancel') process.exit(0)})
+.onNotification('session/cancel', async () => {
+ if(mode === 'progress-cancel') {
+   await sessionClient.notify('session/update', {sessionId: 'new-session', update: {sessionUpdate: 'agent_message_chunk', content: {type: 'text', text: 'late'}}});
+   writeFileSync(${JSON.stringify(join(cwd, 'late-sent'))}, '1');
+ }
+ if(mode !== 'ignore-cancel') process.exit(0);
+})
 .onRequest('session/prompt', async ({params, client}) => {
  if(mode.startsWith('prompt-error:')) throw new acp.RequestError(-32603, mode.slice('prompt-error:'.length));
  if(mode === 'long-stream') for(let i=0;i<140;i++) await client.notify('session/update',{sessionId:params.sessionId,update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'x'.repeat(65536)}}});
@@ -90,6 +96,18 @@ acp.agent()
  if(mode === 'crash') process.exit(3);
  if(mode === 'stderr') {process.stderr.write('x'.repeat(300000)); return await new Promise(() => {});}
  if(mode === 'hang') return await new Promise(() => {});
+ if(mode === 'progress-cancel') {
+   await client.notify('session/update', {sessionId: params.sessionId, update: {sessionUpdate: 'agent_message_chunk', content: {type: 'text', text: 'first'}}});
+   return await new Promise(() => {});
+ }
+ if(mode === 'progress-burst' || mode === 'progress-paced') {
+   for(let i = 0; i < 1000; i++) {
+     if(mode === 'progress-paced' && i === 998) await new Promise(resolve => setTimeout(resolve, 5100));
+     await client.notify('session/update', {sessionId: params.sessionId, update: {sessionUpdate: 'agent_message_chunk', content: {type: 'text', text: 'x'}}});
+   }
+   return {stopReason: 'end_turn'};
+ }
+
  if(mode.startsWith('permission')) {
    const options = mode === 'permission-always' ? [{optionId: 'always', kind: 'allow_always', name: 'Remember'}] : [{optionId: 'yes', kind: 'allow_once', name: 'Allow'}, {optionId: 'no', kind: 'reject_once', name: 'Deny'}];
    const details = mode === 'permission-details' ? {kind: 'execute', rawInput: {command: 'printf operation-check', data: 'mcp-private-token', extra: 'x'.repeat(2000)}, locations: [{path: '/tmp/operation-check.txt', line: 7}]}
@@ -532,6 +550,55 @@ test('ACP refuses a session id the project store would reject before writing a p
     assert.equal(result.code, 'server_rejected')
     assert.equal(result.turnStartWritten, false)
     assert.equal(existsSync(join(f.cwd, 'prompted')), false)
+  } finally {await transport.close(); await f.clean()}
+})
+
+for (const mode of ['progress-burst', 'progress-paced']) {
+  test(`ACP ${mode} bounds callbacks and preserves all text and activity`, async () => {
+    const f = await fixture(mode)
+    const transport = new AcpTransport({...f, backendId: 'opencode', permissionMode: 'ask', workingInterval: 5})
+    const progress: {internal_activity: number; elapsed: number}[] = []
+    try {
+      const result = await transport.run({workOrder: 'hello'}, {onProgress: value => progress.push(value)}, {expiresAtMs: Date.now() + 15000})
+      assert.equal(result.code, 'completed')
+      assert.equal(result.completion?.final_text, 'x'.repeat(1000))
+      assert.equal(result.completion?.internal_activity, 1000)
+      assert.equal(progress.length, mode === 'progress-paced' ? 3 : 2)
+      assert.equal(progress[0]?.internal_activity, 1)
+      assert.equal(progress.at(-1)?.internal_activity, 1000)
+      if (mode === 'progress-paced') {
+        assert.equal(progress[1]?.internal_activity, 999)
+        assert.ok(progress[1].elapsed - progress[0].elapsed >= 5)
+      }
+      const count = progress.length
+      await transport.close()
+      assert.equal(progress.length, count)
+    } finally { await transport.close(); await f.clean() }
+  })
+}
+
+
+test('ACP session/load history never becomes progress for the new prompt', async () => {
+  const f = await fixture('progress-history')
+  const transport = new AcpTransport({...f, backendId: 'opencode', permissionMode: 'ask', resumeSessionId: 'saved'})
+  const progress: number[] = []
+  try {
+    const result = await transport.run({workOrder: 'hello'}, {onProgress: value => progress.push(value.internal_activity)}, deadline())
+    assert.equal(result.code, 'completed')
+    assert.equal(result.completion?.final_text, 'done')
+    assert.deepEqual(progress, [1])
+  } finally {await transport.close(); await f.clean()}
+})
+
+test('ACP cancellation suppresses updates actually sent after session/cancel', async () => {
+  const f = await fixture('progress-cancel')
+  const transport = new AcpTransport({...f, backendId: 'opencode', permissionMode: 'ask'})
+  const controller = new AbortController(), progress: number[] = []
+  try {
+    const result = await transport.run({workOrder: 'hello'}, {onProgress: value => {progress.push(value.internal_activity); controller.abort()}}, {...deadline(), signal: controller.signal})
+    assert.equal(result.classification, 'uncertain')
+    assert.equal(await readFile(join(f.cwd, 'late-sent'), 'utf8'), '1')
+    assert.deepEqual(progress, [1])
   } finally {await transport.close(); await f.clean()}
 })
 

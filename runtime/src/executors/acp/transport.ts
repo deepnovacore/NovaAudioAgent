@@ -50,6 +50,8 @@ function record(value: unknown): Record<string, unknown> | null {
 
 export interface AcpTransportOptions extends Omit<AcpLaunchInput, 'env'> {
   readonly env?: NodeJS.ProcessEnv
+  /** Seconds between activity reports, matching CODEX_WORKING_INTERVAL (5–600). */
+  readonly workingInterval?: number
   readonly resumeSessionId?: string | null
   readonly mcpServers?: readonly acp.McpServer[]
   readonly approvalController?: ApprovalPort | null
@@ -83,6 +85,9 @@ export class AcpTransport implements CodexAppServerTransport {
   #written = false
   #text = ''
   #activity = 0
+  #reportedActivity = 0
+  #lastProgressAt = -Infinity
+  readonly #workingInterval: number
   #turnId = ''
   readonly #tools = new Map<string, ToolObservation>()
   #started = 0
@@ -91,6 +96,9 @@ export class AcpTransport implements CodexAppServerTransport {
   #process: {exit_code: number | null; stop: 'none' | 'terminate' | 'kill'} | undefined
 
   constructor(options: AcpTransportOptions) {
+    const interval = options.workingInterval ?? 30
+    if (!Number.isFinite(interval) || interval < 5 || interval > 600) throw new CodexTransportError('workspace_invalid')
+    this.#workingInterval = interval
     this.#options = options
     this.#cwd = options.cwd
     this.#resume = options.resumeSessionId ?? null
@@ -265,6 +273,7 @@ export class AcpTransport implements CodexAppServerTransport {
         sessionId, prompt: [{type: 'text', text: input.workOrder}],
       }), promptDeadline, deadline.signal)
       if (this.#failure) throw this.#failure
+      this.#emitProgress(true)
       if (result.stopReason !== 'end_turn') throw new CodexTransportError('turn_failed', {method, server_code: null, message: `stop_reason=${String(result.stopReason).replace(/[^a-z_]/gu, '').slice(0, 32)}`})
       // Match the existing public evidence format: bounded, NFC, printable text.
       const text = [...normalizeNfcPinned(this.#safeText(this.#text))]
@@ -406,8 +415,18 @@ export class AcpTransport implements CodexAppServerTransport {
     if (update.sessionUpdate === 'session_info_update' && update.title !== undefined) {
       this.#observer?.onThreadNamed?.(params.sessionId, update.title === null ? null : this.#safeText(update.title).slice(0, 200))
     }
+    this.#emitProgress()
+  }
+
+  #emitProgress(flush = false): void {
+    // session/load can replay history; it is not activity from this prompt.
+    if (!this.#written || this.#lifetime.signal.aborted || this.#activity === this.#reportedActivity) return
+    const now = Date.now()
+    if (!flush && now - this.#lastProgressAt < this.#workingInterval * 1000) return
+    this.#lastProgressAt = now
+    this.#reportedActivity = this.#activity
     this.#observer?.onProgress?.({phase: 'working', internal_activity: this.#activity,
-      elapsed: (Date.now() - this.#started) / 1000, summary: null})
+      elapsed: (now - this.#started) / 1000, summary: null})
   }
 
   #safeText(text: string): string {
@@ -658,6 +677,7 @@ export interface AcpTransportFactoryOptions {
   readonly capabilities: CapabilityRegistry
   readonly knowledgeEntries?: Readonly<Record<string, McpServerConfig>>
   readonly permissionMode: 'ask' | 'full'
+  readonly workingInterval?: number
   readonly processFactory?: CodexProcessOwnerFactory
 }
 
@@ -674,6 +694,7 @@ export function createAcpProjectTransport(options: AcpTransportFactoryOptions, b
       return {mcp, transport: new AcpTransport({
         backendId: binding.backendId, cwd: hostWorkspacePath(binding.workspace), env: {...profile.environment},
         permissionMode: options.permissionMode,
+        ...(options.workingInterval === undefined ? {} : {workingInterval: options.workingInterval}),
         ...(profile.binaryPath ? {binaryPath: profile.binaryPath} : {}),
         ...(options.processFactory === undefined ? {} : {processFactory: options.processFactory}),
         resumeSessionId: binding.resumeSessionId, mcpServers: mcp.servers, approvalController: binding.approvalController,
@@ -692,6 +713,7 @@ export function createAcpBackendRouting(options: {
   readonly capabilities: CapabilityRegistry
   readonly knowledgeEntries?: Readonly<Record<string, McpServerConfig>>
   readonly approvalMode: 'ask' | 'yolo'
+  readonly workingInterval?: number
   readonly processFactory?: CodexProcessOwnerFactory
 }): CodingBackendRouting {
   const profiles = runtimeCodingProfiles(parseCodingProfiles(options.environment.CODING_PROFILES), options.environment)
@@ -699,6 +721,7 @@ export function createAcpBackendRouting(options: {
     profiles: profiles.profiles, capabilities: options.capabilities,
     ...(options.knowledgeEntries === undefined ? {} : {knowledgeEntries: options.knowledgeEntries}),
     permissionMode: options.approvalMode === 'yolo' ? 'full' : 'ask',
+    ...(options.workingInterval === undefined ? {} : {workingInterval: options.workingInterval}),
     ...(options.processFactory === undefined ? {} : {processFactory: options.processFactory}),
   }
   return Object.freeze({

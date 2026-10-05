@@ -128,7 +128,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
       return await createCodexAssemblyResource({
         backends: createAcpBackendRouting({initialBackend: settings.coding_backend, environment, capabilities,
           ...(knowledge === undefined ? {} : {knowledgeEntries: knowledge.codexEntries}),
-          approvalMode: settings.codex_approval_mode,
+          approvalMode: settings.codex_approval_mode, workingInterval: codexConfig.workingInterval,
           ...(acpProcessFactory === undefined ? {} : {processFactory: acpProcessFactory})}),
         managedMcp: prepareManagedCodexMcp(capabilities, knowledge?.codexEntries),
         config: codexConfig,
