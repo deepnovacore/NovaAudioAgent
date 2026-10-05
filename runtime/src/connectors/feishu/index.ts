@@ -16,6 +16,7 @@ export interface FeishuSnapshot {
   last_sync?: string; error?: string; bot_enabled: boolean; retention_days: 30; verification_url?: string;
   app_id?: string;
   scope_configured?: boolean;
+  auth_issue?: 'expired' | 'missing_scopes' | 'login_required';
   processing_consent_required?: boolean;
   app_setup?: {state: 'idle' | 'waiting' | 'ready' | 'error'; verification_url?: string; error?: string};
 }
@@ -196,14 +197,19 @@ export class FeishuConnector {
     const user = identities.user ? object(identities.user) : {};
     const scopes = Array.isArray(user.scopes ?? user.scope) ? user.scopes ?? user.scope : str(user.scope ?? user.scopes).split(/[ ,]+/);
     const id = str(user.openId ?? user.open_id);
-    const valid = data.verified !== false && (user.status === 'authenticated' || user.tokenStatus === 'valid' || user.authenticated === true);
+    // CLI --verify may refresh successfully while retaining the pre-refresh status.
+    const valid = data.verified !== false && user.verified !== false && (user.status === 'authenticated' || user.tokenStatus === 'valid' || user.authenticated === true
+      || user.status === 'needs_refresh' && user.verified === true);
     if (!app || !id || !valid || !FEISHU_SCOPES.every((scope) => (scopes as unknown[]).includes(scope))) {
+      if (app) this.view.auth_issue = user.tokenStatus === 'expired' ? 'expired' : valid && id ? 'missing_scopes' : 'login_required';
+      else delete this.view.auth_issue;
       this.view.state = 'unauthorized'; this.view.bot_enabled = false;
       this.saved.connected = false; this.saved.bot = false;
       this.listenerController?.abort(); await this.listener?.catch(() => { /* Authorization is no longer valid. */ });
       await this.save();
       return this.snapshot();
     }
+    delete this.view.auth_issue;
     const account = hash(JSON.stringify([app, user.tenantKey ?? user.tenant_key ?? null, id]));
     if (this.saved.account && this.saved.account !== account) {
       this.listenerController?.abort(); await this.listener?.catch(() => { /* Fence the old identity. */ });

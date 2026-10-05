@@ -41,6 +41,14 @@ test('Feishu does not authorize reading or bot delivery by rendering and keeps d
  await v.button('删除本地历史').action();assert.equal(confirmation.hidden,false)
  await v.button('确认删除本地历史').action();assert.equal(v.commands.at(-1).method,'feishu.delete')
 })
+test('expired user authorization offers reauthorization without replacing the app',async()=>{
+ const v=view({available:true,configured:true,state:'unauthorized',auth_issue:'expired',chats:[]})
+ assert.ok(v.nodes.some(node=>node.text?.includes('授权已过期')))
+ assert.ok(v.nodes.some(node=>node.text?.includes('无需重新绑定应用')))
+ assert.equal(v.button('绑定已有应用'),undefined)
+ await v.button('重新授权飞书').action()
+ assert.deepEqual(v.commands,[{method:'feishu.login',params:{}}])
+})
 test('unconfigured deployment does not offer OAuth or expose credentials',()=>{
  assert.doesNotThrow(()=>view(null))
  const v=view({available:true,configured:false,device_code:'secret',app_secret:'secret'})
@@ -138,6 +146,17 @@ test('settings waits for status without claiming CLI is missing',async()=>{
  assert.match(text(),/正在读取/);assert.doesNotMatch(text(),/安装|lark-cli/)
  const pending=panel.load();assert.match(text(),/正在读取/)
  respond({available:false});await pending;assert.match(text(),/lark-cli/)
+})
+
+test('sync attachment warnings keep connection and consent controls available',async()=>{
+ const root=new Node('main'),error=new Node('p')
+ const document={querySelector:selector=>selector==='#im-connection'?root:error,createElement:tag=>new Node(tag),createTextNode:text=>new Node('text',text)}
+ globalThis.document=document
+ const panel=createImPanel({document,api:{feishuCommand:()=>Promise.resolve({available:true,configured:true,state:'ready',scope_configured:true,processing_consent_required:false,error:'8 条附件未提取正文'})}})
+ await panel.load()
+ assert.ok(root.querySelectorAll('button').some(node=>node.textContent==='立即同步'))
+ assert.ok(root.querySelectorAll('input').some(node=>node.checked===true))
+ assert.ok(root.querySelectorAll('p').some(node=>node.textContent==='8 条附件未提取正文'))
 })
 
 test('text captions never duplicate persisted users; voice captions and generation states remain visible',()=>{

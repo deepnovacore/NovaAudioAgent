@@ -284,6 +284,20 @@ test('a supporting memory and a concrete task do not suppress each other in eith
  }
 })
 
+test('Feishu authorization status and login do not depend on model discovery', async () => {
+    const f = await fixture();
+    const host = new PersonalAgentHost({...f.host.options, path:join(f.dir,'feishu.json'), discover: () => Promise.reject(Error('模型请求失败（HTTPStatus400）'))});
+    try {
+        await host.open();
+        host.setFeishu({snapshot:()=>({available:true,configured:true,state:'unauthorized'}),open:()=>Promise.resolve(),close:()=>Promise.resolve(),command:()=>Promise.resolve({available:true,configured:true,state:'unauthorized'})});
+        for (const method of ['feishu.status','feishu.login','feishu.complete','feishu.bot.configure']) {
+            const result = await host.command({type:'personal.command',request_id:method,method,params:{}}) as {ok:boolean;data?:{state:string}};
+            assert.equal(result.ok,true,method);
+            assert.equal(result.data?.state,'unauthorized');
+        }
+    } finally { await host.close(); await f.close(); }
+});
+
 test('Feishu controls and delivery ledger stay separate from execution authorization', async () => {
     const f = await fixture();
     let calls=0;
