@@ -63,4 +63,4 @@ node runtime/scripts/live/acp-compression-compare.mjs /absolute/before/report.js
 
 `NOVA_ACP_AFTER_DIST` selects a separately built integration output. Logs emit safe `model_call` metrics; reports include module hashes, actual counts, token records and lifecycle outcomes. Do not interpret stale `dist` output as the current source: rebuild before running. The baseline ref annotation is not a build attestation; the independent build commands and recorded module hashes are the evidence in this run.
 
-Compact credentials-free reports (temporary paths/session IDs redacted) are in [the evidence directory](acp-progress-compression-2026-10-06/). Initial exploratory runs with an ambiguous row count or relative output path failed artifact validation and were excluded from the successful comparison.
+The compact per-run JSON reports are kept locally in the ignored `docs/internal/` directory, not in the repository; regenerate them with the live scripts named in this document. Initial exploratory runs with an ambiguous row count or relative output path failed artifact validation and were excluded from the successful comparison.
