@@ -1376,12 +1376,12 @@ export function realtimeServiceHarness(profile: 'queue' | 'pipeline' | 'projecti
           idFactory: nextId,
         }),
         idFactory: nextId,
-        controlledGuardReconnect: options.controlledReconnect ?? false,
+        controlledPreemptiveAlertReconnect: options.controlledReconnect ?? false,
         ...(options.recoveryTexts === undefined
           ? {}
           : {
-            guardHistoryRecovery: 'packed' as const,
-            guardHistoryPairs: 1,
+            preemptiveAlertHistoryRecovery: 'packed' as const,
+            preemptiveAlertHistoryPairs: 1,
             telemetry: {
               record: (kind: string, payload: Readonly<Record<string, JsonValue>>) => {
                 telemetry.push({kind, payload})

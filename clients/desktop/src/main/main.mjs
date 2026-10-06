@@ -12,7 +12,7 @@ import {FeishuConnector, VISION_MODELS} from '@nova-audio-agent/runtime/desktop'
 import {configureDesktopIdentity} from './desktop-identity.mjs'
 import {createFrontendUsage} from './frontend-usage.mjs'
 import {createKnowledgeActions} from './knowledge-actions.mjs'
-import {createManagedPhoneService, phoneNetwork, requestPhonePairing, renderPhoneQr} from './phone-connection.mjs'
+import {phoneNetwork, requestPhonePairing, renderPhoneQr} from './phone-connection.mjs'
 import {activeMcpMenuRows} from './orb-menu.mjs'
 import {parseSettingsCommit, validatePreparedSettings, prepareCapabilityCommit, readCapabilityDocument, readCapabilityEditor, publicCapabilityProbe, capabilityEnvironment, assertEditorSafe, referencedCapabilitySecrets, capabilityPath, capabilityDocumentRevision, invalidCommit} from './capabilities-settings.mjs'
 import {parseCapabilityRegistry} from '@nova-audio-agent/runtime/desktop'
@@ -671,34 +671,39 @@ const phoneRoot = () => resolve(app.getPath('userData'), 'phone')
 let phoneConfig, phonePayload, phoneImage, phoneEpoch = 0
 let phoneIssuedDevices = new Set()
 let phoneQueue = Promise.resolve()
-const managedPhone = createManagedPhoneService({
-  shutdown: child => shutdownBackend(child),
-  launch: async () => {
-    if (!configurationReady) throw classifyBackendFailure('configuration_required')
-    const entry = nodeRuntimeEntry({isPackaged: app.isPackaged, appPath: app.getAppPath(), packageRoot})
-    const {initializeServerToken, loadServerConfig} = await import(pathToFileURL(resolve(dirname(entry), 'server/server-config.js')).href)
-    await mkdir(phoneRoot(), {recursive: true, mode: 0o700})
-    const tokenFile = resolve(phoneRoot(), 'host.token')
-    try { initializeServerToken(tokenFile) } catch (error) { if (error.code !== 'EEXIST') throw error }
-    const environment = {SERVER_PORT: '19876', SERVER_TOKEN_FILE: tokenFile}
-    phoneConfig = loadServerConfig(environment)
-    const spec = backendLaunchSpec({
-      newsLanguage: preferredLanguage(app.getPreferredSystemLanguages()),backend: 'node', nodeEntry: entry,
-      nodeResourcesPath: app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'build'),
-      workspace: desktopConfig?.workspace || process.cwd(), token: phoneConfig.token,
-      readyEndpoint: '127.0.0.1:1', parentEnv: process.env, settings: currentSettings,
-      decryptedSecrets: await accessCredentials(() => decryptSecretsForSpawn(currentSettings, secretCodec)), resolvedConfig: desktopConfig,
-      capabilitiesDocument: readCapabilityDocument(currentSettings, process.env)})
-    if (app.isQuitting || !currentSettings.phoneConnectionEnabled) throw new Error('service_unavailable')
-    return utilityProcess.fork(resolve(dirname(entry), 'desktop/phone-desktop-entry.js'), [], {
-      cwd: desktopConfig?.workspace || process.cwd(), stdio: 'pipe', serviceName: 'Nova iPhone Service',
-      env: {...spec.env, ...environment, SERVER_MEDIA_MODE: 'relay',
-        BLACKBOARD_PATH: resolve(phoneRoot(), 'blackboard.sqlite'),
-        BLACKBOARD_OWNER_ID: 'phone',
-        CODEX_PROJECT_STATE_ROOT: resolve(phoneRoot(), 'projects')},
+let phoneBackend, phoneOperation = Promise.resolve()
+const managedPhone = {
+  get running() { return !!backend && !!phoneBackend && phoneBackend === backendControl },
+  start() {
+    const operation = phoneOperation.then(async () => {
+      if (this.running) return
+      if (!configurationReady || !backendControl) throw classifyBackendFailure('configuration_required')
+      const owner = backendControl
+      const entry = nodeRuntimeEntry({isPackaged: app.isPackaged, appPath: app.getAppPath(), packageRoot})
+      const {initializeServerToken, loadServerConfig} = await import(pathToFileURL(resolve(dirname(entry), 'server/server-config.js')).href)
+      await mkdir(phoneRoot(), {recursive: true, mode: 0o700})
+      const tokenFile = resolve(phoneRoot(), 'host.token')
+      try { initializeServerToken(tokenFile) } catch (error) { if (error.code !== 'EEXIST') throw error }
+      const config = loadServerConfig({SERVER_PORT:'19876',SERVER_TOKEN_FILE:tokenFile})
+      if (app.isQuitting || !currentSettings.phoneConnectionEnabled) throw new Error('service_unavailable')
+      const result = await owner.request('phone.start', {port:config.port,tokenFile}, {timeoutMs:30000})
+      if (!result?.running || owner !== backendControl) throw new Error('service_unavailable')
+      phoneConfig = config
+      phoneBackend = owner
     })
+    phoneOperation = operation.catch(() => {})
+    return operation
   },
-})
+  stop() {
+    const operation = phoneOperation.then(async () => {
+      const owner = phoneBackend
+      phoneBackend = undefined
+      if (owner) await owner.request('phone.stop', {}, {timeoutMs:10000}).catch(() => {})
+    })
+    phoneOperation = operation.catch(() => {})
+    return operation
+  },
+}
 
 async function cancelPhonePairing(invalidate = true) {
   if (invalidate) phoneEpoch++
@@ -841,6 +846,11 @@ async function applyDesktopSettings(payload, restart = false) {
 
 function showOrbMenu(launchId) {
   Menu.buildFromTemplate([
+    { label: t("显示模式"), submenu: [
+      { label: t("工作台"), type: 'radio', checked: presentationMode === 'workbench', click: () => requestPresentation('workbench') },
+      { label: t("悬浮球"), type: 'radio', checked: presentationMode === 'orb', click: () => requestPresentation('orb') },
+      { label: t("隐藏"), type: 'radio', checked: presentationMode === 'background', click: () => requestPresentation('background') },
+    ] },
     { label: t("连接 iPhone…"), click: () => { void openPairingWindow() } },
     { label: t("记忆面板"), click: () => openMemoryBoard(launchId) },
     { label: t("设置…"), click: () => openSettingsWindow(launchId) },
@@ -856,8 +866,6 @@ function showOrbMenu(launchId) {
       }
     } },
     { type: 'separator' },
-    // Hiding is the quiet end of the orb: no window, no microphone, no wake word.
-    { label: t("隐藏"), click: () => requestPresentation('background') },
     { label: t("退出 Nova Audio Agent"), click: () => app.quit() },
   ]).popup({ window: mainWindow })
 }
@@ -1102,7 +1110,7 @@ const workspaceActions = createWorkspaceActions({
   },
 })
 
-async function launchBackend(backendKind, smokeChannel, onExit) {
+async function launchBackend(smokeChannel, onExit) {
   capabilityEditorCache = null
   let launchDocument
   try { launchDocument = readCapabilityDocument(currentSettings, process.env) }
@@ -1146,7 +1154,6 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
     }
     const spec = backendLaunchSpec({
       newsLanguage: preferredLanguage(app.getPreferredSystemLanguages()),
-      backend: backendKind,
       nodeEntry: nodeRuntimeEntry({
         isPackaged: app.isPackaged,
         appPath: app.getAppPath(),
@@ -1221,6 +1228,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
     })
     ;[ready] = await Promise.all([waitForBackendReadiness(spawnedBackend, listener.readiness, diagnostic),acceptanceProof])
     if(acceptance)appendAcceptanceCounts('runtime_gate_verified',{verified:1})
+    if (!acceptance && process.platform === 'darwin' && currentSettings.phoneConnectionEnabled && !currentSettings.phoneServerTokenFile) void managedPhone.start().catch(() => {})
   } finally {
     listener.close()
   }
@@ -1270,7 +1278,7 @@ async function loadStartupSettings() {
   }
 }
 
-async function startSelectedCamera(camera, backendKind, smokeChannel) {
+async function startSelectedCamera(camera, smokeChannel) {
   settingsReady = await loadStartupSettings()
   setLanguage(currentSettings.language)
   initializeDesktopBootstrap(camera.source)
@@ -1362,10 +1370,6 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // Sleep is an orb state: a workbench reached from a sleeping orb must hear its voice session, not the wake detector.
     if(mode==='workbench'&&['sleeping','blocked'].includes(wakeWord?.state))wakeWord.wake({show:false})
     if(activate){mainWindow.show();mainWindow.focus();return shown}
-  })
-  ipcMain.handle('nova:personal:collapse', (event, value) => {
-    if (event.sender !== mainWindow.webContents || typeof value !== 'boolean') throw new Error('window request rejected')
-    requestPresentation(value ? 'orb' : 'workbench')
   })
   ipcMain.handle('nova:personal:unread', (event, value) => {
     if (event.sender !== mainWindow.webContents || !Number.isSafeInteger(value) || value < 0 || value > 1000000) throw new Error('unread request rejected')
@@ -1499,9 +1503,6 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     const result = phoneQueue.then(() => phoneAction(action, deviceId, epoch))
     phoneQueue = result.catch(() => {})
     return result
-  })
-  ipcMain.on('nova:pairing:open', (event, ...args) => {
-    if (settingsWindow && event.sender === settingsWindow.webContents && args.length === 0) void openPairingWindow(launchId)
   })
   ipcMain.on('nova:setup:open', event => {
     if (mainWindow && event.sender === mainWindow.webContents) void openSetupWindow()
@@ -2089,7 +2090,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!globalShortcut.register(key, action)) console.warn(`[nova-audio-agent-desktop] shortcut unavailable: ${key}`)
   }
   backendSupervisor = createBackendSupervisor({
-    start: onExit => launchBackend(backendKind, smokeChannel, onExit),
+    start: onExit => launchBackend(smokeChannel, onExit),
     stopBackend: async child => {
       backendControl?.close()
       await shutdownBackend(child)
@@ -2135,7 +2136,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
 }
 
 async function start() {
-  const backendKind = selectedBackend(process.env, { isPackaged: app.isPackaged })
+  selectedBackend(process.env, { isPackaged: app.isPackaged })
   releaseSmokeChannel = createReleaseSmokeChannel({
     environment: process.env,
     isPackaged: app.isPackaged,
@@ -2143,7 +2144,7 @@ async function start() {
   })
   return startWithSelectedCamera({
     environment: process.env,
-    start: camera => startSelectedCamera(camera, backendKind, releaseSmokeChannel),
+    start: camera => startSelectedCamera(camera, releaseSmokeChannel),
   })
 }
 
@@ -2229,6 +2230,10 @@ if (packagedSourceRollbackUnavailable) {
     () => finishInstalledFileCameraSmoke('capture_failed'),
   )
 } else {
+  // macOS reopens the existing process through activate, not second-instance.
+  app.on('activate', () => {
+    if (!app.isQuitting && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) requestPresentation('workbench')
+  })
   app.on('second-instance', (_event, argv) => {
     wakeWord?.wake()
     requestPresentation('workbench')

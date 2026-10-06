@@ -1,5 +1,5 @@
 import {app,BrowserWindow,ipcMain} from 'electron'
-import {mkdtemp,realpath,writeFile,copyFile,mkdir,readFile} from 'node:fs/promises'
+import {mkdtemp,realpath,writeFile,copyFile,mkdir} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
 import assert from 'node:assert/strict'

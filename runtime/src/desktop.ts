@@ -542,6 +542,7 @@ export class NodeDesktopServer {
     // closing the peer. The close code remains the renderer-visible verdict.
     socket.on('error', error => { void error })
     let authenticated = false
+    let controlsReady = false
     let rejected = false
     let processing = Promise.resolve()
     const authTimer = setTimeout(() => socket.close(4003, 'desktop protocol rejected'),
@@ -555,7 +556,14 @@ export class NodeDesktopServer {
         return
       }
       this.#inboundBytes += inboundBytes
-      processing = processing.then(async () => {
+      // Personal commands include stopping voice and creating a text conversation. They
+      // must not wait for PCM delivery to a slow provider. Authentication and generation
+      // fences still run below; audio-routing controls retain their original queue order.
+      let personal = false
+      if (controlsReady && !isBinary) {
+        try { personal = parseDesktopControl(rawText(data)).type === 'personal.command' } catch { /* normal parser rejects below */ }
+      }
+      const operation = (personal ? Promise.resolve() : processing).then(async () => {
         // One rejection is terminal. Without this latch a peer could keep
         // guessing tokens on the same socket in the window before close settles.
         if (rejected) return
@@ -576,6 +584,7 @@ export class NodeDesktopServer {
           if (this.#active !== socket || this.#connectionGeneration !== generation
             || socket.readyState !== WebSocket.OPEN) return
           await this.#options.onClientAuthenticated?.(language)
+          controlsReady = true
           return
         }
         if (isBinary) {
@@ -626,6 +635,7 @@ export class NodeDesktopServer {
       }).finally(() => {
         this.#inboundBytes -= inboundBytes
       })
+      if (!personal) processing = operation
     })
     socket.once('close', () => {
       clearTimeout(authTimer)

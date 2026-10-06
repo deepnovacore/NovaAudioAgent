@@ -16,6 +16,7 @@ import {
 } from '../src/realtime/qwen.js'
 import { ItemDeliveryUncertainError, type RealtimeProviderEvent } from '../src/realtime/protocol.js'
 import { RealtimeProviderSession } from '../src/realtime/provider-session.js'
+import {createOpenAIWireProfile} from '../src/realtime/openai-wire-profile.js'
 import {createStepFunWireProfile} from '../src/realtime/integrated-wire-profile.js'
 
 const execFileAsync = promisify(execFile)
@@ -968,9 +969,9 @@ test('a transport close surfaces a recoverable disconnect', async () => {
   stop.abort()
 })
 
-test('a cancel with no active response becomes response_cancel_rejected', async () => {
+for(const vendor of ['qwen','openai'] as const) test(`${vendor} cancel rejection retains request identity`, async () => {
   const scripted = scriptedSocket([...handshake])
-  const adapter = adapterFor(scripted)
+  const adapter = adapterFor(scripted,vendor==='openai'?{wireProfile:createOpenAIWireProfile()}:{})
   await adapter.connect({tools: [], signal: new AbortController().signal})
   const stop = new AbortController()
 
@@ -982,8 +983,8 @@ test('a cancel with no active response becomes response_cancel_rejected', async 
   scripted.push({
     type: 'error',
     error: {
-      code: 'invalid_value',
-      message: '  Conversation has no active response. ',
+      code: vendor==='openai'?'response_cancel_not_active':'invalid_value',
+      message: vendor==='openai'?'任意服务端文案':'  Conversation has no active response. ',
       event_id: cancelRequestId,
     },
   })
@@ -1544,4 +1545,26 @@ test('language selected during provider handshake reaches the connected session'
   assert.equal(scripted.sent.length, 2)
   assert.match(String((scripted.sent[1]?.session as Record<string, unknown>).instructions), /^You are Nova/)
   await adapter.close()
+})
+
+
+test('OpenAI GA item added confirms host delivery and playback truncates the exact audio item',async()=>{
+  const scripted=scriptedSocket([...handshake])
+  const adapter=adapterFor(scripted,{wireProfile:createOpenAIWireProfile(),model:'gpt-realtime-2.1-mini',voice:'marin'})
+  const signal=new AbortController().signal
+  await adapter.connect({tools:[],signal})
+  const injection=adapter.injectHostItem({kind:'final',host_item_id:'fact',event_id:'event',call_id:null,content:'done'},{confirmationTimeout:1,asUserActivation:false,signal})
+  await until(()=>scripted.sent.some(frame=>frame.type==='conversation.item.create'))
+  const id=(scripted.sent.find(frame=>frame.type==='conversation.item.create')!.item as {id:string}).id
+  scripted.push({type:'conversation.item.added',item:{id}})
+  assert.equal((await injection).provider_item_id,id)
+  scripted.push({type:'response.created',response:{id:'r'}})
+  scripted.push({type:'response.output_audio.delta',response_id:'r',item_id:'audio-item',content_index:0,delta:Buffer.alloc(4800).toString('base64')})
+  for await(const event of adapter.events(signal)){if(event.kind==='response_audio_delta')break}
+  await adapter.reportPlayback({response_id:'r',played_ms:40,disposition:'interrupted'},signal)
+  assert.deepEqual(scripted.sent.at(-1),{event_id:scripted.sent.at(-1)!.event_id,type:'conversation.item.truncate',item_id:'audio-item',content_index:0,audio_end_ms:40})
+  const count=scripted.sent.length
+  await adapter.reportPlayback({response_id:'r',played_ms:40,disposition:'interrupted'},signal)
+  assert.equal(scripted.sent.length,count)
+  await adapter.close();scripted.end()
 })

@@ -1,8 +1,8 @@
 import {t} from './locale.mjs'
-import {attachSources} from './source-popover.mjs'
+import {attachSources,attachSourceTags} from './source-popover.mjs'
 const el=(tag,text,className)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node}
 /** Renders the Todo recap and grounded suggestions; these cards never become Life objects automatically, and a goal suggestion is saved only when the user adopts it. */
-export function renderSourceSuggestions(panel,{tab,context,sources=[],button,command,continueChat,delegate=continueChat,openSettings,connected=true,everConnected=true,startupFailed=false,clampable}){
+export function renderSourceSuggestions(panel,{tab,context,sources=[],button,command,continueChat,delegate=continueChat,openSettings,openArticle,connected=true,everConnected=true,startupFailed=false,clampable}){
  if(!['todos','ideas','goals'].includes(tab))return
  // The goal list above has its own empty state; a goal suggestion appears only when there is one.
  if(tab==='goals'&&!(context?.cards??[]).some(item=>item.tab==='goals'))return
@@ -22,12 +22,12 @@ export function renderSourceSuggestions(panel,{tab,context,sources=[],button,com
   if(clampable)clampable(body,item.id,item.title)
   card.append(body)
   if(item.next)card.append(el('p',`${tab==='goals'?'先从':'下一步'}：${item.next}`,'workbench-next'))
-  attachSources(card,item.refs?.map(ref=>ref.label??ref.entry_id))
+  if(!attachSourceTags(card,item.sources,{openArticle}))attachSources(card,item.refs?.map(ref=>ref.label).filter(Boolean))
   const actions=el('div',undefined,'card-actions');card.append(actions)
-  if(tab==='goals'){const adopt=button('设为目标',()=>{adopt.disabled=true;return Promise.resolve(command('context.adopt',{id:item.id})).finally(()=>{adopt.disabled=false})},actions)}
-  else if(tab==='todos'&&item.next)button('帮我做',()=>delegate(`请帮我推进「${item.title}」：${item.next}`),actions)
-  else button('聊聊这个',()=>continueChat(`${item.title}：${item.body}`),actions)
-  button('隐藏',()=>command('context.dismiss',{id:item.id}),actions).className='quiet'
+  if(tab==='goals')button('设为目标',()=>command('context.adopt',{id:item.id}),actions,`suggestion:${item.id}`)
+  else if(tab==='todos'&&item.next)button('帮我做',()=>delegate(`请帮我推进「${item.title}」：${item.next}`),actions,`suggestion:${item.id}`)
+  else button('聊聊这个',()=>continueChat(`${item.title}：${item.body}`),actions,`suggestion:${item.id}`)
+  button('隐藏',()=>command('context.dismiss',{id:item.id}),actions,`suggestion:${item.id}`).className='quiet'
  }
  const failed=sources.filter(source=>source.state==='error'),sourceName=source=>source.scope==='computer'?'整机资料':source.path?.split(/[\\/]/u).filter(Boolean).pop()??'已连接目录'
  if(cards.length){if(failed.length){const note=el('p',`${failed.map(sourceName).join('、')}还没读完，先给你看读到的部分。`,'hint');section.append(note);if(openSettings)button('查看来源',()=>openSettings('connections'),section)}return}

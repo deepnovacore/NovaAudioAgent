@@ -134,27 +134,26 @@ test('search, watch, and structured evidence use closed field allowlists', () =>
   assert.equal(watch, 'watch 报告命中出现水杯：桌面上出现蓝色水杯')
   assert.doesNotMatch(watch, /private-media/u)
 
-  const state = safeMemoryEvidence(item('ha', {
+  const state = safeMemoryEvidence(item('fast_sim', {
     op: 'get_state',
     state: 'on',
-    brightness_pct: 20,
+    elapsed: 20,
     entity_id: 'light.private_name',
   }, {trust: 'trusted_system'}))
-  assert.equal(state, 'ha 报告：op=get_state；state=on；brightness_pct=20')
+  assert.equal(state, 'fast_sim 报告：op=get_state；state=on；elapsed=20.0')
   assert.doesNotMatch(state, /private_name/u)
 })
 
 test('structured numeric evidence uses deterministic Python float spelling', () => {
   const cases = [
-    [20, 'ha 报告：brightness_pct=20'],
-    [20.5, 'ha 报告：brightness_pct=20.5'],
-    [1e16, 'ha 报告：elapsed=1e+16'],
-    [1e-7, 'ha 报告：elapsed=1e-07'],
-    [-0, 'ha 报告：elapsed=-0.0'],
+    [20, 'fast_sim 报告：elapsed=20.0'],
+    [20.5, 'fast_sim 报告：elapsed=20.5'],
+    [1e16, 'fast_sim 报告：elapsed=1e+16'],
+    [1e-7, 'fast_sim 报告：elapsed=1e-07'],
+    [-0, 'fast_sim 报告：elapsed=-0.0'],
   ] as const
   for (const [value, expected] of cases) {
-    const key = expected.includes('brightness_pct') ? 'brightness_pct' : 'elapsed'
-    assert.equal(safeMemoryEvidence(item('ha', {[key]: value}, {
+    assert.equal(safeMemoryEvidence(item('fast_sim', {elapsed: value}, {
       trust: 'trusted_system',
     })), expected)
   }

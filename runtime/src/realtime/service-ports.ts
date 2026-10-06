@@ -205,14 +205,9 @@ export interface RealtimeServiceOptions {
     readonly userInputRevision: number
   }) => void | Promise<void>
   readonly telemetry?: RealtimeTelemetry
-  /** Generic composition seam; the legacy Guard-named options below remain accepted. */
   readonly controlledPreemptiveAlertReconnect?: boolean
   readonly preemptiveAlertHistoryRecovery?: PreemptiveAlertHistoryRecovery
   readonly preemptiveAlertHistoryPairs?: number
-  /** @deprecated Compatibility options for existing environment/configuration keys. */
-  readonly controlledGuardReconnect?: boolean
-  readonly guardHistoryRecovery?: PreemptiveAlertHistoryRecovery
-  readonly guardHistoryPairs?: number
   /** Absent means project confirmation is off, and every branch of it is inert. */
   readonly projectConfirmation?: ProjectConfirmationController
   /** Independent one-shot Codex permission authority; absent on non-brokered transports. */

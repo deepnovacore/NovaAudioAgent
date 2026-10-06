@@ -5,13 +5,17 @@ const same=(a,b)=>a?.workspace_id===b?.workspace_id&&(a?.session_id??null)===(b?
 /** Workspaces (level 1) and the sessions of each (level 2), from the loaded catalog plus the conversation's current target. */
 export function targetLevels(catalog,current){
  const options=[...(catalog??[])]
- if(current&&!options.some(item=>same(item,current)))options.unshift(current)
+ if(current&&!options.some(item=>same(item,current))){
+  const related=options.find(item=>item.workspace_id===current.workspace_id)
+  if(catalog==null||related)options.unshift({...related,...current})
+ }
  const workspaces=new Map()
  for(const item of options){
-  let entry=workspaces.get(item.workspace_id)
-  if(!entry){entry={workspace_id:item.workspace_id,project:item.project,directory:item.directory??'',sessions:[]};workspaces.set(item.workspace_id,entry)}
+  const group=item.group_workspace_id??item.workspace_id
+  let entry=workspaces.get(group)
+  if(!entry){entry={workspace_id:group,project:item.group_project??item.project,directory:item.group_directory??item.directory??'',sessions:[]};workspaces.set(group,entry)}
   if(!entry.directory&&item.directory)entry.directory=item.directory
-  if(item.session_id&&!entry.sessions.some(session=>session.session_id===item.session_id))entry.sessions.push({session_id:item.session_id,title:item.title})
+  if(item.session_id&&!entry.sessions.some(session=>session.session_id===item.session_id))entry.sessions.push({session_id:item.session_id,title:item.title,...(item.group_workspace_id?{workspace_id:item.workspace_id}:{})})
  }
  return [...workspaces.values()]
 }
@@ -85,7 +89,9 @@ export function mountCodingTargetMenu(parent,{c,el,run}){
  }
  function render(){
   const now=current(),levels=targetLevels(catalog,now)
-  label.textContent=targetLabel(now);chip.title=now?.directory??levels.find(entry=>entry.workspace_id===now?.workspace_id)?.directory??''
+  const selectedGroup=levels.find(entry=>entry.workspace_id===now?.workspace_id||entry.sessions.some(session=>session.session_id===now?.session_id))?.workspace_id
+  const grouped=catalog?.find(item=>same(item,now))
+  label.textContent=targetLabel(grouped?.group_project?{...now,project:grouped.group_project}:now);chip.title=grouped?.directory??now?.directory??levels.find(entry=>entry.workspace_id===selectedGroup)?.directory??''
   chip.disabled=!c.connected||!c.presentationReady||!conversation
   root.hidden=!available
   if(!opened)return
@@ -95,16 +101,16 @@ export function mountCodingTargetMenu(parent,{c,el,run}){
   const focused=[...nodes].find(([,node])=>node===document.activeElement)?.[0]
   nodes=new Map();workspaceColumn.replaceChildren();sessionColumn.replaceChildren()
   item(workspaceColumn,'w:none',t('不指定工作区'),{selected:!now,onClick:()=>{browsing=null;choose(null)}})
-  for(const entry of levels)item(workspaceColumn,`w:${entry.workspace_id}`,entry.project,{selected:entry.workspace_id===now?.workspace_id,title:entry.directory,
-   onClick:()=>{browsing=entry.workspace_id;if(!pending&&entry.workspace_id===now?.workspace_id)render();else choose({workspace_id:entry.workspace_id,session_id:null},{keepOpen:true})}})
+  for(const entry of levels)item(workspaceColumn,`w:${entry.workspace_id}`,entry.project,{selected:entry.workspace_id===selectedGroup,title:entry.directory,
+   onClick:()=>{browsing=entry.workspace_id;if(!pending&&entry.workspace_id===selectedGroup)render();else choose({workspace_id:entry.workspace_id,session_id:null},{keepOpen:true})}})
   if(status==='loading')workspaceColumn.append(el('p',t('正在加载工作区…'),'hint target-note'))
   else if(status==='error'){const retry=el('button',t('加载失败，点击重试'),'target-item');retry.type='button';retry.addEventListener('click',()=>void load());workspaceColumn.append(retry)}
   else if(!levels.length)workspaceColumn.append(el('p',t('还没有工作区'),'hint target-note'))
-  const entry=levels.find(level=>level.workspace_id===browsing)
+  const entry=levels.find(level=>level.workspace_id===browsing)??levels.find(level=>level.workspace_id===selectedGroup)
   sessionColumn.hidden=!entry
   if(entry){
    item(sessionColumn,'s:new',t('新会话'),{selected:now?.workspace_id===entry.workspace_id&&!now.session_id,onClick:()=>choose({workspace_id:entry.workspace_id,session_id:null})})
-   for(const session of entry.sessions)item(sessionColumn,`s:${session.session_id}`,session.title,{selected:now?.workspace_id===entry.workspace_id&&now.session_id===session.session_id,onClick:()=>choose({workspace_id:entry.workspace_id,session_id:session.session_id})})
+   for(const session of entry.sessions)item(sessionColumn,`s:${session.session_id}`,session.title,{selected:now?.workspace_id===(session.workspace_id??entry.workspace_id)&&now.session_id===session.session_id,onClick:()=>choose({workspace_id:session.workspace_id??entry.workspace_id,session_id:session.session_id})})
   }
   if(focused)(nodes.get(focused)??nodes.get('s:new')??nodes.get('w:none'))?.focus?.()
  }

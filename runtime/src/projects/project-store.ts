@@ -545,13 +545,6 @@ export class ProjectStore {
     return await this.#files.transaction(async () => [await this.#files.loadMaintenanceJournal(), false], {wait: true})
   }
 
-  async clearManagedMaintenanceJournal(expectedOperationId: string): Promise<void> {
-    await this.#files.transaction(async () => {
-      await this.#files.clearMaintenanceJournal(expectedOperationId)
-      return [undefined, false]
-    }, {wait: true})
-  }
-
   async cleanupManagedMaintenanceJournal(): Promise<{
     readonly status: 'clean' | 'cleanup_pending' | 'rollback_pending'
   }> {

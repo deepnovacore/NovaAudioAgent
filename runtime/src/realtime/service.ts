@@ -55,13 +55,10 @@ MAX_TRACKED_TOOL_CALLS,
 PROJECT_EXPIRY_STEP_TIMEOUT_S,
 callKey,
 hostFactIntent,
-type ContinuationBatch,
 type ExecutorState,
 type PreemptiveAlertHistoryRecovery,
 type QueuedHostResponse,
-type SemanticAcknowledgement,
 type ToolCallAcceptanceSnapshot,
-type ToolCallState,
 type UrgentHostResponseOwner
 } from './service-state.js'
 import {
@@ -236,11 +233,11 @@ export class RealtimeService {
     let onProjectView: RealtimeServiceOptions['onProjectView'] = undefined
     let projectViewProvider: RealtimeServiceOptions['projectViewProvider'] = undefined
     let projectExpiryStepTimeoutMs: number | undefined = undefined
-    const recovery = options.preemptiveAlertHistoryRecovery ?? options.guardHistoryRecovery ?? 'none'
+    const recovery = options.preemptiveAlertHistoryRecovery ?? 'none'
     if (recovery !== 'none' && recovery !== 'packed') {
       throw new TypeError('unknown preemptive-alert history recovery arm')
     }
-    const pairs = options.preemptiveAlertHistoryPairs ?? options.guardHistoryPairs ?? 4
+    const pairs = options.preemptiveAlertHistoryPairs ?? 4
     // 1, 2, or 4 rather than any positive number: these are the arms the recovery experiment has,
     // and an unlisted value would silently be a fifth arm nobody measured.
     if (pairs !== 1 && pairs !== 2 && pairs !== 4) {
@@ -268,9 +265,7 @@ export class RealtimeService {
     this.#onDiagnostic = options.onDiagnostic ?? ((line: string): void => {
       console.log(line)
     })
-    this.#controlledPreemptiveAlertReconnect = options.controlledPreemptiveAlertReconnect
-      ?? options.controlledGuardReconnect
-      ?? false
+    this.#controlledPreemptiveAlertReconnect = options.controlledPreemptiveAlertReconnect ?? false
     this.#preemptiveAlertHistoryRecovery = recovery
     this.#preemptiveAlertHistoryPairs = pairs
     const projectConfirmation = options.projectConfirmation
@@ -1229,6 +1224,16 @@ export class RealtimeService {
       await this.#approvalHost.maybeRequestFreshExecutorApprovalResponse()
     }
 
+    if (event.kind === 'response_yielded' && accepted) {
+      this.#audioStarted.delete(event.response_id)
+      const generation = this.session.currentGeneration
+      if (generation?.response_id === event.response_id && generation.session_epoch === event.session_epoch) {
+        this.#onProviderTerminal(generation)
+      }
+      this.#continuations.finishContinuation({response_id:event.response_id,status:'yielded'})
+      this.#continuations.finishOrigin(event.response_id)
+    }
+
     if (event.kind === 'response_terminal' && accepted) {
       this.#approvalHost.noteTerminal(event)
       this.#host.recordPreemptiveAlertCancelTerminal(event)
@@ -1711,11 +1716,6 @@ export class RealtimeService {
     return this.#userOrigins.boundResponses
   }
 
-  /** The runtime's delegate lookups, for a projection test that needs one to be in flight. */
-  get sessionForTest(): RealtimeSession {
-    return this.session
-  }
-
   /** How many responses hold a user turn as their evidence. */
   get boundOriginCountForTest(): number {
     return this.#userOrigins.boundResponseCount
@@ -1739,62 +1739,21 @@ export class RealtimeService {
     }
   }
 
-  /** @deprecated Compatibility view for legacy configuration assertions. */
-  get guardConfiguration(): {
-    readonly controlledReconnect: boolean
-    readonly historyRecovery: PreemptiveAlertHistoryRecovery
-    readonly historyPairs: number
-  } {
-    return this.preemptiveAlertConfiguration
-  }
-
   /** Existing test compatibility views; production owners communicate through semantic methods. */
   get internals(): {
     readonly reconnectLock: Mutex
-    readonly requeueHostItem: (queued: QueuedHostResponse) => void
-    readonly nextUrgentDeliveryToken: () => number
-    readonly nextPreemptiveAlertToken: () => number
     readonly bridge: RealtimeRuntimeBridge
     readonly tools: CompiledTools
     readonly runtime: ServiceRuntime
     readonly idFactory: () => string
-    readonly toolCalls: ReadonlyMap<string, ToolCallState>
-    readonly overflowToolCalls: ReadonlyMap<string, ToolCallState>
-    readonly continuationBatches: ReadonlyMap<string, ContinuationBatch>
-    readonly continuationFifo: readonly string[]
-    readonly semanticAcknowledgements: ReadonlyMap<string, SemanticAcknowledgement>
-    readonly audioStarted: ReadonlySet<string>
-    readonly onProviderTerminal: (generation: PlaybackGeneration) => void
-    readonly onExecutorState: (state: ExecutorState) => void
-    readonly clearCaptions: () => void
     readonly setExecutorState: (state: ExecutorState) => void
   } {
     return {
       reconnectLock: this.#reconnectLock,
-      requeueHostItem: (queued: QueuedHostResponse) => {
-        this.#host.requeueHostItem(queued)
-      },
-      nextUrgentDeliveryToken: () => {
-        return this.#host.nextUrgentDeliveryToken()
-      },
-      nextPreemptiveAlertToken: () => {
-        return this.#host.nextPreemptiveAlertToken()
-      },
       bridge: this.#bridge,
       tools: this.#tools,
       runtime: this.#runtime,
       idFactory: this.#idFactory,
-      toolCalls: this.#continuations.callsForTest(),
-      overflowToolCalls: this.#continuations.overflowCallsForTest(),
-      continuationBatches: this.#continuations.batchesForTest(),
-      continuationFifo: this.#continuations.continuationOrderForTest(),
-      semanticAcknowledgements: this.#host.acknowledgementsForTest(),
-      audioStarted: this.#audioStarted,
-      onProviderTerminal: this.#onProviderTerminal,
-      onExecutorState: this.#onExecutorState,
-      clearCaptions: () => {
-        this.#clearCaptions()
-      },
       setExecutorState: (state: ExecutorState) => {
         this.#projection.setExecutorStateForTest(state)
       },

@@ -1,3 +1,4 @@
+import {queueMemoryFiles} from './file-authority.js'
 import {createHash} from 'node:crypto'
 import {z} from 'zod'
 import type {LedgerDatabase} from '../memory-ledger/store.js'
@@ -18,6 +19,7 @@ interface LifeObject {kind:'todo'|'idea'|'goal'|'profile';id:string;data:Record<
 
 /** Operation receipts, aggregate CAS, Profile version watermark and completed migration marker. */
 export function initializeLife(db:LedgerDatabase):void{
+ db.exec('CREATE TABLE IF NOT EXISTS memory_life_im_receipts(namespace TEXT NOT NULL,message_key TEXT NOT NULL,evidence_id TEXT NOT NULL,entry_id TEXT,PRIMARY KEY(namespace,message_key))')
  db.exec('CREATE TABLE IF NOT EXISTS memory_life_meta(namespace TEXT PRIMARY KEY,payload_json TEXT NOT NULL)')
 }
 function readMeta(db:LedgerDatabase,namespace:string):Meta|null{
@@ -77,7 +79,7 @@ function persist(run:Run,namespace:string,before:EntryRevision[],state:LifeState
   if(legacy)run('append_evidence',EvidenceRecordSchema.parse({id:objectEvidenceId,source_id:namespace+'migration:'+hash(id),source_kind:'task_result',locator:'legacy-life-json:'+item.kind,observed_at:now,recorded_at:now,raw_text:null,hash:hash(canonicalJson({entry_id:id,legacy:item.data})),trust:'trusted_system',extracted:{event:'legacy_import',legacy:true,original_evidence_available:false}}))
   if(legacy&&processingGrant)run('source_grant',{source_id:namespace+'migration:'+hash(id),expected_revision:0,grant:processingGrant})
   const order=typeof old?.content.life_order==='number'?old.content.life_order:nextOrder.get(item.kind)??0;nextOrder.set(item.kind,Math.max(nextOrder.get(item.kind)??0,order+1))
-  run('merge',CandidateSchema.parse({entry_id:id,expected_revision:old?.revision??0,kind:item.kind,origin:legacy?'inferred':'stated',written_by:legacy?'merge':'user_correction',evidence_refs:[objectEvidenceId],content:{life_id:item.id,life_data:item.data,life_order:order,text,...(item.kind==='profile'?{section:'explicit'}:{}),legacy},recorded_at:now}))
+  run('merge',CandidateSchema.parse({entry_id:id,expected_revision:old?.revision??0,kind:item.kind,origin:legacy?'inferred':'stated',written_by:legacy?'merge':'user_correction',evidence_refs:[...new Set([objectEvidenceId,...(Array.isArray(item.data.provenance_refs)?item.data.provenance_refs.filter((ref):ref is string=>typeof ref==='string'&&run('retrieval_evidence',{id:ref})!==null):[])])],content:{life_id:item.id,life_data:item.data,life_order:order,text,...(item.kind==='profile'?{section:'explicit'}:{}),legacy},recorded_at:now}))
  }
  for(const old of before)if(old.op!=='tombstone'&&!ids.has(old.entry_id))run('merge',CandidateSchema.parse({entry_id:old.entry_id,expected_revision:old.revision,kind:old.kind,origin:'stated',written_by:'user_correction',evidence_refs:[evidenceId],content:{life_id:old.content.life_id,reason:'undo_create'},op:'tombstone',recorded_at:now}))
 }
@@ -95,7 +97,8 @@ function checkResolution(run:Run,namespace:string,resolution:LifeResolution):Ent
 }
 
 /** The caller's enclosing memory worker transaction owns evidence, merge and receipts atomically. */
-export function lifeOperation(db:LedgerDatabase,operation:'life_load'|'life_mutate',value:unknown,run:Run):unknown{
+export function lifeOperation(db:LedgerDatabase,operation:'life_load'|'life_mutate'|'life_capture_im',value:unknown,run:Run):unknown{
+ if(operation==='life_capture_im')return captureIm(db,value,run)
  if(operation==='life_load'){
   const q=z.object({namespace:namespaceSchema,legacy:lifeStateSchema.optional(),processingGrant:processingGrantSchema.optional(),hostMigrationPath:z.string().min(1).max(4096).optional(),resolution:lifeResolutionSchema.optional()}).strict().parse(value)
   if(q.resolution)checkResolution(run,q.namespace,q.resolution)
@@ -161,4 +164,54 @@ export function lifeOperation(db:LedgerDatabase,operation:'life_load'|'life_muta
  const updated=rows(run,q.namespace),updatedMeta:Meta={...meta,profile_version:Math.max(meta.profile_version??0,next.state.profile.version),revision:meta.revision+1,receipts:next.state.receipts,signature:signature(updated),migrated:true}
  saveMeta(db,q.namespace,updatedMeta)
  return {state:stateFrom(updated,updatedMeta.receipts),revision:updatedMeta.revision,result:next.result}
+}
+
+/** This transaction records receipt and original source linkage together. No message text is retained in receipts. */
+function captureIm(db:LedgerDatabase,value:unknown,run:Run):unknown{
+ const q=z.object({namespace:namespaceSchema.startsWith('personal:'),evidence_id:z.string().min(1).max(512),provider:z.string().min(1),stamp:z.string().min(1),context:z.array(z.object({evidence_id:z.string().min(1).max(512),stamp:z.string().min(1)}).strict()).max(12).optional(),action:z.object({title:z.string().trim().min(1).max(200),note:z.string().max(4000),due:z.string().date().nullable(),quote:z.string().min(1)}).strict().nullable(),target:z.object({entry_id:z.string(),revision:z.number().int().positive(),stamp:z.string().min(1)}).strict().optional()}).strict().parse(value)
+ const evidence=EvidenceRecordSchema.nullable().parse(run('processing_evidence',{id:q.evidence_id,purpose:'extraction',provider:q.provider})),metadata=evidence?.source_metadata
+ if(!evidence||!evidence.source_id.startsWith(q.namespace.slice(0,-5))||evidence.source_kind!=='im'||metadata?.mention!=='direct'||metadata.auto_capture!==true||!metadata.recipient_id||metadata.recipient_id===metadata.sender_id||!metadata.message_id||!metadata.chat_id)throw Error('im_capture_not_authorized')
+ if(run('processing_stamp',{ids:[evidence.id],purpose:'extraction',provider:q.provider})!==q.stamp)throw Error('STORE_STALE_REVISION')
+ for(const context of q.context??[]){
+  const record=EvidenceRecordSchema.nullable().parse(run('processing_evidence',{id:context.evidence_id,purpose:'extraction',provider:q.provider}))
+  if(record?.source_kind!=='im'||!record.source_id.startsWith(q.namespace.slice(0,-5))||record.source_metadata?.account_id!==metadata.account_id||record.source_metadata.chat_id!==metadata.chat_id||Date.parse(record.observed_at)>Date.now()||run('processing_stamp',{ids:[record.id],purpose:'extraction',provider:q.provider})!==context.stamp)throw Error('STORE_STALE_REVISION')
+ }
+ if(q.action?.quote&&!evidence.raw_text?.includes(q.action.quote))throw Error('im_capture_quote_missing')
+ const entries=rows(run,q.namespace),now=new Date().toISOString()
+ let meta=readMeta(db,q.namespace)??{revision:0,receipts:{},signature:signature(entries),migrated:true as const}
+ if(meta.signature!==signature(entries))meta={...meta,revision:meta.revision+1,signature:signature(entries)}
+ const key=hash(canonicalJson([metadata.account_id,metadata.chat_id,metadata.message_id]))
+ const prior=db.prepare('SELECT evidence_id,entry_id FROM memory_life_im_receipts WHERE namespace=? AND message_key=?').get(q.namespace,key)
+ let target:EntryRevision|undefined
+ if(prior){target=entries.find(row=>row.entry_id===prior.entry_id&&row.op!=='tombstone')}
+ else if(q.target){
+  target=entries.find(row=>row.entry_id===q.target!.entry_id&&row.kind==='todo'&&row.op!=='tombstone')
+  if(target?.revision!==q.target.revision||(target.valid_until!==null&&Date.parse(target.valid_until)<=Date.now())||run('processing_stamp',{ids:target.evidence_refs,purpose:'extraction',provider:q.provider})!==q.target.stamp)throw Error('STORE_STALE_REVISION')
+ }
+ let result:{id:string;version:number}|null=null,storedId:string|null=null
+ if(target&&(q.action||prior)){
+  const data=lifeStateSchema.shape.todos.element.parse(target.content.life_data)
+  const changed=Boolean(prior&&prior.evidence_id!==evidence.id)
+  const refs=[...new Set([...(data.provenance_refs??[]),evidence.id])]
+  if(refs.length>256)throw Error('im_provenance_limit')
+  if(changed||!prior){
+   const updated={...data,provenance_refs:refs,...(changed?{source_changed:true}:{}),version:data.version+1,updated_at:now}
+   // A metadata-only revision retains the original human authority and all editable fields.
+   const next=EntryRevisionSchema.parse({...target,revision:target.revision+1,supersedes:target.revision,op:'update',recorded_at:now,evidence_refs:[...new Set([...target.evidence_refs,evidence.id])],content:{...target.content,life_data:updated}})
+   db.prepare('INSERT INTO memory_revisions VALUES(?,?,?)').run(next.entry_id,next.revision,canonicalJson(next));db.prepare('DELETE FROM memory_vectors WHERE entry_id=?').run(next.entry_id);queueMemoryFiles(db)
+   result={id:data.id,version:updated.version}
+  }else result={id:data.id,version:data.version}
+  storedId=target.entry_id
+ }else if(!prior&&q.action){
+  const data=lifeStateSchema.shape.todos.element.parse({id:hash(q.namespace+key),title:q.action.title,note:q.action.note,due:q.action.due,status:'open',goal_id:null,idea_id:null,version:1,created_at:now,updated_at:now,auto_recorded:true,provenance_refs:[evidence.id]})
+  storedId=q.namespace+'todo:'+data.id
+  const merged=EntryRevisionSchema.nullable().parse(run('merge',{entry_id:storedId,expected_revision:0,kind:'todo',origin:'inferred',written_by:'merge',evidence_refs:[evidence.id],content:{life_id:data.id,life_data:data,life_order:entries.filter(row=>row.kind==='todo').length,text:[data.title,data.note].filter(Boolean).join('\n')},recorded_at:now}))
+  if(!merged)throw Error('im_capture_merge_rejected')
+  result={id:data.id,version:data.version}
+ }
+ if(!prior)db.prepare('INSERT INTO memory_life_im_receipts VALUES(?,?,?,?)').run(q.namespace,key,evidence.id,storedId)
+ else if(prior.evidence_id!==evidence.id)db.prepare('UPDATE memory_life_im_receipts SET evidence_id=? WHERE namespace=? AND message_key=?').run(evidence.id,q.namespace,key)
+ const updated=rows(run,q.namespace),nextSignature=signature(updated)
+ meta={...meta,revision:meta.revision+(nextSignature!==meta.signature?1:0),signature:nextSignature};saveMeta(db,q.namespace,meta)
+ return {state:stateFrom(updated,meta.receipts),revision:meta.revision,result}
 }

@@ -128,10 +128,6 @@ export class ToolContinuations {
     return matching
   }
   continuationOrder(): readonly string[] {return [...this.#continuationFifo]}
-  callsForTest(): ReadonlyMap<string, ToolCallState> {return this.#toolCalls}
-  overflowCallsForTest(): ReadonlyMap<string, ToolCallState> {return this.#overflowToolCalls}
-  batchesForTest(): ReadonlyMap<string, ContinuationBatch> {return this.#continuationBatches}
-  continuationOrderForTest(): readonly string[] {return this.#continuationFifo}
   responseCarriesPersonalRecall(responseId: string): boolean {
     for (const state of this.#toolCalls.values()) {
       if (
@@ -269,7 +265,7 @@ export class ToolContinuations {
           await this.session.injectToolOutput(state.acceptance.host_item)
           state.output = 'confirmed'
         }
-        if (state.acceptance.continuation === 'deferred') {
+        if (state.acceptance.continuation === 'deferred' && batch.origin_status !== 'yielded') {
           state.continuation = 'terminal'
           state.final_disposition = 'completed'
         } else intents.push(state.acceptance.response_intent)
@@ -744,6 +740,7 @@ export class ToolContinuations {
     // `cancel_requested` is still active: the cancel has been asked for, not observed, and treating
     // it as cancelled would abandon a batch whose response may yet complete normally.
     if (phase === 'active' || phase === 'cancel_requested') return 'active'
+    if (phase === 'yielded') return 'yielded'
     if (phase === 'failed') return 'failed'
     if (phase === 'cancelled' || this.session.providerTurnWasFenced(responseId)) return 'cancelled'
     return 'completed'
@@ -1460,7 +1457,7 @@ export class ToolContinuations {
       state.continuation = 'terminal'
       state.final_disposition = !state.acceptance.accepted
         ? 'refused'
-        : event.status === 'completed'
+        : event.status === 'completed' || event.status === 'yielded'
           ? 'completed'
           : 'abandoned'
     }
@@ -1470,7 +1467,7 @@ export class ToolContinuations {
   /** A collecting batch whose originating response has ended is ready to speak. */
   finishOrigin(responseId: string): void {
     const batch = this.#continuationBatches.get(callKey(this.session.sessionEpoch, responseId))
-    if (batch?.phase !== 'collecting') return
+    if (batch?.phase !== 'collecting' && batch?.phase !== 'ready') return
     batch.origin_status = this.#originStatus(responseId)
     batch.phase = 'ready'
   }

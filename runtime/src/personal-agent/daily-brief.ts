@@ -33,7 +33,7 @@ export function isQuietTime(input:PersonalSettings,now:Date):boolean {
  const settings=dailyBriefSettings(input)
  return quiet(localParts(formatter(settings.timezone),now).time,settings.quiet_start,settings.quiet_end)
 }
-/** Returns only recent real wall-clock slots; the host durably claims each key before preparation. */
+/** Returns only recent real wall-clock slots; the host tracks bounded durable attempts for each key. */
 export function dueDailyBriefs(input:PersonalSettings,now:Date,claimed:Iterable<string>):DailyBriefSlot[] {
  const settings=dailyBriefSettings(input),format=formatter(settings.timezone),current=localParts(format,now)
  if(quiet(current.time,settings.quiet_start,settings.quiet_end))return []

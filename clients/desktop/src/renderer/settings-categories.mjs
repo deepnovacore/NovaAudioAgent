@@ -36,7 +36,7 @@ export function categorySectionIds() {
 
 /**
  * Roving-focus mapping for the vertical sidebar. Deliberately separate from
- * channel-tabs.mjs's boardTabForKey, which is horizontal and fixed at
+ * the removed channel-tabs board, which was horizontal and fixed at
  * two tabs; null means the key is not a navigation key and must pass through.
  */
 export function categoryTabForKey(activeCategory, key) {

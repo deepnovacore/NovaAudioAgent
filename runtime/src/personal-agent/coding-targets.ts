@@ -19,7 +19,7 @@ export interface CodingTarget extends CodingTargetSelection {
 
 export interface CodingTargetPort {
   /** Directory is picker-only display metadata; validate returns a path-free persistent target. */
-  list(): Promise<readonly (CodingTarget & {readonly directory?: string})[]>
+  list(): Promise<readonly (CodingTarget & {readonly directory?: string; readonly group_workspace_id?: string; readonly group_project?: string; readonly group_directory?: string})[]>
   forWork?(workId: string): Promise<CodingTarget | null>
   validate(selection: CodingTargetSelection): Promise<CodingTarget>
   resolve(decision: CoordinatorDecision, selection?: CodingTargetSelection,taskContext?:TaskDispatchContext): Promise<IntakeTarget>

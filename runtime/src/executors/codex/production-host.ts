@@ -138,16 +138,6 @@ export type CodexHostDiagnosticCode =
   | 'codex_login_status_multiple_streams'
   | 'codex_login_status_unrecognized'
 
-export function loadPackagedCodexSandboxProbe(): ManifestBoundCodexSandboxProbe | null {
-  const resourcesPath = (process as NodeJS.Process & {readonly resourcesPath?: unknown}).resourcesPath
-  if (typeof resourcesPath !== 'string' || resourcesPath === '') return null
-  return loadCodexSandboxProbeFromResources({
-    resourcesPath,
-    platform: process.platform,
-    arch: process.arch,
-  })
-}
-
 /** Build the one host-owned Codex catalog/resource graph used by the desktop entry. */
 export function createProductionCodexHost(
   settings: Settings,

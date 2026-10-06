@@ -26,6 +26,7 @@ let capabilityView: (() => DesktopCapabilityState | undefined) = () => undefined
 let knowledgeHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
 let feishuHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
 let personalSettingsHandle: ((method: string, params: unknown) => Promise<unknown>) | undefined
+let phoneHandle: ((method:string,params:unknown)=>Promise<unknown>) | undefined
 let clearConversation: (() => Promise<void>) | undefined
 let updateCodingBackend: ((backend: CodingBackendId) => void) | undefined
 const control = installDesktopControl({...(parentPort === undefined ? {} : {parentPort}), signal: stop.signal,
@@ -34,6 +35,7 @@ const control = installDesktopControl({...(parentPort === undefined ? {} : {pare
     updateCodingBackend(backend)
   },
   status: () => capabilityView(), handle: async (method, params) => {
+    if (['phone.start','phone.stop','phone.status'].includes(method)) return phoneHandle?.(method,params)
     if (method.startsWith('feishu.')) return feishuHandle?.(method, params)
     if (PERSONAL_SETTINGS_METHODS.includes(method)) return personalSettingsHandle?.(method, params)
     if (method !== 'conversation.clear') return knowledgeHandle?.(method, params)
@@ -76,6 +78,7 @@ const exitCode = await runDesktopEntryWithStopSources({
       onKnowledge: knowledge => { knowledgeHandle = (method, params) => knowledge.service.handle(method, params) },
       onCoding: coding => { if (coding.updateDefaultBackend) updateCodingBackend = backend => coding.updateDefaultBackend!(backend) },
     })
+    phoneHandle = composition.phoneControl
     capabilityView = () => ({...composition.realtime.capabilityStatus, state: 'running'})
     clearConversation = () => composition.realtime.clearConversation()
     feishuHandle = (method, params) => handleFeishuSettings(input => composition.realtime.personalAgent.command(input), method, params)

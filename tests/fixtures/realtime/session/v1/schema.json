@@ -2428,6 +2428,7 @@
                               "type": "string",
                               "enum": [
                                 "active",
+                                "yielded",
                                 "cancel_requested",
                                 "completed",
                                 "cancelled",

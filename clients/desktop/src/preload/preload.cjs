@@ -12,10 +12,6 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
       ipcRenderer.on('nova:personal:presentation-request', listener)
       return () => ipcRenderer.removeListener('nova:personal:presentation-request', listener)
     },
-    setCollapsed: value => ipcRenderer.invoke('nova:personal:collapse', value),
-    openFeishuVerification: url => ipcRenderer.invoke('nova:personal:feishu-verification', url),
-    openConnectorAuthorization: url => ipcRenderer.invoke('nova:personal:connector-authorization', url),
-    chooseDirectory: () => ipcRenderer.invoke('nova:personal:directory'),
     onCollapsed: callback => {
       const listener = (_event, value) => { if (typeof value === 'boolean') callback(value) }
       ipcRenderer.on('nova:personal:collapsed', listener)
@@ -198,7 +194,6 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   settings: Object.freeze({
     voiceprint: input => ipcRenderer.invoke('nova:settings:voiceprint', input),
     phoneAction: (action, deviceId) => ipcRenderer.invoke('nova:phone:action', action, deviceId),
-    openPairing: () => ipcRenderer.send('nova:pairing:open'),
     get: () => ipcRenderer.invoke('nova:settings:get'),
     rescanCodex: () => ipcRenderer.invoke('nova:codex:rescan'),
     retryBackend: () => ipcRenderer.invoke('nova:backend:retry'),

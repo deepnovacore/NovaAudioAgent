@@ -39,12 +39,14 @@ const voiceprintPanel = createVoiceprintPanel({document, api, stage: patch => co
 const SECRET_KEYS = [
   'composioApiKey',
   'dashscopeApiKey', 'stepfunApiKey', 'tavilyApiKey', 'openrouterApiKey',
-  'arkApiKey', 'deepseekApiKey', 'doubaoBigmodelApiKey',
+  'arkApiKey', 'deepseekApiKey', 'openaiApiKey', 'geminiApiKey', 'doubaoBigmodelApiKey',
 ]
 const SECRET_LABELS = {
   composioApiKey: 'Composio',
   dashscopeApiKey: 'DashScope',
   stepfunApiKey: 'StepFun',
+  openaiApiKey: 'OpenAI',
+  geminiApiKey: 'Google Gemini',
   tavilyApiKey: 'Tavily',
   openrouterApiKey: 'OpenRouter · Jev',
   arkApiKey: 'Ark',
@@ -132,6 +134,9 @@ const integratedProvider = document.querySelector('#integratedProvider')
 const integratedModel = document.querySelector('#integratedModel')
 const integratedVoicePreset = document.querySelector('#integratedVoicePreset')
 const integratedVoiceCustom = document.querySelector('#integratedVoiceCustom')
+const geminiAsrModel = document.querySelector('#geminiAsrModel')
+const geminiTtsModel = document.querySelector('#geminiTtsModel')
+const GEMINI_TTS_VOICES = ['Kore','Puck','Aoede','Charon','Fenrir'].map(value=>({value,label:value}))
 const cascadedAsrProvider = document.querySelector('#cascadedAsrProvider')
 const cascadedLlmProvider = document.querySelector('#cascadedLlmProvider')
 const cascadedLlmModelPreset = document.querySelector('#cascadedLlmModelPreset')
@@ -256,10 +261,12 @@ function keyUsage(view) {
       : view.pipelineMode === 'integrated' && view.integratedProvider === 'stepfun'
         ? t("仅本地记忆嵌入需要") : t("当前未使用"),
     stepfunApiKey: view.pipelineMode === 'integrated' && view.integratedProvider === 'stepfun' ? t("必需") : t("当前未使用"),
+    openaiApiKey: (view.pipelineMode === 'integrated' ? view.integratedProvider : view.cascadedLlmProvider) === 'openai' ? t('必需') : t('当前未使用'),
+    geminiApiKey: (view.pipelineMode === 'integrated' ? view.integratedProvider === 'gemini' : [view.cascadedAsrProvider,view.cascadedLlmProvider,view.cascadedTtsProvider].includes('gemini')) ? t('必需') : t('当前未使用'),
     deepseekApiKey: view.pipelineMode === 'cascaded' && view.cascadedLlmProvider === 'deepseek' ? t("必需") : view.codingBackend === 'deepseek' ? t("编程执行器可使用") : t("当前未使用"),
     arkApiKey: view.pipelineMode === 'cascaded'
       && view.cascadedLlmProvider === 'ark' ? t("必需") : t("当前未使用"),
-    doubaoBigmodelApiKey: view.pipelineMode === 'cascaded' ? t("必需") : t("当前未使用"),
+    doubaoBigmodelApiKey: view.pipelineMode === 'cascaded' && [view.cascadedAsrProvider,view.cascadedTtsProvider].includes('volcengine') ? t("必需") : t("当前未使用"),
     composioApiKey: t('应用连接；修改后重启运行时'),
     tavilyApiKey: t("可选"),
     openrouterApiKey: 'Jev',
@@ -472,8 +479,11 @@ function render(view, drafts, state) {
   renderCodexStatus(view)
   integratedSection.hidden = view.pipelineMode !== 'integrated'
   cascadedSection.hidden = view.pipelineMode !== 'cascaded'
+  document.getElementById('gemini-live-limit').hidden = view.integratedProvider !== 'gemini'
   integratedProvider.value = view.integratedProvider
-  const integratedModels = view.integratedProvider === 'stepfun'
+  const integratedModels = view.integratedProvider === 'openai' ? ['gpt-realtime-2.1-mini','gpt-realtime-2.1'].map(value=>({value,label:value}))
+    : view.integratedProvider === 'gemini' ? [{value:'gemini-3.8-live',label:'Gemini 3.8 Live'}]
+    : view.integratedProvider === 'stepfun'
     ? [{value: 'stepaudio-3-realtime-preview', label: 'StepAudio 3 Realtime Preview'}]
     : [{value: 'qwen-audio-3.1-realtime-plus', label: 'Qwen Audio 3.1 Plus'},
       {value: 'qwen-audio-3.0-realtime-plus', label: 'Qwen Audio 3.0 Plus'},
@@ -487,12 +497,18 @@ function render(view, drafts, state) {
     const option = document.createElement('option'); option.value = view.integratedModel; option.textContent = view.integratedModel; integratedModel.append(option)
   }
   integratedModel.value = view.integratedModel ?? ''
-  const voices = view.integratedProvider === 'stepfun' ? STEPFUN_VOICES
+  const voices = view.integratedProvider === 'openai' ? ['marin','cedar','alloy','coral'].map(value=>({value,label:value}))
+    : view.integratedProvider === 'gemini' ? ['Kore','Puck','Aoede','Charon','Fenrir'].map(value=>({value,label:value}))
+    : view.integratedProvider === 'stepfun' ? STEPFUN_VOICES
     : view.integratedModel?.startsWith('qwen3.5-omni-') ? [{value: 'Ethan', label: t("Ethan（默认）")}] : view.integratedModel === 'qwen-audio-3.1-realtime-plus' ? QWEN_31_VOICES : QWEN_VOICES
   populatePresetOptions(integratedVoicePreset, voices)
   renderPreset(integratedVoicePreset, integratedVoiceCustom, view.integratedVoice, voices)
   voiceprintPanel.render(view, drafts)
   cascadedAsrProvider.value = view.cascadedAsrProvider
+  geminiAsrModel.value = view.geminiAsrModel
+  geminiTtsModel.value = view.geminiTtsModel
+  document.querySelector('#gemini-asr-settings').hidden = view.cascadedAsrProvider !== 'gemini'
+  document.querySelector('#gemini-tts-settings').hidden = view.cascadedTtsProvider !== 'gemini'
   cascadedLlmProvider.value = view.cascadedLlmProvider
   const modelPresets = ({
     qwen: [
@@ -501,13 +517,17 @@ function render(view, drafts, state) {
       {value: 'qwen3.8-max', label: t("qwen3.8-max · 第二档 · ★★★★☆")},
       {value: 'qwen-plus', label: t("qwen-plus · 第三档 · ★★★☆☆")},
     ],
+    openai: [{value:'gpt-6-luna',label:'GPT-6 Luna'}],
+    gemini: ['gemini-3.5-flash-lite','gemini-3.8-flash'].map(value=>({value,label:value})),
     deepseek: [{value: 'deepseek-flash', label: t("deepseek-flash · 第一档 · ★★★★★")}],
     ark: [{value: 'doubao-seed-2-0-pro-260215', label: 'doubao-seed-2-0-pro-260215'}],
   }[view.cascadedLlmProvider] ?? [])
   populatePresetOptions(cascadedLlmModelPreset, modelPresets, t("自定义模型 ID…"))
   renderPreset(cascadedLlmModelPreset, cascadedLlmModel, view.cascadedLlmModels?.[view.cascadedLlmProvider], modelPresets)
   cascadedTtsProvider.value = view.cascadedTtsProvider
-  renderPreset(cascadedTtsVoicePreset, cascadedTtsVoiceCustom, view.cascadedTtsVoice, VOLCENGINE_TTS_VOICES)
+  const ttsVoices = view.cascadedTtsProvider === 'gemini' ? GEMINI_TTS_VOICES : VOLCENGINE_TTS_VOICES
+  populatePresetOptions(cascadedTtsVoicePreset, ttsVoices)
+  renderPreset(cascadedTtsVoicePreset, cascadedTtsVoiceCustom, view.cascadedTtsProvider === 'gemini' ? view.geminiTtsVoice : view.cascadedTtsVoice, ttsVoices)
   renderBadges(view.secretsPresent, view.secretSources)
   renderKeyUsage(view)
   document.querySelector('#startup-status').dataset.stage = view.startup?.stage ?? ''
@@ -617,14 +637,16 @@ bindStage(codexWorkspace, 'input', () => ({codexWorkspace: codexWorkspace.value}
 bindStage(codexManagedRoot, 'input', () => ({codexManagedRoot: codexManagedRoot.value}))
 bindStage(integratedProvider, 'change', () => ({
   integratedProvider: integratedProvider.value,
-  integratedModel: integratedProvider.value === 'stepfun' ? 'stepaudio-3-realtime-preview' : 'qwen-audio-3.0-realtime-plus',
-  integratedVoice: integratedProvider.value === 'stepfun' ? 'default' : 'longanqian',
+  integratedModel: integratedProvider.value === 'openai' ? 'gpt-realtime-2.1-mini' : integratedProvider.value === 'gemini' ? 'gemini-3.8-live' : integratedProvider.value === 'stepfun' ? 'stepaudio-3-realtime-preview' : 'qwen-audio-3.0-realtime-plus',
+  integratedVoice: integratedProvider.value === 'openai' ? 'marin' : integratedProvider.value === 'gemini' ? 'Kore' : integratedProvider.value === 'stepfun' ? 'default' : 'longanqian',
 }))
 bindStage(integratedModel, 'change', () => ({
   integratedModel: integratedModel.value,
   ...(integratedModel.value !== currentView?.integratedModel
-    ? {integratedVoice: integratedProvider.value === 'stepfun' ? 'default' : integratedModel.value.startsWith('qwen3.5-omni-') ? 'Ethan' : integratedModel.value === 'qwen-audio-3.1-realtime-plus' ? 'longanqian_v3.1' : 'longanqian'} : {}),
+    ? {integratedVoice: integratedProvider.value === 'openai' ? 'marin' : integratedProvider.value === 'gemini' ? 'Kore' : integratedProvider.value === 'stepfun' ? 'default' : integratedModel.value.startsWith('qwen3.5-omni-') ? 'Ethan' : integratedModel.value === 'qwen-audio-3.1-realtime-plus' ? 'longanqian_v3.1' : 'longanqian'} : {}),
 }))
+bindStage(geminiAsrModel, 'input', () => ({geminiAsrModel: geminiAsrModel.value}))
+bindStage(geminiTtsModel, 'input', () => ({geminiTtsModel: geminiTtsModel.value}))
 bindStage(cascadedAsrProvider, 'change', () => ({cascadedAsrProvider: cascadedAsrProvider.value}))
 bindStage(cascadedLlmProvider, 'change', () => ({cascadedLlmProvider: cascadedLlmProvider.value}))
 cascadedLlmModelPreset.addEventListener('change', () => {
@@ -648,13 +670,13 @@ function bindVoicePicker(field, select, customInput) {
       customInput.focus()
       return
     }
-    controller.stage({[field]: select.value})
+    controller.stage({[typeof field === 'function' ? field() : field]: select.value})
   })
-  customInput.addEventListener('input', () => { controller.stage({[field]: customInput.value}) })
+  customInput.addEventListener('input', () => { controller.stage({[typeof field === 'function' ? field() : field]: customInput.value}) })
 }
 
 bindVoicePicker('integratedVoice', integratedVoicePreset, integratedVoiceCustom)
-bindVoicePicker('cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom)
+bindVoicePicker(() => cascadedTtsProvider.value === 'gemini' ? 'geminiTtsVoice' : 'cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom)
 
 for (const key of SECRET_KEYS) {
   secretInput(key).addEventListener('input', () => {

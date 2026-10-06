@@ -1,5 +1,5 @@
 import {committedConversationPairsSchema} from './realtime/history.js'
-import {cascadedProviderRegistries,type CascadedProviderRegistries} from './composition/cascaded-realtime-assembly.js'
+import {selectedAsrFactory,selectedTtsFactory,cascadedProviderRegistries,type CascadedProviderRegistries} from './composition/cascaded-realtime-assembly.js'
 import {requireSelectedCascadedRealtimeConfig} from './config/cascaded-realtime-config.js'
 import type {buildCascadedTextProvider} from './cascaded-text-provider.js'
 import {capabilitiesFromSettings,requireIntegratedRealtime} from './config/config.js'
@@ -19,12 +19,12 @@ export function buildCascadedVoiceProvider(options:ConversationVoiceProviderOpti
   const capabilities=capabilitiesFromSettings(options.settings)
   const metering=(endpoint:string)=>options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,endpoint)!}
   const instructions=frontendInstructions({search:capabilities.modules.search.enabled,camera:options.captureFrame!==undefined,coding:capabilities.modules.coding.enabled,knowledge:capabilities.modules.knowledge.enabled},options.executorApproval===true)
-  const llm=registry.llm[selected.llm.provider === 'deepseek' ? 'qwen' : selected.llm.provider]({config:selected.llm.config,clock:options.clock,ids,instructions,...metering(selected.llm.config.baseUrl)})
+  const llm=registry.llm[selected.llm.provider === 'ark' ? 'ark' : 'qwen']({config:selected.llm.config,clock:options.clock,ids,instructions,...metering(selected.llm.config.baseUrl)})
   return new CascadedRealtimeProvider({
     language:options.settings.language,
     endpointingFactory:registry.endpointing[selected.selection.endpointingProvider]({config:selected.endpointing,clock:options.clock}),
-    asrFactory:registry.asr[selected.selection.asrProvider]({config:selected.asr,ids,...metering(selected.asr.endpoint)}),
-    ttsFactory:registry.tts[selected.selection.ttsProvider]({config:selected.tts,ids,...metering(selected.tts.endpoint)}),
+    asrFactory:selectedAsrFactory(registry,{config:selected.asr,ids,...metering(selected.asr.endpoint)}),
+    ttsFactory:selectedTtsFactory(registry,{config:selected.tts,ids,...metering(selected.tts.endpoint)}),
     llmFactory:{open:()=>llm.open(history===undefined?undefined:{history})},
     idFactory:options.idFactory,
     ...(options.captureFrame===undefined?{}:{captureFrame:options.captureFrame}),

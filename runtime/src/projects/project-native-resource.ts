@@ -127,17 +127,6 @@ export type ProjectNativeHostLoadResult =
   | Readonly<{readonly status: 'present_failure'; readonly host: null}>
   | Readonly<{readonly status: 'loaded'; readonly host: ProjectNativeHost}>
 
-export function loadPackagedProjectNativeHost(): ProjectNativeHost | null {
-  const resourcesPath = (process as NodeJS.Process & {readonly resourcesPath?: unknown}).resourcesPath
-  if (typeof resourcesPath !== 'string' || resourcesPath === '') return null
-  return loadProjectNativeHostFromResources({
-    resourcesPath,
-    platform: process.platform,
-    arch: process.arch,
-    electronAbi: process.versions.modules,
-  })
-}
-
 /** Host-only seam. Renderer/model/work-order values never enter these options. */
 export function loadProjectNativeHostFromResources(
   options: ProjectNativeLoadOptions,

@@ -1,4 +1,5 @@
 import {validUploadUrl} from './voiceprint.mjs'
+import {CONTROL_CHARACTERS, RUNTIME_DEFAULTS} from './settings-defaults.mjs'
 import {preferredLanguage} from '../renderer/locale.mjs'
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
@@ -14,6 +15,8 @@ export const SECRET_KEYS = Object.freeze([
   'composioApiKey',
   'dashscopeApiKey',
   'stepfunApiKey',
+  'openaiApiKey',
+  'geminiApiKey',
   'tavilyApiKey',
   'openrouterApiKey',
   'modelApiKey',
@@ -27,11 +30,11 @@ export const SECRET_KEYS = Object.freeze([
 export const PALETTES = Object.freeze(['ember', 'graphite'])
 export const PROACTIVITY_LEVELS = Object.freeze(['conservative', 'balanced', 'eager'])
 export const PIPELINE_MODES = Object.freeze(['integrated', 'cascaded'])
-export const INTEGRATED_PROVIDERS = Object.freeze(['qwen', 'stepfun'])
+export const INTEGRATED_PROVIDERS = Object.freeze(['qwen', 'stepfun', 'openai', 'gemini'])
 export const CASCADED_ENDPOINTING_PROVIDERS = Object.freeze(['auto'])
-export const CASCADED_ASR_PROVIDERS = Object.freeze(['volcengine'])
-export const CASCADED_LLM_PROVIDERS = Object.freeze(['qwen', 'ark', 'deepseek'])
-export const CASCADED_TTS_PROVIDERS = Object.freeze(['volcengine'])
+export const CASCADED_ASR_PROVIDERS = Object.freeze(['volcengine','gemini'])
+export const CASCADED_LLM_PROVIDERS = Object.freeze(['qwen', 'ark', 'deepseek', 'openai', 'gemini'])
+export const CASCADED_TTS_PROVIDERS = Object.freeze(['volcengine','gemini'])
 export const HEARTBEAT_MIN_SECONDS = 15
 export const HEARTBEAT_MAX_SECONDS = 120
 export const MAX_MODEL_OR_VOICE_LENGTH = 64
@@ -42,17 +45,16 @@ export const MAX_SECRET_LENGTH = 4096
 const MAX_CIPHERTEXT_BASE64 = 8192
 
 export const DEFAULT_SETTINGS = Object.freeze({
+  ...RUNTIME_DEFAULTS,
   version: SETTINGS_VERSION,
   language: 'zh-CN',
   startupView: 'workbench',
   lastPresentation: 'workbench',
   palette: 'ember',
-  proactivity: 'balanced',
   codingProgressNarration: 'smart',
   codingBackend: 'codex',
   codingBackendPaths: Object.freeze(normalizeCodingPaths()),
   codingBackendProfiles: Object.freeze({}),
-  codexHeartbeatSeconds: 30,
   codexBinaryMode: 'auto',
   codexBinaryPath: '',
   codexWorkspace: '',
@@ -61,30 +63,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   startListeningOnLaunch: false,
   wakeWordEnabled: false,
   autoHideSeconds: 60,
-  pipelineMode: 'cascaded',
-  integratedProvider: 'qwen',
-  integratedModel: 'qwen-audio-3.0-realtime-plus',
-  integratedVoice: 'longanqian',
-  cascadedEndpointingProvider: 'auto',
-  cascadedAsrProvider: 'volcengine',
   voiceprintEnabled: false,
   voiceprintId: '',
   voiceprintName: '',
   voiceprintUploadUrl: '',
-  cascadedLlmProvider: 'deepseek',
-  cascadedLlmModels: Object.freeze({
-    qwen: 'qwen-plus',
-    ark: 'doubao-seed-2-0-pro-260215',
-    deepseek: 'deepseek-flash',
-  }),
-  cascadedTtsProvider: 'volcengine',
-  cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
-  codexApprovalMode: 'ask',
-  clarificationDepth: 'balanced',
-  planReadback: 'summary',
-  generatePlan: true,
-  plannerModel: '',
-  progressBubbles: 'milestones',
   conversationVisionEnabled: false,
   monitorCameraDeviceId: '',
   watchModel: '',
@@ -92,10 +74,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
   phoneServerPort: 0,
   phoneServerTokenFile: '',
   phoneServerUrl: '',
-  embeddingProvider: 'dashscope',
-  embeddingModel: 'text-embedding-v4',
-  capabilitiesConfigPath: '',
-  knowledgePath: '',
   memoryPrerecallEnabled: false,
   secrets: Object.freeze({}),
 })
@@ -116,7 +94,6 @@ const PLAN_READBACK_MODES = new Set(['summary', 'confirm', 'silent'])
 const PROGRESS_BUBBLE_MODES = new Set(['off', 'milestones', 'all'])
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 // Control characters would survive into an env value handed to a child process.
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 // Files are JSON and Electron IPC structured-clones settings patches.
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -221,6 +198,8 @@ function normalizeCascadedLlmModels(raw, base) {
   return {
     qwen: pick(source.qwen, fallback.qwen, DEFAULT_SETTINGS.cascadedLlmModels.qwen, validModelOrVoice),
     deepseek: pick(source.deepseek, fallback.deepseek, DEFAULT_SETTINGS.cascadedLlmModels.deepseek, validModelOrVoice),
+    openai: pick(source.openai, fallback.openai, DEFAULT_SETTINGS.cascadedLlmModels.openai, validModelOrVoice),
+    gemini: pick(source.gemini, fallback.gemini, DEFAULT_SETTINGS.cascadedLlmModels.gemini, validModelOrVoice),
     ark: pick(source.ark, fallback.ark, DEFAULT_SETTINGS.cascadedLlmModels.ark, validModelOrVoice),
   }
 }
@@ -254,6 +233,9 @@ function normalizeSecrets(raw) {
 export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
   const source = isRecord(raw) ? raw : {}
   const fallback = isRecord(base) ? base : DEFAULT_SETTINGS
+  const selectedProvider = pick(source.integratedProvider, fallback.integratedProvider, DEFAULT_SETTINGS.integratedProvider, validIntegratedProvider)
+  const selectedDefaults = {openai: ['gpt-realtime-2.1-mini', 'marin'], gemini: ['gemini-3.8-live', 'Kore']}[selectedProvider]
+  const sameProvider = selectedProvider === fallback.integratedProvider
   const rawVersion = source.version
   const baseVersion = fallback.version
   const acceptsV4Fields = !Object.hasOwn(source, 'version')
@@ -289,9 +271,12 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
     startListeningOnLaunch: pick(source.startListeningOnLaunch, fallback.startListeningOnLaunch, DEFAULT_SETTINGS.startListeningOnLaunch, validBoolean),
     pipelineMode: pick(source.pipelineMode, fallback.pipelineMode, DEFAULT_SETTINGS.pipelineMode, validPipelineMode),
     integratedProvider: pick(source.integratedProvider, fallback.integratedProvider, DEFAULT_SETTINGS.integratedProvider, validIntegratedProvider),
-    integratedModel: pick(source.integratedModel, fallback.integratedModel, DEFAULT_SETTINGS.integratedModel, validModelOrVoice),
-    integratedVoice: pick(source.integratedVoice, fallback.integratedVoice, DEFAULT_SETTINGS.integratedVoice, validModelOrVoice),
+    integratedModel: pick(source.integratedModel, sameProvider ? fallback.integratedModel : undefined, selectedDefaults?.[0] ?? DEFAULT_SETTINGS.integratedModel, validModelOrVoice),
+    integratedVoice: pick(source.integratedVoice, sameProvider ? fallback.integratedVoice : undefined, selectedDefaults?.[1] ?? DEFAULT_SETTINGS.integratedVoice, validModelOrVoice),
     cascadedEndpointingProvider: pick(source.cascadedEndpointingProvider, fallback.cascadedEndpointingProvider, DEFAULT_SETTINGS.cascadedEndpointingProvider, validCascadedEndpointingProvider),
+    geminiAsrModel: pick(source.geminiAsrModel, fallback.geminiAsrModel, DEFAULT_SETTINGS.geminiAsrModel, validModelOrVoice),
+    geminiTtsModel: pick(source.geminiTtsModel, fallback.geminiTtsModel, DEFAULT_SETTINGS.geminiTtsModel, validModelOrVoice),
+    geminiTtsVoice: pick(source.geminiTtsVoice, fallback.geminiTtsVoice, DEFAULT_SETTINGS.geminiTtsVoice, validModelOrVoice),
     cascadedAsrProvider: pick(source.cascadedAsrProvider, fallback.cascadedAsrProvider, DEFAULT_SETTINGS.cascadedAsrProvider, validCascadedAsrProvider),
     voiceprintEnabled: pick(source.voiceprintEnabled, fallback.voiceprintEnabled, false, validBoolean),
     voiceprintId: pick(source.voiceprintId, fallback.voiceprintId, '', value => typeof value === 'string' && (value === '' || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) ? value : null),
@@ -364,6 +349,9 @@ export function publicSettings(settings) {
     integratedModel: normalized.integratedModel,
     integratedVoice: normalized.integratedVoice,
     cascadedEndpointingProvider: normalized.cascadedEndpointingProvider,
+    geminiAsrModel: normalized.geminiAsrModel,
+    geminiTtsModel: normalized.geminiTtsModel,
+    geminiTtsVoice: normalized.geminiTtsVoice,
     cascadedAsrProvider: normalized.cascadedAsrProvider,
     voiceprintEnabled: normalized.voiceprintEnabled,
     voiceprintId: normalized.voiceprintId,

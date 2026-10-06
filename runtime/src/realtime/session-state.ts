@@ -33,6 +33,7 @@ export type DelegateState = z.infer<typeof delegateStateSchema>
 
 export const providerTurnPhaseSchema = z.enum([
   'active',
+  'yielded',
   'cancel_requested',
   'completed',
   'cancelled',
@@ -40,7 +41,6 @@ export const providerTurnPhaseSchema = z.enum([
 ])
 export type ProviderTurnPhase = z.infer<typeof providerTurnPhaseSchema>
 
-export type ContinuationRequestResult = 'requested' | 'retryable' | 'rejected'
 
 /** A speculative display-only caption: revisable, never persisted. */
 export interface CaptionFrame extends Partial<HostWorkSource> {

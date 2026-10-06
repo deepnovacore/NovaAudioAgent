@@ -1782,3 +1782,20 @@ test('desktop shutdown terminates a peer that does not acknowledge close', async
   assert.ok(Date.now() - started < 500)
   transport.destroy()
 })
+
+
+test('personal stop and create commands bypass blocked audio after authentication',async()=>{
+ let release!:()=>void,entered!:()=>void
+ const gate=new Promise<void>(resolve=>{release=resolve}),entry=new Promise<void>(resolve=>{entered=resolve})
+ const methods:string[]=[]
+ let received!:()=>void
+ const commands=new Promise<void>(resolve=>{received=resolve})
+ const server=new NodeDesktopServer({token:TOKEN,bootstrapTextFrames:['{"type":"ready"}'],onAudio:()=>{entered();return gate},onControl:control=>{if(control.type==='personal.command'){methods.push(control.method);if(methods.length===2)received()}}})
+ const readiness=await startDesktopServer(server),socket=await connectDesktopClient(server,readiness.port)
+ try{
+  await authenticate(socket);socket.send(Buffer.from([0,0]));await entry
+  for(const method of ['conversations.voice','conversations.create'])socket.send(JSON.stringify({type:'personal.command',request_id:method,method,params:method==='conversations.voice'?{id:'chat:test',enabled:false}:{}}))
+  await settleWithin('personal commands while audio is blocked',commands)
+  assert.deepEqual(methods,['conversations.voice','conversations.create'])
+ }finally{release();await closeDesktopClientAndServer(socket,server)}
+})

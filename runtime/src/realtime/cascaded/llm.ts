@@ -23,7 +23,7 @@ export function cascadedNarrationInstructions(language: PromptLanguage = 'zh-CN'
 }
 
 /** Marks host-provided activation context; it never represents a user instruction. */
-export {HOST_ACTIVATION_PREFIX, GUARD_ACTIVATION_PREFIX} from '../frontend-instructions.js'
+export {HOST_ACTIVATION_PREFIX} from '../frontend-instructions.js'
 
 /** Shared by the actual adapter and live probes; tool availability never requires a call. */
 export function cascadedResponseGuidance(allowTools: boolean, language: PromptLanguage = 'zh-CN'): string {

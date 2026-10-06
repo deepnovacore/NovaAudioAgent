@@ -6,8 +6,21 @@ import {basename, join, relative} from 'node:path'
 import {test} from 'node:test'
 
 import {VirtualClock} from '../src/core/clock.js'
-import {ProjectStore, PROJECT_MAINTENANCE_JOURNAL_FILE, ProjectStateError, hostManagedProjectRootForTest, hostProjectRootForTest, normalizeProjectSessionTitle, normalizeProjectWorkspaceName} from '../src/projects/project-store.js'
-import {hostCodexHomeValue, hostWorkspaceForTest, hostWorkspacePath} from '../src/executors/codex/process-owner.js'
+import {
+  ProjectStore,
+  MAX_PROJECT_WORKSPACES,
+  PROJECT_MAINTENANCE_JOURNAL_FILE,
+  ProjectStateError,
+  hostManagedProjectRootForTest,
+  hostProjectRootForTest,
+  normalizeProjectSessionTitle,
+  normalizeProjectWorkspaceName,
+} from '../src/projects/project-store.js'
+import {
+  hostCodexHomeValue,
+  hostWorkspaceForTest,
+  hostWorkspacePath,
+} from '../src/executors/codex/process-owner.js'
 import {ManagedWorkspaceMaintenanceService} from '../src/projects/managed-workspace-maintenance.js'
 import {unsupportedNativeFileLocks, type NativeFileLockAuthority, type NativeFileLockResult} from '../src/storage/native-file-lock.js'
 import type {ProjectRootFileAuthority, ProjectRootFileCreateResult, ProjectRootFileResult} from '../src/projects/project-root-file.js'
@@ -2124,7 +2137,7 @@ test('strict v1 decode rejects key, type, cap, reference, and normalized-identit
   const tooManyWorkspaces = clone()
   tooManyWorkspaces.active_workspace_id = null
   tooManyWorkspaces.sessions = {}
-  tooManyWorkspaces.workspaces = Object.fromEntries(Array.from({length: 101}, (_unused, index) => {
+  tooManyWorkspaces.workspaces = Object.fromEntries(Array.from({length: MAX_PROJECT_WORKSPACES + 1}, (_unused, index) => {
     const id = `workspace-${String(index).padStart(4, '0')}`
     return [id, {
       ...valid.workspaces['workspace-0001'],

@@ -44,10 +44,6 @@ export const PROGRESS_HOST_ITEM_TTL_S = 45
 export const PREEMPTIVE_ALERT_DEADLINE_S = 0.35
 /** The bounded renderer-clear acknowledgement wait for a preemptive alert. */
 export const PREEMPTIVE_ALERT_CLEAR_ACK_DEADLINE_S = 0.5
-/** @deprecated Compatibility alias; new callers use `PREEMPTIVE_ALERT_DEADLINE_S`. */
-export const GUARD_ALERT_DEADLINE_S = PREEMPTIVE_ALERT_DEADLINE_S
-/** @deprecated Compatibility alias; new callers use `PREEMPTIVE_ALERT_CLEAR_ACK_DEADLINE_S`. */
-export const GUARD_CLEAR_ACK_DEADLINE_S = PREEMPTIVE_ALERT_CLEAR_ACK_DEADLINE_S
 /**
  * A monitoring hit outranks routine executor announcements (codex=50) without reaching the
  * preemption band; heartbeats and misses keep the manifest priority.
@@ -56,8 +52,6 @@ export const HIT_ALERT_MIN_PRIORITY = 55
 
 export type ExecutorState = 'idle' | 'preparing' | 'running'
 export type PreemptiveAlertHistoryRecovery = 'none' | 'packed'
-/** @deprecated Compatibility type for the legacy environment keys. */
-export type GuardHistoryRecovery = PreemptiveAlertHistoryRecovery
 
 /** What the service will say when a confirmed project operation could not be carried out. */
 const PROJECT_COMMIT_FAILURE_TEXT: ReadonlyMap<string, string> = new Map([
@@ -154,7 +148,7 @@ export function toolCallState(input: {
 export interface ContinuationBatch {
   readonly provider_response_id: string
   call_keys: string[]
-  origin_status: 'active' | 'completed' | 'cancelled' | 'failed'
+  origin_status: 'active' | 'yielded' | 'completed' | 'cancelled' | 'failed'
   phase: 'collecting' | 'ready' | 'requested' | 'bound' | 'terminal' | 'abandoned'
   continuation_response_id: string | null
 }
@@ -297,9 +291,6 @@ export interface PreemptiveAlert {
   readonly reconnect_disallowed: boolean
   readonly reconnect_aborted: boolean
 }
-
-/** @deprecated Internal compatibility name; new orchestration uses PreemptiveAlert. */
-export type GuardPreemption = PreemptiveAlert
 
 /**
  * A key for the `(session_epoch, id)` ledgers.

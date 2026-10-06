@@ -20,6 +20,7 @@ export function renderInterests(parent,{news,warmup,command,button,local,rerende
  const texts=initialInterests(news,warmup),seeded=Boolean(news?.interests_seeded&&news.interests?.length),configured=!seeded&&Boolean(news?.interests?.length||news?.profile_version>0)
  const card=el('section',undefined,'preference-card');card.setAttribute('aria-label','资讯兴趣');parent.append(card)
  const heading=el('div',undefined,'preference-heading');heading.append(el('h3','你的资讯兴趣'),el('span',configured?'已保存':seeded?'从 Profile 猜的 · 待确认':warmup?.draft?.interests?.length?'为你生成 · 可调整':'通用起点 · 可调整','preference-caption'));card.append(heading)
+ if(local.interestSaving){const progress=el('p','正在保存…','action-progress');progress.setAttribute('role','status');card.append(progress)}
  const draft=local.interestEdit
  const save=async(value)=>{
   if(local.interestSaving)return

@@ -1,3 +1,4 @@
+import {imMetadataSchema} from '../memory/provenance.js'
 import {initializePurge,isPermanentlyPurged} from './purge.js'
 import {normalizeWorkspaceContent,projectWorkspaceRevision} from './workspace-projections.js'
 import {initializeLife,lifeOperation,normalizeLifeContent} from './life-operations.js'
@@ -18,7 +19,7 @@ const object = z.record(z.string(), z.json())
 export const EvidenceRecordSchema = z.object({
   id, source_id:id, source_kind:z.enum(['conversation','file','mail','calendar','im','task_result','user_correction']),
   consent:z.object({provider_fingerprint:id}).optional(),
-  source_metadata:z.object({sender_id:id,account_id:id,provider:id.optional()}).optional(),
+  source_metadata:imMetadataSchema.optional(),
   locator:z.string().max(4096), cursor:z.string().max(4096).nullable().default(null),
   observed_at:date, recorded_at:date, raw_text:z.string().max(100_000).nullable(),
   extracted:object.default({}), hash:z.string().min(1).max(128),
@@ -128,13 +129,13 @@ function write(db:LedgerDatabase,candidate:Candidate,deleted=false):EntryRevisio
     projectWorkspaceRevision(db,next,previous)
     queueMemoryFiles(db)
     if(previous && candidate.written_by==='user_correction'){
-      for(const ref of previous.evidence_refs){const old=evidence(db,ref);if(old)db.prepare('INSERT OR IGNORE INTO memory_suppressed VALUES(?)').run(old.hash)}
+      for(const ref of previous.evidence_refs){const old=evidence(db,ref);if(old&&!candidate.evidence_refs.includes(ref))db.prepare('INSERT OR IGNORE INTO memory_suppressed VALUES(?)').run(old.hash)}
       db.exec("DELETE FROM memory_vectors WHERE entry_id IN (SELECT r.entry_id FROM memory_revisions r,json_each(r.payload_json,'$.evidence_refs') refs JOIN memory_evidence e ON e.id=refs.value JOIN memory_suppressed s ON s.hash=e.hash)")
     }
   }
   return next??current(db,candidate.entry_id)
 }
-export type MemoryOperation = 'purge_index_complete'|'purge'|'purge_status'|'conversation_snapshot'|'enable_files'|'commit_consolidation'|'life_load'|'life_mutate'|'append_evidence'|'merge'|'list'|'history'|'evidence'|'delete_source'|'expire'|'forget'|'record_extraction'|'record_evidence_batch'|'migrate_legacy'|'pending_evidence'|'extraction_done'|'pending_vectors'|'write_vectors'|'search'|'retrieval_evidence'|'source_connection'|'source_apply_page'|'source_pending'|'source_revision'|'invalidate_evidence'|'source_grant'|'processing_evidence'|'extraction_ticket'|'commit_extraction'|'processing_stamp'|'source_events'
+export type MemoryOperation = 'purge_index_complete'|'purge'|'purge_status'|'conversation_snapshot'|'enable_files'|'commit_consolidation'|'life_load'|'life_mutate'|'life_capture_im'|'daily_evidence'|'im_context'|'append_evidence'|'merge'|'list'|'history'|'evidence'|'delete_source'|'expire'|'forget'|'record_extraction'|'record_evidence_batch'|'migrate_legacy'|'pending_evidence'|'extraction_done'|'pending_vectors'|'write_vectors'|'search'|'retrieval_evidence'|'source_connection'|'source_apply_page'|'source_pending'|'source_revision'|'invalidate_evidence'|'source_grant'|'processing_evidence'|'extraction_ticket'|'commit_extraction'|'processing_stamp'|'source_events'
 export function memoryOperation(db:LedgerDatabase,operation:MemoryOperation,input:unknown,transaction=true):unknown {
   const value=z.record(z.string(),z.unknown()).parse(input)
   const ledgerOnly=isLedgerOnlyOperation(operation,value)
@@ -144,7 +145,7 @@ export function memoryOperation(db:LedgerDatabase,operation:MemoryOperation,inpu
   try {
     let result:unknown=null
     switch(operation){
-      case 'life_load':case 'life_mutate':result=lifeOperation(db,operation,input,(op,v)=>memoryOperation(db,op,v,false));break
+      case 'life_load':case 'life_mutate':case 'life_capture_im':result=lifeOperation(db,operation,input,(op,v)=>memoryOperation(db,op,v,false));break
       case 'source_connection':case 'source_apply_page':case 'source_pending':case 'source_revision':case 'source_grant':case 'extraction_ticket':case 'commit_extraction':case 'source_events':result=sourceOperation(db,operation,input,(op,v)=>memoryOperation(db,op,v,false));break
       case 'conversation_snapshot': {
         const q=z.object({entry_prefix:id,consumer:id}).strict().parse(value)
@@ -153,6 +154,33 @@ export function memoryOperation(db:LedgerDatabase,operation:MemoryOperation,inpu
         break
       }
       case 'processing_stamp':result=processingStamp(db,z.array(id).min(1).max(256).parse(value.ids),z.enum(['extraction','embedding','conversation']).parse(value.purpose),id.parse(value.provider));break
+      case 'im_context':{
+        const q=z.object({source_prefix:z.string().min(1).startsWith('personal:').endsWith(':'),provider:id,account_id:id,chat_id:id}).strict().parse(input)
+        const context:EvidenceRecord[]=[],now=Date.now()
+        const candidates=db.prepare("SELECT id FROM memory_evidence WHERE substr(source_id,1,?)=? AND json_extract(payload_json,'$.source_kind')='im' AND json_extract(payload_json,'$.source_metadata.account_id')=? AND json_extract(payload_json,'$.source_metadata.chat_id')=? ORDER BY json_extract(payload_json,'$.observed_at') DESC,id DESC").all(q.source_prefix.length,q.source_prefix,q.account_id,q.chat_id)
+        for(const row of candidates){
+          const ref=effectiveEvidence(db,String(row.id),{purpose:'extraction',provider:q.provider})
+          if(!ref||Date.parse(ref.observed_at)>now)continue
+          context.push(ref);if(context.length===12)break
+        }
+        result=context;break
+      }
+      case 'daily_evidence':{
+        const q=z.object({source_prefix:z.string().min(1).startsWith('personal:'),provider:id}).strict().parse(input)
+        result=db.prepare('SELECT id FROM memory_evidence WHERE substr(source_id,1,?)=?').all(q.source_prefix.length,q.source_prefix).flatMap(row=>{
+          const ref=effectiveEvidence(db,String(row.id),{purpose:'extraction',provider:q.provider})
+          if(!ref||(ref.source_kind!=='calendar'&&(ref.source_kind!=='im'||ref.source_metadata?.mention!=='direct')))return []
+          if(ref.source_kind==='im'){
+            const metadata=ref.source_metadata
+            if(metadata?.chat_id&&metadata.message_id){
+              const messageKey=sha256(canonicalJson([metadata.account_id,metadata.chat_id,metadata.message_id]))
+              if(db.prepare('SELECT 1 FROM memory_life_im_receipts WHERE namespace=? AND message_key=?').get(q.source_prefix+'life:',messageKey))return []
+            }
+          }
+          const calendar=ref.source_kind==='calendar'?sourceObjectFor(db,ref.source_id)?.metadata:undefined
+          return [{...ref,...(calendar?{extracted:{...ref.extracted,calendar}}:{})}]
+        });break
+      }
       case 'processing_evidence':result=effectiveEvidence(db,id.parse(value.id),{purpose:z.enum(['extraction','embedding','conversation']).parse(value.purpose),provider:id.parse(value.provider)});break
       case 'invalidate_evidence': {
         const ids=z.array(id).max(256).parse(value.ids)
@@ -215,7 +243,7 @@ export function memoryOperation(db:LedgerDatabase,operation:MemoryOperation,inpu
           AND NOT EXISTS (SELECT 1 FROM memory_extractions x WHERE x.evidence_id=e.id)
           AND NOT EXISTS (SELECT 1 FROM source_objects o JOIN source_connections c ON c.id=o.connection_id WHERE json_extract(o.payload_json,'$.source_id')=e.source_id AND
             (o.generation<>json_extract(c.payload_json,'$.fence.generation') OR NOT EXISTS (SELECT 1 FROM json_each(o.payload_json,'$.current_evidence_ids') r WHERE r.value=e.id)))
-          ORDER BY e.id LIMIT ?`,prefix,prefix,provider,provider,provider,provider,String(limit)).map(row=>EvidenceRecordSchema.parse(row)).filter(row=>retrievalEvidence(db,row.id)!==null);break
+          ORDER BY CASE WHEN json_extract(e.payload_json,'$.source_metadata.mention')='direct' THEN 0 ELSE 1 END, e.id LIMIT ?`,prefix,prefix,provider,provider,provider,provider,String(limit)).map(row=>EvidenceRecordSchema.parse(row)).filter(row=>retrievalEvidence(db,row.id)!==null);break
       }
       case 'record_evidence_batch': {
         // One transaction for a document's chunks: each is admitted, then marked as already extracted.

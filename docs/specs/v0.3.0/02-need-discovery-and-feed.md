@@ -7,7 +7,7 @@
 
 命名：原 Surrogate 角色现称 Proactive；`surrogate.watch` 槽位、`origin: 'surrogate'`、`SURROGATE_SYSTEM` 等序列化标识和提示词常量保留历史拼写。
 
-状态：待评审。本卷只定边界与验收；对应里程碑 M5-A、M6-B（见 [STATUS](STATUS.zh-CN.md)）。
+状态：待评审。本卷只定边界与验收；对应里程碑 M5-A、M6-B。
 
 ## 规划补充：从开口判断到需求发现
 

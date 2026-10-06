@@ -7,15 +7,63 @@ import {
   validateDesktopToken, type DesktopReadiness, type DesktopServerOptions,
 } from '../desktop.js'
 import {MAX_DESKTOP_PCM_BYTES, validateInputPcm} from '../desktop/desktop-wire.js'
+import {NEWS_SOURCES} from '../news/feeds.js'
 import {CLIENT_PATH, ClientCommands, clientReady, decodeClientAudioFrame, acceptsClientMedia, clientMediaSchema, type ClientMedia} from './client-protocol.js'
 
 const MAX_BUFFERED_BYTES = 256 * 1024
 const MAX_PENDING_SENDS = 128
+const MAX_PERSONAL_BYTES = 1024 * 1024
+const MOBILE_METHODS = new Set(['state', 'life.mutate', 'feed.action', 'memory.list', 'memory.evidence', 'memory.correct', 'memory.forget', 'memory.purge', 'conversations.read', 'conversations.create', 'conversations.select', 'conversations.open_work', 'conversations.clear', 'conversations.confirm', 'conversations.open_feed', 'conversations.voice', 'conversations.approve', 'presentation.set', 'presentation.seen', 'tasks.list', 'tasks.get', 'tasks.delegate', 'tasks.control', 'tasks.input', 'tasks.cancel', 'tasks.continue', 'tasks.reconcile', 'tasks.complete_todo', 'context.adopt', 'context.dismiss'])
+
+/** Explicit mobile projection: new desktop fields are private by default. */
+function mobileSnapshot(value: Record<string, unknown>): Record<string, unknown> {
+  const keys = ['type', 'revision', 'reload_required', 'life', 'tasks', 'conversations', 'feed', 'memory', 'pending_approvals', 'pending_confirmations']
+  const result = Object.fromEntries(keys.filter(key => key in value).map(key => [key, value[key]]))
+  // Mobile displays the same ranked/saved articles without source configuration.
+  if (value.news && typeof value.news === 'object' && !Array.isArray(value.news)) {
+    const news = value.news as Record<string, unknown>
+    const articleKeys = ['id', 'source_id', 'title', 'summary', 'url', 'published_at', 'read', 'saved']
+    const articles = (rows: unknown) => Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object').map(row => {
+      const article = row as Record<string, unknown>
+      const name = NEWS_SOURCES.find(source => source.id === article.source_id)?.name
+      return {...Object.fromEntries(articleKeys.filter(key => key in article).map(key => [key, article[key]])), ...(name ? {source_name: name} : {})}
+    }) : []
+    result.news = {enabled: news.enabled === true, refreshing: news.refreshing === true,
+      items: articles(news.items), saved: articles(news.saved)}
+  }
+  // Suggestions and the Profile draft carry no source excerpts: mobile shows how many sources back them.
+  const record = (input: unknown) => input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : null
+  const text = (input: unknown) => typeof input === 'string' ? input : null
+  const list = (input: unknown) => Array.isArray(input) ? input.map(record).filter(item => item !== null) : []
+  const context = record(value.workbench_context)
+  if (context) {
+    const recap = record(context.recap)
+    result.workbench_context = {status: text(context.status),
+      recap: {text: text(recap?.text), projects: list(recap?.projects).map(project => ({name: text(project.name), line: text(project.line)}))},
+      cards: list(context.cards).map(card => ({id: text(card.id), tab: text(card.tab), title: text(card.title), body: text(card.body),
+        why: text(card.why), next: text(card.next), source_count: Array.isArray(card.refs) ? card.refs.length : 0}))}
+  }
+  const preparation = record(value.profile_preparation), draft = record(preparation?.draft)
+  if (preparation) {
+    result.profile_preparation = {status: text(preparation.status), draft: draft ? {
+      about: text(record(draft.about)?.text),
+      work: list(draft.work).map(item => ({title: text(item.title), text: text(item.text)}))} : null}
+  }
+  if (value.capabilities && typeof value.capabilities === 'object') {
+    const caps = value.capabilities as Record<string, unknown>
+    result.capabilities = Object.fromEntries(['tasks', 'memory'].filter(key => key in caps).map(key => [key, caps[key]]))
+  }
+  return result
+}
 
 interface Connection {
   readonly socket: WebSocket
   readonly id: string
   readonly commands: ClientCommands
+  personal?: boolean
+  legacyConversationId?: string
+  snapshot?: string | undefined
+  snapshotTimer?: ReturnType<typeof setTimeout> | undefined
   clientId?: string
   authenticated: boolean
   pendingBytes: number
@@ -25,13 +73,13 @@ interface Connection {
 
 /** Private remote endpoint. Owns sockets only; a network failure never stops the agent graph. */
 export class ClientServer {
-  readonly #options: DesktopServerOptions & {readonly port: number; readonly media?: ClientMedia; readonly pairing?: ClientPairing}
+  readonly #options: DesktopServerOptions & {readonly port: number; readonly media?: ClientMedia; readonly pairing?: ClientPairing; readonly sharedWorkbench?: boolean; readonly prepareLegacyVoice?: () => Promise<string>}
   readonly #instanceId = randomUUID()
   #server: WebSocketServer | undefined
   #active: Connection | undefined
   #closed = false
 
-  constructor(options: DesktopServerOptions & {readonly port: number; readonly media?: ClientMedia; readonly pairing?: ClientPairing}) {
+  constructor(options: DesktopServerOptions & {readonly port: number; readonly media?: ClientMedia; readonly pairing?: ClientPairing; readonly sharedWorkbench?: boolean; readonly prepareLegacyVoice?: () => Promise<string>}) {
     validateDesktopToken(options.token)
     if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535) {
       throw new DesktopProtocolError('client port is invalid')
@@ -83,10 +131,40 @@ export class ClientServer {
   }
 
   async sendText(raw: string): Promise<void> {
-    if (Buffer.byteLength(raw) > MAX_DESKTOP_JSON_BYTES) throw new DesktopProtocolError('client output text too large')
-    const value = JSON.parse(raw) as {type?: unknown} | null
+    const connection = this.#requireActive()
+    const value = JSON.parse(raw) as Record<string, unknown> | null
     if (!value || typeof value.type !== 'string') throw new DesktopProtocolError('invalid client output')
-    await this.#send(this.#requireActive(), raw)
+    if (this.#options.sharedWorkbench && !connection.personal && (value.type.startsWith('personal.') || value.type.startsWith('conversation.'))) return
+    if (this.#options.sharedWorkbench && !connection.personal && value.type === 'caption' && value.conversation_id !== connection.legacyConversationId) return
+    const personal = connection.personal && ['personal.state', 'personal.result'].includes(value.type)
+    if (personal) {
+      const frame = value.type === 'personal.state' ? mobileSnapshot(value) : {...value}
+      const data = frame.data
+      if (data && typeof data === 'object' && (data as Record<string, unknown>).type === 'personal.state') {
+        frame.data = mobileSnapshot(data as Record<string, unknown>)
+        const pending = connection.snapshot ? JSON.parse(connection.snapshot) as {revision?:number} : undefined
+        if (pending && Number(pending.revision) <= Number((data as Record<string,unknown>).revision)) {
+          clearTimeout(connection.snapshotTimer); connection.snapshotTimer=undefined; connection.snapshot=undefined
+        }
+      }
+      raw = JSON.stringify(frame)
+      if (Buffer.byteLength(raw) > MAX_PERSONAL_BYTES) {
+        raw = JSON.stringify(value.type === 'personal.state'
+          ? {type: value.type, revision: value.revision, reload_required: true}
+          : {type: value.type, request_id: value.request_id, ok: value.ok, ...(value.error ? {error: value.error} : {}), reload_required: true})
+      }
+      if (value.type === 'personal.state') {
+        connection.snapshot = raw
+        connection.snapshotTimer ??= setTimeout(() => {
+          connection.snapshotTimer = undefined
+          const snapshot = connection.snapshot
+          connection.snapshot = undefined
+          if (snapshot && this.#active === connection) void this.#send(connection, snapshot, true).catch(() => { /* send owns disconnect */ })
+        }, 250)
+        return
+      }
+    } else if (Buffer.byteLength(raw) > MAX_DESKTOP_JSON_BYTES) throw new DesktopProtocolError('client output text too large')
+    await this.#send(connection, raw, personal === true)
   }
 
   async sendBinary(raw: Uint8Array): Promise<void> {
@@ -103,10 +181,12 @@ export class ClientServer {
   #release(connection: Connection): void {
     if (this.#active !== connection) return
     this.#active = undefined
+    clearTimeout(connection.snapshotTimer)
+    connection.snapshot = undefined
     if (connection.authenticated) { this.#options.onClientDisconnect?.() }
   }
 
-  #reject(connection: Connection, code = 4003): void {
+  #reject(connection: Connection, code = connection.authenticated && connection.personal ? 1002 : 4003): void {
     this.#release(connection)
     connection.socket.close(code, code === 4008 ? 'refresh connection' : 'client protocol rejected')
     // Closing peers must not retain unbounded sockets if they never complete the handshake.
@@ -139,19 +219,26 @@ export class ClientServer {
           const raw = bytes.toString('utf8')
           const credential = this.#options.pairing?.authenticate(raw)
           if (credential === undefined) authenticateDesktopFrame(raw, this.#options.token)
-          const hello = JSON.parse(raw) as {protocol_version?: unknown; media?: unknown; language?: unknown}
+          const hello = JSON.parse(raw) as {protocol_version?: unknown; media?: unknown; language?: unknown; capabilities?: unknown}
           if (hello.protocol_version !== 1 || !acceptsClientMedia(hello.media)) { this.#reject(connection, 4006); return }
           const language = parsePromptLanguage(hello.language)
           connection.clientId=credential===undefined?'remote:master':this.#options.pairing!.clientIdentity(credential)
+          connection.personal = Array.isArray(hello.capabilities) && hello.capabilities.includes('personal')
           connection.authenticated = true
           if (credential !== undefined) {
             const untrack = this.#options.pairing!.track(credential, () => this.#reject(connection, 4003))
             socket.once('close', untrack)
           }
           clearTimeout(timer)
-          await this.#send(connection, clientReady(this.#instanceId, id, this.#options.media))
+          await this.#send(connection, clientReady(this.#instanceId, id, this.#options.media, connection.personal))
           if (this.#active === connection) {
             await this.#options.onClientAuthenticated?.(language)
+            if (this.#options.sharedWorkbench && !connection.personal) {
+              if (!this.#options.prepareLegacyVoice) { this.#reject(connection,4006); return }
+              try { connection.legacyConversationId = await this.#options.prepareLegacyVoice() }
+              catch { this.#reject(connection,4009); return }
+              if (this.#active === connection) await this.#options.onControl?.({type:'input.audio',conversation_id:connection.legacyConversationId},{client_id:'remote:master',can_takeover:false})
+            }
           }
         } else if (binary) {
           const pcm = validateInputPcm(bytes)
@@ -162,7 +249,10 @@ export class ClientServer {
           const result = await connection.commands.receive(bytes.toString('utf8'), control => {
             if (this.#active !== connection) throw new Error('stale client')
             if (this.#options.onControl === undefined) throw new Error('control consumer unavailable')
-            return this.#options.onControl(control,{client_id:connection.clientId!,can_takeover:connection.clientId!=='remote:master'})
+            const mobile = connection.personal === true || this.#options.sharedWorkbench === true
+            if (mobile && control.type === 'personal.command' && !MOBILE_METHODS.has(control.method)) throw new DesktopProtocolError('mobile command unavailable')
+            if (connection.legacyConversationId && ['input.audio','input.text','input.dictation'].includes(control.type)) control = {...control,conversation_id:connection.legacyConversationId} as typeof control
+            return this.#options.onControl(control, mobile ? {client_id:'remote:master',can_takeover:false} : {client_id:connection.clientId!,can_takeover:connection.clientId!=='remote:master'})
           })
           if (this.#active !== connection) return
           await this.#send(connection, JSON.stringify(result))
@@ -173,11 +263,11 @@ export class ClientServer {
     })
   }
 
-  async #send(connection: Connection, raw: string | Uint8Array): Promise<void> {
+  async #send(connection: Connection, raw: string | Uint8Array, personal = false): Promise<void> {
     const socket = connection.socket
     if (this.#active !== connection || socket.readyState !== WebSocket.OPEN) throw new Error('client unavailable')
     const size = typeof raw === 'string' ? Buffer.byteLength(raw) : raw.byteLength
-    if (socket.bufferedAmount + size > MAX_BUFFERED_BYTES || connection.pendingSends >= MAX_PENDING_SENDS) {
+    if (socket.bufferedAmount + size > (personal ? MAX_PERSONAL_BYTES + MAX_BUFFERED_BYTES : MAX_BUFFERED_BYTES) || connection.pendingSends >= MAX_PENDING_SENDS) {
       this.#reject(connection, 4008)
       throw new Error('client send queue full')
     }

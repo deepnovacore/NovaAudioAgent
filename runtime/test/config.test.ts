@@ -66,7 +66,6 @@ test('pipeline defaults are product-shaped and cascaded defaults use DeepSeek Fl
     progressBubbles: settings.progress_bubbles,
     embeddingProvider: settings.embedding_provider,
     embeddingModel: settings.embedding_model,
-    capabilitiesConfigPath: settings.capabilities_config_path,
     knowledgePath: settings.knowledge_path,
     memoryConnection: settings.memory_connection,
     memoryPath: settings.memory_path,
@@ -79,7 +78,6 @@ test('pipeline defaults are product-shaped and cascaded defaults use DeepSeek Fl
     progressBubbles: 'milestones',
     embeddingProvider: 'dashscope',
     embeddingModel: 'text-embedding-v4',
-    capabilitiesConfigPath: '~/.nova-audio-agent/capabilities.json',
     knowledgePath: '~/.nova-audio-agent/knowledge.sqlite',
     memoryConnection: 'local',
     memoryPath: '~/.nova-audio-agent/memory.sqlite',
@@ -166,7 +164,6 @@ test('v4 settings env selectors and paths load with the documented names', () =>
   assert.equal(settings.plan_readback, 'confirm')
   assert.equal(settings.planner_model, 'planner-model')
   assert.equal(settings.progress_bubbles, 'all')
-  assert.equal(settings.capabilities_config_path, '/state/capabilities.json')
   assert.equal(settings.knowledge_path, '/state/knowledge.sqlite')
   assert.equal(settings.embedding_provider, 'dashscope')
   assert.equal(settings.embedding_model, 'custom-embedding')

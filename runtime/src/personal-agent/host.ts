@@ -34,7 +34,7 @@ import { PersonalStore, acquirePersonalLock, initialState, type PersonalState } 
 import {TaskService,taskInputSchema,taskFenceSchema,type TaskRecord,type TaskFence,type TaskActor} from './tasks.js';
 import {canonicalJson} from '../text/canonical-json.js';
 /** Supplied only by an authenticated transport, never command params. */
-export interface PersonalCommandContext {client_id:string;can_takeover?:boolean}
+export interface PersonalCommandContext {client_id:string;can_takeover?:boolean;presentation_mode?:'background'|'workbench'|'orb'}
 export interface Evidence {
     subject_key: string;
     source: FeedItem['source'];
@@ -43,6 +43,7 @@ export interface Evidence {
     };
 }
 export interface DiscoverySnapshot {
+    daily?: {coverage:{memory_scanned:number;memory_included:number;memory_excluded:number;memory_truncated:number;evidence_included:number;evidence_excluded:number;evidence_truncated:number;evidence_text_truncated:number};evidence: {evidence_id:string;locator:string;text:string;source_kind:string;observed_at:string;trust:'untrusted_external'}[]};
     context?: ContextView;
     retrieval?: UnifiedRetrievalResult;
     user_scope: string;
@@ -484,27 +485,41 @@ export class PersonalAgentHost {
         if(!this.#opened||this.#state.dedupe.includes(key))return false;
         const next=structuredClone(this.#state);next.dedupe.push(key);await this.#commit(next);return true;
     })}
-    async #prepare(call:(signal:AbortSignal)=>Promise<PreparedMaterial|null>,snapshot:DiscoverySnapshot):Promise<PreparedMaterial|null>{
+    async #prepare(call:(signal:AbortSignal)=>Promise<PreparedMaterial|null>,snapshot:DiscoverySnapshot,strict=false):Promise<PreparedMaterial|null>{
         const signal=AbortSignal.any([this.#abort.signal,AbortSignal.timeout(30000)]);
         let cancel:()=>void=()=>{/* listener assigned below */};
         try{
             const raw=await Promise.race([call(signal),new Promise<null>(resolve=>{cancel=()=>resolve(null);signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel()})]);
-            if(signal.aborted||!this.#opened||!raw)return null;
+            if(signal.aborted||!this.#opened)throw Error('brief_interrupted');
+            if(!raw)return null;
             const parsed=z.object({prepared:preparedContentSchema,action_label:z.string().trim().min(1).max(80),memory_refs:z.array(z.object({entry_id:z.string(),version:versionSchema}).strict()).max(16)}).strict().safeParse(raw);
-            if(!parsed.success)return null;
+            if(!parsed.success)throw Error('invalid_preparation');
             const value=parsed.data,refs={evidence_refs:value.prepared.evidence_refs,memory_refs:value.memory_refs};
-            if(!refs.evidence_refs.length&&!refs.memory_refs.length||refs.evidence_refs.some(r=>!snapshot.evidence_refs.includes(r))||refs.memory_refs.some(r=>!snapshot.memory.some(m=>m.id===r.entry_id&&m.version===r.version))||!await this.#valid(refs))return null;
+            if(!refs.evidence_refs.length&&!refs.memory_refs.length||refs.evidence_refs.some(r=>!snapshot.evidence_refs.includes(r))||refs.memory_refs.some(r=>!snapshot.memory.some(m=>m.id===r.entry_id&&m.version===r.version))||!await this.#valid(refs))throw Error('stale_preparation');
+            if(strict&&refs.memory_refs.length){const current=await Promise.all(refs.memory_refs.map(ref=>this.options.memory()?.get?.(ref.entry_id)??Promise.resolve(null)));const authorized=await this.authorizedGenerationEntries(current.filter((entry):entry is MemoryEntry=>!!entry));if(refs.memory_refs.some(ref=>!authorized.some(entry=>entry.id===ref.entry_id&&entry.version===ref.version)))throw Error('brief_authorization_changed')}
             return value;
-        }catch{return null}finally{signal.removeEventListener('abort',cancel)}
+        }catch(error){if(strict)throw error;return null}finally{signal.removeEventListener('abort',cancel)}
     }
+    async #beginBrief(key:string):Promise<boolean>{return this.#serial(async()=>{
+        const previous=this.#state.brief_runs[key],now=this.#now();
+        if(!this.#opened||this.#state.dedupe.includes(key)||previous&&(previous.status==='success'||previous.status==='empty'||previous.attempts>=3||now.getTime()-Date.parse(previous.last_attempt_at)<5*60000))return false;
+        const next=structuredClone(this.#state);next.brief_runs[key]={status:'processing',attempts:(previous?.attempts??0)+1,last_attempt_at:now.toISOString()};await this.#commit(next);return true;
+    })}
+    async #finishBrief(key:string,status:'empty'|'failed'):Promise<void>{await this.#serial(async()=>{
+        const next=structuredClone(this.#state),run=next.brief_runs[key];if(run?.status!=='processing')return;run.status=status;await this.#commit(next);
+    })}
     async #runBriefs():Promise<void>{
         if(!this.options.prepareBrief)return;
         for(const slot of dueDailyBriefs(this.#state.settings,this.#now(),this.#state.dedupe)){
-            if(!await this.#claim(slot.dedupe_key))continue;
-            const controller=this.#abort,snapshot=await this.discoverySnapshot();
-            const prepared=await this.#prepare(signal=>this.options.prepareBrief!(snapshot,slot,signal),snapshot);
-            if(!prepared||controller.signal.aborted||!dueDailyBriefs(this.#state.settings,this.#now(),[]).some(s=>s.dedupe_key===slot.dedupe_key))continue;
-            await this.#admit({kind:'notify',summary:slot.kind==='outlook'?'今日前瞻':'今日回顾',why_now:slot.kind==='outlook'?'根据当前可用信息准备的今日前瞻':'根据当前可用信息准备的今日回顾',evidence_refs:prepared.prepared.evidence_refs,memory_refs:prepared.memory_refs},snapshot,prepared,slot.dedupe_key);
+            if(!await this.#beginBrief(slot.dedupe_key))continue;
+            try{
+                const controller=this.#abort,snapshot=await this.dailyBriefSnapshot();
+                const prepared=await this.#prepare(signal=>this.options.prepareBrief!(snapshot,slot,signal),snapshot,true);
+                if(!prepared){await this.#finishBrief(slot.dedupe_key,'empty');continue}
+                if(controller.signal.aborted||!dueDailyBriefs(this.#state.settings,this.#now(),[]).some(s=>s.dedupe_key===slot.dedupe_key))throw Error('brief_slot_expired');
+                const result=await this.#admit({kind:'notify',summary:slot.kind==='outlook'?'今日前瞻':'今日回顾',why_now:slot.kind==='outlook'?'根据当前可用信息准备的今日前瞻':'根据当前可用信息准备的今日回顾',evidence_refs:prepared.prepared.evidence_refs,memory_refs:prepared.memory_refs},snapshot,prepared,slot.dedupe_key);
+                if(result!=='admitted')await this.#finishBrief(slot.dedupe_key,'failed');
+            }catch{await this.#finishBrief(slot.dedupe_key,'failed')}
         }
     }
     async authorizedGenerationEntries(entries: readonly MemoryEntry[]): Promise<MemoryEntry[]> {
@@ -562,6 +577,12 @@ export class PersonalAgentHost {
     }
     async #evidence(ref: string): Promise<Evidence|null> {
         const direct=this.options.evidence(ref)??this.#sources?.evidence?.(ref);if(direct)return direct
+        const memory=this.options.memory(),stored=await memory?.readEvidence?.(ref);
+        if(stored&&memory?.canProcessEvidence){
+            if(!await memory.canProcessEvidence(ref,'extraction'))return null;
+            const type:FeedItem['source']['type']=stored.source_kind==='task_result'?'task':['file','mail','calendar','im'].includes(stored.source_kind)?stored.source_kind as FeedItem['source']['type']:'conversation';
+            return {subject_key:'evidence:'+stored.source_kind+':'+hash(stored.locator),source:{type,ref}};
+        }
         if(!this.#retrieval)return null
         const result=await this.#retrieval.evidence(ref,{signal:this.#abort.signal});const row=result.evidence;if(result.state!=='ok'||!row)return null
         const type:FeedItem['source']['type']=row.source_kind==='task_result'?'task':['file','mail','calendar','im'].includes(row.source_kind)?row.source_kind as FeedItem['source']['type']:'conversation'
@@ -573,7 +594,31 @@ export class PersonalAgentHost {
         const entry = await this.options.memory()?.get?.(ref.entry_id);
         if (!memoryEligibleForDiscovery(entry) || entry.version !== ref.version)
             return false;
+        const memory=this.options.memory();
+        if(memory?.canProcessEvidence && (!entry.evidence_refs?.length || !(await Promise.all(entry.evidence_refs.map(id=>memory.canProcessEvidence!(id,'extraction')))).every(Boolean)))return false;
     } return true; }
+    async dailyBriefSnapshot():Promise<DiscoverySnapshot>{
+        const now=this.#now(),timezone=dailyBriefSettings(this.#state.settings).timezone,local_date=now.toLocaleDateString('en-CA',{timeZone:timezone}),resource=this.options.memory();
+        const entries:MemoryEntry[]=[],seen=new Set<string>();let cursor:string|undefined;
+        if(resource?.list)do{
+            this.#abort.signal.throwIfAborted();
+            const page=await resource.list({limit:100,...(cursor?{cursor}:{})});entries.push(...page.entries);
+            if(!page.cursor)break;if(seen.has(page.cursor))throw Error('memory_cursor_cycle');seen.add(page.cursor);cursor=page.cursor;
+        }while(true);
+        const eligible=await this.authorizedGenerationEntries(entries.filter(memoryEligibleForDiscovery));
+        const due=(entry:MemoryEntry)=>entry.life?.due??(entry.commitment?.due?new Date(entry.commitment.due).toLocaleDateString('en-CA',{timeZone:timezone}):null);
+        const direct=(entry:MemoryEntry)=>entry.sources?.some(source=>source.mentioned_me===true)??false;
+        const relevant=eligible.filter(entry=>{const date=due(entry);if(date!==null)return date<=local_date;if(direct(entry))return true;return !entry.source_refs.every(ref=>ref.type==='calendar')&&new Date(entry.observed_at).toLocaleDateString('en-CA',{timeZone:timezone})===local_date});
+        const unique=[...new Map(relevant.map(entry=>[entry.life?`life:${entry.kind}:${entry.life.id}`:entry.id,entry])).values()].sort((a,b)=>(due(a)??'9999').localeCompare(due(b)??'9999')||Number(direct(b))-Number(direct(a))||a.id.localeCompare(b.id));
+        const evidence=await resource?.dailyBriefEvidence?.({localDate:local_date,timezone,signal:this.#abort.signal})??[];
+        const priority=(kind:string)=>kind==='im'?0:kind==='calendar'?1:2;
+        evidence.sort((a,b)=>priority(a.source_kind)-priority(b.source_kind)||a.observed_at.localeCompare(b.observed_at)||a.evidence_id.localeCompare(b.evidence_id));
+        const refs=[...new Set([...evidence.map(row=>row.evidence_id),...(this.options.evidenceRefs?.()??[])])];
+        const valid=await Promise.all(refs.map(ref=>this.#evidence(ref))),validRefs=refs.filter((_,index)=>valid[index]!==null);
+        const evidence_refs=validRefs.slice(0,128),selected=evidence.filter(row=>evidence_refs.includes(row.evidence_id));
+        return {user_scope:this.options.userScope,local_date,weekday:now.toLocaleDateString('en-US',{weekday:'long',timeZone:timezone}),timezone,memory:unique.slice(0,128),evidence_refs,recent_delivery:this.#state.feed.filter(f=>Object.values(f.delivery).some(Boolean)).slice(-8),daily:{coverage:{memory_scanned:entries.length,memory_included:Math.min(unique.length,128),memory_excluded:entries.length-unique.length,memory_truncated:Math.max(0,unique.length-128),evidence_included:selected.length,evidence_excluded:refs.length-validRefs.length,evidence_truncated:Math.max(0,validRefs.length-128),evidence_text_truncated:selected.filter(row=>row.text.length>2000).length},evidence:selected.map(row=>({...row,text:row.text.slice(0,2000)}))}};
+
+    }
     async discoverySnapshot(): Promise<DiscoverySnapshot> {
         await this.refreshMemory();const now=this.#now(),timezone=dailyBriefSettings(this.#state.settings).timezone,memory=this.options.memory(),context=this.options.context?.();let relevant=this.#memory.entries
         const query=context?.channels.find(c=>c.name==='conversation')?.recent.map(i=>typeof i.content.text==='string'?i.content.text:'').filter(Boolean).slice(-1)[0]??now.toLocaleDateString('en-CA')
@@ -618,7 +663,7 @@ export class PersonalAgentHost {
         const subject = briefKey ?? (primary.subject_key || hash([...p.evidence_refs].sort()));
         const keyFor=(subjectKey:string)=>hash([this.options.userScope,p.kind,subjectKey,snapshot.local_date]);
         const key=keyFor(subject);
-        if([subject,...(briefKey?[]:entities.length>0?entities.map(e=>e.subject_key):memorySubjects)].some(candidate=>this.#state.dedupe.includes(keyFor(candidate)))) return 'suppressed_duplicate'; const now = this.#now(); const item: FeedItem = { ...(prepared?{prepared:prepared.prepared,action_label:prepared.action_label}:{}), id: randomUUID(), kind: p.kind, title: p.summary.slice(0, 120), why_now: p.why_now, evidence_refs: p.evidence_refs, memory_refs: p.memory_refs, source: primary.source, subject_key: subject, task_ref: entities[0]?.task_ref ?? null, suggestion_id: null, priority: 40, created_at: now.toISOString(), updated_at: now.toISOString(), expires_at: new Date(now.getTime() + 86400000).toISOString(), user_state: 'new', snooze_until: null, lifecycle: 'active', delivery: { presented_at: null, notified_at: null, spoken_at: null } }; const next = structuredClone(this.#state); next.feed.push(item); const proactive=next.conversations.items.find(c=>c.kind==='proactive')!;proactive.messages.push({id:'feed:'+item.id,conversation_id:proactive.id,role:'assistant',text:(item.title+'\n'+(item.prepared?.text??item.why_now)).slice(0,16000),created_at:item.created_at});proactive.messages=proactive.messages.slice(-512);proactive.updated_at=item.created_at;next.dedupe.push(key); await this.#commit(next); this.#pool(item); return 'admitted'; }); }
+        if([subject,...(briefKey?[]:entities.length>0?entities.map(e=>e.subject_key):memorySubjects)].some(candidate=>this.#state.dedupe.includes(keyFor(candidate)))) return 'suppressed_duplicate'; const now = this.#now(); const item: FeedItem = { ...(prepared?{prepared:prepared.prepared,action_label:prepared.action_label}:{}), id: randomUUID(), kind: p.kind, title: p.summary.slice(0, 120), why_now: p.why_now, evidence_refs: p.evidence_refs, memory_refs: p.memory_refs, source: primary.source, subject_key: subject, task_ref: entities[0]?.task_ref ?? null, suggestion_id: null, priority: 40, created_at: now.toISOString(), updated_at: now.toISOString(), expires_at: new Date(now.getTime() + 86400000).toISOString(), user_state: 'new', snooze_until: null, lifecycle: 'active', delivery: { presented_at: null, notified_at: null, spoken_at: null } }; const next = structuredClone(this.#state); next.feed.push(item); const proactive=next.conversations.items.find(c=>c.kind==='proactive')!;proactive.messages.push({id:'feed:'+item.id,conversation_id:proactive.id,role:'assistant',text:(item.title+'\n'+(item.prepared?.text??item.why_now)).slice(0,16000),created_at:item.created_at});proactive.messages=proactive.messages.slice(-512);proactive.updated_at=item.created_at;next.dedupe.push(key); if(briefKey){next.dedupe.push(briefKey);const run=next.brief_runs[briefKey];if(run)run.status='success'} await this.#commit(next); this.#pool(item); return 'admitted'; }); }
     #pool(item: FeedItem): void { const suggestion = this.options.pool.add({ origin: 'surrogate', kind: item.kind === 'question' ? 'question' : 'notify', content: { summary: item.title, why_now: item.why_now, personal_feed_id: item.id }, evidence_refs: item.evidence_refs.filter(r => memoryRefSchema.safeParse(r).success), salience: 40, expires_at: item.expires_at?Date.parse(item.expires_at)/1000:this.#now().getTime()/1000+86400 }); item.suggestion_id = suggestion.id; }
     async revalidate(): Promise<void> { await this.#serial(async () => { const next = structuredClone(this.#state); let changed = false; for (const item of next.feed) {
         if (item.lifecycle !== 'active')
@@ -815,10 +860,10 @@ export class PersonalAgentHost {
                 if(client&&q.mode!=='workbench'){returned=await this.tasks.returnClientTasks(receiptId,client);for(const task of returned)void this.wakeTask(task.id);}
             }catch(error){
                 if(error instanceof Error&&error.message==='request_conflict')throw error;
-                if(q.mode==='background')await this.#setPresentation('background');
+                if(q.mode==='background')await this.#setPresentation(context?.presentation_mode??'background');
                 return {type:'personal.result',request_id:command.request_id,ok:false,error:q.mode==='workbench'?'presentation_sync_failed':'handback_pending'};
             }
-            await this.#setPresentation(q.mode);data={mode:q.mode,returned_task_ids:returned.map(task=>task.id),task_control_revisions:Object.fromEntries(returned.map(task=>[task.id,task.control_revision]))};
+            await this.#setPresentation(context?.presentation_mode??q.mode);data={mode:q.mode,returned_task_ids:returned.map(task=>task.id),task_control_revisions:Object.fromEntries(returned.map(task=>[task.id,task.control_revision]))};
         }
         else if(command.method==='presentation.seen'){const q=z.object({approval_id:z.string().min(1).max(128).optional(),conversation_id:z.string().min(1).max(128).optional(),proposal_id:z.string().min(1).max(128).optional()}).strict().parse(p);if(!this.#presentationMode)throw Error('presentation_unavailable');await this.#setPresentation(this.#presentationMode,q);data={mode:this.#presentationMode}}
         else if(command.method==='conversations.confirm'){if(!client)throw Error('unauthenticated');const q=z.object({id:z.string().min(1).max(128),proposal_id:z.string().min(1).max(128),confirmed:z.boolean()}).strict().parse(p);if(!this.#pendingDecisions().pending_confirmations.some(item=>item.proposal_id===q.proposal_id&&item.conversation_id===q.id))throw Error('confirmation_not_owned');if(!this.#conversationPool)throw Error('conversation_runtime_unavailable');await this.#conversationPool.confirm(q.id,q.proposal_id,q.confirmed);data={accepted:true}}
@@ -859,7 +904,9 @@ export class PersonalAgentHost {
         else if (command.method.startsWith('feishu.')) {
             if (!this.#feishu) throw Error('unsupported');
             data = await this.#feishu.command(command.method, p);
-            await this.sourceChanged();
+            // Ingestion/deletion callbacks refresh evidence. Connection controls must
+            // remain usable when the unrelated discovery model is unavailable.
+            this.connectionChanged();
         }
         else if (command.method === 'memory.evidence') {
             const q=z.object({evidence_id:z.string().min(1).max(600).refine(value=>!value.includes('\0'))}).strict().parse(p);

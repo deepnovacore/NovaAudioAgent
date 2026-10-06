@@ -25,6 +25,8 @@ const ALL_SECRET_KEYS = Object.freeze([
   'composioApiKey',
   'dashscopeApiKey',
   'stepfunApiKey',
+  'openaiApiKey',
+  'geminiApiKey',
   'tavilyApiKey',
   'openrouterApiKey',
   'modelApiKey',
@@ -100,11 +102,12 @@ test('the default settings are the documented schema', () => {
     integratedProvider: 'qwen',
     integratedModel: 'qwen-audio-3.0-realtime-plus',
     integratedVoice: 'longanqian',
+    geminiAsrModel: 'gemini-3.5-flash', geminiTtsModel: 'gemini-3.8-flash-tts', geminiTtsVoice: 'Kore',
     cascadedEndpointingProvider: 'auto',
     cascadedAsrProvider: 'volcengine',
     voiceprintEnabled: false, voiceprintId: '', voiceprintName: '', voiceprintUploadUrl: '',
     cascadedLlmProvider: 'deepseek',
-    cascadedLlmModels: { qwen: 'qwen-plus', ark: 'doubao-seed-2-0-pro-260215', deepseek: 'deepseek-flash' },
+    cascadedLlmModels: { qwen: 'qwen-plus', ark: 'doubao-seed-2-0-pro-260215', deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite' },
     cascadedTtsProvider: 'volcengine',
     cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
     codexApprovalMode: 'ask',
@@ -284,11 +287,12 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     integratedProvider: 'qwen',
     integratedModel: 'qwen-realtime-custom',
     integratedVoice: 'longxiaochun',
+    geminiAsrModel: 'gemini-3.5-flash', geminiTtsModel: 'gemini-3.8-flash-tts', geminiTtsVoice: 'Kore',
     cascadedEndpointingProvider: 'auto',
     cascadedAsrProvider: 'volcengine',
     voiceprintEnabled: false, voiceprintId: '', voiceprintName: '', voiceprintUploadUrl: '',
     cascadedLlmProvider: 'ark',
-    cascadedLlmModels: { qwen: 'qwen-plus', ark: 'doubao-custom', deepseek: 'deepseek-flash' },
+    cascadedLlmModels: { qwen: 'qwen-plus', ark: 'doubao-custom', deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite' },
     cascadedTtsProvider: 'volcengine',
     cascadedTtsVoice: 'zh_female_custom',
     codexApprovalMode: 'ask',
@@ -316,7 +320,7 @@ test('normalizeSettings defaults every invalid v2 field independently', () => {
     integratedVoice: 'bad\nvoice',
     cascadedEndpointingProvider: null,
     cascadedAsrProvider: 'qwen',
-    cascadedLlmProvider: 'openai',
+    cascadedLlmProvider: 'unknown-provider',
     cascadedLlmModels: { qwen: '', ark: 'x'.repeat(65) },
     cascadedTtsProvider: 'qwen',
     cascadedTtsVoice: 42,
@@ -370,6 +374,7 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'conversationVisionEnabled',
     'embeddingModel',
     'embeddingProvider',
+    'geminiAsrModel', 'geminiTtsModel', 'geminiTtsVoice',
     'generatePlan',
     'integratedModel',
     'integratedProvider',
@@ -404,7 +409,7 @@ test('JSON settings rebuild only declared fields and keep invalid nested values 
   assert.equal(normalized.codexHeartbeatSeconds, 45)
   assert.equal(Object.hasOwn(normalized, '__proto__'), false)
   assert.equal(Object.hasOwn(normalized, 'unknown'), false)
-  assert.deepEqual(normalized.cascadedLlmModels, {qwen: 'qwen-plus', deepseek: 'deepseek-flash', ark: 'custom-ark'})
+  assert.deepEqual(normalized.cascadedLlmModels, {qwen: 'qwen-plus', deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite', ark: 'custom-ark'})
   assert.deepEqual(normalized.secrets, {tavilyApiKey: {enc: 'none', data: 'dGF2aWx5'}})
 })
 
@@ -444,32 +449,32 @@ test('normalizeSettings rejects leading and trailing controls before trimming mo
 
   assert.deepEqual(normalizeSettings({
     cascadedLlmModels: { qwen: '\nqwen-custom', ark: 'ark-valid' },
-  }).cascadedLlmModels, { deepseek: 'deepseek-flash',
+  }).cascadedLlmModels, { deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite',
     qwen: 'qwen-plus',
     ark: 'ark-valid',
   })
   assert.deepEqual(normalizeSettings({
     cascadedLlmModels: { qwen: 'qwen-valid', ark: 'ark-custom\r' },
-  }).cascadedLlmModels, { deepseek: 'deepseek-flash',
+  }).cascadedLlmModels, { deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite',
     qwen: 'qwen-valid',
     ark: 'doubao-seed-2-0-pro-260215',
   })
 })
 
-test('normalizeSettings treats cascadedLlmModels as a strict independent three-provider map', () => {
+test('normalizeSettings treats cascadedLlmModels as a strict independent five-provider map', () => {
   assert.deepEqual(normalizeSettings({
     cascadedLlmModels: { qwen: 'qwen-max', ark: 'ark-custom', extra: 'drop-me' },
-  }).cascadedLlmModels, { deepseek: 'deepseek-flash', qwen: 'qwen-max', ark: 'ark-custom' })
+  }).cascadedLlmModels, { deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite', qwen: 'qwen-max', ark: 'ark-custom' })
 
   assert.deepEqual(normalizeSettings({
     cascadedLlmModels: { qwen: 'qwen-max' },
-  }).cascadedLlmModels, { deepseek: 'deepseek-flash',
+  }).cascadedLlmModels, { deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite',
     qwen: 'qwen-max',
     ark: DEFAULT_SETTINGS.cascadedLlmModels.ark,
   })
   assert.deepEqual(normalizeSettings({
     cascadedLlmModels: { qwen: 'bad\nmodel', ark: 'ark-custom' },
-  }).cascadedLlmModels, { deepseek: 'deepseek-flash',
+  }).cascadedLlmModels, { deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite',
     qwen: DEFAULT_SETTINGS.cascadedLlmModels.qwen,
     ark: 'ark-custom',
   })
@@ -505,7 +510,7 @@ test('normalizeSettings falls back per field to a caller-supplied base', () => {
   assert.equal(merged.pipelineMode, 'cascaded')
   assert.equal(merged.integratedModel, 'integrated-kept')
   assert.equal(merged.cascadedLlmProvider, 'ark')
-  assert.deepEqual(merged.cascadedLlmModels, { deepseek: 'deepseek-flash', qwen: 'qwen-next', ark: 'ark-kept' })
+  assert.deepEqual(merged.cascadedLlmModels, { deepseek: 'deepseek-flash', openai: 'gpt-6-luna', gemini: 'gemini-3.5-flash-lite', qwen: 'qwen-next', ark: 'ark-kept' })
 })
 
 test('normalizeSettings keeps only well-formed secret entries', () => {
@@ -577,6 +582,7 @@ test('publicSettings never carries the secrets object', () => {
     'conversationVisionEnabled',
     'embeddingModel',
     'embeddingProvider',
+    'geminiAsrModel', 'geminiTtsModel', 'geminiTtsVoice',
     'generatePlan',
     'integratedModel',
     'integratedProvider',
@@ -624,6 +630,8 @@ test('secretsPresent reports booleans for every key and leaks no ciphertext', ()
     composioApiKey: false,
     dashscopeApiKey: true,
     stepfunApiKey: false,
+    openaiApiKey: false,
+    geminiApiKey: false,
     tavilyApiKey: false,
     openrouterApiKey: false,
     modelApiKey: false,
@@ -638,6 +646,8 @@ test('secretsPresent reports booleans for every key and leaks no ciphertext', ()
     composioApiKey: false,
     dashscopeApiKey: false,
     stepfunApiKey: false,
+    openaiApiKey: false,
+    geminiApiKey: false,
     tavilyApiKey: false,
     openrouterApiKey: false,
     modelApiKey: false,
@@ -1333,3 +1343,9 @@ test('coding path changes retain immutable old sources and public settings hide 
   assert.equal(Object.hasOwn(first.codingBackendPaths, 'codex'), false)
 })
 
+test('Gemini speech selections and independent model/voice settings survive persistence normalization',()=>{
+ const value=normalizeSettings({version:4,cascadedAsrProvider:'gemini',cascadedTtsProvider:'gemini',geminiAsrModel:'asr-custom',geminiTtsModel:'tts-custom',geminiTtsVoice:'Puck'})
+ const exposed=backendSettings(value)
+ assert.equal(exposed.cascadedAsrProvider,'gemini');assert.equal(exposed.cascadedTtsProvider,'gemini')
+ assert.equal(exposed.geminiAsrModel,'asr-custom');assert.equal(exposed.geminiTtsModel,'tts-custom');assert.equal(exposed.geminiTtsVoice,'Puck')
+})

@@ -9,7 +9,7 @@ export function renderNews(panel,{news,warmup,command,button,local,preferencesLo
  const tabs=el('div');tabs.className='preference-segments';tabs.setAttribute('role','group');tabs.setAttribute('aria-label','资讯视图');bar.append(tabs)
  for(const [saved,label]of [[false,'为你推荐'],[true,'收藏']]){const b=button(label,()=>{local.saved=saved;rerender()},tabs);b.setAttribute('aria-pressed',String(Boolean(local.saved)===saved))}
  if(news.enabled){button(local.preferences?'收起兴趣':'调整兴趣',()=>{local.preferences=!local.preferences;rerender()},bar)
-  const refresh=button(news.refreshing?'正在更新…':'刷新',()=>command('news.refresh'),bar);refresh.disabled=news.refreshing
+  const refresh=button(news.refreshing?'正在更新…':'刷新',()=>command('news.refresh'),bar,'news:refresh');refresh.disabled=news.refreshing
  }
  if(!news.enabled||local.preferences)renderInterests(panel,{news,warmup,command,button,local:preferencesLocal,rerender,delegate})
  if(news.enabled&&!local.preferences&&(!news.interests?.length||news.interests_seeded)){const note=el('p',news.interests?.length?`这几个兴趣是我从你的 Profile 里猜的：${news.interests.map(i=>i.text).join('、')}。先按时间给你看；点“就用这些”确认一下，我就按它们来排。`:'还不清楚你关心什么，先按时间给你看；等我整理好你的 Profile，就按你的兴趣来排。');note.className='hint';panel.append(note)
@@ -24,7 +24,7 @@ export function renderNews(panel,{news,warmup,command,button,local,preferencesLo
   empty.append(el('p',local.saved?'看到想保留的文章时，可以点收藏。':!news.enabled?'开启后，这里会显示新文章。':news.refreshing?'获取完成后会显示在这里。':news.sources.some(s=>s.error)?'部分来源暂时无法连接；可以在下方查看来源状态。':'可以稍后刷新，或调整关注的主题。'))
  }
  const sources=el('details');sources.append(el('summary','来源与同步状态'));panel.append(sources)
- for(const source of news.sources){const row=el('div');row.append(el('p',`${source.name} · ${source.blocked?'已屏蔽':source.error?'获取失败：'+source.error:source.last_success?'最近成功：'+new Date(source.last_success).toLocaleString():'尚未获取'} · ${source.count??0} 条`));button(source.blocked?'恢复来源':'屏蔽来源',()=>command('news.action',{action:'block',source_id:source.id,value:!source.blocked}),row);sources.append(row)}
+ for(const source of news.sources){const row=el('div');row.append(el('p',`${source.name} · ${source.blocked?'已屏蔽':source.error?'获取失败：'+source.error:source.last_success?'最近成功：'+new Date(source.last_success).toLocaleString():'尚未获取'} · ${source.count??0} 条`));button(source.blocked?'恢复来源':'屏蔽来源',()=>command('news.action',{action:'block',source_id:source.id,value:!source.blocked}),row,`news-source:${source.id}`);sources.append(row)}
  if(news.rank_error)sources.append(el('p','推荐排序暂不可用，先展示已获取的资讯。'))
  if(!news.items.length&&!news.saved.length&&!news.sources.some(s=>s.error))sources.hidden=true
  for(const item of items){const card=el('article');card.className='personal-card news-card';card.dataset.articleId=item.id;panel.append(card)
@@ -33,17 +33,17 @@ export function renderNews(panel,{news,warmup,command,button,local,preferencesLo
   attachSources(card,(item.ranking?.matches??[]).map(m=>`${news.interests.find(i=>i.id===m.interest_id)?.text??''}：${m.quote}`),{title:'推荐依据'})
   const actions=el('div');actions.className='card-actions';card.append(actions)
   button('阅读原文',async()=>{await openArticle(item.url);await command('news.action',{action:'read',id:item.id,value:true})},actions)
-  button(item.saved?'取消收藏':'收藏',()=>command('news.action',{action:'save',id:item.id,value:!item.saved}),actions)
+  button(item.saved?'取消收藏':'收藏',()=>command('news.action',{action:'save',id:item.id,value:!item.saved}),actions,`news-save:${item.id}`)
   const conversionKey='convert:'+item.id,draft=local[conversionKey]
   if(!draft)button('转为个人事项',()=>{local[conversionKey]={id:item.id,content_hash:item.content_hash,kind:'idea',title:item.title.slice(0,200),note:''};rerender()},actions)
   else{
    const form=el('div');form.className='life-form';card.append(form)
    form.append(el('p','把这篇资讯作为参考，写下你自己的想法、目标或待办。保存不会授权 Nova 执行。'))
-   const select=el('select');select.setAttribute('aria-label','个人事项类型');for(const [value,label]of [['idea','想法'],['todo','待办'],['goal','目标']]){const option=el('option',label);option.value=value;select.append(option)}select.value=draft.kind;select.addEventListener('change',()=>{draft.kind=select.value});form.append(select)
-   for(const [key,label,tag,limit]of [['title','个人事项标题','input',200],['note','我的补充说明','textarea',4000]]){const wrapper=el('label',label),input=el(tag);input.value=draft[key];input.maxLength=limit;input.setAttribute('aria-label',label);input.addEventListener('input',()=>{draft[key]=input.value});wrapper.append(input);form.append(wrapper)}
+   const select=el('select');select.pendingKey=`news-convert:${item.id}`;select.setAttribute('aria-label','个人事项类型');for(const [value,label]of [['idea','想法'],['todo','待办'],['goal','目标']]){const option=el('option',label);option.value=value;select.append(option)}select.value=draft.kind;select.addEventListener('change',()=>{draft.kind=select.value});form.append(select)
+   for(const [key,label,tag,limit]of [['title','个人事项标题','input',200],['note','我的补充说明','textarea',4000]]){const wrapper=el('label',label),input=el(tag);input.pendingKey=`news-convert:${item.id}`;input.value=draft[key];input.maxLength=limit;input.setAttribute('aria-label',label);input.addEventListener('input',()=>{draft[key]=input.value});wrapper.append(input);form.append(wrapper)}
    if(draft.content_hash!==item.content_hash)form.append(el('p','资讯已更新，请取消后重新打开转换。'))
-   const save=button('保存个人事项',async()=>{await command('news.convert',{...draft});delete local[conversionKey];rerender()},form);save.disabled=draft.content_hash!==item.content_hash
-   button('取消转换',()=>{delete local[conversionKey];rerender()},form)
+   const save=button('保存个人事项',async()=>{await command('news.convert',{...draft});delete local[conversionKey];rerender()},form,`news-convert:${item.id}`);save.disabled=draft.content_hash!==item.content_hash
+   button('取消转换',()=>{delete local[conversionKey];rerender()},form,`news-convert:${item.id}`)
   }
   for(const match of item.ranking?.matches??[]){const interest=news.interests.find(i=>i.id===match.interest_id);if(!interest)continue
    button(`多看「${interest.text}」`,()=>command('news.action',{action:'weight',interest_id:interest.id,value:Math.min(2,interest.weight+0.5)}),actions).className='quiet'

@@ -10,7 +10,6 @@ const id = z.string().min(1).max(128).refine(s => s.trim().length > 0 && !/[\p{C
 const label = z.string().min(1).refine(s => [...s].length <= 120 && !/[\p{C}]/u.test(s))
 export const taskActionSchema = z.object({type: z.literal('executor.task_action'), request_id: id, work_id: id, executor: id, action: z.enum(['open', 'cancel'])}).strict()
 export const taskActionResultSchema = z.object({type: z.literal('executor.task_action_result'), request_id: id, work_id: id, action: z.enum(['open', 'cancel']), status: z.enum(['opened', 'cancelling', 'not_running', 'unavailable', 'failed'])}).strict()
-export type TaskAction = z.infer<typeof taskActionSchema>
 export type TaskActionStatus = z.infer<typeof taskActionResultSchema>['status']
 export const executorTasksSchema = z.object({type: z.literal('executor.tasks'), revision: z.number().int().nonnegative(), active_project: label.nullable(), tasks: z.array(z.object({work_id: id, executor: id, backend_id: z.enum(CODING_BACKEND_IDS).optional(), project: label, title: label, phase: z.enum(['started', 'working', 'completed', 'failed', 'refused', 'unknown', 'cancelled']), summary: z.string().min(1).max(180), ts: z.number().finite().nonnegative()}).strict()).max(16)}).strict()
 type Task = z.infer<typeof executorTasksSchema>['tasks'][number]

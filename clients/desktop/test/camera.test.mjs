@@ -22,7 +22,6 @@ import {
   cameraPermissionResultMessage,
 } from '../src/renderer/camera.mjs'
 
-const {RendererCameraToggle} = cameraModule
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -454,113 +453,6 @@ test('failed explicit enable leaves local capture disabled and releases an unusa
     cameraUnavailableMessage('camera-after-denial'),
   )
   assert.equal(harness.calls.constraints.length, 1, 'failed enable is not retried by a host request')
-  controller.dispose()
-})
-
-test('camera toggle asks on the user action, enables the real controller, and releases on off', async () => {
-  assert.equal(typeof RendererCameraToggle, 'function')
-  const harness = makeLocalHarness()
-  const controller = new RendererCameraController(harness)
-  controller.setSourceMode('local')
-  const states = []
-  let permissionRequests = 0
-  const toggle = new RendererCameraToggle({
-    cameraController: controller,
-    requestPermission: async () => {
-      permissionRequests += 1
-      return {status: 'granted'}
-    },
-    onState: state => states.push(state),
-  })
-
-  assert.equal(toggle.state, 'off')
-  assert.equal(await toggle.toggle(), 'on')
-  assert.equal(permissionRequests, 1)
-  assert.deepEqual(harness.calls.constraints, [{video: true, audio: false}])
-  assert.deepEqual(states, ['requesting', 'on'])
-
-  assert.equal(await toggle.toggle(), 'off')
-  assert.equal(harness.track.stops, 1)
-  assert.equal(permissionRequests, 1, 'turning off never asks for permission')
-  assert.deepEqual(states, ['requesting', 'on', 'off'])
-  controller.dispose()
-})
-
-test('camera toggle keeps the hard gate closed when system permission is denied', async () => {
-  assert.equal(typeof RendererCameraToggle, 'function')
-  const harness = makeLocalHarness()
-  const controller = new RendererCameraController(harness)
-  controller.setSourceMode('local')
-  const toggle = new RendererCameraToggle({
-    cameraController: controller,
-    requestPermission: async () => ({status: 'denied'}),
-  })
-
-  assert.equal(await toggle.toggle(), 'denied')
-  assert.deepEqual(harness.calls.constraints, [])
-  const response = makeDelivery()
-  controller.enqueue(localRequest('camera-denied'), response.delivery)
-  assert.equal(
-    (await settleWithin(response.response.promise, 'denied camera capture')).value,
-    cameraUnavailableMessage('camera-denied'),
-  )
-  controller.dispose()
-})
-
-test('voice-triggered camera admission enables idempotently instead of toggling an active camera off', async () => {
-  const harness = makeLocalHarness()
-  const controller = new RendererCameraController(harness)
-  controller.setSourceMode('local')
-  let permissionRequests = 0
-  const toggle = new RendererCameraToggle({
-    cameraController: controller,
-    requestPermission: async () => {
-      permissionRequests += 1
-      return {status: 'granted'}
-    },
-  })
-
-  assert.equal(await toggle.ensureEnabled(), 'on')
-  assert.equal(await toggle.ensureEnabled(), 'on')
-  assert.equal(permissionRequests, 1)
-  assert.deepEqual(harness.calls.constraints, [{video: true, audio: false}])
-  controller.dispose()
-})
-
-test('voice-triggered camera admission preserves restricted as a permission verdict', async () => {
-  const harness = makeLocalHarness()
-  const controller = new RendererCameraController(harness)
-  controller.setSourceMode('local')
-  const toggle = new RendererCameraToggle({
-    cameraController: controller,
-    requestPermission: async () => ({status: 'restricted'}),
-  })
-
-  assert.equal(await toggle.admitForHost(), 'restricted')
-  assert.equal(toggle.state, 'denied')
-  assert.deepEqual(harness.calls.constraints, [])
-  controller.dispose()
-})
-
-test('browser permission denial remains a denied admission when system status is unknown', async () => {
-  const denied = Object.assign(new Error('do not expose this browser detail'), {
-    name: 'NotAllowedError',
-  })
-  const harness = makeLocalHarness({
-    getUserMedia: () => Promise.reject(denied),
-  })
-  const controller = new RendererCameraController(harness)
-  controller.setSourceMode('local')
-  const states = []
-  const toggle = new RendererCameraToggle({
-    cameraController: controller,
-    requestPermission: async () => ({status: 'unknown'}),
-    onState: state => states.push(state),
-  })
-
-  assert.equal(await toggle.admitForHost(), 'denied')
-  assert.equal(toggle.state, 'denied')
-  assert.deepEqual(states, ['requesting', 'denied'])
   controller.dispose()
 })
 

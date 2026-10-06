@@ -8,7 +8,7 @@ import {candidateId,type ContextInput} from '../src/personal-agent/context-candi
 import {GatewayPersonalWriter} from '../src/model/personal-writer.js'
 import type {ModelGateway} from '../src/model/model-gateway.js'
 /** The documents a digest fixture cites, fed back as the eligible inputs they would be in production. */
-const refFile=(ref:{entry_id:string;version:string}):ContextInput=>({kind:'file',id:ref.entry_id,version:ref.version,content:'Project notes.',source_id:'s',file_id:ref.entry_id,root:'/nova',rel_path:'notes.md',role:'document',mtime_ms:1,priority:1})
+const refFile=(ref:{entry_id:string;version:string}):Extract<ContextInput,{kind:'file'}>=>({kind:'file',id:ref.entry_id,version:ref.version,content:'Project notes.',source_id:'s',file_id:ref.entry_id,root:'/nova',rel_path:'notes.md',role:'document',mtime_ms:1,priority:1})
 test('generated suggestion copy stays short enough for a single readable card',()=>{
  const card={candidate_id:'c',tab:'ideas',title:'具体提议',body:'一句简短的说明。',refs:[{entry_id:'source:doc',version:'v1'}]}
  assert.equal(contextCardSchema.safeParse(card).success,true)
@@ -298,5 +298,26 @@ test('an idea candidate does not mask pending project digests on the Todo page',
   const snapshot=context.snapshot()
   assert.equal(snapshot.candidate_count,1,'the idea is a real candidate')
   assert.equal(snapshot.empty_reasons.todos,'digests_pending');assert.equal(snapshot.empty_reasons.ideas,'model_abstained')
+ }finally{await context.close();await rm(dir,{recursive:true,force:true})}
+})
+
+test('suggestion sources are projected from current input metadata, never guessed from text',async()=>{
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-context-sources-'))
+ const context=new WorkbenchContext(join(dir,'cards.json'),candidates=>Promise.resolve({cards:candidates.map(c=>({candidate_id:c.candidate_id,tab:c.tab,title:'一起讨论',body:'讨论这个想法',why:null,next:null,refs:c.refs}))}),()=>undefined)
+ const sources=[{evidence_id:'e1',type:'mail' as const,observed_at:'2026-10-04T00:00:00Z',summary:'已确认邮件',mentioned_me:true}]
+ try{
+  await context.open();context.update([{id:'m',version:1,origin:'stated',content:'想法：邮件和飞书里的提议',sources}]);await context.refresh()
+  assert.deepEqual(context.snapshot().cards[0]?.sources,sources)
+  context.update([{id:'m',version:1,origin:'stated',content:'想法：邮件和飞书里的提议'}])
+  assert.deepEqual(context.snapshot().cards[0]?.sources,[],'channel words alone confer no provenance')
+  context.update([{id:'m',version:2,origin:'stated',content:'想法：新内容',sources}]);assert.equal(context.snapshot().cards.length,0)
+ }finally{await context.close();await rm(dir,{recursive:true,force:true})}
+})
+test('file source badges use actual file input metadata without fabricating original URLs',async()=>{
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-context-file-source-'))
+ const context=new WorkbenchContext(join(dir,'cards.json'),candidates=>Promise.resolve({cards:candidates.map(c=>({candidate_id:c.candidate_id,tab:c.tab,title:'讨论方案',body:'一个想法',why:null,next:null,refs:c.refs}))}),()=>undefined)
+ try{
+  await context.open();context.update([{...refFile({entry_id:'source:a',version:'v1'}),content:'An idea for simplification.',rel_path:'docs/proposal.md'}]);await context.refresh()
+  assert.deepEqual(context.snapshot().cards[0]?.sources,[{evidence_id:'source:a',type:'file',label:'proposal.md',observed_at:'1970-01-01T00:00:00.001Z'}])
  }finally{await context.close();await rm(dir,{recursive:true,force:true})}
 })

@@ -150,8 +150,8 @@ function getPlaybackLevel() {
 // capture path, which already walks every PCM frame for onset detection; the
 // speaker is pulled by the visual's own loop, because only it knows when it is
 // about to draw a speaking frame.
-// The palette itself arrives later, from bootstrap.settings (a future task's
-// preload channel), so construction always starts on the 'ember' default and
+// The palette itself arrives later, from bootstrap.settings,
+// so construction always starts on the 'ember' default and
 // boot() below swaps it live once settings are known.
 // Guarded, not raw: the orb is the one decorative part of this renderer, and a
 // canvas it cannot acquire (or one that throws mid-draw) must not take the
@@ -1419,7 +1419,7 @@ orb.addEventListener('pointerup', () => finishDrag(false))
 orb.addEventListener('pointercancel', () => finishDrag(true))
 orb.addEventListener('pointerenter', () => paletteHover.enter())
 orb.addEventListener('pointerleave', () => paletteHover.leave())
-// Double-click is the orb's only way back to the workbench; the first click of a sleeping orb still wakes it.
+// Double-click opens the workbench; the context menu also offers all presentation modes.
 orb.addEventListener('dblclick', event => {
   event.preventDefault()
   if (lastPointerDragged || personalView?.controller.presentationMode !== 'orb') return

@@ -4,18 +4,18 @@
 > 形成有来源的记忆和有依据的发现；覆盖范围、失败与同步状态对用户可见；撤销和删除能传播到
 > 检索、记忆与建议。写操作是可选能力，走既有执行授权路径。
 
-状态：M7（本地目录）已在 `v0.3.0dev` 实现，验收边界见 [STATUS](STATUS.zh-CN.md)；M8-Mail（一个邮件 / 日历 provider）与
+状态：M7（本地目录）已在 `v0.3.0dev` 实现；M8-Mail（一个邮件 / 日历 provider）与
 M8-IM（飞书连接器，§2.5）为规划，2026-09-12 决定留在 v0.3.0，推翻 09-11 移至 v0.4.0 的划分。执行生态 M9 仍在
 [v0.4.0](../v0.4.0/00-overview.md)。
 
 ## 1. 现有基础
 
 - `runtime/src/knowledge/service.ts`：文件、URL、文件夹的**有界导入**，正文分块、embedding、
-  混合检索，SQLite 存储（spec [04 知识库](../v0.2.0/04-knowledge-base.md)）。不是持续同步服务。
+  混合检索，SQLite 存储（v0.2.0 spec 04 知识库）。不是持续同步服务。
 - `runtime/src/config/capability-registry.ts`：`capabilities.json`、模块开关、按消费者（frontbrain / codex）
   暴露工具；`runtime/src/executors/mcp-client.ts`：外部 MCP（stdio、streamable-http），≤8 server、≤32 工具/server，
-  有界 I/O。spec [03 能力注册表与 MCP](../v0.2.0/03-capability-registry-and-mcp.md)。
-- 执行器边界：[07](../v0.2.0/07-executor-boundary.md)。核心只认角色（coding），Codex 是插件；
+  有界 I/O。v0.2.0 spec 03 能力注册表与 MCP。
+- 执行器边界：v0.2.0 spec 07。核心只认角色（coding），Codex 是插件；
   执行器 manifest 有 `readonly`、`confirm`、`deadline_budget`、`sensitive_params`。
 - Home Assistant、AutoGLM 在源码中不存在。`thirdparty/Open-AutoGLM` 仅为参考副本。
 - 组织专属能力（周报问答、员工工作台、飞书部署配置）在 internal；公共边界由
@@ -57,7 +57,7 @@ MCP 是工具暴露方式。可复用现有 MCP server 作为查询工具，但*
 
 ### 2.3 邮件与日历（M8-Mail）
 
-以**一个**服务商生态验证闭环再扩展。2026-09-19 已确认 Composio + Gmail / Google Calendar，先只读后台同步；[详细设计](../../superpowers/specs/2026-09-19-composio-connectors-design.md) 已批准，固定版本契约已完成探针验证；实现与 live 层级见 [验收记录](../../research/2026-09-20-connector-acceptance.md)。
+以**一个**服务商生态验证闭环再扩展。2026-09-19 已确认 Composio + Gmail / Google Calendar，先只读后台同步；详细设计已批准（本地文档），固定版本契约已完成探针验证；实现与 live 层级见本地验收记录。
 
 - **日历**：保留事件 ID、日历归属、时区、全天语义、重复规则与例外、取消状态。
 - **邮件**：保留消息 ID、线程归属、参与人、时间、正文及必要状态。"是否待回复"需检查线程，

@@ -126,7 +126,7 @@ jobs:
           npm publish "./release-artifacts/nova-audio-agent-server-$RELEASE_VERSION.tgz" --access public --tag "$npm_tag"
           npm publish "$tarball" --access public --tag "$npm_tag"
           published=''
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 60); do
             if test "$(npm view "nova-audio-agent@$npm_tag" version --registry https://registry.npmjs.org 2>/dev/null || true)" = "$RELEASE_VERSION" \
               && test "$(npm view "nova-audio-agent-server@$npm_tag" version --registry https://registry.npmjs.org 2>/dev/null || true)" = "$RELEASE_VERSION"; then
               published=1
@@ -150,34 +150,7 @@ jobs:
 
   npm-platform-acceptance:
     needs: publish
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, windows-latest, ubuntu-22.04]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    env:
-      RELEASE_VERSION: ${{ inputs.release_version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.commit }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          registry-url: https://registry.npmjs.org
-          cache: npm
-      - run: npm install --global npm@11.6.0
-      - run: npm ci --ignore-scripts
-      - name: Install Linux display dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb libasound2 libgtk-3-0 libnss3 libgbm1 libsecret-1-0
-      - name: Install the published desktop CLI
-        run: npm install --prefix npm-smoke nova-audio-agent@${{ inputs.release_version }}
-      - name: Verify public download and installed application
-        run: ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }} node scripts/verify-npm-desktop.mjs npm-smoke/node_modules/nova-audio-agent
-      - name: Verify the published headless package
-        if: runner.os == 'Linux'
-        run: |
-          npm install --prefix server-smoke nova-audio-agent-server@${{ inputs.release_version }}
-          node scripts/verify-server-package.mjs server-smoke/node_modules/.bin/novaaudio-server
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      commit: ${{ inputs.commit }}
+      release_version: ${{ inputs.release_version }}

@@ -2,52 +2,12 @@ import { createServer } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
 import {codingProfileRegistry} from './coding-settings.mjs'
+import { CONTROL_CHARACTERS, RUNTIME_DEFAULTS as SETTINGS_DEFAULTS } from './settings-defaults.mjs'
 
 const MAX_READINESS_BYTES = 4096
 const TOKEN_PATTERN = /^[a-f0-9]{32}$/
 const READY_ENDPOINT_PATTERN = /^127\.0\.0\.1:([0-9]{1,5})$/
 const NEWLINE = 0x0a
-
-// Mirrors settings-store.mjs's DEFAULT_SETTINGS for the runtime-facing fields
-// this module injects. Duplicated rather than imported: backend.mjs stays importable
-// without the settings-store module (and its node:fs/node:crypto surface) ever
-// loading, and a missing/corrupt settings file must never produce the literal
-// string "undefined" in a child's environment.
-const SETTINGS_DEFAULTS = Object.freeze({
-  proactivity: 'balanced',
-  codexHeartbeatSeconds: 30,
-  pipelineMode: 'cascaded',
-  integratedProvider: 'qwen',
-  integratedModel: 'qwen-audio-3.0-realtime-plus',
-  integratedVoice: 'longanqian',
-  cascadedEndpointingProvider: 'auto',
-  cascadedAsrProvider: 'volcengine',
-  cascadedLlmProvider: 'qwen',
-  cascadedLlmModels: Object.freeze({
-    qwen: 'qwen-plus',
-    ark: 'doubao-seed-2-0-pro-260215',
-    deepseek: 'deepseek-flash',
-  }),
-  cascadedTtsProvider: 'volcengine',
-  cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
-  codexApprovalMode: 'ask',
-  clarificationDepth: 'balanced',
-  planReadback: 'summary',
-  generatePlan: true,
-  plannerModel: '',
-  progressBubbles: 'milestones',
-  embeddingProvider: 'dashscope',
-  embeddingModel: 'text-embedding-v4',
-  capabilitiesConfigPath: '',
-  knowledgePath: '',
-})
-
-// Duplicated from settings-store.mjs for the same reason SETTINGS_DEFAULTS is:
-// this module stays importable on its own. Node refuses a C0 control character
-// in a child's environment value and throws out of `spawn`, so a stored secret
-// that somehow carries one must be dropped here rather than take the launch —
-// and with it the app — down before the panel can clear it.
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 
 // decryptedSecrets key -> env var name. Only a non-empty decrypted string maps
 // to an override; an absent/empty key is omitted entirely so the user's own
@@ -57,6 +17,8 @@ export const SECRET_ENV_MAP = Object.freeze({
   composioApiKey: 'COMPOSIO_API_KEY',
   dashscopeApiKey: 'DASHSCOPE_API_KEY',
   stepfunApiKey: 'STEPFUN_API_KEY',
+  openaiApiKey: 'OPENAI_API_KEY',
+  geminiApiKey: 'GEMINI_API_KEY',
   tavilyApiKey: 'TAVILY_API_KEY',
   openrouterApiKey: 'OPENROUTER_API_KEY',
   modelApiKey: 'MODEL_API_KEY',
@@ -166,7 +128,6 @@ export function searchProxyUrlFromRules(rules) {
 }
 
 export function backendLaunchSpec({
-  backend = 'node',
   nodeEntry,
   nodeResourcesPath,
   workspace,
@@ -180,7 +141,6 @@ export function backendLaunchSpec({
   newsLanguage = 'en',
   capabilitiesDocument,
 }) {
-  if (backend !== 'node') throw new Error('backend kind is invalid')
   if (typeof nodeEntry !== 'string' || !isAbsolute(nodeEntry)) {
     throw new Error('absolute Node runtime entry is required')
   }
@@ -222,7 +182,7 @@ export function backendLaunchSpec({
     ...parentEnv,
     DESKTOP_TOKEN: token,
     DESKTOP_READY_ENDPOINT: readyEndpoint,
-    BACKEND: backend,
+    BACKEND: 'node',
     CODEX_WORKSPACE: effectiveWorkspace,
     EXECUTOR: 'codex',
     CODING_BACKEND: settings?.codingBackend ?? 'codex',
@@ -299,6 +259,9 @@ export function backendLaunchSpec({
       DOUBAO_ASR_VOICEPRINT_NAME: settings?.voiceprintName ?? '',
       CASCADE_ENDPOINTING_PROVIDER: settings?.cascadedEndpointingProvider
         ?? SETTINGS_DEFAULTS.cascadedEndpointingProvider,
+      GEMINI_ASR_MODEL: settings?.geminiAsrModel ?? SETTINGS_DEFAULTS.geminiAsrModel,
+      GEMINI_TTS_MODEL: settings?.geminiTtsModel ?? SETTINGS_DEFAULTS.geminiTtsModel,
+      GEMINI_TTS_VOICE: settings?.geminiTtsVoice ?? SETTINGS_DEFAULTS.geminiTtsVoice,
       CASCADE_ASR_PROVIDER: settings?.cascadedAsrProvider
         ?? SETTINGS_DEFAULTS.cascadedAsrProvider,
       CASCADE_LLM_PROVIDER: llmProvider,
@@ -309,14 +272,16 @@ export function backendLaunchSpec({
         ?? SETTINGS_DEFAULTS.cascadedTtsVoice,
     })
   } else {
-    const stepfun = settings?.integratedProvider === 'stepfun'
+    const provider = settings?.integratedProvider ?? SETTINGS_DEFAULTS.integratedProvider
+    const prefix = provider.toUpperCase()
+    const providerDefaults = {openai: ['gpt-realtime-2.1-mini','marin'], gemini: ['gemini-3.8-live','Kore']}[provider]
     Object.assign(env, {
       INTEGRATED_PROVIDER: settings?.integratedProvider
         ?? SETTINGS_DEFAULTS.integratedProvider,
-      [stepfun ? 'STEPFUN_REALTIME_MODEL' : 'QWEN_REALTIME_MODEL']:
-        settings?.integratedModel ?? SETTINGS_DEFAULTS.integratedModel,
-      [stepfun ? 'STEPFUN_REALTIME_VOICE' : 'QWEN_REALTIME_VOICE']:
-        settings?.integratedVoice ?? SETTINGS_DEFAULTS.integratedVoice,
+      [`${prefix}_REALTIME_MODEL`]:
+        settings?.integratedModel ?? providerDefaults?.[0] ?? SETTINGS_DEFAULTS.integratedModel,
+      [`${prefix}_REALTIME_VOICE`]:
+        settings?.integratedVoice ?? providerDefaults?.[1] ?? SETTINGS_DEFAULTS.integratedVoice,
     })
   }
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
@@ -650,13 +615,15 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
     if (pipelineMode === 'cascaded') {
       const llmProvider = settings?.cascadedLlmProvider
         ?? SETTINGS_DEFAULTS.cascadedLlmProvider
-      activeSecretKeys.add(llmProvider === 'deepseek' ? 'deepseekApiKey' : llmProvider === 'ark' ? 'arkApiKey' : 'dashscopeApiKey')
-      activeSecretKeys.add('doubaoBigmodelApiKey')
+      activeSecretKeys.add(llmProvider === 'qwen' ? 'dashscopeApiKey' : `${llmProvider}ApiKey`)
+      activeSecretKeys.add((settings?.cascadedTtsProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoBigmodelApiKey')
       // Optional override only. When absent, the runtime falls back to the
       // big-model key; Main does not synthesize a duplicate secret value.
-      activeSecretKeys.add('doubaoAsrApiKey')
+      activeSecretKeys.add((settings?.cascadedAsrProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoAsrApiKey')
+      if ((settings?.cascadedAsrProvider ?? 'volcengine') === 'volcengine') activeSecretKeys.add('doubaoBigmodelApiKey')
     } else {
-      activeSecretKeys.add(settings?.integratedProvider === 'stepfun' ? 'stepfunApiKey' : 'dashscopeApiKey')
+      const integrated = settings?.integratedProvider ?? 'qwen'
+      activeSecretKeys.add(integrated === 'qwen' ? 'dashscopeApiKey' : `${integrated}ApiKey`)
       if (settings?.integratedProvider === 'stepfun') activeSecretKeys.add('dashscopeApiKey')
     }
     const search = document?.modules?.search

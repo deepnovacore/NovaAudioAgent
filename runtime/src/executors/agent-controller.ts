@@ -107,7 +107,6 @@ export const agentActionResultSchema = z.discriminatedUnion('code', [
 ])
 
 export type AgentActionResult = z.infer<typeof agentActionResultSchema>
-export type AgentActionCode = AgentActionResult['code']
 
 /** Parse controller output without invoking accessors or retaining caller-owned object graphs. */
 export function parseAgentActionResult(value: unknown): AgentActionResult | null {

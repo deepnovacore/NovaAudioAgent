@@ -22,7 +22,7 @@ test('orb restart applies saved settings through the shared transaction and repo
     const context = {
       t: value => value,
       Menu: {buildFromTemplate: value => { rows = value; return {popup() {}} }},
-      mainWindow: {}, settingsReady: true, lifecycleCoordinator: coordinator,
+      mainWindow: {}, presentationMode: 'orb', settingsReady: true, lifecycleCoordinator: coordinator,
       activeMcpSubmenu: () => [],
       applyDesktopSettings: async (patch, restart) => {
         called++
@@ -45,7 +45,7 @@ test('orb restart applies saved settings through the shared transaction and repo
   }
 })
 
-test('the orb menu hides Nova to the tray, right before quitting', async () => {
+test('the orb menu offers all presentation modes through the shared transition', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const start = source.indexOf('function showOrbMenu(launchId) {')
   const menuSource = source.slice(start, source.indexOf('\n}', start) + 2)
@@ -54,16 +54,25 @@ test('the orb menu hides Nova to the tray, right before quitting', async () => {
   const context = {
     t: value => value,
     Menu: {buildFromTemplate: value => { rows = value; return {popup() {}} }},
-    mainWindow: {}, settingsReady: true, lifecycleCoordinator: {busy: false},
+    mainWindow: {}, presentationMode: 'orb', settingsReady: true, lifecycleCoordinator: {busy: false},
     activeMcpSubmenu: () => [],
     requestPresentation: mode => requested.push(mode),
   }
-  runInNewContext(`${menuSource}\nshowOrbMenu('test')`, context)
-  const labels = rows.map(row => row.label ?? row.type)
-  assert.deepEqual([...labels.slice(-3)], ['separator', '隐藏', '退出 Nova Audio Agent'])
-  assert.ok(labels.includes('设置…'))
-  rows.find(row => row.label === '隐藏').click()
-  assert.deepEqual(requested, ['background'])
+  for(const mode of ['workbench','orb','background']){
+    context.presentationMode=mode
+    runInNewContext(`${menuSource}\nshowOrbMenu('test')`, context)
+    const modes=rows.find(row=>row.label==='显示模式').submenu
+    assert.deepEqual([...modes.map(row=>row.label)],['工作台','悬浮球','隐藏'])
+    assert.equal(modes.filter(row=>row.checked).length,1)
+    for(const [index,row] of modes.entries()){
+      assert.equal(row.type,'radio')
+      assert.equal(row.checked,['workbench','orb','background'][index]===mode)
+      row.click()
+    }
+    assert.deepEqual(requested.splice(0),['workbench','orb','background'])
+    assert.equal(rows.at(-1).label,'退出 Nova Audio Agent')
+    assert.ok(rows.some(row=>row.label==='设置…'))
+  }
 })
 
 // The shape backend-supervisor.mjs sanitizes into, with main's own state overlay.

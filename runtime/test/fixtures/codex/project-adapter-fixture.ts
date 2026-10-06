@@ -33,7 +33,6 @@ import {
   ProjectStore,
   hostManagedProjectRootForTest,
   hostProjectRootForTest,
-  ProjectStateError,
   type PublicProjectView,
 } from '../../../src/projects/project-store.js'
 import {hostWorkspaceForTest} from '../../../src/executors/codex/process-owner.js'
@@ -468,46 +467,6 @@ export function storeWithPersistentHomeHook(
       if (typeof value !== 'function') return value
       const bound: unknown = value.bind(target)
       return bound
-    },
-  })
-}
-
-export function storeWithManagedValidationHook(
-  store: ProjectStore,
-  beforeValidation: (attempt: number) => Promise<void>,
-): ProjectStore {
-  let attempts = 0
-  return new Proxy(store, {
-    get(target, property) {
-      if (property === 'validateManagedCreate') {
-        return async (displayName: string) => {
-          attempts += 1
-          await beforeValidation(attempts)
-          return await target.validateManagedCreate(displayName)
-        }
-      }
-      const value: unknown = Reflect.get(target, property, target)
-      if (typeof value !== 'function') return value
-      const bound: unknown = value.bind(target)
-      return bound
-    },
-  })
-}
-
-export function storeWithBusyPublicContext(
-  store: ProjectStore,
-  busy: () => boolean,
-): ProjectStore {
-  return new Proxy(store, {
-    get(target, property) {
-      if (property === 'publicContext') {
-        return async (pendingConfirmation: boolean) => {
-          if (busy()) throw new ProjectStateError('state_busy')
-          return await target.publicContext(pendingConfirmation)
-        }
-      }
-      const value: unknown = Reflect.get(target, property, target)
-      return typeof value === 'function' ? value.bind(target) as unknown : value
     },
   })
 }

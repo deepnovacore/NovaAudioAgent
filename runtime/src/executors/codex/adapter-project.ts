@@ -7,7 +7,7 @@ import {basename} from 'node:path'
 import {compareCodePoints} from '../../text/canonical-json.js'
 import {stripLikePython} from '../../text/python-text.js'
 import {realpath} from 'node:fs/promises'
-import {readLocalCodexSessions, localRolloutAvailable} from './local-sessions.js'
+import {readLocalCodexSessions, readLocalCodexProjects, type LocalCodexProject, localRolloutAvailable} from './local-sessions.js'
 import {hostPersistentHomeFromConfig, hostWorkspaceFromConfig} from '../../projects/host-paths.js'
 import {hostWorkspacePath} from '../../projects/host-paths.js'
 import {MAX_PROJECT_SESSION_TITLE, normalizeProjectSessionTitle, type SessionBackendBinding} from '../../projects/project-state.js'
@@ -159,6 +159,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   readonly #localCodexHome: string | undefined
   readonly #defaultBackend: () => ProjectBackendBinding
   #localSessionIds = new Set<string>()
+  #localProjects: readonly LocalCodexProject[] | null = null
+  #sessionProjectPaths = new Map<string, string>()
   #catalogHealthy = false
   #catalogTimer: ReturnType<typeof setInterval> | null = null
   #catalogRefresh: Promise<void> | null = null
@@ -258,10 +260,22 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       const ids = new Set<string>()
       try {
         const home = await realpath(this.#localCodexHome!)
+        this.#localProjects = await readLocalCodexProjects(home)
+        const projectPaths = new Map<string, string>()
+        const registeredPaths = new Set((await this.#store.snapshot()).workspaces.map(workspace => workspace.canonical_path))
+        for (const project of this.#localProjects ?? []) {
+          if (registeredPaths.has(project.path)) continue
+          try { await this.#store.ensureImported(project.name, hostWorkspaceFromConfig(project.path, [project.path])) }
+          catch { /* One unavailable project must not hide the remaining roots. */ }
+        }
         const catalog = await readLocalCodexSessions(home)
-        // Discover at most ten local projects; registered projects remain in the intake roster.
+        const projectFor = (item: typeof catalog[number]) => this.#localProjects?.find(project => project.path === item.cwd && project.threadIds.includes(item.threadId))
+          ?? this.#localProjects?.find(project => project.threadIds.includes(item.threadId))
+          ?? this.#localProjects?.find(project => project.path === item.cwd)
         const paths = new Set<string>()
-        for (const item of catalog) { if (paths.size < MAX_ROSTER) paths.add(item.cwd) }
+        for (const item of catalog) {
+          if (this.#localProjects !== null ? projectFor(item) !== undefined : paths.size < MAX_ROSTER) paths.add(item.cwd)
+        }
         // Each import is a locked read-parse-validate-write transaction (~50 ms on a real store), so only
         // entries the store does not already hold identically go through one.
         let workspacesByPath = new Map<string, WorkspaceRecord>()
@@ -283,6 +297,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
             && (existing.origin === 'nova' || (existing.last_used_at >= item.updatedAt && workspace.last_used_at >= item.updatedAt
               && sameSessionTitle(existing.display_title, item.title)))) {
             ids.add(existing.session_id)
+            const project = projectFor(item)
+            if (project) projectPaths.set(existing.session_id, project.path)
             continue
           }
           stale = true
@@ -292,9 +308,12 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
               threadId: item.threadId, title: item.title, home: home, updatedAt: item.updatedAt,
             })
             ids.add(session.session_id)
+            const project = projectFor(item)
+            if (project) projectPaths.set(session.session_id, project.path)
           } catch { /* An unavailable directory or full store must not hide other sessions. */ }
         }
         this.#localSessionIds = ids
+        this.#sessionProjectPaths = projectPaths
         this.#catalogHealthy = true
       } catch { this.#catalogHealthy = false }
     })()
@@ -317,18 +336,29 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   async #listCodingTargets(): ReturnType<CodingTargetPort['list']> {
     await this.#refreshLocalSessions()
     const snapshot = await this.#store.snapshot()
-    const targets: (CodingTarget & {directory: string})[] = []
-    for (const workspace of [...snapshot.workspaces].sort((a, b) => b.last_used_at - a.last_used_at).slice(0, MAX_ROSTER)) {
+    const targets: Awaited<ReturnType<CodingTargetPort['list']>>[number][] = []
+    const savedRoots = this.#localProjects === null ? null : new Map(this.#localProjects.map(project => [project.path, project]))
+    const workspaces = [...snapshot.workspaces].sort((a, b) => b.last_used_at - a.last_used_at)
+    for (const workspace of savedRoots === null ? workspaces.slice(0, MAX_ROSTER) : workspaces) {
+      if (savedRoots !== null && !savedRoots.has(workspace.canonical_path)
+        && !snapshot.sessions.some(session => session.workspace_id === workspace.workspace_id && this.#sessionProjectPaths.has(session.session_id))) continue
       try { await this.#store.revalidateWorkspace(workspace.workspace_id) } catch { continue }
       // Exclusive workspace concurrency: a running work blocks every session of its workspace.
       const holder = this.#slots.get(workspace.workspace_id)?.work.title
       const base = {workspace_id: workspace.workspace_id, project: workspace.display_name, executor: 'codex' as const, directory: workspace.canonical_path, ...(holder === undefined ? {} : {running: holder})}
-      targets.push({...base, session_id: null, title: workspace.display_name})
+      const saved = savedRoots?.get(workspace.canonical_path)
+      if (savedRoots === null || saved) targets.push({...base, session_id: null, title: workspace.display_name,
+        ...(saved ? {group_project:saved.name} : {})})
       for (const session of snapshot.sessions.filter(item => item.workspace_id === workspace.workspace_id
         && item.state === 'ready' && item.backend_session_id !== null
         && (!item.executor_home || item.origin === 'nova' || (this.#catalogHealthy && this.#localSessionIds.has(item.session_id))))
         .sort((a, b) => b.last_used_at - a.last_used_at).slice(0, 20)) {
-        if (await this.#rolloutAvailable(session)) targets.push({...base, session_id: session.session_id, title: session.display_title, last_active: session.last_used_at})
+        const projectPath = this.#sessionProjectPaths.get(session.session_id) ?? workspace.canonical_path
+        if (savedRoots !== null && !savedRoots.has(projectPath)) continue
+        const group = snapshot.workspaces.find(item => item.canonical_path === projectPath)
+        if (savedRoots !== null && !group) continue
+        if (await this.#rolloutAvailable(session)) targets.push({...base, session_id: session.session_id, title: session.display_title, last_active: session.last_used_at,
+          ...(group && savedRoots ? {group_workspace_id:group.workspace_id,group_project:savedRoots.get(projectPath)!.name,group_directory:group.canonical_path} : {})})
       }
     }
     return targets
@@ -427,7 +457,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
 
   roster(): readonly RosterEntry[] {
     const snapshot = this.#snapshot
-    // The store bounds the registry at 100; display limits must not hide valid project evidence.
+    // Display limits must not hide valid project evidence in the bounded registry.
     return [...(snapshot?.workspaces ?? [])].sort((left, right) =>
       right.last_used_at - left.last_used_at || right.created_at - left.created_at
       || compareCodePoints(right.workspace_id, left.workspace_id),

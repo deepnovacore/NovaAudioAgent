@@ -1,3 +1,6 @@
+import {ClientServer} from '../server/client-server.js'
+import {ClientPairing} from '../server/client-pairing.js'
+import {loadServerConfig} from '../server/server-config.js'
 import {acceptanceCapabilityRegistry} from '../desktop/workbench-acceptance.js'
 import type {ProjectExecutorAdapter} from '../executors/coding-executor.js'
 import {MacMailClient} from '../connectors/macos/mail.js'
@@ -79,7 +82,9 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     provider: settings.pipeline_mode === 'cascaded' ? settings.cascade_llm_provider : settings.integrated_provider,
     model: settings.pipeline_mode === 'cascaded'
       ? requireSelectedCascadedLlmConfig(settings).config.model
-      : settings.integrated_provider === 'stepfun' ? settings.stepfun_realtime_model : settings.qwen_realtime_model,
+      : settings.integrated_provider === 'stepfun' ? settings.stepfun_realtime_model
+      : settings.integrated_provider === 'openai' ? settings.openai_realtime_model
+      : settings.integrated_provider === 'gemini' ? settings.gemini_realtime_model : settings.qwen_realtime_model,
     asr: settings.cascade_asr_provider, tts: settings.cascade_tts_provider,
     vision: settings.conversation_vision_enabled,
   })
@@ -246,8 +251,8 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     ...(knowledge?{knowledge}:{}),...(codexResource?{codexResource}:{}),onDiagnostic,
     host,memory:()=>composition.realtime.personalMemory,nextPlaybackGeneration,
     onExecutorProgress:(progress,result)=>composition.desktop.bridge.onExecutorProgress(progress,result),
-    onAudioFrame:frame=>composition.desktop.bridge.onAudioFrame(frame),onAudioClear:(id,epoch)=>composition.desktop.bridge.onAudioClear(id,epoch),onAudioAlert:(id,epoch)=>composition.desktop.bridge.onAudioAlert(id,epoch),onAudioTerminal:(id,epoch)=>composition.desktop.bridge.onAudioTerminal(id,epoch),
-  }),frame=>composition.desktop.bridge.onPersonalFrame(frame))
+    onAudioFrame:frame=>composition.audioBridge()?.onAudioFrame(frame),onAudioClear:(id,epoch)=>composition.audioBridge()?.onAudioClear(id,epoch),onAudioAlert:(id,epoch)=>composition.audioBridge()?.onAudioAlert(id,epoch),onAudioTerminal:(id,epoch)=>composition.audioBridge()?.onAudioTerminal(id,epoch),
+  }),frame=>composition.publishPersonal(frame))
   host.setConnectors(new ComposioConnector({...(process.platform==='darwin'&&environment.CODEX_RESOURCES_PATH?{local:new MacCalendarClient(environment.CODEX_RESOURCES_PATH),mail:new MacMailClient(environment.CODEX_RESOURCES_PATH)}:{}),memory:()=>{const memory=composition.realtime.personalMemory;return memory instanceof SubstrateMemoryResource?memory:undefined},client:environment.COMPOSIO_API_KEY?new ComposioClient(environment.COMPOSIO_API_KEY):null,onChange:()=>{void host.connectionChanged()}}))
   const feishu = new FeishuConnector({
     executable: environment.FEISHU_CLI_PATH ?? 'lark-cli',
@@ -259,7 +264,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     ingest: async message => {
       const memory = composition.realtime.personalMemory
       if (!(memory instanceof SubstrateMemoryResource)) throw Error('请先启用本地记忆')
-      await memory.ingestEvidence({sourceId:message.source_id,locator:message.locator,text:message.raw_text,observedAt:message.observed_at,kind:'im',...(message.processing_consent?{processingConsent:message.processing_consent}:{}),retentionUntil:message.retention_until,senderId:message.sender_id,accountId:message.account_id})
+      await memory.ingestEvidence({sourceId:message.source_id,locator:message.locator,text:message.raw_text,observedAt:message.observed_at,kind:'im',...(message.sender_id?{im:{sender_id:message.sender_id,account_id:message.account_id,provider:'feishu',message_id:message.message_id,chat_id:message.chat_id,recipient_id:message.recipient_id,sender_name:message.sender_name,source_url:message.source_url,mention:message.mention,auto_capture:message.auto_capture}}:{}),...(message.processing_consent?{processingConsent:message.processing_consent}:{}),retentionUntil:message.retention_until,senderId:message.sender_id,accountId:message.account_id})
       await host.sourceChanged()
     },
     deleteSource: async ref => {
@@ -296,10 +301,38 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   ownership.own(() => {clearInterval(deliveryTimer);unsubscribeFeishu()})
   ownership.own(() => composition.desktop.server.close())
   publishExecutorApproval = view => { if(view.work&&host.workConversation(view.work.work_id))return;composition.desktop.bridge.onExecutorApproval(view) }
+  let phone: ReturnType<typeof composition.createPhone> | undefined
+  let phoneQueue: Promise<unknown> = Promise.resolve()
+  const closePhone = async () => { const endpoint=phone;phone=undefined;await endpoint?.server.close() }
+  ownership.own(closePhone)
+  stop.signal.addEventListener('abort',()=>{void phoneQueue.then(closePhone).catch(()=>{ /* shutdown close is best effort */ })},{once:true})
+  const phoneControl = (method:string, params:unknown):Promise<unknown> => {
+    const operation=phoneQueue.then(async()=>{
+      if(process.platform!=='darwin'||remote)throw Error('unsupported')
+      if(method==='phone.start'){
+        const input=z.object({port:z.number().int().min(1).max(65535),tokenFile:z.string().min(1)}).strict().parse(params)
+        if(stop.signal.aborted)throw Error('stopped')
+        if(!phone){
+          const config=loadServerConfig({SERVER_PORT:String(input.port),SERVER_TOKEN_FILE:input.tokenFile})
+          const media=remoteClientMedia(settings)
+          const endpoint=composition.createPhone({token:config.token,createServer:serverOptions=>new ClientServer({...serverOptions,sharedWorkbench:true,prepareLegacyVoice:()=>composition.prepareLegacyPhoneVoice(),media,pairing:new ClientPairing(config.token,input.tokenFile+'.devices.json'),port:config.port})})
+          try{await endpoint.server.start();phone=endpoint}catch(error){await endpoint.server.close();throw error}
+        }
+      }else{
+        z.object({}).strict().parse(params)
+        if(method==='phone.stop')await closePhone()
+        else if(method!=='phone.status')throw Error('unavailable')
+      }
+      return {running:phone!==undefined}
+    })
+    phoneQueue=operation.catch(()=>{ /* the caller observes the failure through the returned operation */ })
+    return operation
+  }
   return {
     ...composition,
+    phoneControl,
     closeAuxiliary: async () => {
-      try { await Promise.all(phoneExecutors.map(phone => phone.close())) } finally { closeSharedApproval(); telemetry.close() }
+      try { await phoneQueue; await closePhone(); await Promise.all(phoneExecutors.map(phone => phone.close())) } finally { closeSharedApproval(); telemetry.close() }
     },
   }
 }

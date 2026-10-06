@@ -1,3 +1,4 @@
+import {sourceTagSchema} from '../memory/provenance.js'
 import type {TaskRecord} from './tasks.js'
 import {z} from 'zod'
 import {createHash} from 'node:crypto'
@@ -8,7 +9,7 @@ import type {EvaluatedCandidate} from '../understanding/candidates.js'
 import {BoundedJsonStore} from '../storage/bounded-json.js'
 export const newsArticleSchema=z.object({article_id:z.string().min(1).max(512),source_id:z.string().min(1).max(256),url:z.string().url().max(4096).refine(value=>['https:','http:'].includes(new URL(value).protocol),'news_web_url_required'),content_hash:z.string().min(1).max(256),title:z.string().max(300),summary:z.string().max(1500),published_at:z.string().nullable()}).strict()
 const newsSourceSchema=newsArticleSchema.extend({action:z.literal('user_conversion'),converted_at:z.string().datetime()})
-const fields={news_source:newsSourceSchema.optional(),id:z.string(),version:z.number().int().nonnegative(),title:z.string().trim().min(1).max(200),note:z.string().max(4000),created_at:z.string(),updated_at:z.string()}
+const fields={sources:z.array(sourceTagSchema).max(256).optional(),provenance_refs:z.array(z.string().max(600)).max(256).optional(),auto_recorded:z.boolean().optional(),source_changed:z.boolean().optional(),news_source:newsSourceSchema.optional(),id:z.string(),version:z.number().int().nonnegative(),title:z.string().trim().min(1).max(200),note:z.string().max(4000),created_at:z.string(),updated_at:z.string()}
 const todoSchema=z.object({...fields,status:z.enum(['open','doing','waiting','done','cancelled']),due:z.string().date().nullable(),goal_id:z.string().nullable(),idea_id:z.string().nullable()})
 const ideaSchema=z.object({...fields,status:z.enum(['active','archived']),goal_id:z.string().nullable()})
 const goalSchema=z.object({...fields,status:z.enum(['active','paused','completed','archived']),success_criteria:z.string().max(2000),idea_id:z.string().nullable()})
@@ -70,7 +71,7 @@ export function applyLifeMutation(state:LifeState,raw:unknown,requestId:string,n
    const existing=p.target==='todo'?next.todos.find(t=>t.idea_id===p.id||(idea.news_source&&t.news_source?.article_id===idea.news_source.article_id)):next.goals.find(g=>g.idea_id===p.id||(idea.news_source&&g.news_source?.article_id===idea.news_source.article_id))
    if(existing)result=existing
    else{if(idea.version!==p.expected_version)throw Error('version_conflict');if(idea.status==='archived')throw Error('idea_archived')
-    const b={...base(idea.title,idea.note),...(idea.news_source?{news_source:idea.news_source}:{})}
+    const b={...base(idea.title,idea.note),...(idea.provenance_refs?{provenance_refs:idea.provenance_refs}:{}),...(idea.sources?{sources:idea.sources}:{}),...(idea.news_source?{news_source:idea.news_source}:{})}
     if(p.target==='todo')next.todos.push({...b,status:'open',due:null,goal_id:idea.goal_id,idea_id:idea.id})
     else next.goals.push({...b,status:'active',success_criteria:'',idea_id:idea.id})
     result=b
@@ -108,7 +109,7 @@ export class LifeService{
  async refresh():Promise<void>{const run=this.#tail.then(async()=>{
   if(!this.#backend?.peek)return
   const fresh=await this.#backend.peek();if(!fresh)throw Error('life_backend_unavailable')
-  if(fresh.revision===this.#revision)return
+  if(fresh.revision===this.#revision&&JSON.stringify(fresh.state)===JSON.stringify(this.#state))return
   this.#state=lifeStateSchema.parse(fresh.state);this.#revision=fresh.revision;this.changed()
  });this.#tail=run.catch(()=>{/* preserve the mutation queue after a failed refresh */});return run}
  snapshot(){const state=structuredClone(this.#state);return {todos:state.todos.map(r=>({...r,kind:'todo' as const})),ideas:state.ideas.map(r=>({...r,kind:'idea' as const})),profile:state.profile,goals:state.goals.map(g=>{const todos=state.todos.filter(t=>t.goal_id===g.id&&t.status!=='cancelled');return {...g,kind:'goal' as const,progress:{done:todos.filter(t=>t.status==='done').length,total:todos.length}}})}}

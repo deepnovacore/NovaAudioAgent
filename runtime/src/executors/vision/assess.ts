@@ -14,7 +14,6 @@ export const visionAssessSchema = z.object({
 }).strict()
 
 export type VisionAssess = z.infer<typeof visionAssessSchema>
-export type VisionKind = VisionAssess['kind']
 
 export interface VisionIdentity {
   request_id: string

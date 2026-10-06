@@ -204,7 +204,7 @@ export function publicRuntimeCapabilityStatus(value) {
   return result
 }
 
-const BLOCKING_CREDENTIALS = new Set(['DASHSCOPE_API_KEY', 'DEEPSEEK_API_KEY', 'ARK_API_KEY', 'DOUBAO_BIGMODEL_API_KEY'])
+const BLOCKING_CREDENTIALS = new Set(['OPENAI_API_KEY', 'GEMINI_API_KEY', 'STEPFUN_API_KEY', 'DASHSCOPE_API_KEY', 'DEEPSEEK_API_KEY', 'ARK_API_KEY', 'DOUBAO_BIGMODEL_API_KEY'])
 
 /** One private utility child owns every pending request; replacement closes this handle. */
 export function createBackendControl(child, {onStatus = () => {}, onUsage = () => {}} = {}) {

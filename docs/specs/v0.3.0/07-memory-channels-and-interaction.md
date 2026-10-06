@@ -175,8 +175,8 @@ IM 的三个角色分别配置范围与权限：读取选定会话作为信息�
 
 | 时间／证据级别 | 已记录内容 | 边界 |
 |---|---|---|
-| 2026-09-12 历史实现记录 | 记忆底座、统一回忆、飞书连接引导及自动化／界面检查 | 详见 [Memory 与飞书实现记录](MEMORY-AND-FEISHU-IMPLEMENTATION.md)；失败、跳过和未验收项保留。 |
-| 2026-09-20 历史 live 报告 | 合成事实和真实模型／embedding 验证抽取、召回、证据 ID、重启及删除失效；桌面跨会话回忆 | 详见 [memory live acceptance](../../research/2026-09-20-memory-live-acceptance.md)。未证明真实私人连接器处理或麦克风回忆。 |
+| 2026-09-12 历史实现记录 | 记忆底座、统一回忆、飞书连接引导及自动化／界面检查 | 失败、跳过和未验收项保留在本地记录中。 |
+| 2026-09-20 历史 live 报告 | 合成事实和真实模型／embedding 验证抽取、召回、证据 ID、重启及删除失效；桌面跨会话回忆 | 详见本地 memory live acceptance 记录。未证明真实私人连接器处理或麦克风回忆。 |
 | 2026-09-21 代码核查 | 对照现有规格检查底座、Life、抽取、JEV、mem0、检索和连接器边界 | 只读核查，未重新运行产品验收。 |
 | 2026-09-21 架构评议 | 本地 Claude CLI 提出写入口收敛、历史删除、摘要新鲜度等风险 | 第二意见，不是能力验证。 |
 | 2026-09-21 脑暴收敛 | 定下存储边界、整理节奏、mem0 结论、IM 私聊入口、忘记与彻底删除；核实 mem0ai 3.2.0 add 只有 ADD | 仅文档变更，不代表已实施 Markdown 迁移、BM25、每日整理或双模式读取。 |
@@ -211,7 +211,7 @@ IM 的三个角色分别配置范围与权限：读取选定会话作为信息�
 - [02 需求发现与动态页](02-need-discovery-and-feed.md) 的历史 `feed_item` 是主动建议事项，不与本卷外部资讯 feeds 等同；命名和迁移待后续统一。
 - [04 来源与 connector](04-sources-and-connectors.md) 的授权、暂停、断开和删除边界继续保留；本卷补充可配置更新频率与飞书私聊入口。
 - [five-tab 个人空间记录](../../design-notes/2026-09-20-five-tab-personal-space.md) 记录了 LifeService、NewsService 与 JEV 默认判别的现状。
-- [Instinct 分析原文（本地）](../../../output/x-post-2101745550752428340/instinct-memory-reverse-engineered-article.en.md) 与 [讨论截图（本地）](../../../references/instinct_discussion/) 提供读写分离、目录优先、profile 三段和一页纸思路。它是外部行为逆向推测；每日周期、冲突处理不能当作已验证事实。
+- Instinct 分析原文与讨论截图（仅本地保存） 提供读写分离、目录优先、profile 三段和一页纸思路。它是外部行为逆向推测；每日周期、冲突处理不能当作已验证事实。
 - [OpenClaw 官方说明](https://docs.openclaw.ai/concepts/memory) 与 [检索说明](https://docs.openclaw.ai/concepts/memory-search) 是 Markdown 与混合检索并存的参考。
 - mem0ai 3.2.0 结论来自本地 `node_modules/mem0ai/dist/oss` 源码核查，不来自其文档宣称。
 

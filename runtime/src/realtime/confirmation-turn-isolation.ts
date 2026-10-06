@@ -571,17 +571,6 @@ export class ConfirmationTurnIsolation<TCall> {
     return changed
   }
 
-  /** Release the exact reservation and every local event correlated to it. */
-  releaseReserved(input: {
-    readonly sessionEpoch: number
-    readonly itemId: string
-    readonly userRevision: number
-  }): boolean {
-    if (!isItemIdentity(input) || !this.#matchesReservation(input)) return false
-    this.#clearReservation()
-    return true
-  }
-
   /** Invalidate all correlations when the containing session is replaced. */
   invalidate(): boolean {
     const changed = this.#authority !== null || this.#reservation !== null || this.#responses.size !== 0

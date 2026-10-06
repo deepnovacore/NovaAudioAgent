@@ -207,5 +207,3 @@ export function renderActiveExecutorContext(
 
 
 export const HOST_ACTIVATION_PREFIX = 'Nova Audio Agent 宿主激活事实：'
-/** @deprecated Compatibility alias; new host-activation paths use `HOST_ACTIVATION_PREFIX`. */
-export const GUARD_ACTIVATION_PREFIX = HOST_ACTIVATION_PREFIX

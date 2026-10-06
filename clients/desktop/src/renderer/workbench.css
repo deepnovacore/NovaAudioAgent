@@ -129,10 +129,6 @@ body[data-opaque="1"] .workbench{border-radius:0}
 .workbench button.card-body[data-expanded="true"]{display:block}
 .workbench button.card-body:disabled{opacity:1;cursor:text}
 .card-footer{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin-top:6px;padding-top:10px;border-top:1px solid var(--line)}
-.card-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;flex:1;min-width:0}
-.card-meta details[open]{flex-basis:100%}
-.card-meta details>p{margin:4px 0 0 14px}
-.workbench .card-meta .hint{font-size:11px}
 .workbench .card-footer .card-actions{margin:0 0 0 auto}
 .workbench .card-footer>select{width:auto;font-size:12px;padding:4px 24px 4px 8px}
 .workbench .personal-card.life-card{flex-direction:column;flex-wrap:nowrap;align-items:stretch}
@@ -370,3 +366,15 @@ body[data-presentation-mode="orb"] #shell:has(.personal-orb-task:not([hidden])) 
 .workbench .source-menu{position:fixed;z-index:30;padding:4px;background:var(--surface-raised);border:1px solid var(--line-strong);border-radius:var(--radius-sm);box-shadow:0 6px 20px rgba(0,0,0,.14)}
 .workbench .source-menu button{border:0;background:transparent;width:100%;text-align:left}
 .workbench .source-menu button:hover,.workbench .source-menu button:focus-visible{background:var(--accent-wash)}
+
+.workbench button[aria-busy="true"]::before,.action-progress::before{content:"";display:inline-block;width:12px;height:12px;margin-right:6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-2px;animation:warmup-spin .8s linear infinite}
+.action-progress{font-size:13px;color:var(--muted)}
+@media(prefers-reduced-motion:reduce){.workbench button[aria-busy="true"]::before,.action-progress::before{animation:none}}
+
+.workbench .source-tags{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:8px 0}
+.workbench .source-tags>*{font-size:11px;line-height:1.5;border-radius:5px;padding:2px 7px;background:var(--surface-inset);color:var(--ink-dim);border:1px solid var(--line)}
+.workbench .source-tags .source-tag{cursor:pointer}
+.workbench .source-tag:hover,.workbench .source-tag:focus-visible{color:var(--ink);border-color:var(--line-strong)}
+.workbench .source-popover .source-label,.workbench .source-popover time,.workbench .source-popover a{display:block;margin-top:4px}
+.workbench .source-popover li+li{margin-top:8px}
+.workbench .source-popover p{margin:4px 0}

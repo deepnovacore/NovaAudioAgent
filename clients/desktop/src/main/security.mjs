@@ -40,6 +40,8 @@ export function browserWindowOptions(preload, launchId, { opaque = false } = {})
     minWidth: DORMANT_ORB_WINDOW_SIZE.width,
     minHeight: DORMANT_ORB_WINDOW_SIZE.height,
     frame: false,
+    // Let an unfocused macOS orb receive both clicks of a double-click.
+    acceptFirstMouse: true,
     // Compositors without a working transparent-visuals path (opted into via
     // NOVA_ORB_OPAQUE) get a solid plate instead of a broken/black surface.
     transparent: !opaque,

@@ -1,10 +1,10 @@
 name: Website
 on:
   push:
-    branches: [main, v0.2.0dev]
+    branches: [main, v0.2.0dev, v0.3.0dev]
     paths: ['website/**', 'docs/en/**', 'docs/zh-CN/**', 'assets/**', '.github/workflows/website.yml']
   pull_request:
-    branches: [main, v0.2.0dev]
+    branches: [main, v0.2.0dev, v0.3.0dev]
     paths: ['website/**', 'docs/en/**', 'docs/zh-CN/**', 'assets/**', '.github/workflows/website.yml']
   workflow_dispatch:
 
@@ -20,7 +20,7 @@ env:
 
 jobs:
   build:
-    if: github.repository == 'deepnovacore/NovaAudioAgent' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v0.2.0dev' || github.event_name == 'pull_request')
+    if: github.repository == 'deepnovacore/NovaAudioAgent' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v0.2.0dev' || github.ref == 'refs/heads/v0.3.0dev' || github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     defaults:
       run:

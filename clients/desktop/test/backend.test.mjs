@@ -48,7 +48,6 @@ const SETTINGS_V2 = Object.freeze({
 
 function nodeLaunchSpec(options) {
   return backendLaunchSpec({
-    backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
     nodeResourcesPath: '/repo/clients/desktop/build',
     ...options,
@@ -182,22 +181,10 @@ test('packaged backend selection refuses explicit Python before resolving an int
   )
 })
 
-test('launch spec cannot construct the retired Python process', () => {
-  assert.throws(() => nodeLaunchSpec({
-    backend: 'python',
-    python: '/private/poison/python',
-    workspace: '/workspace',
-    token: TOKEN,
-    readyEndpoint: '127.0.0.1:49152',
-    parentEnv: {},
-  }), /backend kind is invalid/)
-})
-
 test('Node launch uses the compiled utility-process entry and no writable stdin', () => {
   const nodeEntry = '/repo/runtime/dist/src/desktop-entry.js'
   const nodeResourcesPath = '/repo/clients/desktop/build'
   const spec = nodeLaunchSpec({
-    backend: 'node',
     nodeEntry,
     nodeResourcesPath,
     workspace: '/workspace',
@@ -215,7 +202,6 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
   assert.equal(JSON.stringify(spec).includes(TOKEN), true)
   assert.equal(JSON.stringify(spec.argv).includes(TOKEN), false)
   assert.throws(() => nodeLaunchSpec({
-    backend: 'node',
     nodeEntry: 'relative-entry.js',
     nodeResourcesPath,
     workspace: '/workspace',
@@ -224,7 +210,6 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
     parentEnv: {},
   }), /absolute Node runtime entry/)
   assert.throws(() => nodeLaunchSpec({
-    backend: 'node',
     nodeEntry,
     nodeResourcesPath: 'relative-resources',
     workspace: '/workspace',
@@ -236,7 +221,6 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
 
 test('resolved desktop settings override inherited Codex and model configuration', () => {
   const spec = nodeLaunchSpec({
-    backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
     nodeResourcesPath: '/repo/clients/desktop/build',
     workspace: '/environment/workspace',
@@ -365,7 +349,6 @@ test('the runtime receives the exact state root resolved for desktop maintenance
 
 test('resolved desktop configuration removes an invalid inherited Codex binary', () => {
   const spec = nodeLaunchSpec({
-    backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
     nodeResourcesPath: '/repo/clients/desktop/build',
     workspace: '/workspace',
@@ -583,8 +566,8 @@ test('launch spec falls back to the settings-store defaults when settings is mis
   assert.equal(spec.env.PROACTIVITY_PRESET, 'balanced')
   assert.equal(spec.env.CODEX_WORKING_INTERVAL, '30')
   assert.equal(spec.env.PIPELINE_MODE, 'cascaded')
-  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'qwen')
-  assert.equal(spec.env.CASCADE_LLM_MODEL, 'qwen-plus')
+  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'deepseek')
+  assert.equal(spec.env.CASCADE_LLM_MODEL, 'deepseek-flash')
   assert.equal(spec.env.DOUBAO_TTS_VOICE, 'zh_female_vv_uranus_bigtts')
 })
 
@@ -600,8 +583,8 @@ test('launch spec falls back per-field for a partially-populated settings object
   assert.equal(spec.env.PROACTIVITY_PRESET, 'conservative')
   assert.equal(spec.env.CODEX_WORKING_INTERVAL, '30')
   assert.equal(spec.env.PIPELINE_MODE, 'cascaded')
-  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'qwen')
-  assert.equal(spec.env.CASCADE_LLM_MODEL, 'qwen-plus')
+  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'deepseek')
+  assert.equal(spec.env.CASCADE_LLM_MODEL, 'deepseek-flash')
   assert.equal(spec.env.DOUBAO_TTS_VOICE, 'zh_female_vv_uranus_bigtts')
 })
 
@@ -1426,4 +1409,9 @@ test('RSS language uses the system signal independently of saved UI language',()
   assert.equal(spec.env.NEWS_LANGUAGE,newsLanguage)
   assert.equal(spec.env.PROMPT_LANGUAGE,language)
  }
+})
+
+test('Gemini speech settings reach the runtime without borrowing the Volcengine voice',()=>{
+ const env=nodeLaunchSpec({workspace:'/workspace',token:TOKEN,readyEndpoint:'127.0.0.1:49152',parentEnv:{},settings:{pipelineMode:'cascaded',cascadedAsrProvider:'gemini',cascadedTtsProvider:'gemini',geminiAsrModel:'asr-custom',geminiTtsModel:'tts-custom',geminiTtsVoice:'Puck'},decryptedSecrets:{geminiApiKey:'synthetic-gemini'}}).env
+ assert.equal(env.GEMINI_API_KEY,'synthetic-gemini');assert.equal(env.GEMINI_ASR_MODEL,'asr-custom');assert.equal(env.GEMINI_TTS_MODEL,'tts-custom');assert.equal(env.GEMINI_TTS_VOICE,'Puck')
 })

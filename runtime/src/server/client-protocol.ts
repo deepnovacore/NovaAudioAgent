@@ -48,13 +48,13 @@ export interface ClientCommandResult {
   readonly status: 'applied' | 'rejected' | 'stale'
 }
 
-export function clientReady(serverInstanceId: string, connectionId: string, media?: ClientMedia): string {
+export function clientReady(serverInstanceId: string, connectionId: string, media?: ClientMedia, personal = false): string {
   return JSON.stringify({
     type: 'client.ready', protocol_version: 1,
     server_instance_id: serverInstanceId, connection_id: connectionId, media,
     input_audio: {encoding: 'pcm_s16le', sample_rate: 16_000, channels: 1},
     output_audio: {encoding: 'pcm_s16le', sample_rate: 24_000, channels: 1},
-    capabilities: ['audio', 'captions', 'projects', 'executor', ...(media?.pipeline === 'cascaded' ? ['text_input', 'dictation'] : [])],
+    capabilities: ['audio', 'captions', 'projects', 'executor', ...(personal ? ['personal'] : []), ...(media?.pipeline === 'cascaded' ? ['text_input', 'dictation'] : [])],
   })
 }
 

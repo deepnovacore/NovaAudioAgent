@@ -9,7 +9,7 @@ import {DatabaseSync} from 'node:sqlite'
 import {ProjectCodexAdapter} from '../src/executors/codex/adapter-project.js'
 import {sharedHomeOverrides} from '../src/executors/codex/shared-home.js'
 import {prepareManagedCodexMcp} from '../src/executors/codex/managed-mcp.js'
-import {readLocalCodexSessions} from '../src/executors/codex/local-sessions.js'
+import {readLocalCodexSessions, readLocalCodexProjects} from '../src/executors/codex/local-sessions.js'
 
 test('local catalog reads named top-level sessions and excludes archived, agents and missing workspaces', async () => {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'nova-local-catalog-')))
@@ -345,4 +345,46 @@ test('renaming a duplicate-titled catalog session refreshes it even when its tim
     await rm(value.root, {recursive: true, force: true})
     await rm(home, {recursive: true, force: true})
   }
+})
+
+
+test('picker follows saved local projects and groups worktree sessions without changing their execution directory',async()=>{
+ const home=await realpath(await mkdtemp(join(tmpdir(),'nova-project-picker-'))),value=await fixture({localCodexHome:home})
+ try{
+  const root=join(home,'project'),tree=join(home,'worktree'),scratch=join(home,'scratch'),empty=join(home,'empty')
+  for(const path of [root,tree,scratch,empty])await mkdir(path)
+  await writeFile(join(home,'.codex-global-state.json'),JSON.stringify({'local-projects':{p:{name:'Project',rootPaths:[root]},e:{name:'Empty',rootPaths:[empty]}},'thread-project-assignments':{branch:{projectKind:'local',projectId:'p'}}}))
+  const db=new DatabaseSync(join(home,'state_5.sqlite'));db.exec('CREATE TABLE threads (id TEXT,title TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at INTEGER)')
+  const insert=db.prepare('INSERT INTO threads VALUES (?,?,?,\'cli\',0,?)')
+  insert.run('main','Main',root,1);insert.run('branch','Branch',tree,2);insert.run('scratch','Scratch',scratch,3);db.close()
+  // Existing imported worktrees must not reappear as top-level projects after upgrading.
+  await value.store.ensureImported('Old worktree',hostWorkspaceForTest(tree))
+  // Upgrade a full legacy catalog without deleting old sessions or directories.
+  for(let i=0;i<98;i++){const path=join(home,`legacy-${i}`);await mkdir(path);await value.store.ensureImported(`Legacy ${i}`,hostWorkspaceForTest(path))}
+  await value.adapter.initialize()
+  const targets=await value.adapter.targetPort.list(),roots=targets.filter(t=>t.session_id===null)
+  assert.deepEqual(roots.map(t=>t.directory).sort(),[root,empty].sort())
+  assert.equal(targets.some(t=>t.title==='Scratch'),false)
+  const branch=targets.find(t=>t.title==='Branch')!
+  assert.ok(branch);assert.equal(branch.directory,tree)
+  const main=roots.find(t=>t.directory===root)!
+  assert.equal((branch as typeof branch & {group_workspace_id:string}).group_workspace_id,main.workspace_id)
+  const target=await value.adapter.targetPort.validate(branch)
+  const request={work_order:'Continue branch',project:target.project,session:'latest',session_id:target.session_id!}
+  assert.equal((await value.adapter.dispatch('run',request,context('run',request,value.clock))).outcome,'ok')
+  assert.equal(hostWorkspacePath(value.factory.bindings[0]!.workspace),tree)
+  assert.equal(value.factory.bindings[0]!.resumeThreadId,'branch')
+ }finally{await value.adapter.close();await rm(value.root,{recursive:true,force:true});await rm(home,{recursive:true,force:true})}
+})
+
+
+test('desktop project discovery distinguishes missing, corrupt, empty and legacy registries',async()=>{
+ const home=await realpath(await mkdtemp(join(tmpdir(),'nova-project-registry-'))),file=join(home,'.codex-global-state.json')
+ try{
+  assert.equal(await readLocalCodexProjects(home),null)
+  await writeFile(file,'{broken');assert.deepEqual(await readLocalCodexProjects(home),[])
+  await writeFile(file,JSON.stringify({'local-projects':{},'electron-saved-workspace-roots':[home]}));assert.deepEqual(await readLocalCodexProjects(home),[])
+  await writeFile(file,JSON.stringify({'electron-saved-workspace-roots':[home,'relative',join(home,'missing')]}))
+  assert.deepEqual((await readLocalCodexProjects(home))?.map(project=>project.path),[home])
+ }finally{await rm(home,{recursive:true,force:true})}
 })

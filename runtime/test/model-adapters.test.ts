@@ -198,6 +198,7 @@ test('discovery uses bounded Proactive gateway without speech or execution', asy
   const proactive=new GatewayProactivity({gateway,model:'same-model',proactivityPreset:'balanced'})
   const snapshot={user_scope:'local',local_date:'2026-09-11',weekday:'Friday',timezone:'Asia/Shanghai',memory:[],evidence_refs:[],recent_delivery:[]}
   assert.equal(await proactive.discover(snapshot,new AbortController().signal),null)
+  assert.match(gateway.completions[0]!.system,/json/i,'JSON mode requires an explicit JSON instruction even when source text has no JSON keyword')
   const conflicted=new GatewayProactivity({gateway:new ScriptedGateway([],JSON.stringify({speak:true,suggestion_id:'s-1',progress_class:null,reason:'bad',proposal:{kind:'question',summary:'Q',why_now:'Now',evidence_refs:['conversation:1'],memory_refs:[]}})),model:'same-model',proactivityPreset:'balanced'})
   await assert.rejects(conflicted.select(emptyView),/契约/)
 })

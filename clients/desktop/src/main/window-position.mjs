@@ -279,42 +279,6 @@ function bubbleConfirmationLayout({normalBounds, zoomFactor, bubbleHeight, bubbl
       }
 }
 
-/** Translate a dragged temporary surface back to the natural 160x160 position persisted on disk. */
-export function naturalWindowPositionAfterTemporaryDrag({
-  normalBounds,
-  temporaryBounds,
-  draggedPosition,
-  workArea,
-}) {
-  if (!validRectangle(normalBounds) || !validRectangle(temporaryBounds)
-    || !validPosition(draggedPosition) || !validRectangle(workArea)) {
-    throw new TypeError('confirmation drag geometry is invalid')
-  }
-  return clampWindowPosition({
-    x: normalBounds.x + (draggedPosition.x - temporaryBounds.x),
-    y: normalBounds.y + (draggedPosition.y - temporaryBounds.y),
-  }, NATURAL_ORB_WINDOW_SIZE, workArea)
-}
-
-/**
- * Legacy confirmation API backed by the sole temporary-bounds owner below.
- * Existing call sites retain their narrow method names while bubbles share its state.
- */
-export function createConfirmationWindowController(options) {
-  const controller = createOrbWindowController({
-    ...options,
-    getScaleFactor: () => 1,
-    onConfirmationPlacement: options.onPlacement,
-  })
-  return Object.freeze({
-    setMode: controller.setConfirmationMode,
-    sync: controller.sync,
-    clampDragPosition: controller.clampDragPosition,
-    finishDrag: controller.finishDrag,
-    get active() { return controller.active },
-  })
-}
-
 /** Sole owner for confirmation and bubble bounds, anchored to the persisted 160 DIP orb. */
 export function createOrbWindowController({
   getBounds,

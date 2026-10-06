@@ -224,7 +224,8 @@ export function mountTaskDetail(root, { command, onClose, onViewed = () => { }, 
     goal.textContent = detail.goal
     summary.replaceChildren(...(detail.acceptance ?? []).map((text, index) => criterionItem(text, detail.criteria_evidence?.find(item => item.index === index)?.evidence_refs)))
     summary.hidden = criteriaTitle.hidden = !(detail.acceptance ?? []).length
-    const statusText = `${t(TASK_PHASE_LABEL[detail.phase] ?? detail.phase)} · ${owned() ? t('由你控制') : detail.controller.kind === 'nova' ? t('Nova 控制') : t('由另一客户端控制')}${detail.waiting_reason ? ` · ${taskWaitingLabel(detail.waiting_reason)}` : ''}${detail.todo_sync === 'conflict' ? t(' · Todo 已变更，未自动完成') : ''}`
+    status.setAttribute('aria-busy', String(busy))
+    const statusText = `${busy ? t('正在处理…') + ' · ' : ''}${t(TASK_PHASE_LABEL[detail.phase] ?? detail.phase)} · ${owned() ? t('由你控制') : detail.controller.kind === 'nova' ? t('Nova 控制') : t('由另一客户端控制')}${detail.waiting_reason ? ` · ${taskWaitingLabel(detail.waiting_reason)}` : ''}${detail.todo_sync === 'conflict' ? t(' · Todo 已变更，未自动完成') : ''}`
     if (status.textContent !== statusText)
       status.textContent = statusText
     const noSession = !(detail.session_ids ?? []).length

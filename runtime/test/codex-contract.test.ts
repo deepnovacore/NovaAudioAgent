@@ -97,7 +97,7 @@ test('the generic runtime package root does not load concrete Codex ownership', 
   const exports = runtimeIndex as Readonly<Record<string, unknown>>
   for (const forbidden of [
     'CODEX_LIVE_MANIFEST', 'CODEX_PROJECT_MANIFEST', 'JsonRpcConnection',
-    'CodexJsonlParser', 'AppServerTurnProjection', 'ProjectCodexAdapter',
+    'AppServerTurnProjection', 'ProjectCodexAdapter',
     'CodexLiveAdapter', 'CodexProcess', 'CodexTransport', 'spawnCodex',
   ]) {
     assert.equal(Object.hasOwn(exports, forbidden), false)

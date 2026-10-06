@@ -41,11 +41,18 @@ clients/desktop/resources/generated/
 # Internal working material (demo video production)
 docs/demos/
 docs/superpowers/
+docs/research/
 docs/internal/
 .superpowers/
 assets/demos/cat-sofa-guard/*-preroll.mp4
 assets/demos/video-cut
 assets/demos/video-recut-v*/
+assets/features/vision.png
+assets/features/vision.en.png
+assets/features/mem0.png
+assets/features/mem0.en.png
+assets/features/mem0-dark.png
+assets/features/mem0-dark.en.png
 .worktrees/
 video/
 

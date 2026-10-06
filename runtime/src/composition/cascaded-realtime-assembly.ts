@@ -1,3 +1,8 @@
+import {createGeminiAsrFactory,createGeminiTtsFactory} from '../realtime/cascaded/gemini-speech.js'
+import type {GeminiSpeechConfig} from '../config/cascaded-realtime-config.js'
+import {createOpenAIWireProfile} from '../realtime/openai-wire-profile.js'
+import {GeminiLiveAdapter} from '../realtime/gemini.js'
+import {OPENAI_BASE_URL,GEMINI_BASE_URL} from '../config/config.js'
 import type {CommittedConversationPair} from '../realtime/history.js'
 import {transcribeDraft} from '../realtime/cascaded/transcribe.js'
 import type {PromptLanguage} from '../realtime/prompt-language.js'
@@ -8,10 +13,8 @@ import {usageReporterForEndpoint, type UsageReporter} from '../realtime/usage.js
 import {
   capabilitiesFromSettings,
   resolveSupportModelConnection,
-  type CascadedAsrProviderName,
   type CascadedEndpointingProviderName,
   type CascadedLlmProviderName,
-  type CascadedTtsProviderName,
   type Settings,
   DASHSCOPE_COMPATIBLE_BASE_URL,
   STEPFUN_COMPATIBLE_BASE_URL,
@@ -117,9 +120,6 @@ export interface BuildCascadedRealtimeAssemblyOptions
     | 'controlledPreemptiveAlertReconnect'
     | 'preemptiveAlertHistoryRecovery'
     | 'preemptiveAlertHistoryPairs'
-    | 'controlledGuardReconnect'
-    | 'guardHistoryRecovery'
-    | 'guardHistoryPairs'
   > {
   readonly registries?: CascadedProviderRegistries
   readonly supportGateway?: ModelGateway
@@ -176,18 +176,12 @@ export interface CascadedProviderRegistries {
     CascadedEndpointingProviderName,
     (input: AutoEndpointingFactoryInput) => EndpointingFactory
   >>
-  readonly asr: Readonly<Record<
-    CascadedAsrProviderName,
-    (input: VolcengineAsrFactoryInput) => AsrFactory
-  >>
+  readonly asr: Readonly<{volcengine:(input:VolcengineAsrFactoryInput)=>AsrFactory; gemini:(input:GeminiSpeechFactoryInput)=>AsrFactory}>
   readonly llm: Readonly<{
     readonly qwen: (input: QwenLlmFactoryInput) => CascadedLlmFactory
     readonly ark: (input: ArkLlmFactoryInput) => CascadedLlmFactory
   }>
-  readonly tts: Readonly<Record<
-    CascadedTtsProviderName,
-    (input: VolcengineTtsFactoryInput) => TtsFactory
-  >>
+  readonly tts: Readonly<{volcengine:(input:VolcengineTtsFactoryInput)=>TtsFactory; gemini:(input:GeminiSpeechFactoryInput)=>TtsFactory}>
 }
 
 export const cascadedProviderRegistries: CascadedProviderRegistries = Object.freeze({
@@ -208,6 +202,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     },
   }),
   asr: Object.freeze({
+    gemini:(input:GeminiSpeechFactoryInput)=>createGeminiAsrFactory({...input.config,...(input.onUsage?{onUsage:input.onUsage}:{})}),
     volcengine: (input: VolcengineAsrFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultAsrClient)({
         ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
@@ -235,6 +230,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     }),
   }),
   tts: Object.freeze({
+    gemini:(input:GeminiSpeechFactoryInput)=>createGeminiTtsFactory({...input.config,...(input.onUsage?{onUsage:input.onUsage}:{})}),
     volcengine: (input: VolcengineTtsFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultTtsClient)({
         ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
@@ -268,7 +264,7 @@ export function buildTextRealtimeAssembly(
     transcribeDraft:(pcm:Uint8Array,signal:AbortSignal)=>{
       signal.throwIfAborted()
       const config=requireSelectedCascadedAsrConfig(options.settings)
-      const factory=registry.asr.volcengine({config,ids,...(options.asrClient===undefined?{}:{clientFactory:options.asrClient}),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,config.endpoint)!})})
+      const factory=selectedAsrFactory(registry,{config,ids,...(options.asrClient===undefined?{}:{clientFactory:options.asrClient}),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,config.endpoint)!})})
       return transcribeDraft(factory.openClient(),pcm,signal)
     },
   })
@@ -306,7 +302,7 @@ export function buildCascadedRealtimeAssembly(
       : {capability: options.endpointingCapability}),
     ...(options.liveKitExecutor === undefined ? {} : {liveKitExecutor: options.liveKitExecutor}),
   })
-  const asrFactory = registry.asr[selection.asrProvider]({
+  const asrFactory = selectedAsrFactory(registry,{
     ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.asr.endpoint)!}),
     config: selected.asr,
     ids,
@@ -336,7 +332,7 @@ export function buildCascadedRealtimeAssembly(
     if (next !== instructions) { instructions = next; selectedLlmFactory = createLlmFactory() }
     return selectedLlmFactory.open()
   }}
-  const ttsFactory = registry.tts[selection.ttsProvider]({
+  const ttsFactory = selectedTtsFactory(registry,{
     ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.tts.endpoint)!}),
     config: selected.tts,
     ids,
@@ -404,7 +400,7 @@ function supportComposition(
   const gateway = new OpenAIModelGateway({
     baseUrl: connection.baseUrl,
     apiKey: connection.apiKey,
-    ...(connection.source !== 'generic' && provider === 'deepseek' ? {thinkingControl: 'deepseek' as const} : {}),
+    ...(connection.source !== 'generic' && (provider === 'deepseek'||provider === 'openai') ? {thinkingControl: provider} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
@@ -483,9 +479,6 @@ export interface BuildQwenRealtimeAssemblyOptions
     | 'controlledPreemptiveAlertReconnect'
     | 'preemptiveAlertHistoryRecovery'
     | 'preemptiveAlertHistoryPairs'
-    | 'controlledGuardReconnect'
-    | 'guardHistoryRecovery'
-    | 'guardHistoryPairs'
   > {
   /** Deterministic test seam; production uses the bounded WebSocket connector. */
   readonly connector?: QwenConnector
@@ -559,12 +552,13 @@ export function buildQwenRealtimeAssembly(
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const support = resolveSupportModelConnection(options.settings, {
-    baseUrl: stepfunOwnSupport ? STEPFUN_COMPATIBLE_BASE_URL : DASHSCOPE_COMPATIBLE_BASE_URL,
+    baseUrl: options.settings.integrated_provider === 'openai' ? OPENAI_BASE_URL : options.settings.integrated_provider === 'gemini' ? GEMINI_BASE_URL : stepfunOwnSupport ? STEPFUN_COMPATIBLE_BASE_URL : DASHSCOPE_COMPATIBLE_BASE_URL,
     apiKey: qwen.apiKey,
   })
   const gateway = new OpenAIModelGateway({
     baseUrl: support.baseUrl,
     apiKey: support.apiKey,
+    ...(support.source === 'selected_provider' && options.settings.integrated_provider === 'openai' ? {thinkingControl: 'openai' as const} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
@@ -623,6 +617,8 @@ export type IntegratedProviderRegistry = Readonly<Partial<Record<
 export const integratedProviderRegistry: Required<IntegratedProviderRegistry> = Object.freeze({
   qwen: input => buildQwenRealtimeAssembly(input),
   stepfun: input => buildIntegratedWireProvider(input, createStepFunWireProfile()),
+  openai: input => buildIntegratedWireProvider(input, createOpenAIWireProfile()),
+  gemini: input => new GeminiLiveAdapter({...input.config, ...input, connector:input.connector??webSocketQwenConnector}),
 })
 
 export function buildIntegratedRealtimeAssembly(
@@ -710,4 +706,12 @@ function productionCodingComposition(
     codingAgentControllerFactory: factory,
     agentDescriptors: [...descriptors, descriptor],
   }
+}
+
+interface GeminiSpeechFactoryInput {readonly config:GeminiSpeechConfig;readonly onUsage?:UsageReporter}
+export function selectedAsrFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineAsrFactoryInput,'config'>&{config:VolcengineAsrConfig|GeminiSpeechConfig}):AsrFactory {
+  return input.config.provider==='gemini'?registry.asr.gemini({...input,config:input.config}):registry.asr.volcengine({...input,config:input.config})
+}
+export function selectedTtsFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineTtsFactoryInput,'config'>&{config:VolcengineTtsConfig|GeminiSpeechConfig}):TtsFactory {
+  return input.config.provider==='gemini'?registry.tts.gemini({...input,config:input.config}):registry.tts.volcengine({...input,config:input.config})
 }

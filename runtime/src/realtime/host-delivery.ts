@@ -246,7 +246,6 @@ export class HostDelivery {
   hasSemanticAcknowledgement(id: string): boolean {return this.#semanticAcknowledgements.has(id)}
   retirementTasks(): readonly Promise<void>[] {return [...this.#providerRetirementTasks]}
   acknowledgementReleaseTasks(): readonly Promise<void>[] {return [...this.#semanticAcknowledgementReleaseTasks]}
-  acknowledgementsForTest(): ReadonlyMap<string, SemanticAcknowledgement> {return this.#semanticAcknowledgements}
   acceptUserActivation(epoch: number): void {
     if (this.#providerEpochNeedingActivation === epoch) this.#providerEpochNeedingActivation = null
     this.#providerReconnectSourceEpoch = null
@@ -263,8 +262,6 @@ export class HostDelivery {
   adoptReconnectedPreemption(current: PreemptiveAlert): void {
     this.#preemptiveAlert = {...current, session_epoch: this.session.sessionEpoch, old_response_id: null}
   }
-  nextUrgentDeliveryToken(): number {this.#urgentDeliveryToken += 1; return this.#urgentDeliveryToken}
-  nextPreemptiveAlertToken(): number {this.#preemptiveAlertToken += 1; return this.#preemptiveAlertToken}
 
   rememberLocalSpeechInterruption(key: string): void {
     this.#localSpeechInterruptedResponses.delete(key)

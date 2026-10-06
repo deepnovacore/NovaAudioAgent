@@ -292,7 +292,7 @@ app.whenReady().then(async () => {
       shell.style.removeProperty('--bubble-orb-y')
     })()`)
 
-    // Use the production five-button rail, not the legacy three-button fixture.
+    // Use the production four-button rail, not the legacy three-button fixture.
     await window.loadFile(join(__dirname, '../src/renderer/index.html'))
     await window.webContents.insertCSS('#orb-rail { opacity: 1 !important; pointer-events: auto !important; transition: none !important; }')
     const confirmationLayouts = []
