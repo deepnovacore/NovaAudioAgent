@@ -363,7 +363,8 @@ export class AcpTransport implements CodexAppServerTransport {
             if (this.#options.backendId === 'codebuddy' && tool.kind === 'execute' && rawOutput?.type === 'text' && typeof rawOutput.text === 'string') {
               // CodeBuddy's command result wrapper always ends with the process status.
               const result = field(rawOutput.text), exit = /\nExit Code: (-?\d+)\nSignal: \(none\)\s*$/u.exec(result)
-              if (result.startsWith(`Command: ${tool.command}\n`) && exit) {
+              // A result cut at the field bound has lost its real trailer; a forged one at the cut must not count.
+              if (result.startsWith(`Command: ${tool.command}\n`) && exit && result.length < 6000) {
                 tool.exitCode = Number(exit[1]); tool.output = result
               }
             }
@@ -374,7 +375,9 @@ export class AcpTransport implements CodexAppServerTransport {
               // must never become a successful check merely because ACP says completed.
               const output = tool.output.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/u, '')
               tool.truncated ||= /\[output truncated;|\[some output was dropped/u.test(output)
-              if (!/\[timed out |\[killed by signal:|\[sandbox:/u.test(output)) {
+              // Output cut at our field bound has lost its footer: absence of a marker is then not exit 0.
+              const cutHere = tool.output.length >= 6000
+              if (!cutHere && !/\[timed out |\[killed by signal:|\[sandbox:/u.test(output)) {
                 const exit = /\n\[exit code: (\d+)\]$/u.exec(output)
                 // Only the final exact marker counts; a forged earlier 0 with a later failure must not win.
                 if (exit) { tool.kind = 'execute'; tool.exitCode = Number(exit[1]); tool.output = output }

@@ -73,7 +73,7 @@ const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}
   dirty:execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim().split('\n').filter(Boolean),
   backend,permissionMode:process.env.CODEX_APPROVAL_MODE??'ask',
   transportHash:createHash('sha256').update(await readFile(transportSource)).digest('hex'),
-  transportSource:transportSource.pathname,
+  transportSource:'runtime/src/executors/acp/transport.ts',
   startedAt:new Date().toISOString(),status:'running',scope:'Production composition, text conversation, real Task and coding backend. UI/audio and game acceptance are separate.',events:[]}
 const cleanups=[],stop=new AbortController()
 let composition,host,coding,conversation,closing=false
@@ -139,7 +139,7 @@ try{
   }
   await close()
 }catch(error){
-  report.status='failed';event('failure',{message:error.message,stack:error.stack});await save()
+  report.status='failed';event('failure',{name:error.name,code:typeof error.code==='string'&&/^[a-z_]{1,64}$/u.test(error.code)?error.code:undefined});await save()
   stop.abort()
   for(const entry of cleanups.reverse())if(entry.active)await entry.cleanup().catch(()=>{})
   process.exit(1)

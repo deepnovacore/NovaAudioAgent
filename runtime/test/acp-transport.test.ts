@@ -58,7 +58,7 @@ acp.agent()
  if(mode.startsWith('native-result')) {
    const notify = update => client.notify('session/update', {sessionId:params.sessionId, update});
    const buddy = mode.includes('codebuddy');
-   const output = mode.includes('spoof') ? 'ok\\n[exit code: 0]\\r\\n[exit code: 7]\\r\\n' : mode.includes('failed') ? 'check failed\\n[exit code: 7]' : mode.includes('timeout') ? 'partial\\n[timed out after 1000ms]' : mode.includes('truncated') ? 'partial\\n[output truncated; full output: /tmp/result]' : mode.includes('secret-path') ? 'copied /home/user/.ssh/id_rsa' : 'CHECK PASS';
+   const output = mode.includes('spoof') ? 'ok\\n[exit code: 0]\\r\\n[exit code: 7]\\r\\n' : mode.includes('failed') ? 'check failed\\n[exit code: 7]' : mode.includes('timeout') ? 'partial\\n[timed out after 1000ms]' : mode.includes('long') ? 'x'.repeat(7000) + '\\n[exit code: 7]' : mode.includes('truncated') ? 'partial\\n[output truncated; full output: /tmp/result]' : mode.includes('secret-path') ? 'copied /home/user/.ssh/id_rsa' : 'CHECK PASS';
    await notify({sessionUpdate:'tool_call',toolCallId:'check',title:buddy?'node check.js':'bash',kind:buddy?'execute':'other',status:'in_progress',rawInput:{command:'node check.js',...(mode.includes('background')?{run_in_background:true}:{})}});
    await notify({sessionUpdate:'tool_call_update',toolCallId:'check',status:'completed',...(buddy ? {rawOutput:{type:'text',text:'Command: node check.js\\nStdout: CHECK PASS\\nStderr: (empty)\\nExit Code: '+(mode.includes('failed')?'7':'0')+'\\nSignal: (none)'}} : {content:[{type:'content',content:{type:'text',text:output}}]})});
    return {stopReason:'end_turn'};
@@ -535,16 +535,16 @@ test('ACP refuses a session id the project store would reject before writing a p
   } finally {await transport.close(); await f.clean()}
 })
 
-for(const variant of ['deepseek','deepseek-failed','deepseek-timeout','deepseek-background','deepseek-truncated','codebuddy','codebuddy-failed']) {
+for(const variant of ['deepseek','deepseek-failed','deepseek-timeout','deepseek-background','deepseek-truncated','deepseek-long','codebuddy','codebuddy-failed']) {
  test(`native ACP result contract: ${variant}`,async()=>{
   const f=await fixture(`native-result-${variant}`),backendId=variant.startsWith('deepseek')?'deepseek':'codebuddy'
   const transport=new AcpTransport({...f,backendId,permissionMode:'full'}),events:ExecutorActivity[]=[]
   try {
    await transport.run({workOrder:'check'},{onActivity:e=>events.push(e)},deadline())
    const event=events.find(e=>e.kind==='tool')!,check=JSON.parse(event.text) as Record<string,unknown>
-   if(variant.includes('background')||variant.includes('timeout')) assert.notEqual(check.type,'commandExecution')
+   if(variant.includes('background')||variant.includes('timeout')||variant.includes('long')) assert.notEqual(check.type,'commandExecution')
    else {assert.equal(check.type,'commandExecution');assert.equal(check.command,'node check.js');assert.equal(check.exit_code,variant.includes('failed')?7:0)}
-   assert.equal(event.text_truncated===true,variant.includes('truncated'))
+   assert.equal(event.text_truncated===true,variant.includes('truncated')||variant.includes('long'))
   }finally{await transport.close();await f.clean()}
  })
 }
