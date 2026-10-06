@@ -640,8 +640,8 @@ for (const action of ['import', 'export']) {
       if (result.canceled) return
       if (result.error) throw new Error(result.error)
       if (result.patch) stageSelfHostedPatch(result.patch)
-      status.textContent = t(action === 'import' ? '预设已导入，请保存。' : '自托管预设已导出（不含密钥）。')
-    } catch { status.textContent = t('预设操作失败：请检查 JSON 版本、地址和模型；至少选择一个完整的自托管阶段。') }
+      status.textContent = t(action === 'import' ? '预设已导入，请保存。' : '语音预设已导出（不含密钥）。')
+    } catch { status.textContent = t('预设操作失败：请检查 JSON 版本、地址和模型；至少选择一个支持的完整阶段。') }
   })
 }
 bindStage(cascadedAsrProvider, 'change', () => ({cascadedAsrProvider: cascadedAsrProvider.value}))

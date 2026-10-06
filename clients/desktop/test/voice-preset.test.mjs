@@ -18,7 +18,7 @@ test('preset round-trips only explicit self-hosted stages and never exports cred
   const partial = parseVoicePreset(JSON.stringify({...preset, asr: undefined, tts: undefined})).patch
   assert.deepEqual(Object.keys(partial).sort(), ['pipelineMode', 'cascadedLlmProvider', 'selfHostedLlmBaseUrl', 'cascadedLlmModels'].sort())
   assert.equal(applySettingsUpdate(DEFAULT_SETTINGS, partial, codec).cascadedAsrProvider, DEFAULT_SETTINGS.cascadedAsrProvider)
-  assert.throws(() => exportVoicePreset(DEFAULT_SETTINGS), /invalid_voice_preset/)
+  assert.throws(() => exportVoicePreset({...DEFAULT_SETTINGS, cascadedAsrProvider: 'gemini', cascadedLlmProvider: 'gemini'}), /invalid_voice_preset/)
 })
 
 test('preset validation is strict, bounded and atomic across every stage', () => {
@@ -73,4 +73,25 @@ test('launch uses dedicated endpoints, models and optional stage keys with canon
   assert.equal(env.SELF_HOSTED_ASR_API_KEY, '')
   assert.equal(env.DOUBAO_BIGMODEL_API_KEY, undefined)
   assert.equal(env.DEEPSEEK_API_KEY, undefined)
+})
+
+
+test('hybrid preset selects Volcengine ASR and DeepSeek Flash while retaining self-hosted TTS', () => {
+  const hybrid = {...preset, name: 'Hybrid', asr: {provider: 'volcengine'}, llm: {provider: 'deepseek', model: 'deepseek-flash'}}
+  const prior = applySettingsUpdate(DEFAULT_SETTINGS, parseVoicePreset(JSON.stringify(preset)).patch, codec)
+  const settings = applySettingsUpdate(prior, parseVoicePreset(JSON.stringify(hybrid)).patch, codec)
+  assert.equal(settings.cascadedAsrProvider, 'volcengine')
+  assert.equal(settings.cascadedLlmProvider, 'deepseek')
+  assert.equal(settings.cascadedLlmModels.deepseek, 'deepseek-flash')
+  assert.equal(settings.cascadedTtsProvider, 'self-hosted')
+  assert.deepEqual(JSON.parse(exportVoicePreset(settings, 'Hybrid')), hybrid)
+  for (const extra of [{url: 'https://evil.example'}, {baseUrl: 'https://evil.example'}, {apiKey: 'secret'}]) {
+    assert.throws(() => parseVoicePreset(JSON.stringify({...hybrid, llm: {...hybrid.llm, ...extra}})), /invalid_voice_preset/)
+    assert.throws(() => parseVoicePreset(JSON.stringify({...hybrid, asr: {...hybrid.asr, ...extra}})), /invalid_voice_preset/)
+  }
+  const env = backendLaunchSpec({nodeEntry: '/repo/runtime/dist/src/desktop-entry.js', nodeResourcesPath: '/repo/clients/desktop/build', workspace: '/workspace', token: 'a'.repeat(32), readyEndpoint: '127.0.0.1:49152', parentEnv: {}, settings, decryptedSecrets: {doubaoAsrApiKey: 'asr-test', deepseekApiKey: 'llm-test', selfHostedTtsApiKey: ''}}).env
+  assert.equal(env.CASCADE_ASR_PROVIDER, 'volcengine')
+  assert.equal(env.CASCADE_LLM_PROVIDER, 'deepseek')
+  assert.equal(env.CASCADE_LLM_MODEL, 'deepseek-flash')
+  assert.equal(env.CASCADE_TTS_PROVIDER, 'self-hosted')
 })

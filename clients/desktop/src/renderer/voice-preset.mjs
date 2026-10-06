@@ -3,6 +3,7 @@ export const SELF_HOSTED_STAGES = Object.freeze([
   {stage: 'llm', provider: 'cascadedLlmProvider', endpoint: 'selfHostedLlmBaseUrl', secret: 'selfHostedLlmApiKey', field: 'baseUrl'},
   {stage: 'tts', provider: 'cascadedTtsProvider', endpoint: 'selfHostedTtsUrl', secret: 'selfHostedTtsApiKey', field: 'url'},
 ])
+const cloudStage = (stage, provider) => stage === 'asr' && provider === 'volcengine' || stage === 'llm' && provider === 'deepseek'
 export const MAX_PRESET_BYTES = 65_536
 export function validSelfHostedUrl(value, stage) {
   if (typeof value !== 'string' || value.length > 2048 || /[\s\u0000-\u001f\u007f\\?#]/.test(value)) return null
@@ -36,6 +37,13 @@ export function parseVoicePreset(raw) {
   for (const {stage, provider, endpoint, field} of SELF_HOSTED_STAGES) {
     if (!Object.hasOwn(value, stage)) continue
     const part = value[stage]
+    if (record(part) && cloudStage(stage, part.provider)) {
+      if (!exact(part, ['provider', ...(stage === 'llm' ? ['model'] : [])]) || stage === 'llm' && !text(part.model, 64)) throw new Error('invalid_voice_preset')
+      patch[provider] = part.provider
+      if (stage === 'llm') patch.cascadedLlmModels = {[part.provider]: part.model}
+      count++
+      continue
+    }
     if (!exact(part, ['provider', field, ...(stage === 'llm' ? ['model'] : [])]) || part.provider !== 'self-hosted' || !part[field] || validSelfHostedUrl(part[field], stage) === null || stage === 'llm' && !text(part.model, 64)) throw new Error('invalid_voice_preset')
     patch[provider] = 'self-hosted'
     patch[endpoint] = part[field]
@@ -45,9 +53,13 @@ export function parseVoicePreset(raw) {
   if (!count) throw new Error('invalid_voice_preset')
   return {name: value.name, patch}
 }
-export function exportVoicePreset(settings, name = 'Self-hosted voice') {
+export function exportVoicePreset(settings, name = 'Voice pipeline') {
   const preset = {schema: 'nova.voice-preset', version: 1, name}
   for (const {stage, provider, endpoint, field} of SELF_HOSTED_STAGES) {
+    if (cloudStage(stage, settings[provider])) {
+      preset[stage] = {provider: settings[provider], ...(stage === 'llm' ? {model: settings.cascadedLlmModels?.[settings[provider]]} : {})}
+      continue
+    }
     if (settings[provider] !== 'self-hosted') continue
     preset[stage] = {provider: 'self-hosted', [field]: settings[endpoint], ...(stage === 'llm' ? {model: settings.cascadedLlmModels?.['self-hosted']} : {})}
   }

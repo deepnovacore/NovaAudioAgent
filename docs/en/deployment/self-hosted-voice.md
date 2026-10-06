@@ -29,7 +29,7 @@ Substitute your SSH host alias and profile ports. Use an authenticated TLS rever
 
 ## Import and export
 
-Open Settings → Voice pipeline, import the exported JSON, review the displayed endpoints/model, then Save. Import stages the changes and leaves omitted stages unchanged. Export includes selected self-hosted stages only. Cloud presets, memory embeddings and executor configuration are outside this preset format.
+Open Settings → Voice pipeline, import the exported JSON, review the displayed endpoints/model, then Save. Import stages the changes and leaves omitted stages unchanged. Export includes supported selected stages: self-hosted ASR/LLM/TTS, Volcengine ASR and DeepSeek LLM. Cloud stages use existing saved API keys and provider endpoints. Memory embeddings and executor configuration are outside this preset format.
 
 ```json
 {
@@ -41,6 +41,8 @@ Open Settings → Voice pipeline, import the exported JSON, review the displayed
   "tts": {"provider": "self-hosted", "url": "http://127.0.0.1:18103/v1/audio/speech"}
 }
 ```
+
+For a hybrid preset, cloud ASR uses `{"provider":"volcengine"}` and cloud LLM uses `{"provider":"deepseek","model":"your-model"}`; combine these with a self-hosted TTS section. Keep deployment-specific presets outside Git. The endpoint contract is model-independent: model paths, GPU settings and voices belong to the serving implementation. Replace the TTS URL to use any server implementing the wire contract below; this is not an arbitrary vendor API adapter.
 
 Unknown fields/versions and files over 64 KiB are rejected as a whole. URLs support remote HTTPS/WSS or plaintext literal loopback addresses. URL credentials, query strings and fragments are rejected. Tokens use separate optional ASR/LLM/TTS secret fields and are never exported. Changing an endpoint's origin clears its old token; an explicitly entered new token can be saved together with the new endpoint. Existing cloud keys are never reused for self-hosted stages.
 
