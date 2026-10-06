@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { classifySurrogateVerdict, runSurrogateCall } from '../src/core/calls.js'
+import { classifyProactiveSelection, runProactiveSelection } from '../src/core/calls.js'
 import type { Affordance, ContextView } from '../src/core/context-view.js'
 import { wakeReasonSchema } from '../src/core/slots.js'
 
@@ -18,9 +18,9 @@ const view: ContextView = {
 
 const reason = wakeReasonSchema.parse({kind: 'user_input', priority: 100})
 
-test('the Surrogate records the suggestion table it actually saw', async () => {
-  const record = await runSurrogateCall({
-    watch: () => Promise.resolve({
+test('the Proactive selector records the suggestion table it actually saw', async () => {
+  const record = await runProactiveSelection({
+    select: () => Promise.resolve({
       speak: true, suggestion_id: 's-2', progress_class: 'milestone', reason: '因为',
     }),
   }, {view, reason, trigger: {
@@ -34,13 +34,13 @@ test('the Surrogate records the suggestion table it actually saw', async () => {
   assert.equal(record.reason, reason)
 })
 
-test('the Surrogate table is captured before the call, not after it', async () => {
+test('the Proactive selector table is captured before the call, not after it', async () => {
   // A suggestion that rearms mid-flight must not appear in `offered`, otherwise a
-  // selection the Surrogate never saw would pass the core check.
+  // selection the Proactive selector never saw would pass the core check.
   const affordances: Affordance[] = [...view.affordances]
   const mutable: ContextView = {...view, affordances}
-  const record = await runSurrogateCall({
-    watch: () => {
+  const record = await runProactiveSelection({
+    select: () => {
       affordances.push({
         source: 'suggestion', ref: 's-3-arrived-late', content: {}, conclusive: null,
       })
@@ -52,24 +52,24 @@ test('the Surrogate table is captured before the call, not after it', async () =
   assert.ok(!record.offered.includes('s-3-arrived-late'))
 })
 
-test('Surrogate verdict attribution distinguishes silence from invalid and selected output', () => {
+test('Proactive selection attribution distinguishes silence from invalid and selected output', () => {
   const base = {reason, trigger: null} as const
-  assert.equal(classifySurrogateVerdict({
+  assert.equal(classifyProactiveSelection({
     ...base,
     offered: ['s-1'],
     output: {speak: false, suggestion_id: null, progress_class: null, reason: 'routine'},
   }), 'silent')
-  assert.equal(classifySurrogateVerdict({
+  assert.equal(classifyProactiveSelection({
     ...base,
     offered: ['s-1'],
     output: {speak: true, suggestion_id: null, progress_class: null, reason: 'missing'},
   }), 'missing_selection')
-  assert.equal(classifySurrogateVerdict({
+  assert.equal(classifyProactiveSelection({
     ...base,
     offered: ['s-1'],
     output: {speak: true, suggestion_id: 's-2', progress_class: null, reason: 'wrong'},
   }), 'selection_not_offered')
-  assert.equal(classifySurrogateVerdict({
+  assert.equal(classifyProactiveSelection({
     ...base,
     offered: ['s-1'],
     output: {speak: true, suggestion_id: 's-1', progress_class: null, reason: 'selected'},

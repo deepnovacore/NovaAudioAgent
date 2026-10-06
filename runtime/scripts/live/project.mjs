@@ -56,15 +56,15 @@ try {
       return originalFetch(url,options)
     }
   }
-  const invocation=canonicalInstalledInvocation({kind:'native',command:process.env.NOVA_AUDIO_AGENT_CODEX_BIN??'/opt/homebrew/bin/codex',prefixArgs:[]},
+  const invocation=canonicalInstalledInvocation({kind:'native',command:process.env.CODEX_BIN??'/opt/homebrew/bin/codex',prefixArgs:[]},
     {platform:process.platform,arch:process.arch,pathApi:path,realpath:realpathSync,stat:statSync,readFile:readFileSync,access:p=>accessSync(p,constants.X_OK)})
   if(!invocation)throw Error('codex_not_found')
-  const settings=loadSettings({...process.env,NOVA_AUDIO_AGENT_PIPELINE_MODE:'cascaded',NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER:'qwen',
-    NOVA_AUDIO_AGENT_EXECUTOR:'codex',NOVA_AUDIO_AGENT_CODEX_BIN:invocation.command,NOVA_AUDIO_AGENT_CODEX_PREWARM:process.env.NOVA_AUDIO_AGENT_CODEX_PREWARM??'false',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE:path.join(runRoot,'initial'),NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT:path.join(runRoot,'workspaces'),
-    NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT:runRoot,NOVA_AUDIO_AGENT_CONVERSATION_VISION_ENABLED:'false'})
+  const settings=loadSettings({...process.env,PIPELINE_MODE:'cascaded',CASCADE_LLM_PROVIDER:'qwen',
+    EXECUTOR:'codex',CODEX_BIN:invocation.command,CODEX_PREWARM:process.env.CODEX_PREWARM??'false',
+    CODEX_WORKSPACE:path.join(runRoot,'initial'),CODEX_MANAGED_ROOT:path.join(runRoot,'workspaces'),
+    CODEX_PROJECT_STATE_ROOT:runRoot,CONVERSATION_VISION_ENABLED:'false'})
   const capabilities=parseCapabilityRegistry({version:1,modules:{coding:{enabled:true},camera:{enabled:false},search:{enabled:false},knowledge:{enabled:false}}},{})
-  const host=createProductionCodexHost(settings,{resourcesPath:process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH??path.join(root,'clients/desktop/build')})
+  const host=createProductionCodexHost(settings,{resourcesPath:process.env.CODEX_RESOURCES_PATH??path.join(root,'clients/desktop/build')})
   const config=resolveCodexHostConfig(settings,workspaceScenario?{...host.catalog,homeDirectory:runRoot}:host.catalog)
   if(workspaceScenario){
     // Share login/provider configuration only; never import the user's session catalog.

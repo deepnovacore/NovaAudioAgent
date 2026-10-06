@@ -1,0 +1,10 @@
+qwen-tts==0.1.1
+transformers==4.57.3
+accelerate==1.12.0
+torch==2.10.0
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+python-multipart==0.0.20
+torchaudio==2.10.0
+numpy>=2.0
+soundfile>=0.13

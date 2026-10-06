@@ -1,16 +1,21 @@
 /* eslint-disable @typescript-eslint/require-await */
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
+import {buildAssembly} from '../src/composition/assembly.js'
+import type {ModelGateway,CompleteRequest} from '../src/model/model-gateway.js'
 import {settingsSchema} from '../src/config/config.js'
 import {decide} from '../src/model/jev-client.js'
 import {createJevNewsRanker} from '../src/news/jev-ranking.js'
-import {GatewaySurrogate} from '../src/model/model-adapters.js'
-import type {ModelGateway} from '../src/model/model-gateway.js'
 test('default news uses Jev and never silently substitutes the chat provider',async()=>{
  assert.equal(settingsSchema.parse({executors:[]}).openrouter_api_key,null)
- const gateway={complete:()=>{throw Error('wrong_provider')}} as unknown as ModelGateway
- const surrogate=new GatewaySurrogate({gateway,model:'chat',proactivityPreset:'balanced'})
- await assert.rejects(surrogate.rankNews([],[],new AbortController().signal),/jev_not_configured/)
+ const calls:CompleteRequest[]=[]
+ const gateway={complete:(request:CompleteRequest)=>{calls.push(request);return Promise.resolve({text:JSON.stringify({candidates:[{quote:'记下想法',occurrence:0,kind:'idea',text:'记下想法'}]})})}} as unknown as ModelGateway
+ const core=buildAssembly({settings:settingsSchema.parse({executors:[],support_model:'support-test'}),gateway,cameraModuleEnabled:false,blackboard:{path:':memory:',ownerId:'test'}})
+ const models=core.personalAgentConfig!.models
+ await assert.rejects(models.rankNews([],[],new AbortController().signal),/jev_not_configured/)
+ assert.equal(calls.length,0,'news never calls the chat model')
+ await assert.rejects(models.understand({id:'source',version:1,text:'记下想法',origin:'user'},new AbortController().signal),/jev_not_configured/)
+ assert.equal(calls[0]!.model,'support-test','understanding extracts with the shared LLM before Jev judgment')
 })
 test('typed transport rejects incomplete probability distributions',async()=>{
  const q={one:{type:'choice' as const,instructions:'test',criteria:{yes:'yes',no:'no'}}}

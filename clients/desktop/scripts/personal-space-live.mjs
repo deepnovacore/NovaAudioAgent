@@ -1,11 +1,13 @@
 import {app,BrowserWindow,ipcMain} from 'electron'
-import {mkdtemp,realpath,writeFile,copyFile,mkdir,readFile} from 'node:fs/promises'
+import {mkdtemp,realpath,writeFile,copyFile,mkdir} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
 import assert from 'node:assert/strict'
 import {fileURLToPath,pathToFileURL} from 'node:url'
 import {PersonalAgentHost} from '../../../runtime/dist/src/personal-agent/host.js'
-import {GatewaySurrogate} from '../../../runtime/dist/src/model/model-adapters.js'
+import {createUnderstandingPipeline} from '../../../runtime/dist/src/understanding/pipeline.js'
+import {createJevJudge} from '../../../runtime/dist/src/understanding/jev.js'
+import {createJevNewsRanker} from '../../../runtime/dist/src/news/jev-ranking.js'
 import {loadSettings,resolveModelApiKey} from '../../../runtime/dist/src/config/config.js'
 import {OpenAIModelGateway} from '../../../runtime/dist/src/model/model-gateway.js'
 import {RealClock} from '../../../runtime/dist/src/core/clock.js'
@@ -20,7 +22,7 @@ let understand,rankNews,extractionModel
 if(process.env.NOVA_SPACE_LIVE_MODEL==='1'){
  process.loadEnvFile(process.env.NOVA_SPACE_ENV_FILE);if(process.env.NOVA_SPACE_JEV_ENV_FILE)process.loadEnvFile(process.env.NOVA_SPACE_JEV_ENV_FILE)
  const settings=loadSettings(),key=resolveModelApiKey(settings);extractionModel=settings.fast_model;assert.ok(key,'model credentials required')
- const gateway=new OpenAIModelGateway({baseUrl:settings.model_base_url,apiKey:key,clock:new RealClock()});const surrogate=new GatewaySurrogate({gateway,model:settings.fast_model,proactivityPreset:settings.proactivity_preset,jevApiKey:settings.openrouter_api_key??undefined});understand=surrogate.understand;const rank=surrogate.rankNews;rankNews=async(...args)=>{try{return await rank(...args)}catch(error){console.log('news ranking rejected:',error.name,String(error.message).slice(0,500));throw error}}
+ const gateway=new OpenAIModelGateway({baseUrl:settings.model_base_url,apiKey:key,clock:new RealClock()});const jev={apiKey:settings.openrouter_api_key??''};understand=createUnderstandingPipeline({gateway,model:settings.fast_model,judge:createJevJudge(jev)});const rank=createJevNewsRanker(jev);rankNews=async(...args)=>{try{return await rank(...args)}catch(error){console.log('news ranking rejected:',error.name,String(error.message).slice(0,500));throw error}}
 }
 const make=()=>new PersonalAgentHost({path,userScope:'synthetic-live',memory:()=>undefined,pool:new SuggestionPool(),evidence:()=>null,...(understand?{understand,rankNews}:{})})
 let host=make(),window;const report={extraction_model:extractionModel??null,judgment_model:understand?'typesafe/jev-1.13':null,checks:[],errors:[],opened:[],data_directory:dir,news_provenance:newsData??null}
@@ -46,7 +48,7 @@ try{
  await click('Todos');await click('编辑');const goal=host.life.snapshot().goals[0];await js(`(()=>{const i=document.querySelector('[aria-label="关联目标"]');i.value=${JSON.stringify(goal.id)};i.dispatchEvent(new Event('change',{bubbles:true}));i.blur()})()`);await click('保存修改');await wait('window.view.controller.snapshot.life.todos[0].goal_id!==null')
  await js("(()=>{const i=document.querySelector('[aria-label=\"每天十分钟听力状态\"]');i.value='done';i.dispatchEvent(new Event('change',{bubbles:true}));i.blur()})()");await wait("window.view.controller.snapshot.life.todos[0].status==='done'")
  await click('Goals');assert.ok(await js("document.querySelector('.workbench-page').textContent.includes('1/1')"));assert.equal(host.life.snapshot().goals[0].status,'active');report.checks.push('todo edit/completion and explicit goal completion boundary')
- await click('Profile');await click('补充一句');await fill('关于我','验收专用：喜欢语言学习和科技资讯');await click('保存介绍');await wait("window.view.controller.snapshot.life.profile.about.includes('验收专用')");report.checks.push('profile editing')
+ await click('Profile');await click('自己写一段');await fill('关于我','验收专用：喜欢语言学习和科技资讯');await click('保存介绍');await wait("window.view.controller.snapshot.life.profile.about.includes('验收专用')");report.checks.push('profile editing')
  await click('Feeds');if(newsData){await wait("document.querySelectorAll('.news-card').length>0");await click('阅读原文');await wait('window.view.controller.snapshot.news.items.some(i=>i.read)');assert.equal(report.opened.length,1);report.checks.push('real acquired news rendered, article-open IPC validated (external browser intercepted)');await click('收藏');await wait('window.view.controller.snapshot.news.saved.length>0');report.checks.push('news save action persisted')}
  await click('Feeds');await wait("document.querySelector('.workbench-page h2')?.textContent.includes('Feeds')");await new Promise(r=>setTimeout(r,150));
  await writeFile(join(output,'five-tabs.png'),(await window.webContents.capturePage()).toPNG())

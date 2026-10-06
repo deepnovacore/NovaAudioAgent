@@ -1,4 +1,3 @@
-import {validExtraction} from '../voicemem/store-client.js'
 import {z} from 'zod'
 import {MemoryObservationSchema, MemoryListOptionsSchema, MemorySourceRefSchema, MemoryVersionSchema} from '../memory/entry.js'
 import {VersionedMemory} from './versioned-memory.js'
@@ -48,7 +47,6 @@ interface WorkerData {
   readonly userId: string
   readonly embedding: PersonalMemoryEmbeddingConfig
   readonly extractionModel?: string
-  readonly extraction?: PersonalMemoryEmbeddingConfig
 }
 
 interface Request extends Record<string, unknown> {
@@ -118,7 +116,7 @@ function open(): VoiceMemOpenResult {
       path,
       userId: data.userId,
       model: data.extractionModel === undefined ? inertTextModel : new OpenAITextModel({
-        baseUrl:(data.extraction??data.embedding).baseUrl,apiKey:(data.extraction??data.embedding).apiKey,model:data.extractionModel,
+        baseUrl:data.embedding.baseUrl,apiKey:data.embedding.apiKey,model:data.extractionModel,
       }),
       embeddings: new OpenAIEmbeddingModel({
         baseUrl: data.embedding.baseUrl,
@@ -301,8 +299,7 @@ const inertTextModel: TextModel = {
 }
 
 function parseWorkerData(value: unknown): WorkerData {
-  if (isRecord(value) && value.extraction !== undefined && !validExtraction(value.extraction)) throw new Error('invalid extraction connection')
-  if (!isRecord(value) || !hasOnlyKeys(value, ['path', 'userId', 'embedding', 'extractionModel', 'extraction']) || !nonempty(value.path, 4_096) || !nonempty(value.userId, 256)
+  if (!isRecord(value) || !hasOnlyKeys(value, ['path', 'userId', 'embedding', 'extractionModel']) || !nonempty(value.path, 4_096) || !nonempty(value.userId, 256)
     || !isRecord(value.embedding) || !nonempty(value.embedding.baseUrl, 2_048)
     || !nonempty(value.embedding.apiKey, 4_096) || !nonempty(value.embedding.model, 256)
     || !hasOnlyKeys(value.embedding, ['baseUrl', 'apiKey', 'model', 'dimensions'])
@@ -312,7 +309,6 @@ function parseWorkerData(value: unknown): WorkerData {
   }
   return {
     path: value.path,
-    ...(value.extraction ? {extraction:value.extraction as PersonalMemoryEmbeddingConfig} : {}),
     userId: value.userId,
     embedding: {
       baseUrl: value.embedding.baseUrl,

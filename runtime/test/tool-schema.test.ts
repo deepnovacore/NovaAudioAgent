@@ -8,7 +8,7 @@ import { handoffPolicySchema } from '../src/core/memory.js'
 import { executorManifestSchema } from '../src/core/ports.js'
 import { ToolSchemaError, compileToolSchema } from '../src/core/tool-schema.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/tools/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/tools/v1')
 
 function loadJson<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(fixtureRoot, name), 'utf8')) as T

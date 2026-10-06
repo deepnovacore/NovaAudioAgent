@@ -10,24 +10,24 @@ import {ConfigurationError, loadSettings} from '../src/config/config.js'
 import {buildDiagnosticReport, diagnosticReportSchema} from '../src/config/diagnostics.js'
 import {main} from '../src/cli.js'
 
-test('diagnostics require the credential for the unconditionally assembled Search adapter', async () => {
+test('diagnostics pass Search on the DashScope fallback when no Tavily key is set', async () => {
   const environment = {
-    NOVA_AUDIO_AGENT_BACKEND: 'node',
+    BACKEND: 'node',
     DASHSCOPE_API_KEY: 'dashscope-secret',
-    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'sentinel-model-secret',
+    MODEL_API_KEY: 'sentinel-model-secret',
   }
   const report = await buildDiagnosticReport({environment, nodeVersion: 'v22.12.0'})
   assert.equal(diagnosticReportSchema.safeParse(report).success, true)
   assert.deepEqual(report, {
     schema_version: 1,
     runtime: 'node',
-    ok: false,
+    ok: true,
     checks: [
       {id: 'node.version', status: 'pass', code: 'node_version_supported'},
       {id: 'configuration.parse', status: 'pass', code: 'configuration_valid'},
       {id: 'provider.qwen', status: 'pass', code: 'qwen_configuration_valid'},
       {id: 'executors.contract', status: 'pass', code: 'executor_configuration_valid'},
-      {id: 'search.credential', status: 'fail', code: 'search_credential_missing'},
+      {id: 'search.credential', status: 'pass', code: 'search_credential_present'},
       {id: 'camera.source', status: 'pass', code: 'camera_local_selected'},
     ],
   })
@@ -38,7 +38,7 @@ test('diagnostics pass the required Search check without probing Tavily', async 
   const report = await buildDiagnosticReport({
     environment: {
       DASHSCOPE_API_KEY: 'dashscope-secret',
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-secret',
+      MODEL_API_KEY: 'model-secret',
       TAVILY_API_KEY: 'search-secret',
     },
     nodeVersion: 'v22.12.0',
@@ -72,24 +72,24 @@ test('cascaded diagnostics reject every representative configuration production 
   const cases = [
     {
       name: 'secure ASR endpoint',
-      override: {NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT: 'https://sentinel.invalid/asr'},
+      override: {DOUBAO_ASR_ENDPOINT: 'https://sentinel.invalid/asr'},
     },
     {
       name: 'VAD lower bound',
-      override: {NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD: '0'},
+      override: {VOLCENGINE_VAD_THRESHOLD: '0'},
     },
     {
       name: 'ASR chunk lower bound',
-      override: {NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS: '0'},
+      override: {DOUBAO_ASR_CHUNK_MS: '0'},
     },
     {
       name: 'TTS sample rate',
-      override: {NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE: '16000'},
+      override: {DOUBAO_TTS_OUTPUT_SAMPLE_RATE: '16000'},
     },
   ] as const
   for (const case_ of cases) {
     const environment = {
-      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+      PIPELINE_MODE: 'cascaded',
       DASHSCOPE_API_KEY: 'sentinel-selected-secret',
       DOUBAO_BIGMODEL_API_KEY: 'sentinel-doubao-secret',
       TAVILY_API_KEY: 'sentinel-search-secret',
@@ -113,12 +113,12 @@ test('cascaded diagnostics reject every representative configuration production 
 test('cascaded diagnostics never read the unselected LLM platform', async () => {
   for (const provider of ['qwen', 'ark'] as const) {
     const inaccessible = provider === 'qwen'
-      ? new Set<PropertyKey>(['ARK_API_KEY', 'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL'])
+      ? new Set<PropertyKey>(['ARK_API_KEY', 'VOLCENGINE_ARK_BASE_URL'])
       : new Set<PropertyKey>(['DASHSCOPE_API_KEY'])
     const environment = new Proxy<NodeJS.ProcessEnv>({
-      NOVA_AUDIO_AGENT_MEMORY_CONNECTION: 'disabled',
-      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
-      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: provider,
+      MEMORY_CONNECTION: 'disabled',
+      PIPELINE_MODE: 'cascaded',
+      CASCADE_LLM_PROVIDER: provider,
       ...(provider === 'qwen'
         ? {DASHSCOPE_API_KEY: 'selected-qwen-secret'}
         : {ARK_API_KEY: 'selected-ark-secret'}),
@@ -154,7 +154,7 @@ test('diagnostics classify unexpected access without retaining private data', as
 
 test('diagnostics reject unsupported Node and classify camera paths without touching them', async () => {
   const unsupported = await buildDiagnosticReport({
-    environment: {DASHSCOPE_API_KEY: 'dashscope-key', NOVA_AUDIO_AGENT_MODEL_API_KEY: 'key'},
+    environment: {DASHSCOPE_API_KEY: 'dashscope-key', MODEL_API_KEY: 'key'},
     nodeVersion: 'v21.99.0',
   })
   assert.equal(unsupported.checks[0]?.status, 'fail')
@@ -163,8 +163,8 @@ test('diagnostics reject unsupported Node and classify camera paths without touc
   const file = await buildDiagnosticReport({
     environment: {
       DASHSCOPE_API_KEY: 'dashscope-key',
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'key',
-      NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE: '/sentinel/private/video.mp4',
+      MODEL_API_KEY: 'key',
+      DESKTOP_VIDEO_FILE: '/sentinel/private/video.mp4',
     },
     nodeVersion: 'v22.12.0',
   })
@@ -176,8 +176,8 @@ test('diagnostics reject unsupported Node and classify camera paths without touc
   const invalid = await buildDiagnosticReport({
     environment: {
       DASHSCOPE_API_KEY: 'dashscope-key',
-      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'key',
-      NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE: 'sentinel-relative.mp4',
+      MODEL_API_KEY: 'key',
+      DESKTOP_VIDEO_FILE: 'sentinel-relative.mp4',
     },
     nodeVersion: 'v22.12.0',
   })
@@ -190,9 +190,9 @@ test('diagnostics reject unsupported Node and classify camera paths without touc
 test('diagnose CLI emits one canonical line with exact exit behavior', async () => {
   let output = ''
   const environment = {
-    NOVA_AUDIO_AGENT_BACKEND: 'node',
+    BACKEND: 'node',
     DASHSCOPE_API_KEY: 'dashscope-secret',
-    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'sentinel-secret',
+    MODEL_API_KEY: 'sentinel-secret',
     TAVILY_API_KEY: 'sentinel-search-secret',
   }
   const expected = await buildDiagnosticReport({environment, nodeVersion: 'v22.12.0'})
@@ -214,12 +214,12 @@ test('diagnostics validate configured modules and require only the selected sear
   const path = join(directory, 'capabilities.json')
   try {
     writeFileSync(path, JSON.stringify({version: 1, modules: {search: {enabled: false}}}))
-    const report = await buildDiagnosticReport({environment: {DASHSCOPE_API_KEY: 'test-only', NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: path}, nodeVersion: 'v22.13.0'})
+    const report = await buildDiagnosticReport({environment: {DASHSCOPE_API_KEY: 'test-only', CAPABILITIES_CONFIG: path}, nodeVersion: 'v22.13.0'})
     assert.equal(report.ok, true)
-    const mcp = await buildDiagnosticReport({environment: {DASHSCOPE_API_KEY: 'test-only', NOVA_AUDIO_AGENT_SEARCH_PROVIDER: 'mcp'}, nodeVersion: 'v22.13.0'})
+    const mcp = await buildDiagnosticReport({environment: {DASHSCOPE_API_KEY: 'test-only', SEARCH_PROVIDER: 'mcp'}, nodeVersion: 'v22.13.0'})
     assert.equal(mcp.ok, true)
     writeFileSync(path, '{"version": 2, "secret": "never-report"}')
-    const invalid = await buildDiagnosticReport({environment: {NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: path}, nodeVersion: 'v22.13.0'})
+    const invalid = await buildDiagnosticReport({environment: {CAPABILITIES_CONFIG: path}, nodeVersion: 'v22.13.0'})
     assert.equal(invalid.ok, false)
     assert.equal(canonicalJson(invalid).includes('never-report'), false)
   } finally { rmSync(directory, {recursive: true, force: true}) }

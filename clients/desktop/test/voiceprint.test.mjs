@@ -117,10 +117,11 @@ test('main registers against saved settings and replaces the vendor record only 
   const register = handler.slice(handler.indexOf("input.action !== 'register'"))
   assert.doesNotMatch(register, /input\.uploadUrl/, 'register uploads only to the saved URL')
   assert.doesNotMatch(handler.slice(handler.indexOf("input.action === 'start'")), /input\.uploadUrl/)
-  const changed = register.indexOf('speechKey(currentSettings) !== apiKey')
+  const changed = register.indexOf('if (currentKey !== apiKey)')
   const commit = register.indexOf('applyDesktopSettings({settingsPatch:{voiceprintId:result.id')
   const removeOld = register.indexOf('deleteVoiceprint({id:previousId')
   assert.ok(changed > 0 && changed < commit && commit < removeOld)
+  assert.ok(register.indexOf('await accessCredentials(() => speechKey(currentSettings))') < changed)
   assert.match(register.slice(0, commit), /deleteVoiceprint\(\{id:result\.id,apiKey/)
   assert.match(register.slice(changed, commit), /discard\('voiceprint_settings_changed'\)/)
   // saved:false (busy, invalid, rolled back) must discard the new ID and keep the old one.
@@ -128,6 +129,29 @@ test('main registers against saved settings and replaces the vendor record only 
   assert.ok(commit < gate && gate < removeOld)
   assert.match(register.slice(gate, removeOld), /discard\('voiceprint_request_failed'\)/)
   assert.match(register, /catch \{return \{error,orphanedId:result\.id\}\}/, 'a failed discard surfaces the orphaned ID')
+})
+
+test('queued voiceprint registration reads upload target, key and previous ID from one current settings snapshot', async () => {
+  const {runInNewContext} = await import('node:vm')
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const handlerSource = source.slice(source.indexOf("ipcMain.handle('nova:settings:voiceprint'"), source.indexOf("ipcMain.handle('nova:settings:get'"))
+  const sender = {}, calls = []
+  let handler, release
+  const waiting = new Promise(resolve => { release = resolve })
+  const context = {
+    settingsWindow:{webContents:sender},currentSettings:{voiceprintUploadUrl:'https://old.example',voiceprintId:'old',key:'old-key'},voiceprintBusy:false,secretCodec:{},net:{fetch(){}},
+    accessCredentials:async operation=>{if(!calls.length)await waiting;calls.push('read');return operation()},
+    decryptSecretsForSpawn:settings=>({doubaoAsrApiKey:settings.key}),voiceprintHealth:async url=>{calls.push(url);return true},
+    registerVoiceprint:async input=>{calls.push([input.uploadUrl,input.apiKey]);return {id:'new',name:'new-name'}},
+    deleteVoiceprint:async input=>{calls.push(input.id)},applyDesktopSettings:async()=>{context.currentSettings.voiceprintId='new';return {saved:true}},
+    endVoiceprintRecording(){},ipcMain:{handle(_channel,fn){handler=fn}},
+  }
+  runInNewContext(handlerSource,context)
+  const result = handler({sender},{action:'register',audio:new Uint8Array()})
+  context.currentSettings = {voiceprintUploadUrl:'https://new.example',voiceprintId:'previous',key:'new-key'}
+  release()
+  assert.equal((await result).id,'new')
+  assert.deepEqual(calls,['read','https://new.example',['https://new.example','new-key'],'read','previous'])
 })
 
 test('the panel blocks registration until the upload URL is saved and never stages the identity itself', async () => {
@@ -164,16 +188,17 @@ test('registration cleanup respects failed recovery and pending backend configur
   const {applySettingsTransaction} = await import('../src/main/settings-apply.mjs')
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const handlerSource = source.slice(source.indexOf("ipcMain.handle('nova:settings:voiceprint'"), source.indexOf("ipcMain.handle('nova:settings:get'"))
-  for (const scenario of ['rollback_failed', 'pending_restart', 'rollback_success']) await t.test(scenario, async () => {
-    let handler, restarts = 0
+  for (const scenario of ['rollback_failed', 'pending_restart', 'rollback_success', 'credential_failed', 'credential_discard_failed']) await t.test(scenario, async () => {
+    let handler, restarts = 0, credentialReads = 0
     const deleted = [], events = [], sender = {}
     const original = {voiceprintUploadUrl:'https://upload.example',voiceprintId:'old',voiceprintEnabled:scenario !== 'pending_restart'}
     const context = {
       settingsWindow:{webContents:sender},currentSettings:{...original},voiceprintBusy:false,
       settingsRecoveryAvailable:false,settingsRestartPending:scenario === 'pending_restart',secretCodec:{},net:{fetch(){}},
       decryptSecretsForSpawn:()=>({doubaoAsrApiKey:'key'}),voiceprintHealth:async()=>true,
+      accessCredentials:async operation=>{credentialReads++;await Promise.resolve();if(scenario.startsWith('credential_')&&credentialReads===2)throw Error('credential unavailable');return operation()},
       registerVoiceprint:async()=>({id:'new',name:'new-name'}),
-      deleteVoiceprint:async({id})=>{deleted.push(id);events.push(`delete:${id}`)},
+      deleteVoiceprint:async({id})=>{deleted.push(id);events.push(`delete:${id}`);if(scenario==='credential_discard_failed')throw Error('delete unavailable')},
       endVoiceprintRecording(){},ipcMain:{handle(_channel,fn){handler=fn}},
       applyDesktopSettings:async(payload,restart)=>applySettingsTransaction({
         coordinator:{run:async(_key,fn)=>({status:'done',value:await fn()})},patch:payload,
@@ -187,7 +212,13 @@ test('registration cleanup respects failed recovery and pending backend configur
     }
     runInNewContext(handlerSource,context)
     const result = await handler({sender},{action:'register',audio:new Uint8Array()})
-    if(scenario==='rollback_failed') {
+    assert.equal(credentialReads,2,'registration and final key check use the queued credential path')
+    if(scenario==='credential_discard_failed') {
+      assert.equal(result.orphanedId,'new','failed cleanup returns the remote ID for recovery')
+    } else if(scenario==='credential_failed') {
+      assert.deepEqual(deleted,['new'],'a failed final key check discards the newly registered ID')
+      assert.equal(result.error,'voiceprint_request_failed')
+    } else if(scenario==='rollback_failed') {
       assert.equal(context.currentSettings.voiceprintId,'new')
       assert.deepEqual(deleted,[], 'an ID still referenced by failed recovery must survive')
       assert.equal(result.retainedId,'new')

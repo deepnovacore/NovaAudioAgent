@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto'
 import {z} from 'zod'
-import type {GraphDatabase} from '../workspace-graph/store.js'
+import type {LedgerDatabase} from '../memory-ledger/store.js'
 
 export const sourceIdSchema=z.string().min(1).max(256)
 export const revisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
@@ -8,11 +8,11 @@ export const fenceSchema=z.object({connection_id:sourceIdSchema,generation:revis
 export type Fence=z.infer<typeof fenceSchema>
 export const processingGrantSchema=z.object({revision:revisionSchema,scope_revision:revisionSchema,extraction_provider:sourceIdSchema.nullable(),embedding_provider:sourceIdSchema.nullable(),conversation_providers:z.array(sourceIdSchema).max(8).optional()}).strict()
 export type ProcessingGrant=z.infer<typeof processingGrantSchema>
-export function readProcessingGrant(db:GraphDatabase,sourceId:string):ProcessingGrant|null{
+export function readProcessingGrant(db:LedgerDatabase,sourceId:string):ProcessingGrant|null{
  const row=db.prepare('SELECT payload_json FROM source_grants WHERE source_id=?').get(sourceId)
  return row?processingGrantSchema.parse(JSON.parse(String(row.payload_json))):null
 }
-export function allowsProcessing(db:GraphDatabase,sourceId:string,purpose:'extraction'|'embedding'|'conversation',provider:string):boolean{
+export function allowsProcessing(db:LedgerDatabase,sourceId:string,purpose:'extraction'|'embedding'|'conversation',provider:string):boolean{
  const permitted=(grant:ProcessingGrant|null)=>purpose==='conversation'?(grant?.conversation_providers??[]).includes(provider):grant?.[purpose==='extraction'?'extraction_provider':'embedding_provider']===provider
  const grant=readProcessingGrant(db,sourceId);if(!grant||!permitted(grant))return false
  const object=sourceObjectFor(db,sourceId)
@@ -32,15 +32,15 @@ export const connectionSchema=z.object({fence:fenceSchema,namespace:sourceIdSche
 export type SourceConnection=z.infer<typeof connectionSchema>
 export const sourceObjectSchema=z.object({connection_id:sourceIdSchema,generation:revisionSchema,object_key:sourceIdSchema,source_id:sourceIdSchema,semantic_hash:sourceIdSchema,metadata:z.record(z.string(),z.json()),current_evidence_ids:z.array(z.string().min(1).max(512)).max(256),activation_revision:revisionSchema,status:z.enum(['current','coverage_removed','provider_deleted']),observed_at:z.iso.datetime({offset:true})}).strict()
 export type SourceObject=z.infer<typeof sourceObjectSchema>
-export function readConnection(db:GraphDatabase,id:string):SourceConnection|null{
+export function readConnection(db:LedgerDatabase,id:string):SourceConnection|null{
  const row=db.prepare('SELECT payload_json FROM source_connections WHERE id=?').get(id)
  return row?connectionSchema.parse(JSON.parse(String(row.payload_json))):null
 }
-export function sourceObjectFor(db:GraphDatabase,sourceId:string):SourceObject|null{
+export function sourceObjectFor(db:LedgerDatabase,sourceId:string):SourceObject|null{
  const row=db.prepare("SELECT payload_json FROM source_objects WHERE json_extract(payload_json,'$.source_id')=?").get(sourceId)
  return row?sourceObjectSchema.parse(JSON.parse(String(row.payload_json))):null
 }
-export function isCurrentEvidence(db:GraphDatabase,evidenceId:string,sourceId:string):boolean{
+export function isCurrentEvidence(db:LedgerDatabase,evidenceId:string,sourceId:string):boolean{
  const object=sourceObjectFor(db,sourceId);if(!object)return true
  const connection=readConnection(db,object.connection_id)
  return connection!==null&&connection.fence.generation===object.generation&&object.status==='current'&&object.current_evidence_ids.includes(evidenceId)
@@ -53,7 +53,7 @@ export function connectorSourceId(namespace:string,generation:number,objectKey:s
 }
 
 /** Called by the graph schema migration; also supports isolated in-memory memory tests. */
-export function initializeSourceState(db:GraphDatabase):void{
+export function initializeSourceState(db:LedgerDatabase):void{
  db.exec(`
  CREATE TABLE IF NOT EXISTS source_connections(id TEXT PRIMARY KEY,payload_json TEXT NOT NULL) STRICT;
  CREATE TABLE IF NOT EXISTS source_objects(connection_id TEXT NOT NULL,generation INTEGER NOT NULL,object_key TEXT NOT NULL,payload_json TEXT NOT NULL,PRIMARY KEY(connection_id,generation,object_key)) STRICT;
@@ -66,7 +66,7 @@ export function initializeSourceState(db:GraphDatabase):void{
  `)
 }
 
-export function assertSourceStateSchema(db:GraphDatabase):void{
+export function assertSourceStateSchema(db:LedgerDatabase):void{
  const shapes:Record<string,string[]>={source_connections:['id','payload_json'],source_objects:['connection_id','generation','object_key','payload_json'],source_pages:['connection_id','batch_id','page_id','payload_hash','result_json'],source_grants:['source_id','payload_json'],source_extractions:['ticket_key','payload_json'],source_clock:['id','revision']}
  for(const [table,columns] of Object.entries(shapes)){
   const actual=db.prepare(`PRAGMA table_info(${table})`).all()
@@ -77,7 +77,7 @@ export function assertSourceStateSchema(db:GraphDatabase):void{
 }
 
 /** A manual correction inherits only the intersection of still-authorized source destinations. */
-export function correctionProcessingGrant(db:GraphDatabase,sourceIds:readonly string[]):ProcessingGrant|null {
+export function correctionProcessingGrant(db:LedgerDatabase,sourceIds:readonly string[]):ProcessingGrant|null {
  if(!sourceIds.length)return null
  const sources=[...new Set(sourceIds)],grants=sources.map(source=>readProcessingGrant(db,source))
  if(grants.some(grant=>grant===null))return null

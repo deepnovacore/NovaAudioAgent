@@ -5,7 +5,7 @@ const HELP = `Usage: novaaudio-server [--env-file PATH] [start|token-init|pair W
   token-init     Create the configured private host credential file
   pair WSS_URL   Show a one-use pairing QR in an interactive terminal
 
-Requires NOVA_AUDIO_AGENT_SERVER_PORT and NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE.
+Requires SERVER_PORT and SERVER_TOKEN_FILE.
 Configure model credentials and workspace in the environment or --env-file.
 `
 const modules = {
@@ -33,12 +33,12 @@ export async function main(argv, {
     || args.length !== (command === 'pair' ? 1 : 0)) { write(HELP); return 2 }
   if (envFile) loadEnvFile(envFile)
   if (command === 'start') {
-    environment.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH ??= fileURLToPath(new URL('../resources', import.meta.url))
+    environment.CODEX_RESOURCES_PATH ??= fileURLToPath(new URL('../resources', import.meta.url))
     return (await load('entry')).runServerEntry({environment})
   }
   const config = await load('config')
   if (command === 'token-init') {
-    config.initializeServerToken(environment.NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE ?? '')
+    config.initializeServerToken(environment.SERVER_TOKEN_FILE ?? '')
     write('[server-token] initialized local credential file\n')
   } else {
     const {terminalPair} = await load('pair')

@@ -17,6 +17,25 @@ export function HomePage({ en = false }: { en?: boolean }) {
     ['主动有分寸', '重要进展、关注的画面变化，及时提醒；琐碎过程保持安静，不抢你说话。'],
     ['理解你的上下文', '结合个人记忆与知识库回答问题，需要授权时先确认，决定权始终在你。'],
   ];
+  const preview = en ? [
+    ['Context, joined up', 'Beyond your workspaces, Nova keeps the folders you authorize in sync and connects email, calendars and Feishu.'],
+    ['Memory with sources', 'What Nova learns becomes structured memory in one ledger, each entry marked as something you said or something from your sources. Correct, forget or purge any of it.'],
+    ['Align first, then act', 'Nova clarifies the request with your long-term context before handing it to Codex, then checks the result against its acceptance criteria. Take over or hand it back at any time.'],
+    ['Three modes', 'Switch between the Workbench, the orb and background. In background the window hides and the microphone turns off; tasks keep running and the tray shows new reminders.'],
+  ] : [
+    ['拉通 Context', '除了 PC 上的各个工作区，小诺能持续同步你授权的本地目录，也能接入邮件、日历和飞书。'],
+    ['沉淀 Memory', '把信息抽取成结构化记忆，写进统一的记忆账本；每条都标明是你说过的还是来自资料，可以纠正、忘记，也可以彻底删除。'],
+    ['先对齐，再执行', '结合长期 Context 先把需求问清，再交给 Codex；结果对照验收标准核对，中途随时可以接管或交还。'],
+    ['三种模式', '工作台、悬浮球、后台随时切换。后台时窗口隐藏、麦克风关闭，任务照常跑，新提醒由托盘告诉你。'],
+  ];
+  const cards = featureCards.filter(card => card.lang === (en ? 'en' : 'zh-CN'));
+  const tile = (card: (typeof featureCards)[number]) => (
+    <article className="feature-tile" key={card.image}>
+      <div className="feature-tile-copy"><h3>{card.title}</h3><p>{card.description}</p></div>
+      <a className="feature-image-stage" style={{ aspectRatio: `${card.width} / ${card.height}` }} href={sitePath(card.image)} target="_blank" rel="noreferrer" aria-label={card.alt}><img src={sitePath(card.image)} alt={card.alt} loading="lazy" width={card.width} height={card.height} /></a>
+      {card.caption && <p className="feature-caption">{card.caption}</p>}
+    </article>
+  );
   return (
     <>
       <Header en={en} hero />
@@ -61,7 +80,7 @@ export function HomePage({ en = false }: { en?: boolean }) {
             <span>
               {en
                 ? 'Always present. Thoughtfully proactive.'
-                : '常驻在线，主动有分寸。'}
+                : '干活不停，言语有度。'}
             </span>
             <a href="#demo" aria-label={en ? 'Explore Nova' : '了解 Nova'}>
               ↓
@@ -87,21 +106,26 @@ export function HomePage({ en = false }: { en?: boolean }) {
           </h2>
           <p className="lead">
             {en
-              ? 'Nova connects real-time voice with background tasks, camera monitoring, personal memory, and document knowledge. Stay in conversation on your desktop or from your iPhone.'
-              : '小诺常驻桌面，把实时语音、后台执行、视觉监控、个人记忆和知识库连在一起，也能通过 iPhone 随身连接。'}
+              ? 'Human-centric AI understands you before it helps. Nova sits between you and executors like Codex, connecting real-time voice with a Workbench for your todos, goals and delegated tasks, plus camera monitoring, personal memory, and document knowledge. Stay in conversation on your desktop or from your iPhone.'
+              : '以人为中心的 AI，先了解你、理解你，再帮到你。小诺站在你和 Codex 这样的执行器之间，把实时语音、Workbench 里的待办与任务、视觉监控、个人记忆和知识库连在一起，也能通过 iPhone 随身连接。'}
           </p>
         </section>
         <div className="demo-media wrap"><YouTubeCard en={en} /></div>
         <section className="home-highlights wrap" aria-label={en ? 'Highlights' : '核心特性'}>
           {highlights.map(([title, body], i) => <article key={title}><span className="section-label">0{i + 1}</span><h2>{title}</h2><p>{body}</p></article>)}
         </section>
+        <section className="main-features wrap" id="preview">
+          <div className="main-features-heading"><p className="section-label">{en ? 'New in v0.3.0 Preview' : 'v0.3.0 Preview 新功能'}</p><h2>{en ? 'Understands what you mean. Helps with what you need.' : '懂你所想，帮你所需。'}</h2></div>
+          <p>{en ? 'Install or update the preview: ' : '安装或更新预览版：'}<code>npm install --global nova-audio-agent@preview</code>{en ? '. The latest tag stays stable.' : '。latest 标签保持为稳定版。'}</p>
+          <div className="home-highlights preview-grid">{preview.map(([title, body]) => <article key={title}><h3>{title}</h3><p>{body}</p></article>)}</div>
+        </section>
         <section className="main-features wrap" id="features">
-          <div className="main-features-heading"><p className="section-label">{en ? 'Main features' : '核心功能'}</p><h2>{en ? 'More ways to work with Nova.' : '从一句话，到更多可能。'}</h2></div>
-          <div className="feature-gallery">{featureCards.filter(card => card.lang === (en ? 'en' : 'zh-CN')).map(card => <article className="feature-tile" key={card.image}>
-            <div className="feature-tile-copy"><h3>{card.title}</h3><p>{card.description}</p></div>
-            <a className="feature-image-stage" href={sitePath(card.image)} target="_blank" rel="noreferrer" aria-label={card.alt}><img src={sitePath(card.image)} alt={card.alt} loading="lazy" width={1280} height={1280} /></a>
-            {card.caption && <p className="feature-caption">{card.caption}</p>}
-          </article>)}</div>
+          <div className="main-features-heading"><p className="section-label">{en ? 'Use cases' : '使用场景'}</p><h2>{en ? 'More ways to work with Nova.' : '从一句话，到更多可能。'}</h2></div>
+          <div className="feature-gallery">{cards.filter(card => card.group === 'use-case').map(tile)}</div>
+          <div className="main-features-heading feature-group-heading"><p className="section-label">{en ? 'Main features' : '核心功能'}</p><h2>{en ? 'You stay in control.' : '每一步，都由你做主。'}</h2></div>
+          <div className="feature-gallery">{cards.filter(card => card.group === 'feature').map(tile)}</div>
+          <div className="main-features-heading feature-group-heading"><p className="section-label">{en ? 'New in v0.3' : 'v0.3 新功能'}</p><h2>{en ? 'Your day, on one Workbench.' : '一天的事，都在工作台上。'}</h2></div>
+          <div className="feature-gallery">{cards.filter(card => card.group === 'new').map(tile)}</div>
         </section>
         <section className="philosophy" id="design">
           <div className="reading">
@@ -140,7 +164,7 @@ export function HomePage({ en = false }: { en?: boolean }) {
                 <strong>
                   {en ? 'Consider the value' : '判断是否值得告知'}
                 </strong>
-                <span>Surrogate</span>
+                <span>Proactive</span>
               </div>
               <span className="flow-arrow">→</span>
               <div>

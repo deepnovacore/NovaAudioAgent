@@ -1,7 +1,11 @@
-import {StreamingAsrClient} from '../realtime/cascaded/streaming-asr.js'
-import {BreezeTtsClient} from '../realtime/cascaded/http-speech.js'
-import {resolveEndpointingConfig} from '../config/cascaded-realtime-config.js'
-import {resolveCascadedSelection} from '../config/config.js'
+import {SelfHostedAsrClient} from '../realtime/cascaded/self-hosted-asr.js'
+import {SelfHostedTtsClient} from '../realtime/cascaded/self-hosted-tts.js'
+import type {SelfHostedSpeechConfig} from '../config/cascaded-realtime-config.js'
+import {createGeminiAsrFactory,createGeminiTtsFactory} from '../realtime/cascaded/gemini-speech.js'
+import type {GeminiSpeechConfig} from '../config/cascaded-realtime-config.js'
+import {createOpenAIWireProfile} from '../realtime/openai-wire-profile.js'
+import {GeminiLiveAdapter} from '../realtime/gemini.js'
+import {OPENAI_BASE_URL,GEMINI_BASE_URL} from '../config/config.js'
 import type {CommittedConversationPair} from '../realtime/history.js'
 import {transcribeDraft} from '../realtime/cascaded/transcribe.js'
 import type {PromptLanguage} from '../realtime/prompt-language.js'
@@ -12,10 +16,8 @@ import {usageReporterForEndpoint, type UsageReporter} from '../realtime/usage.js
 import {
   capabilitiesFromSettings,
   resolveSupportModelConnection,
-  type CascadedAsrProviderName,
   type CascadedEndpointingProviderName,
   type CascadedLlmProviderName,
-  type CascadedTtsProviderName,
   type Settings,
   DASHSCOPE_COMPATIBLE_BASE_URL,
   STEPFUN_COMPATIBLE_BASE_URL,
@@ -121,9 +123,6 @@ export interface BuildCascadedRealtimeAssemblyOptions
     | 'controlledPreemptiveAlertReconnect'
     | 'preemptiveAlertHistoryRecovery'
     | 'preemptiveAlertHistoryPairs'
-    | 'controlledGuardReconnect'
-    | 'guardHistoryRecovery'
-    | 'guardHistoryPairs'
   > {
   readonly registries?: CascadedProviderRegistries
   readonly supportGateway?: ModelGateway
@@ -180,18 +179,12 @@ export interface CascadedProviderRegistries {
     CascadedEndpointingProviderName,
     (input: AutoEndpointingFactoryInput) => EndpointingFactory
   >>
-  readonly asr: Readonly<Record<
-    CascadedAsrProviderName,
-    (input: VolcengineAsrFactoryInput) => AsrFactory
-  >>
+  readonly asr: Readonly<{volcengine:(input:VolcengineAsrFactoryInput)=>AsrFactory; gemini:(input:GeminiSpeechFactoryInput)=>AsrFactory; 'self-hosted':(input:{config:SelfHostedSpeechConfig})=>AsrFactory}>
   readonly llm: Readonly<{
     readonly qwen: (input: QwenLlmFactoryInput) => CascadedLlmFactory
     readonly ark: (input: ArkLlmFactoryInput) => CascadedLlmFactory
   }>
-  readonly tts: Readonly<Record<
-    CascadedTtsProviderName,
-    (input: VolcengineTtsFactoryInput) => TtsFactory
-  >>
+  readonly tts: Readonly<{volcengine:(input:VolcengineTtsFactoryInput)=>TtsFactory; gemini:(input:GeminiSpeechFactoryInput)=>TtsFactory; 'self-hosted':(input:{config:SelfHostedSpeechConfig})=>TtsFactory}>
 }
 
 export const cascadedProviderRegistries: CascadedProviderRegistries = Object.freeze({
@@ -200,8 +193,8 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
       const capability = input.capability
         ?? createEndpointingCapabilityFactory({
           clock: input.clock,
-          ...(process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH === undefined ? {}
-            : {resourcesPath: process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH}),
+          ...(process.env.CODEX_RESOURCES_PATH === undefined ? {}
+            : {resourcesPath: process.env.CODEX_RESOURCES_PATH}),
           ...(input.liveKitExecutor === undefined
             ? {}
             : {executor: input.liveKitExecutor}),
@@ -212,6 +205,8 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     },
   }),
   asr: Object.freeze({
+    'self-hosted':(input:{config:SelfHostedSpeechConfig})=>({openClient:()=>new SelfHostedAsrClient(input.config)}),
+    gemini:(input:GeminiSpeechFactoryInput)=>createGeminiAsrFactory({...input.config,...(input.onUsage?{onUsage:input.onUsage}:{})}),
     volcengine: (input: VolcengineAsrFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultAsrClient)({
         ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
@@ -239,6 +234,8 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     }),
   }),
   tts: Object.freeze({
+    'self-hosted':(input:{config:SelfHostedSpeechConfig})=>({openClient:()=>new SelfHostedTtsClient(input.config)}),
+    gemini:(input:GeminiSpeechFactoryInput)=>createGeminiTtsFactory({...input.config,...(input.onUsage?{onUsage:input.onUsage}:{})}),
     volcengine: (input: VolcengineTtsFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultTtsClient)({
         ...(input.onUsage === undefined ? {} : {onUsage: input.onUsage}),
@@ -271,9 +268,8 @@ export function buildTextRealtimeAssembly(
   }),{
     transcribeDraft:(pcm:Uint8Array,signal:AbortSignal)=>{
       signal.throwIfAborted()
-      if(options.settings.local_serving)return transcribeDraft(new StreamingAsrClient(options.settings.local_serving.asr),pcm,signal)
       const config=requireSelectedCascadedAsrConfig(options.settings)
-      const factory=registry.asr.volcengine({config,ids,...(options.asrClient===undefined?{}:{clientFactory:options.asrClient}),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,config.endpoint)!})})
+      const factory=selectedAsrFactory(registry,{config,ids,...(options.asrClient===undefined?{}:{clientFactory:options.asrClient}),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,config.endpoint)!})})
       return transcribeDraft(factory.openClient(),pcm,signal)
     },
   })
@@ -288,10 +284,8 @@ export function buildCascadedRealtimeAssembly(
   registry: CascadedProviderRegistries = options.registries ?? cascadedProviderRegistries,
 ): RealtimeAssembly {
   options = filterDisabledCoding(options)
-  const local=options.settings.local_serving
-  const selected = local ? undefined : requireSelectedCascadedRealtimeConfig(options.settings)
-  const selection = selected?.selection ?? resolveCascadedSelection(options.settings)
-  const selectedLlm = requireSelectedCascadedLlmConfig(options.settings)
+  const selected = requireSelectedCascadedRealtimeConfig(options.settings)
+  const selection = selected.selection
   validateCodingResource(options)
   const createPersonalMemory = options.createPersonalMemory
     ?? personalMemoryFactory(options.settings)
@@ -306,32 +300,32 @@ export function buildCascadedRealtimeAssembly(
   }, (options.executorApproval ?? options.codexResource?.approvalController) != null)
 
   const endpointingFactory = registry.endpointing[selection.endpointingProvider]({
-    config: selected?.endpointing ?? resolveEndpointingConfig(options.settings),
+    config: selected.endpointing,
     clock,
     ...(options.endpointingCapability === undefined
       ? {}
       : {capability: options.endpointingCapability}),
     ...(options.liveKitExecutor === undefined ? {} : {liveKitExecutor: options.liveKitExecutor}),
   })
-  const asrFactory:AsrFactory = local ? {openClient:()=>new StreamingAsrClient(local.asr)} : registry.asr[selection.asrProvider]({
-    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected!.asr.endpoint)!}),
-    config: selected!.asr,
+  const asrFactory = selectedAsrFactory(registry,{
+    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.asr.endpoint)!}),
+    config: selected.asr,
     ids,
     ...(options.asrClient === undefined ? {} : {clientFactory: options.asrClient}),
   })
   let instructions = currentInstructions()
-  const createLlmFactory = () => selectedLlm.provider !== 'ark'
+  const createLlmFactory = () => selected.llm.provider !== 'ark'
     ? registry.llm.qwen({
-      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selectedLlm.config.baseUrl)!}),
-      config: selectedLlm.config,
+      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.llm.config.baseUrl)!}),
+      config: selected.llm.config,
       clock,
       ids,
       instructions,
       ...(options.qwenLlmFactory === undefined ? {} : {factory: options.qwenLlmFactory}),
     })
     : registry.llm.ark({
-      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selectedLlm.config.baseUrl)!}),
-      config: selectedLlm.config,
+      ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.llm.config.baseUrl)!}),
+      config: selected.llm.config,
       clock,
       ids,
       instructions,
@@ -343,9 +337,9 @@ export function buildCascadedRealtimeAssembly(
     if (next !== instructions) { instructions = next; selectedLlmFactory = createLlmFactory() }
     return selectedLlmFactory.open()
   }}
-  const ttsFactory:TtsFactory = local ? {openClient:()=>new BreezeTtsClient({...local.tts,...(options.telemetry===undefined?{}:{telemetry:options.telemetry})})} : registry.tts[selection.ttsProvider]({
-    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected!.tts.endpoint)!}),
-    config: selected!.tts,
+  const ttsFactory = selectedTtsFactory(registry,{
+    ...(options.onUsage === undefined ? {} : {onUsage: usageReporterForEndpoint(options.onUsage, selected.tts.endpoint)!}),
+    config: selected.tts,
     ids,
     ...(options.ttsClient === undefined ? {} : {clientFactory: options.ttsClient}),
   })
@@ -354,8 +348,8 @@ export function buildCascadedRealtimeAssembly(
     options,
     selection.llmProvider,
     selection.llmModel,
-    selectedLlm.config.apiKey,
-    selectedLlm.config.baseUrl,
+    selected.llm.config.apiKey,
+    selected.llm.config.baseUrl,
     clock,
   )
   const core = buildAssembly({
@@ -411,7 +405,9 @@ function supportComposition(
   const gateway = new OpenAIModelGateway({
     baseUrl: connection.baseUrl,
     apiKey: connection.apiKey,
-    ...(options.settings.local_serving ? {thinkingControl:'chat-template' as const} : connection.source !== 'generic' && provider === 'deepseek' ? {thinkingControl: 'deepseek' as const} : {}),
+    allowAnonymous: provider === 'self-hosted' && connection.source === 'selected_provider',
+    redirect: provider === 'self-hosted' && connection.source === 'selected_provider' ? 'error' : 'follow',
+    ...(connection.source !== 'generic' && (provider === 'deepseek'||provider === 'openai') ? {thinkingControl: provider} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
@@ -421,7 +417,7 @@ function supportComposition(
   const settings = Object.create(options.settings) as Settings
   Object.assign(settings, {
     watch_model: watchModel,
-    surrogate_model: model,
+    support_model: model,
     planner_model: stripLikePython(options.settings.planner_model) || model,
     compressor_model: model,
   })
@@ -490,9 +486,6 @@ export interface BuildQwenRealtimeAssemblyOptions
     | 'controlledPreemptiveAlertReconnect'
     | 'preemptiveAlertHistoryRecovery'
     | 'preemptiveAlertHistoryPairs'
-    | 'controlledGuardReconnect'
-    | 'guardHistoryRecovery'
-    | 'guardHistoryPairs'
   > {
   /** Deterministic test seam; production uses the bounded WebSocket connector. */
   readonly connector?: QwenConnector
@@ -566,12 +559,13 @@ export function buildQwenRealtimeAssembly(
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const support = resolveSupportModelConnection(options.settings, {
-    baseUrl: stepfunOwnSupport ? STEPFUN_COMPATIBLE_BASE_URL : DASHSCOPE_COMPATIBLE_BASE_URL,
+    baseUrl: options.settings.integrated_provider === 'openai' ? OPENAI_BASE_URL : options.settings.integrated_provider === 'gemini' ? GEMINI_BASE_URL : stepfunOwnSupport ? STEPFUN_COMPATIBLE_BASE_URL : DASHSCOPE_COMPATIBLE_BASE_URL,
     apiKey: qwen.apiKey,
   })
   const gateway = new OpenAIModelGateway({
     baseUrl: support.baseUrl,
     apiKey: support.apiKey,
+    ...(support.source === 'selected_provider' && options.settings.integrated_provider === 'openai' ? {thinkingControl: 'openai' as const} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })
@@ -630,6 +624,8 @@ export type IntegratedProviderRegistry = Readonly<Partial<Record<
 export const integratedProviderRegistry: Required<IntegratedProviderRegistry> = Object.freeze({
   qwen: input => buildQwenRealtimeAssembly(input),
   stepfun: input => buildIntegratedWireProvider(input, createStepFunWireProfile()),
+  openai: input => buildIntegratedWireProvider(input, createOpenAIWireProfile()),
+  gemini: input => new GeminiLiveAdapter({...input.config, ...input, connector:input.connector??webSocketQwenConnector}),
 })
 
 export function buildIntegratedRealtimeAssembly(
@@ -640,7 +636,7 @@ export function buildIntegratedRealtimeAssembly(
   const provider = options.settings.integrated_provider
   const factory = Object.hasOwn(registry, provider) ? registry[provider] : undefined
   if (factory === undefined) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER 无效')
+    throw new ConfigurationError('INTEGRATED_PROVIDER 无效')
   }
   const config = Object.freeze({...requireIntegratedRealtime(options.settings)})
   const clock = options.clock ?? new RealClock()
@@ -695,7 +691,7 @@ export function buildProductionRealtimeAssembly(
   if (options.settings.pipeline_mode === 'cascaded') {
     return (builders.cascaded ?? buildCascadedRealtimeAssembly)(composition)
   }
-  throw new ConfigurationError('NOVA_AUDIO_AGENT_PIPELINE_MODE 无效')
+  throw new ConfigurationError('PIPELINE_MODE 无效')
 }
 
 function productionCodingComposition(
@@ -717,4 +713,12 @@ function productionCodingComposition(
     codingAgentControllerFactory: factory,
     agentDescriptors: [...descriptors, descriptor],
   }
+}
+
+interface GeminiSpeechFactoryInput {readonly config:GeminiSpeechConfig;readonly onUsage?:UsageReporter}
+export function selectedAsrFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineAsrFactoryInput,'config'>&{config:VolcengineAsrConfig|GeminiSpeechConfig|SelfHostedSpeechConfig}):AsrFactory {
+  return input.config.provider==='self-hosted'?registry.asr['self-hosted']({config:input.config}):input.config.provider==='gemini'?registry.asr.gemini({...input,config:input.config}):registry.asr.volcengine({...input,config:input.config})
+}
+export function selectedTtsFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineTtsFactoryInput,'config'>&{config:VolcengineTtsConfig|GeminiSpeechConfig|SelfHostedSpeechConfig}):TtsFactory {
+  return input.config.provider==='self-hosted'?registry.tts['self-hosted']({config:input.config}):input.config.provider==='gemini'?registry.tts.gemini({...input,config:input.config}):registry.tts.volcengine({...input,config:input.config})
 }

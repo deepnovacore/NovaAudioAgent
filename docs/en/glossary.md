@@ -4,10 +4,10 @@
 |---|---|
 | FastBrain | Historical name for the user-facing reasoning path; the realtime implementation calls this the FrontBrain |
 | FrontBrain | The realtime provider model filling the FastBrain role on the voice path |
-| Surrogate | A bounded attention policy for unsolicited suggestions; it selects pooled entries and never generates words |
+| Proactive | Proactive communication: discovers grounded proposals and selects optional updates; never executes tasks or controls the floor |
 | Runtime spine | The event loop that applies state and coordinates work |
 | Memory | Canonical per-channel observations, accepted handoffs, and revision-bound intake facts |
-| Personal memory | Cross-session facts; local mem0 by default, optional VoiceMem or remote resource; never execution authority |
+| Personal memory | Cross-session facts stored by default in the unified local memory ledger; mem0 remains an explicit alternative; never execution authority |
 | Knowledge corpus (K) | Opt-in, separately admitted user documents retrieved through Knowledge MCP; stored apart from the personal-memory store; cloud embedding egress requires explicit disclosure and consent |
 | Saved / applied | Persisted configuration versus configuration activated by the backend; service changes can be saved but pending restart |
 | Channel | One append-only observation stream per capability: `conversation`, `search`, camera evidence, hidden Vision `watch`/`guard`, plus one per active executor |
@@ -40,6 +40,14 @@
 | Endpointing | The cascaded stage deciding when an utterance has ended (semantic turn detector or bounded silence) |
 | Knowledge MCP | Built-in `mcp__nova_knowledge__recall` evidence tool; optional Codex loopback additionally resolves digest-pinned chunks via `get_chunk`, never mutates the corpus |
 | MyContext adapter | An optional loopback-only, read-only evidence provider behind Nova's strict capability handshake; no adapter ships in this repository |
+| Workbench | The desktop main window: an icon rail beside personal-object pages, with Nova present as a collapsible chat pane |
+| Rail | The Workbench's icon navigation column, selecting Todos, Ideas, Goals, Feeds, Task and Profile |
+| Task | A durable, host-tracked unit of delegated work with a goal and acceptance criteria; distinct from an ad hoc executor delegate |
+| Handback / takeover | Transferring a Task's controller between Nova and the user; takeover lets the user message the executor directly and pauses Nova's automatic corrections, handback returns control to Nova |
+| Acceptance criterion | One statement a Task's goal must satisfy before Nova marks it complete; evidence is recorded per criterion |
+| Candidate | An unconfirmed Todo, Idea, Goal or Profile fact Nova notices in conversation; recorded once the user confirms it, except that an explicitly stated todo is recorded right away and can be undone |
+| Source | An authorized document, account or feed that personal memory and suggestions may draw on |
+| Connector | An integration (for example Google, macOS Calendar, Apple Mail or Feishu) that exposes a Source through a read scope the user grants |
 
 ## Invariants
 
@@ -50,8 +58,8 @@
 5. A model sees a bounded ContextView, never unrestricted memory.
 6. Delegate identity and operation must match progress and terminal events.
 7. Terminal completion is accepted at most once.
-8. User-awaited work does not depend on Surrogate for delivery.
-9. Ambient suggestions cannot bypass Surrogate and Floor.
+8. User-awaited work does not depend on Proactive for delivery.
+9. Ambient suggestions cannot bypass Proactive and Floor.
 10. External text and images are treated as evidence, not instructions.
 11. Only configured manifests become model-facing tools.
 12. Secret values are not included in logs or configuration errors.

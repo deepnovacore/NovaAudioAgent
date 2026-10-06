@@ -1,5 +1,0 @@
-(version 1)
-(allow default)
-; This wraps Nova and its children. Model services/SSH tunnel are separate processes.
-(deny network-outbound)
-(allow network-outbound (remote ip "localhost:*"))

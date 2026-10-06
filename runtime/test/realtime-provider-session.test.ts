@@ -169,6 +169,19 @@ test('provider session requires increasing epochs and resets through one reconne
   assert.equal(session.state, 'closed')
 })
 
+test('a failed playback report is best effort and leaves a healthy provider session open', async () => {
+  class ReportingProvider extends FakeProvider {
+    reportPlayback(): Promise<void> { return Promise.reject(new Error('socket closed')) }
+  }
+  const provider = new ReportingProvider()
+  const session = new RealtimeProviderSession(provider)
+  await session.connect([])
+  await session.reportPlayback({session_epoch: 1, response_id: 'r', played_ms: 10, disposition: 'spoken'})
+  assert.equal(session.state, 'connected')
+  assert.equal(provider.closeCount, 0)
+  await session.close()
+})
+
 test('provider session applies adaptation without blocking PCM ingress', async () => {
   const provider = new FakeProvider()
   let context: {readonly revision: number; readonly content: string | null} | undefined = {
@@ -589,3 +602,14 @@ for (const mode of ['text','audio'] as const) {
   assert.equal(sentText,0);assert.equal(provider.sentAudio.length,0)
  })
 }
+
+
+test('requested-response audio does not read memory per frame but response admission revalidates it',async()=>{
+ const provider=Object.assign(new FakeProvider(),{userResponseMode:'requested' as const})
+ let reads=0,fail=false
+ const session=new RealtimeProviderSession(provider,{responseAdaptationRequired:()=>true,responseAdaptation:()=>{reads++;if(fail)throw Error('revoked');return {revision:1,content:'allowed'}}})
+ await session.connect();const before=reads;fail=true
+ for(let i=0;i<50;i++)await session.sendAudio(new Uint8Array(640))
+ assert.equal(provider.sentAudio.length,50);assert.equal(reads,before)
+ await assert.rejects(session.ensureResponse());assert.equal(provider.ensured,0);assert.equal(session.state,'closed')
+})

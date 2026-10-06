@@ -13,16 +13,17 @@ export interface PersonalState {
     revision: number;
     feed: FeedItem[];
     dedupe: string[];
+    brief_runs: Record<string,{status:'processing'|'success'|'failed'|'empty';attempts:number;last_attempt_at:string}>;
     settings: PersonalSettings;
     receipts: Record<string, {
         payload: string;
         result: unknown;
     }>;
 }
-export const initialState = (): PersonalState => ({ conversations:initialConversations(), user_scope: null, revision: 0, feed: [], dedupe: [], settings: { discovery_enabled: true, discovery_interval_minutes: 30 }, receipts: {} });
+export const initialState = (): PersonalState => ({ conversations:initialConversations(), user_scope: null, revision: 0, feed: [], dedupe: [], brief_runs: {}, settings: { discovery_enabled: true, discovery_interval_minutes: 30 }, receipts: {} });
 // ponytail: bounded JSON ledger; move to the existing Worker if 10000 retained matters are needed.
 const MAX_STORE_BYTES = 16 * 1024 * 1024;
-const stateSchema = z.object({ conversations:conversationsStateSchema.default(initialConversations), user_scope: z.string().max(512).nullable(), revision: z.number().int().nonnegative(), feed: z.array(feedItemSchema).max(10000), dedupe: z.array(z.string().max(128)).max(20000), settings: personalSettingsSchema, receipts: z.record(z.string().max(128), z.object({ payload: z.string().max(16384), result: z.unknown() })).refine(r => Object.keys(r).length <= 256) }).strict();
+const stateSchema = z.object({ conversations:conversationsStateSchema.default(initialConversations), user_scope: z.string().max(512).nullable(), revision: z.number().int().nonnegative(), feed: z.array(feedItemSchema).max(10000), dedupe: z.array(z.string().max(128)).max(20000), brief_runs:z.record(z.string().max(128),z.object({status:z.enum(['processing','success','failed','empty']),attempts:z.number().int().min(1).max(3),last_attempt_at:z.iso.datetime()})).default({}), settings: personalSettingsSchema, receipts: z.record(z.string().max(128), z.object({ payload: z.string().max(16384), result: z.unknown() })).refine(r => Object.keys(r).length <= 256) }).strict();
 export class PersonalStore {
     constructor(readonly path: string) { }
     async read(): Promise<PersonalState> {
@@ -58,12 +59,15 @@ export class PersonalStore {
         }
         try {
             await rename(tmp, this.path);
-            const directory = await open(dirname(this.path), constants.O_RDONLY);
-            try {
-                await directory.sync();
-            }
-            finally {
-                await directory.close();
+            // Node cannot fsync directories on Windows; the file was synced before rename.
+            if (process.platform !== 'win32') {
+                const directory = await open(dirname(this.path), constants.O_RDONLY);
+                try {
+                    await directory.sync();
+                }
+                finally {
+                    await directory.close();
+                }
             }
         }
         catch (e) {

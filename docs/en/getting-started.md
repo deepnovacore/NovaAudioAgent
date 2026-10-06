@@ -16,6 +16,26 @@ Desktop targets macOS arm64, Windows x64, and Ubuntu 22.04+ x64.
 
 ## 2. Install and start
 
+### Preview channel
+
+The preview uses npm's `preview` tag; `latest` stays on the stable release.
+
+```bash
+# Install or update the preview
+npm install --global nova-audio-agent@preview
+novaaudio
+# Pin this preview exactly
+npm install --global nova-audio-agent@0.3.0-preview.1
+# Switch back to the stable CLI
+npm install --global nova-audio-agent@latest
+```
+
+Quit Nova before switching channels. Both channels use the same local settings and data; switching the CLI does not roll back data changes. Back up your Nova data before trying a preview.
+
+For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@preview` (or `@latest` for stable).
+
+For development from source:
+
 ```bash
 git clone https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
@@ -23,14 +43,13 @@ npm ci
 cp .env.example .env
 ```
 
-Add the default voice and search credentials to `.env`:
+Add the voice credential to `.env`:
 
 ```dotenv
 DASHSCOPE_API_KEY=your-dashscope-key
-TAVILY_API_KEY=your-tavily-key
 ```
 
-You can disable search in the capability configuration if you do not need it. Start the desktop:
+The same key covers memory, the camera and web search, which uses Bailian search until you add `TAVILY_API_KEY`. A feature whose key is missing stays off, and Settings shows the key it needs. Without a key, the desktop opens a setup window on first launch. Start the desktop:
 
 ```bash
 npm run start:client
@@ -65,6 +84,8 @@ Keys are write-only: the panel shows presence, not their values. Edit `.env` to 
 | `integrated` | One model handles speech directly | Qwen `qwen-audio-3.0-realtime-plus`, voice `longanqian` |
 | `cascaded` | Separate recognition, language model and speech synthesis | Volcengine ASR -> DeepSeek `deepseek-flash` -> Volcengine TTS |
 
+Integrated mode can also use StepFun (`INTEGRATED_PROVIDER=stepfun`, preview) with `STEPFUN_API_KEY`.
+
 One key per platform is reused across selected services: DeepSeek uses `DEEPSEEK_API_KEY`; Qwen uses `DASHSCOPE_API_KEY`; Volcengine speech uses `DOUBAO_BIGMODEL_API_KEY`. An optional `DOUBAO_ASR_API_KEY` overrides recognition credentials; the ASR fallback is `DOUBAO_BIGMODEL_API_KEY`.
 
 Ark is an explicit cascaded LLM option using `ARK_API_KEY`. The conditional Settings Panel shows only the selected mode's controls. Service settings take effect on the backend's next launch. Nova does not automatically fail over to another provider.
@@ -75,9 +96,13 @@ Local wake-word detection is off by default. Enabling it downloads the model on 
 
 While asleep, microphone input goes to local wake detection. Explicit mute stops detection too; unmute manually to resume.
 
+### Choose the main window
+
+Desktop launches into one of three views, controlled by the `startupView` setting: `orb` starts hidden as a floating orb, `workbench` opens the full window (the default), and `last` reopens whichever view was active when Nova last closed. Run `npm run start:workbench` to open Workbench for a single launch regardless of the saved setting. See [Workbench](workbench.md).
+
 ## 5. Memory, documents and iPhone
 
-- **Personal memory** uses local mem0 by default. Open the memory panel from the orb menu to inspect original wording and learned facts. See [personal memory](personal-memory.md).
+- **Personal memory** is on by default and stored locally in the unified memory ledger; inspect, correct or forget entries from the Workbench's Profile page. mem0 remains available as an explicit alternative. See [personal memory](personal-memory.md).
 - **Document knowledge** is enabled in capability settings. Review the data-processing notice before importing files; embedding sends text to your configured model service.
 - **iPhone connection**: on macOS, choose “连接 iPhone…” from the orb menu, enable the phone service, and follow the network and QR-code instructions. See [remote service and pairing](iphone.md).
 
@@ -88,7 +113,7 @@ While asleep, microphone input goes to local wake detection. Explicit mute stops
 | Voice cannot connect | Credentials, service access and connectivity for the selected mode |
 | Codex cannot run | Codex sign-in and access to the project directory |
 | Saved settings have no effect | Look for the pending-restart notice and restart the backend |
-| Search is unavailable | Search credentials; MCP search also needs the selected service enabled |
+| Search is unavailable | Search credentials; Bailian or other MCP search also needs the selected service enabled |
 | A recent fact is missing | Learning takes time; check its state in the memory panel |
 | iPhone has no text-chat option | The host must use cascaded mode and support editable input |
 
@@ -96,7 +121,7 @@ While asleep, microphone input goes to local wake detection. Explicit mute stops
 
 Capabilities are stored in `~/.nova-audio-agent/capabilities.json`. Disable unneeded modules or configure external MCP services and their allowed tools. Only enabled services need credentials.
 
-Search defaults to Tavily. MCP search uses its own service credentials and does not need a Tavily key. Remote MCP requires HTTPS; unauthenticated local testing can use loopback HTTP.
+Search uses Tavily when `TAVILY_API_KEY` is set, otherwise Bailian MCP search with `DASHSCOPE_API_KEY`, otherwise it stays off. MCP search uses its own service credentials and does not need a Tavily key. Remote MCP requires HTTPS; unauthenticated local testing can use loopback HTTP.
 
 For implementation details, see the [architecture guide](architecture.md).
 

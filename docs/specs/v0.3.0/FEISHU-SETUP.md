@@ -1,6 +1,6 @@
 # 飞书连接器配置
 
-需要 `lark-cli >= 1.0.69`。通过 `NOVA_AUDIO_AGENT_FEISHU_CLI_PATH` 指定可执行文件；未指定时使用 `PATH` 中的 `lark-cli`。不包含任何预置应用或组织凭据。
+需要 `lark-cli >= 1.0.69`。通过 `FEISHU_CLI_PATH` 指定可执行文件；未指定时使用 `PATH` 中的 `lark-cli`。不包含任何预置应用或组织凭据。
 
 打开 Nova「设置 → IM 渠道」，按三个步骤完成连接：
 

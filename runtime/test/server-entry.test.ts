@@ -37,22 +37,25 @@ test('token file is private, valid, never overwritten, and invalid config alloca
     assert.equal(statSync(tokenFile).mode & 0o777, 0o600)
     assert.throws(() => initializeServerToken(tokenFile))
     assert.equal(readFileSync(tokenFile, 'utf8'), original)
-    const env = {NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: tokenFile, NOVA_AUDIO_AGENT_SERVER_PORT: '19876'}
+    const env = {SERVER_TOKEN_FILE: tokenFile, SERVER_PORT: '19876'}
     assert.deepEqual(loadServerConfig(env), {port: 19876, token: original.trim(), mediaMode: 'relay'})
-    assert.equal(loadServerConfig({...env, NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE: 'aoq_chat'}).mediaMode, 'aoq_chat')
-    assert.equal(loadServerConfig({...env, NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE: 'aoq_runtime'}).mediaMode, 'aoq_runtime')
-    assert.throws(() => loadServerConfig({...env, NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE: 'unknown'}))
+    assert.deepEqual(loadServerConfig({...env, LANGUAGE: 'en_US:en'}), loadServerConfig(env))
+    assert.equal(loadServerConfig({...env, LANGUAGE: 'en_US:en', PROMPT_LANGUAGE: 'en'}).language, 'en')
+    assert.throws(() => loadServerConfig({...env, PROMPT_LANGUAGE: 'invalid'}), /PROMPT_LANGUAGE/u)
+    assert.equal(loadServerConfig({...env, SERVER_MEDIA_MODE: 'aoq_chat'}).mediaMode, 'aoq_chat')
+    assert.equal(loadServerConfig({...env, SERVER_MEDIA_MODE: 'aoq_runtime'}).mediaMode, 'aoq_runtime')
+    assert.throws(() => loadServerConfig({...env, SERVER_MEDIA_MODE: 'unknown'}))
     for (const port of ['', '0', '-1', '65536', '1.5', '12x']) {
       let allocated = false
       const lines: string[] = []
-      assert.equal(await runServerEntry({environment: {...env, NOVA_AUDIO_AGENT_SERVER_PORT: port},
+      assert.equal(await runServerEntry({environment: {...env, SERVER_PORT: port},
         construct: () => { allocated = true; throw new Error('should not construct') },
         onDiagnostic: line => { lines.push(line) }, processEvents: new EventEmitter()}), 2)
       assert.equal(allocated, false)
       assert.equal(lines.join('').includes(original.trim()), false)
     }
-    assert.throws(() => loadServerConfig({NOVA_AUDIO_AGENT_SERVER_PORT: '19876'}))
-    assert.throws(() => loadServerConfig({...env, NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: 'relative'}))
+    assert.throws(() => loadServerConfig({SERVER_PORT: '19876'}))
+    assert.throws(() => loadServerConfig({...env, SERVER_TOKEN_FILE: 'relative'}))
     chmodSync(tokenFile, 0o644)
     assert.throws(() => loadServerConfig(env))
   } finally { rmSync(dir, {recursive: true, force: true}) }
@@ -69,7 +72,7 @@ test('server ignores IPC disconnect, stops on SIGTERM, and removes signal bindin
   const calls: string[] = []
   try {
     const result = await runServerEntry({
-      environment: {NOVA_AUDIO_AGENT_SERVER_PORT: '19876', NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: tokenFile},
+      environment: {SERVER_PORT: '19876', SERVER_TOKEN_FILE: tokenFile},
       processEvents: events, stop,
       onDiagnostic: line => {
         assert.equal(line.includes(readFileSync(tokenFile, 'utf8').trim()), false)
@@ -132,15 +135,15 @@ for (const invalid of ['credential', 'endpoint', 'cascaded-credential'] as const
     exposeTo: {frontbrain: true, codex: false}, tools: {}}}}))
   const previous = process.env
   const cleanups: (() => void | Promise<void>)[] = []
-  process.env = {NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: config, NOVA_AUDIO_AGENT_REALTIME_TELEMETRY: '',
-    NOVA_AUDIO_AGENT_PIPELINE_MODE: invalid === 'cascaded-credential' ? 'cascaded' : 'integrated',
-    ...(invalid === 'endpoint' ? {DASHSCOPE_API_KEY: 'test-only', NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: 'http://invalid.example'} : {}),
+  process.env = {CAPABILITIES_CONFIG: config, REALTIME_TELEMETRY: '',
+    PIPELINE_MODE: invalid === 'cascaded-credential' ? 'cascaded' : 'integrated',
+    ...(invalid === 'endpoint' ? {DASHSCOPE_API_KEY: 'test-only', QWEN_REALTIME_URL: 'http://invalid.example'} : {}),
   }
   try {
     await assert.rejects(buildProductionComposition({token: 'a'.repeat(32), stop: new AbortController(), remote: true,
       ownership: {own: cleanup => { cleanups.push(cleanup); return () => { /* Failed construction is cleaned below. */ } }},
       onDiagnostic: () => { /* No raw diagnostic text is retained. */ },
-    }), invalid === 'endpoint' ? /NOVA_AUDIO_AGENT_QWEN_REALTIME_URL/u : /DASHSCOPE_API_KEY/u)
+    }), invalid === 'endpoint' ? /QWEN_REALTIME_URL/u : /DASHSCOPE_API_KEY/u)
     assert.equal(discover.mock.callCount(), 0, 'provider validation must precede MCP discovery')
     assert.equal(cleanups.length, 0, 'configuration failure must not allocate owned resources')
   } finally {
@@ -197,8 +200,8 @@ test('AOQ entry starts without loading the desktop/provider graph and closes on 
     // In source-mode tests the same loader handles .js -> .ts; compiled tests need no loader.
     const sourceScript = import.meta.url.endsWith('.ts') ? script.replace('server-entry.js', 'server-entry.ts') : script
     await promisify(execFile)(process.execPath, [...process.execArgv, '--input-type=module', '-e', sourceScript], {
-      env: {PATH: process.env.PATH, NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: tokenFile,
-        NOVA_AUDIO_AGENT_SERVER_PORT: String(address.port), NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE: 'aoq_chat', NOVA_AUDIO_AGENT_AOQ_API_HOST: 'llm-test.cn-beijing.maas.aliyuncs.com'},
+      env: {PATH: process.env.PATH, SERVER_TOKEN_FILE: tokenFile,
+        SERVER_PORT: String(address.port), SERVER_MEDIA_MODE: 'aoq_chat', AOQ_API_HOST: 'llm-test.cn-beijing.maas.aliyuncs.com'},
     })
   } finally { rmSync(dir, {recursive: true, force: true}) }
 })
@@ -209,7 +212,7 @@ test('Windows rejects remote private storage before creating credentials or allo
   const dir = mkdtempSync(join(tmpdir(), 'nova-server-unsupported-'))
   t.after(() => rmSync(dir, {recursive: true, force: true}))
   const tokenFile = join(dir, 'token')
-  const environment = {NOVA_AUDIO_AGENT_SERVER_PORT: '19876', NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: tokenFile}
+  const environment = {SERVER_PORT: '19876', SERVER_TOKEN_FILE: tokenFile}
   assert.throws(() => initializeServerToken(tokenFile), /requires POSIX/u)
   assert.throws(() => loadServerConfig(environment), /requires POSIX/u)
   let allocated = false
@@ -218,4 +221,14 @@ test('Windows rejects remote private storage before creating credentials or allo
   assert.equal(allocated, false)
   assert.equal(existsSync(tokenFile), false)
   assert.equal(existsSync(`${tokenFile}.devices.json`), false)
+})
+
+test('a leftover SURROGATE_MODEL is reported before the configuration check can stop startup', async () => {
+  const {runServerEntry} = await import('../src/server-entry.js')
+  const lines: string[] = []
+  assert.equal(await runServerEntry({environment: {SURROGATE_MODEL: 'old-model'}, onDiagnostic: line => { lines.push(line) }}), 2)
+  assert.deepEqual(lines, [
+    '[config-warning] SURROGATE_MODEL is no longer read; rename it to SUPPORT_MODEL',
+    '[runtime-diagnostic] configuration_required',
+  ])
 })

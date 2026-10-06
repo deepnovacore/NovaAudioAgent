@@ -24,6 +24,7 @@ export interface KnowledgeChunkInput {
 
 export interface ReplaceKnowledgeSourceInput {
   readonly source: KnowledgeSource
+  readonly replaces_source_id?: string
   readonly chunks: readonly KnowledgeChunkInput[]
   readonly provider_id: string
   readonly dims: number
@@ -65,4 +66,9 @@ export interface KnowledgeJob {
   readonly state: 'running' | 'complete' | 'failed'
   readonly error_code: string | null
   readonly updated_at: number
+}
+
+export interface KnowledgeUnembedded {
+  readonly fingerprint: string | null
+  readonly chunks: readonly {readonly chunk_id: string; readonly content_digest: string; readonly text: string; readonly evidence_id?: string}[]
 }

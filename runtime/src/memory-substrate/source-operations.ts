@@ -1,7 +1,7 @@
 import {resolutionContextSchema} from './resolution.js'
 import {syncStatusSchema} from './source-state.js'
 import {z} from 'zod'
-import type {GraphDatabase} from '../workspace-graph/store.js'
+import type {LedgerDatabase} from '../memory-ledger/store.js'
 import {canonicalJson} from '../text/canonical-json.js'
 import {EvidenceRecordSchema,CandidateSchema,EntryRevisionSchema,processingStamp,type MemoryOperation} from './store.js'
 import {connectionSchema,readConnection,sourceObjectSchema,sourceIdSchema,revisionSchema,fenceSchema,connectorSourceId,sha256,readProcessingGrant,processingGrantSchema,extractionTicketSchema,sourceObjectFor,type ExtractionTicket,type SourceConnection,type Activation} from './source-state.js'
@@ -11,10 +11,10 @@ const changeSchema=z.object({object_key:sourceIdSchema,source_id:sourceIdSchema,
 export const applyPageSchema=z.object({fence:fenceSchema,batch_id:z.string().regex(/^[1-9][0-9]{0,14}$/u),page_id:sourceIdSchema,changes:z.array(changeSchema).max(200),pending_ids:z.array(sourceIdSchema).max(200),continuation:z.json(),checkpoint:z.json(),complete:z.boolean()}).strict()
 export type ApplyPage=z.infer<typeof applyPageSchema>
 export interface PageResult {revision:number;applied:boolean;activations:Activation[]}
-export function sourceRevision(db:GraphDatabase):number{return Number(db.prepare('SELECT revision FROM source_clock WHERE id=1').get()!.revision)}
-export function advanceSourceRevision(db:GraphDatabase):number{db.exec('UPDATE source_clock SET revision=revision+1 WHERE id=1');return sourceRevision(db)}
-function save(db:GraphDatabase,c:SourceConnection):void{db.prepare('INSERT INTO source_connections VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json').run(c.fence.connection_id,canonicalJson(connectionSchema.parse(c)))}
-function withdrawObjects(db:GraphDatabase,c:SourceConnection,run:Run,generation=c.fence.generation):void{
+export function sourceRevision(db:LedgerDatabase):number{return Number(db.prepare('SELECT revision FROM source_clock WHERE id=1').get()!.revision)}
+export function advanceSourceRevision(db:LedgerDatabase):number{db.exec('UPDATE source_clock SET revision=revision+1 WHERE id=1');return sourceRevision(db)}
+function save(db:LedgerDatabase,c:SourceConnection):void{db.prepare('INSERT INTO source_connections VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json').run(c.fence.connection_id,canonicalJson(connectionSchema.parse(c)))}
+function withdrawObjects(db:LedgerDatabase,c:SourceConnection,run:Run,generation=c.fence.generation):void{
  let after=''
  for(;;){
   const rows=db.prepare('SELECT payload_json FROM source_objects WHERE connection_id=? AND generation=? AND object_key>? ORDER BY object_key LIMIT 200').all(c.fence.connection_id,generation,after)
@@ -26,7 +26,7 @@ function withdrawObjects(db:GraphDatabase,c:SourceConnection,run:Run,generation=
   if(rows.length<200)break
  }
 }
-export function sourceOperation(db:GraphDatabase,operation:string,input:unknown,run:Run):unknown{
+export function sourceOperation(db:LedgerDatabase,operation:string,input:unknown,run:Run):unknown{
  const v=z.record(z.string(),z.unknown()).parse(input)
  if(operation==='source_events'){
   const q=z.object({prefix:sourceIdSchema,provider:sourceIdSchema,after:revisionSchema.optional(),ack:z.object({revision:revisionSchema,phase:z.enum(['invalidated','ready'])}).strict().optional()}).strict().parse(v)

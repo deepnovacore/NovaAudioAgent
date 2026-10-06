@@ -1,3 +1,5 @@
+import {taskGrantService} from '../personal-agent/tasks.js'
+import type {TaskDispatchContext} from './task-tools.js'
 import {CodingProgressNarrationState, codingProgressSummary} from '../realtime/coding-progress-narration.js'
 import {createHash, randomUUID} from 'node:crypto'
 import { canonicalJson, compareCodePoints } from '../text/canonical-json.js'
@@ -37,7 +39,7 @@ import {
   delegateSchema,
   executorHandoffSchema,
   fastBrainOutputSchema,
-  surrogateOutputSchema,
+  proactiveOutputSchema,
   type Delegate,
   type DelegateRequest,
   type ExecutorManifest,
@@ -73,7 +75,7 @@ interface ProgressTrigger {
 
 interface AppliedProgress {
   readonly delegate: Delegate
-  readonly surrogateCandidateCreated: boolean
+  readonly proactiveCandidateCreated: boolean
 }
 
 interface AppliedObservation {
@@ -277,7 +279,7 @@ export class CoreRuntime {
     this.floor = this.floor.onSpeakEnd(utteranceId)
   }
 
-  /** Bind the realtime speech outlet used when Surrogate is the final arbiter. */
+  /** Bind the realtime speech outlet for selected proactive communication. */
   bindSuggestionSelected(
     observer: (suggestion: Suggestion, reason: WakeReason) => void,
   ): () => void {
@@ -533,8 +535,8 @@ export class CoreRuntime {
         const policy = delegate === undefined ? undefined : this.memory.policies.get(delegate.executor)
         if (applied === undefined || delegate === undefined || policy === undefined) break
         const coding = this.#manifests.get(delegate.executor)?.roles.includes('coding') === true
-        if (this.codingProgressNarration.viaSurrogate(coding, policy.progress_via_surrogate)) {
-          if (applied.surrogateCandidateCreated) {
+        if (this.codingProgressNarration.viaProactive(coding, policy.progress_via_surrogate)) {
+          if (applied.proactiveCandidateCreated) {
             target = {
               slot: 'surrogate.watch',
               reason: wakeReasonSchema.parse({
@@ -651,6 +653,12 @@ export class CoreRuntime {
    * caller cite a memory item that has aged out of the recent window -- the one check that turns
    * "may only reference what it has actually seen" into something enforceable.
    */
+  dispatchTaskExternal(request:DelegateRequest,reason:WakeReason,grant:TaskDispatchContext):RuntimeDispatchResult {
+    taskGrantService(grant)
+    if(request.origin_ref!==grant.origin_ref)throw Error('invalid_origin_ref')
+    const admission=this.#dispatch(request,reason,new Set([grant.origin_ref]),grant)
+    return {accepted:admission.accepted,delegate_id:admission.delegate_id,problem:admission.problem}
+  }
   dispatchExternal(request: DelegateRequest, reason: WakeReason): RuntimeDispatchResult {
     const admission = this.#dispatch(request, reason, this.#visibleMemoryRefs())
     return {
@@ -670,6 +678,7 @@ export class CoreRuntime {
     request: unknown,
     reason: WakeReason,
     capability: object,
+    taskGrant?:TaskDispatchContext,
   ): RuntimeDispatchResult {
     const parsed = delegateRequestSchema.safeParse(request)
     const coding = executorWithRole(this.#manifests.values(), 'coding')
@@ -689,7 +698,7 @@ export class CoreRuntime {
     try {
       // The capability pins only its exact origin. #dispatch still validates that the Memory item
       // exists and applies duplicate, executor, operation and deadline guards normally.
-      const admission = this.#dispatch(parsed.data, reason, new Set([parsed.data.origin_ref]))
+      const admission = this.#dispatch(parsed.data, reason, new Set([parsed.data.origin_ref]),taskGrant)
       accepted = admission.accepted
       return {
         accepted: admission.accepted,
@@ -774,6 +783,7 @@ export class CoreRuntime {
     request: DelegateRequest,
     reason: WakeReason,
     visibleRefs?: ReadonlySet<string>,
+    taskGrant?:TaskDispatchContext,
   ): DelegateAdmission {
     const result = delegateRequestSchema.safeParse(request)
     if (!result.success) return this.#refuseDelegate(request, 'invalid_delegate_request', reason)
@@ -812,7 +822,7 @@ export class CoreRuntime {
         )
       }
     }
-    const originProblem = this.#originProblem(parsed.origin_ref, visibleRefs)
+    const originProblem = this.#originProblem(parsed.origin_ref, visibleRefs,taskGrant)
     if (originProblem !== null) return this.#refuseDelegate(parsed, originProblem, reason)
     const dispatchedAt = this.appliedEvents.at(-1)?.ts ?? 0
     const delegate = delegateSchema.parse({
@@ -982,10 +992,10 @@ export class CoreRuntime {
     // The summary comparison is Node-only: `Runtime._apply_progress` in the oracle builds a
     // candidate for every working summary and `_wake_progress` wakes on every one of them. A
     // Codex heartbeat repeats an unchanged summary for as long as a stage runs, and each repeat
-    // cost a Surrogate call that had already been declined. No committed fixture repeats a
+    // cost a Proactive selection that had already been declined. No committed fixture repeats a
     // summary, so the oracle-generated expectations still agree; the first one that does will
     // diverge here rather than in the fixture.
-    let surrogateCandidateCreated = false
+    let proactiveCandidateCreated = false
     const coding = this.#manifests.get(delegate.executor)?.roles.includes('coding') === true
     const summary = coding ? codingProgressSummary(event.payload.summary) : event.payload.summary
     const previousSummary = this.#latestProgressSummary.get(delegate.delegate_id)
@@ -995,7 +1005,7 @@ export class CoreRuntime {
       this.#latestProgressSummary.set(delegate.delegate_id, summary)
     }
     if (
-      this.codingProgressNarration.viaSurrogate(coding, policy.progress_via_surrogate)
+      this.codingProgressNarration.viaProactive(coding, policy.progress_via_surrogate)
       && event.payload.phase === 'working'
       && summary !== null
       && previousSummary !== summary
@@ -1016,9 +1026,9 @@ export class CoreRuntime {
         delivery_policy: 'once',
       })
       this.#latestProgressSuggestion.set(delegate.delegate_id, suggestion.id)
-      surrogateCandidateCreated = true
+      proactiveCandidateCreated = true
     }
-    return {delegate, surrogateCandidateCreated}
+    return {delegate, proactiveCandidateCreated}
   }
 
   #applyObservation(event: Extract<EventRecord, {kind: 'observation'}>): AppliedObservation | undefined {
@@ -1251,7 +1261,7 @@ export class CoreRuntime {
       this.#results.delete(job.jobId)
       this.#jobs.delete(job.jobId)
       if (slot === 'surrogate.watch') {
-        this.#consumeWatch(output, job)
+        this.#consumeProactiveSelection(output, job)
         return
       }
       const compensation = this.#consumeFastBrain(output, job.reason, event.seq, job)
@@ -1259,8 +1269,8 @@ export class CoreRuntime {
     })
   }
 
-  #consumeWatch(output: unknown, job: ModelJob): void {
-    const parsed = surrogateOutputSchema.safeParse(output)
+  #consumeProactiveSelection(output: unknown, job: ModelJob): void {
+    const parsed = proactiveOutputSchema.safeParse(output)
     if (!parsed.success) {
       this.diagnostics.push({code: 'invalid_surrogate_output'})
       this.#settleProgressTrigger(job.progressTrigger, null)
@@ -1585,7 +1595,7 @@ export class CoreRuntime {
     }
   }
 
-  #originProblem(reference: string, visibleRefs?: ReadonlySet<string>): string | null {
+  #originProblem(reference: string, visibleRefs?: ReadonlySet<string>,grant?:TaskDispatchContext): string | null {
     try {
       parseMemoryRef(reference)
     } catch {
@@ -1593,7 +1603,10 @@ export class CoreRuntime {
     }
     if (!this.#memoryItemExists(reference)) return 'origin_not_found'
     const [channel, seq] = parseMemoryRef(reference)
-    if (this.memory.isHistorical({channel, seq})) return 'historical_origin'
+    if (this.memory.isHistorical({channel, seq})){
+      const task=grant?taskGrantService(grant).get(grant.fence.task_id):undefined
+      if(!task||grant?.origin_ref!==reference||task.conversation_generation===undefined||this.memory.scope.conversation_id!==task.conversation_id+':'+task.conversation_generation)return 'historical_origin'
+    }
     if (visibleRefs !== undefined && !visibleRefs.has(reference)) return 'origin_not_visible'
     return null
   }

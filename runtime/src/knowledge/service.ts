@@ -1,13 +1,17 @@
 import type {ProcessingGrant} from '../memory-substrate/source-state.js'
 import {randomUUID} from 'node:crypto'
+import {appendFileSync} from 'node:fs'
 import {opendir, realpath} from 'node:fs/promises'
 import {join} from 'node:path'
 import {z} from 'zod'
 import {SensitivePathPolicy} from '../memory/sensitivity.js'
-import {chunkKnowledgeText, fetchKnowledgeUrl, readKnowledgeFile, knowledgeExcerpt} from './documents.js'
+import {acceptanceManifest} from '../desktop/workbench-acceptance.js'
+import {chunkKnowledgeText, fetchKnowledgeUrl, readKnowledgeFile, knowledgeExcerpt, KnowledgeDocumentFailure} from './documents.js'
 import type {EmbeddingProvider} from './embeddings.js'
 import type {KnowledgeStoreClient} from './store-client.js'
+import {KnowledgeStoreClientError} from './store-client.js'
 import type {KnowledgeSource} from './types.js'
+import {withModelPurpose} from '../model/model-purpose.js'
 import type {PersonalMemoryResource} from '../memory/personal-memory.js'
 
 export interface KnowledgeEvidenceLedger {
@@ -15,6 +19,8 @@ export interface KnowledgeEvidenceLedger {
   canProcess?: (id:string,purpose:'extraction'|'embedding')=>Promise<boolean>
   processingStamp?: (ids:string[])=>Promise<string|null>
   record(input: {sourceId: string; locator: string; text: string; observedAt: string; kind: 'file'; embeddingConsent: boolean;processingConsent?:ProcessingGrant}): Promise<{evidence_id: string}>
+  /** A document's chunks in one ledger transaction, in order. */
+  recordBatch?(inputs: {sourceId: string; locator: string; text: string; observedAt: string; kind: 'file'; embeddingConsent: boolean;processingConsent?:ProcessingGrant}[]): Promise<{evidence_id: string}[]>
   read: NonNullable<PersonalMemoryResource['readEvidence']>
   remove(sourceId: string): Promise<void>
 }
@@ -22,6 +28,20 @@ export interface KnowledgeEvidenceLedger {
 const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/u)
 const ingestSchema = z.object({kind: z.enum(['file', 'url', 'folder']), locator: z.string().min(1).max(4096), consent: z.literal(true)}).strict()
 const failure = (code: string): Error => new Error(code)
+export interface VectorOwner {readonly signal: AbortSignal; readonly grant: ProcessingGrant | undefined}
+/** Matches the provider's request batch, so each backfill upload is individually authorized. */
+const EMBED_BATCH = 10
+function ingestionCode(cause: unknown, stage: 'read' | 'evidence' | 'embedding' | 'store'): string {
+  if(cause instanceof KnowledgeStoreClientError&&cause.code==='STORE_CAPACITY')return 'index_capacity'
+  if (cause instanceof KnowledgeDocumentFailure) {
+    if (['sensitive_content', 'path_denied'].includes(cause.code)) return 'screening_rejected'
+    if (['unsupported_mime', 'invalid_file', 'file_too_large', 'empty_text', 'invalid_text', 'parse_failed', 'parse_timeout'].includes(cause.code)) return 'unsupported_file'
+    if (cause.code === 'file_changed') return 'file_changed'
+    if (cause.code === 'file_unavailable') return 'file_unavailable'
+  }
+  if (cause instanceof Error && cause.message === 'knowledge_busy') return 'knowledge_busy'
+  return stage === 'embedding' ? 'embedding_failed' : stage === 'evidence' || stage === 'store' ? 'store_failed' : 'ingest_failed'
+}
 
 /** Host-only mutations; all public model surfaces receive read-only evidence. */
 export class KnowledgeService {
@@ -37,6 +57,12 @@ export class KnowledgeService {
   #binding: Promise<void> | undefined
   #migrated = false
   readonly #requireLedger: boolean
+  readonly #vectorQueue = new Map<string, {grant: ProcessingGrant | undefined; signal: AbortSignal | undefined}>()
+  readonly #vectorRetries = new Map<string, number>()
+  readonly #timings = new Map<string, {ms: number; n: number}>()
+  #vectorWork: Promise<void> | undefined
+  #vectorGate: ((id: string, queuedByOwner: boolean) => VectorOwner | null | undefined) | undefined
+  #resumeRequested = false
 
   constructor(options: {store: KnowledgeStoreClient; embedding: EmbeddingProvider; requireEvidenceLedger?: boolean}) {
     this.#store = options.store; this.#embedding = options.embedding
@@ -70,6 +96,82 @@ export class KnowledgeService {
     const work = this.#migrateEvidence(ledger)
     this.#binding = work
     try {await work; this.#migrated = true} finally {if (this.#binding === work) this.#binding = undefined}
+    if (this.#resumeRequested) await this.resumeVectors()
+  }
+
+  /** The source owner decides, per backfill round, whether a knowledge source may still be embedded:
+   * null skips it now, an owner's signal cancels its in-flight uploads and its current grant replaces
+   * the one captured at queue time, undefined means no owner fences it. `queuedByOwner` says the owner
+   * queued this work itself with a lifecycle signal, before it could record the new source id. */
+  setVectorGate(gate: (id: string, queuedByOwner: boolean) => VectorOwner | null | undefined): void {this.#vectorGate = gate}
+
+  /** Scans commit lexically first; the source owner resumes vectors a previous run or a pause left unfinished. */
+  async resumeVectors(): Promise<void> {
+    // A ledger-backed service resumes only after its evidence migration settles.
+    if (!this.#migrated && (this.#requireLedger || this.#binding)) {this.#resumeRequested = true; return}
+    this.#resumeRequested = false
+    for (const id of await this.#store.unembeddedSources(this.#embedding.id, this.#embedding.dims)) this.#queueVectors(id, undefined, undefined)
+  }
+
+  /** Resolves once scan-committed chunks have been embedded or skipped. */
+  async vectorsSettled(): Promise<void> {while (this.#vectorWork) await this.#vectorWork}
+
+  #queueVectors(id: string, grant: ProcessingGrant | undefined, signal: AbortSignal | undefined): void {
+    if (this.#stop.signal.aborted || signal?.aborted) return
+    this.#vectorQueue.set(id, {grant, signal})
+    this.#vectorWork ??= this.#drainVectors().finally(() => {
+      this.#vectorWork = undefined
+      const next = this.#vectorQueue.entries().next().value
+      if (next) this.#queueVectors(next[0], next[1].grant, next[1].signal)
+    })
+  }
+
+  /** One source at a time, off the scan path; a failure is retried twice with a growing delay. */
+  async #drainVectors(): Promise<void> {
+    for (const [id, {grant, signal}] of this.#vectorQueue) {
+      this.#vectorQueue.delete(id)
+      if (this.#stop.signal.aborted) return
+      try {await this.#embedSource(id, grant, signal); this.#vectorRetries.delete(id)} catch (cause) {
+        if (this.#stop.signal.aborted) return
+        const gate = this.#vectorGate?.(id, signal !== undefined)
+        if (gate === null || gate?.signal.aborted || signal?.aborted) {this.#vectorRetries.delete(id); continue}
+        const acceptance = acceptanceManifest()
+        if (acceptance) appendFileSync(join(acceptance.outputDirectory, 'knowledge-errors.ndjson'), JSON.stringify({stage: 'embedding_backfill', code: ingestionCode(cause, 'embedding'), error: cause instanceof Error ? `${cause.name}: ${cause.message}`.slice(0, 300) : typeof cause}) + '\n', {mode: 0o600})
+        const attempt = (this.#vectorRetries.get(id) ?? 0) + 1
+        if (attempt > 2) {this.#vectorRetries.delete(id); continue}
+        this.#vectorRetries.set(id, attempt)
+        setTimeout(() => this.#queueVectors(id, grant, signal), 60000 * attempt).unref()
+      }
+    }
+  }
+
+  async #embedSource(id: string, grant: ProcessingGrant | undefined, owner: AbortSignal | undefined): Promise<void> {
+    // One provider batch per round, so pause or revocation is observed before every upload.
+    for (let round = 0; round < 2000; round++) {
+      const gate = this.#vectorGate?.(id, owner !== undefined)
+      if (gate === null || gate?.signal.aborted || owner?.aborted) return
+      const current = gate ? gate.grant : grant
+      const pending = await this.#store.unembeddedChunks(id, this.#embedding.id, this.#embedding.dims)
+      if (pending.fingerprint === null || pending.chunks.length === 0) return
+      const chunks = pending.chunks.slice(0, EMBED_BATCH)
+      const evidenceIds = chunks.map(chunk => chunk.evidence_id), ids = evidenceIds.filter((value): value is string => value !== undefined)
+      const ledger = this.#ledger
+      const fenced = () => {const now = this.#vectorGate?.(id, owner !== undefined); return now === null || !!now?.signal.aborted || !!gate?.signal.aborted || !!owner?.aborted || (gate !== undefined && now?.grant?.embedding_provider !== current?.embedding_provider)}
+      const allowed = async () => !fenced() && (ledger
+        ? evidenceIds.length > 0 && (await Promise.all(evidenceIds.map(async value => value ? await (ledger.canProcess?.(value, 'embedding') ?? Promise.resolve(false)) : false))).every(Boolean)
+        : current?.embedding_provider === this.#embedding.id)
+      const stamp = ledger ? await ledger.processingStamp?.(ids) ?? null : 'standalone'
+      if (stamp === null || !await allowed()) return
+      const signal = AbortSignal.any([this.#stop.signal, ...(gate ? [gate.signal] : []), ...(owner ? [owner] : []), AbortSignal.timeout(60000)])
+      const vectors = await withModelPurpose('embedding', () => this.#embedding.embed(chunks.map(chunk => chunk.text), signal))
+      signal.throwIfAborted()
+      if (vectors.length !== chunks.length) throw failure('embedding_invalid_result')
+      if (!await allowed() || this.#ledger !== ledger || (ledger && stamp !== await ledger.processingStamp?.(ids))) return
+      // No await between this fence and enqueueing the fingerprint-checked write.
+      const written = await this.#store.setVectors({source_id: id, fingerprint: pending.fingerprint, provider_id: this.#embedding.id, dims: this.#embedding.dims,
+        vectors: chunks.map((chunk, index) => ({chunk_id: chunk.chunk_id, content_digest: chunk.content_digest, vector: [...vectors[index]!]}))})
+      if (written === 0) return
+    }
   }
 
   async #migrateEvidence(ledger: KnowledgeEvidenceLedger): Promise<void> {
@@ -98,7 +200,7 @@ export class KnowledgeService {
     this.#queries++
     try {
       if ((await this.#store.listSources()).length === 0) return []
-      const [vector] = await this.#embedding.embed([input.query], abort)
+      const [vector] = await withModelPurpose('recall',()=>this.#embedding.embed([input.query], abort))
       abort.throwIfAborted()
       if (vector === undefined) throw failure('embedding_invalid_result')
       const hits = await this.#store.recall(input.query, [...vector], this.#embedding.id, input.k)
@@ -115,29 +217,53 @@ export class KnowledgeService {
   }
 
   /** Directory-source admission retains its grant and cancellation through the actual file read. */
-  async syncFile(locator: string, root: string, signal: AbortSignal, sourceId?: string,processingConsent?:ProcessingGrant): Promise<{id: string; excerpt: string; evidence_ids?: string[]}> {
+  /** `vectorSignal` outlives the scan: the source owner aborts it when the source is paused, removed, or withdrawn. */
+  /** Cumulative ingest time per step, for acceptance counts. */
+  timings(): Record<string, number> {
+    const out: Record<string, number> = {}
+    for (const [key, row] of this.#timings) {out[`${key}_ms`] = Math.round(row.ms); out[`${key}_n`] = row.n}
+    return out
+  }
+  async #timed<T>(key: string, run: () => Promise<T>): Promise<T> {
+    const at = performance.now()
+    try {return await run()} finally {const row = this.#timings.get(key) ?? {ms: 0, n: 0}; row.ms += performance.now() - at; row.n++; this.#timings.set(key, row)}
+  }
+
+  async syncFile(locator: string, root: string, signal: AbortSignal, sourceId?: string,processingConsent?:ProcessingGrant,vectorSignal?:AbortSignal): Promise<{id: string; excerpt: string; evidence_ids?: string[]}> {
     this.#assertLedger()
     signal.throwIfAborted()
     this.#stop.signal.throwIfAborted()
     if (this.#active || this.#folderBusy) throw failure('knowledge_busy')
     if (sourceId !== undefined && !idSchema.safeParse(sourceId).success) throw failure('invalid_request')
-    const active = {id: sourceId ?? randomUUID(), abort: new AbortController(), root,...(processingConsent?{processingConsent}:{}),processingAuthorized:false}
+    const active = {id: sourceId ?? randomUUID(), abort: new AbortController(), root,...(processingConsent?{processingConsent}:{}),processingAuthorized:false,deferVectors:true}
     this.#active = active
     const cancel = () => active.abort.abort()
     signal.addEventListener('abort', cancel, {once: true})
     try {
-      let old = (await this.#store.listSources()).find(source => source.locator === locator)
+      const known=await this.#timed('ingest_list',()=>this.#store.listSources())
+      const old = known.find(source => source.locator === locator)
+      if(!old&&known.length>=this.#store.maxSources)throw failure('index_capacity')
       signal.throwIfAborted()
       if (sourceId !== undefined && this.#ledger) {
         if (old && old.id !== sourceId) throw failure('source_changed')
-        if (old) {await this.#ledger.remove(`knowledge:${old.id}`);await this.#store.removeSource(old.id)}
-        active.id = randomUUID(); old = undefined
+        // Build under a fresh ID. The old index stays queryable if reading,
+        // embedding, or the atomic replacement fails.
+        active.id = randomUUID()
       } else if (old !== undefined) active.id = old.id
       let excerpt = ''
       const result = await this.#index('folder_child', locator, active, old, text => {excerpt = knowledgeExcerpt(text)})
       if ('error' in result) throw failure(result.error)
-      const evidence_ids = (await this.#store.listChunks(active.id, 0)).flatMap(chunk => chunk.evidence_id ? [chunk.evidence_id] : []).slice(0, 2)
+      if (old && old.id !== active.id) {
+        await this.#ledger?.remove(`knowledge:${old.id}`)
+      }
+      this.#queueVectors(active.id, processingConsent, vectorSignal)
+      const evidence_ids = (await this.#timed('ingest_list_chunks',()=>this.#store.listChunks(active.id, 0))).flatMap(chunk => chunk.evidence_id ? [chunk.evidence_id] : []).slice(0, 2)
       return {id: active.id, excerpt, ...(evidence_ids.length ? {evidence_ids} : {})}
+    } catch (cause) {
+      signal.throwIfAborted()
+      const code = cause instanceof Error && /^(?:screening_rejected|unsupported_file|file_changed|file_unavailable|embedding_failed|store_failed|knowledge_busy|ingest_failed|index_capacity)$/u.test(cause.message)
+        ? cause.message : 'store_failed'
+      throw failure(code)
     } finally {
       signal.removeEventListener('abort', cancel)
       if (this.#active === active) this.#active = undefined
@@ -192,48 +318,73 @@ export class KnowledgeService {
     finally {if (this.#active === active) this.#active = undefined}
   }
 
-  async #index(kind: KnowledgeSource['kind'], locator: string, active: {id: string; abort: AbortController; root?: string;processingAuthorized?:boolean;processingConsent?:ProcessingGrant}, old?: KnowledgeSource, onIndexed?: (text: string) => void) {
+  async #index(kind: KnowledgeSource['kind'], locator: string, active: {id: string; abort: AbortController; root?: string;processingAuthorized?:boolean;processingConsent?:ProcessingGrant;deferVectors?:boolean}, old?: KnowledgeSource, onIndexed?: (text: string) => void) {
     const signal = AbortSignal.any([active.abort.signal, this.#stop.signal,
       ...(this.#folderSignal === undefined ? [] : [this.#folderSignal]), AbortSignal.timeout(120000)])
     const job = {id: randomUUID(), source_id: active.id, updated_at: Date.now(), error_code: null}
+    let stage: 'read' | 'evidence' | 'embedding' | 'store' = 'store'
+    let committed = false
     try {
       signal.throwIfAborted()
-      await this.#store.recordJob({...job, state: 'running'})
-      const document = await (kind === 'url' ? fetchKnowledgeUrl(locator, signal) : readKnowledgeFile(locator, signal, active.root))
+      await this.#timed('ingest_job',()=>this.#store.recordJob({...job, state: 'running'}))
+      stage = 'read'
+      const document = await this.#timed('ingest_read',()=>kind === 'url' ? fetchKnowledgeUrl(locator, signal) : readKnowledgeFile(locator, signal, active.root))
       signal.throwIfAborted()
-      if (old === undefined && (await this.#store.listSources()).some(value => value.locator === document.locator)) throw failure('source_exists')
+      if (old === undefined && (await this.#timed('ingest_list',()=>this.#store.listSources())).some(value => value.locator === document.locator)) throw failure('source_exists')
       const chunks = chunkKnowledgeText(document.text)
       const processingConsent=active.processingConsent??(active.processingAuthorized?this.#ledger?.processingGrant?.(true):undefined)
       const evidenceIds: (string | undefined)[] = []
-      for (const [ordinal, chunk] of chunks.entries()) {
+      stage = 'evidence'
+      const evidenceAt = performance.now()
+      // The grant belongs to the source, not the chunk: stating it once spares a read and write per chunk.
+      const inputs = chunks.map((chunk, ordinal) => ({sourceId: `knowledge:${active.id}`, locator: `${document.locator}#chunk=${ordinal}`, text: chunk.text, observedAt: new Date().toISOString(), kind: 'file' as const, embeddingConsent: active.processingAuthorized===true||Boolean(processingConsent?.embedding_provider),...(processingConsent&&ordinal===0?{processingConsent}:{})}))
+      const ledger = this.#ledger
+      if (ledger?.recordBatch) {
+        // One ledger transaction per 256 chunks instead of two round trips per chunk.
+        for (let start = 0; start < inputs.length; start += 256) {
+          signal.throwIfAborted()
+          const part = inputs.slice(start, start + 256), saved = await ledger.recordBatch(part)
+          if (saved.length !== part.length) throw failure('store_failed')
+          evidenceIds.push(...saved.map(row => row.evidence_id))
+        }
+      } else for (const input of inputs) {
         signal.throwIfAborted()
-        const evidence = await this.#ledger?.record({sourceId: `knowledge:${active.id}`, locator: `${document.locator}#chunk=${ordinal}`, text: chunk.text, observedAt: new Date().toISOString(), kind: 'file', embeddingConsent: active.processingAuthorized===true||Boolean(processingConsent?.embedding_provider),...(processingConsent?{processingConsent}:{})})
+        const evidence = await ledger?.record(input)
         evidenceIds.push(evidence?.evidence_id)
       }
+      {const row = this.#timings.get('ingest_evidence') ?? {ms: 0, n: 0}; row.ms += performance.now() - evidenceAt; row.n += chunks.length; this.#timings.set('ingest_evidence', row)}
       signal.throwIfAborted()
       const allowed=async()=>{if(this.#ledger)return evidenceIds.length>0&&(await Promise.all(evidenceIds.map(async id=>id?await (this.#ledger?.canProcess?.(id,'embedding')??Promise.resolve(false)):false))).every(Boolean);return active.processingAuthorized===true||processingConsent?.embedding_provider===this.#embedding.id}
-      const stamp=this.#ledger?await this.#ledger.processingStamp?.(evidenceIds.filter((id):id is string=>id!==undefined))??null:'standalone'
-      const vectors = stamp!==null&&await allowed()?await this.#embedding.embed(chunks.map(chunk => chunk.text), signal):null
+      const stamp=this.#ledger?await this.#timed('ingest_stamp',async()=>await this.#ledger?.processingStamp?.(evidenceIds.filter((id):id is string=>id!==undefined)))??null:'standalone'
+      stage = 'embedding'
+      // Scan-time sources commit lexically now; #drainVectors embeds them off the scan path.
+      const vectors = !active.deferVectors&&stamp!==null&&await allowed()?await withModelPurpose('embedding',()=>this.#embedding.embed(chunks.map(chunk => chunk.text), signal)):null
       signal.throwIfAborted()
       if (vectors!==null&&vectors.length !== chunks.length) throw failure('embedding_invalid_result')
       const keepVectors=vectors!==null&&await allowed()&&(!this.#ledger||stamp===await this.#ledger.processingStamp?.(evidenceIds.filter((id):id is string=>id!==undefined)))
       const now = Date.now()
       const title = [...document.title].slice(0, 256).join('')
       // No await between this fence and enqueueing the atomic replacement. Remove enqueues after it.
-      await this.#store.replaceSource({
+      stage = 'store'
+      await this.#timed('ingest_store',()=>this.#store.replaceSource({
         source: {id: active.id, title, kind, locator: document.locator, mime: document.mime,
           fingerprint: document.fingerprint, bytes: document.bytes, created_at: old?.created_at ?? now, updated_at: now, status: 'ready'},
+        ...(old && old.id !== active.id ? {replaces_source_id: old.id} : {}),
         provider_id: this.#embedding.id, dims: this.#embedding.dims,
         // Plain text and extracted PDF/DOCX need not contain Markdown headings.
         chunks: chunks.map((chunk, index) => ({...chunk,
           ...(evidenceIds[index] === undefined ? {} : {evidence_id: evidenceIds[index]}),
           heading_path: [...(chunk.heading_path || title)].slice(0, 256).join(''), vector: keepVectors&&vectors?[...vectors[index]!]:null})),
-      })
-      await this.#store.recordJob({...job, updated_at: Date.now(), state: 'complete'})
+      }))
+      committed = true
+      await this.#store.recordJob({...job, updated_at: Date.now(), state: 'complete'}).catch(() => undefined)
       onIndexed?.(document.text)
       return {ok: true, id: active.id}
-    } catch {
-      const code = signal.aborted ? 'ingest_cancelled' : 'ingest_failed'
+    } catch (cause) {
+      const code = signal.aborted ? 'ingest_cancelled' : ingestionCode(cause, stage)
+      const acceptance=acceptanceManifest()
+      if(acceptance)appendFileSync(join(acceptance.outputDirectory,'knowledge-errors.ndjson'),JSON.stringify({stage,code,error:cause instanceof Error?`${cause.name}: ${cause.message}`.slice(0,300):typeof cause})+'\n',{mode:0o600})
+      if (!committed && old?.id !== active.id) await this.#ledger?.remove(`knowledge:${active.id}`).catch(() => undefined)
       if (!this.#stop.signal.aborted) await this.#store.recordJob({...job, updated_at: Date.now(), state: 'failed', error_code: code}).catch(() => undefined)
       return {error: code, id: active.id}
     }

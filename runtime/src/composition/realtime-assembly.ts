@@ -1,3 +1,6 @@
+import {admitIntakeTask} from '../personal-agent/intake-task.js'
+import type {RuntimeDispatchResult} from '../core/runtime.js'
+import type {TaskDispatchContext} from '../core/task-tools.js'
 import type {CodingTargetController} from '../personal-agent/coding-targets.js'
 import {requireSelectedCascadedLlmConfig} from '../config/cascaded-realtime-config.js'
 import {requireIntegratedRealtime} from '../config/config.js'
@@ -7,13 +10,13 @@ import {UnifiedRetrieval} from '../memory/retrieval.js'
 import {DashScopeEmbeddingProvider} from '../knowledge/embeddings.js'
 import {createHash as embeddingHash} from 'node:crypto'
 import {SubstrateMemoryResource} from '../memory-substrate/resource.js'
-import {WorkspaceGraphStoreClient} from '../workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../memory-ledger/store-client.js'
 import {homedir as memoryHome} from 'node:os'
 import {resolve as memoryPath} from 'node:path'
 import {compileContextView} from '../core/context-view.js'
 import {PersonalAgentHost} from '../personal-agent/host.js'
 import {tmpdir} from 'node:os'
-import {realpathSync} from 'node:fs'
+import {mkdtempSync, realpathSync} from 'node:fs'
 import {join} from 'node:path'
 import type {MemoryInspectionQuery} from '../memory/personal-memory-inspection.js'
 import type {UsageReporter} from '../realtime/usage.js'
@@ -61,7 +64,7 @@ import type {CoordinatorDecision} from '../executors/coding-executor.js'
 /** Intake-issued delegate requests carry the user's own priority (the voice model awaited them). */
 const USER_AWAITED_TOOL = {kind: 'realtime_tool', priority: USER_PRIORITY, routing_class: 'user_awaited', origin: null, selected_suggestion: null} as const
 import {intakeModels, type IntakeModels} from '../executors/coding/intake-model.js'
-import type {IntakeOptions, IntakeSettings, IntakeSession} from '../executors/coding/intake.js'
+import type {IntakeAdmission, IntakeOptions, IntakeSettings, IntakeSession} from '../executors/coding/intake.js'
 import {OpenAIModelGateway,type ModelGateway} from '../model/model-gateway.js'
 import {RealClock} from '../core/clock.js'
 import type {PersonalMemoryResource} from '../memory/personal-memory.js'
@@ -73,10 +76,10 @@ import type {CodingAgentControllerFactory} from '../executors/coding-executor.js
 export function defaultIntake(
   core: Assembly,
   gateway: ModelGateway,
-  settings: IntakeSettings & {readonly surrogate_model: string; readonly planner_model: string; readonly fast_model: string},
+  settings: IntakeSettings & {readonly support_model: string; readonly planner_model: string; readonly fast_model: string},
 ): RealtimeAssemblyOptions['intake'] {
   if (executorWithRole([...core.runtime.executors.values()].map(adapter => adapter.manifest), 'coding') === null) return undefined
-  return {models: intakeModels(gateway, settings.surrogate_model, settings.planner_model || settings.fast_model), settings}
+  return {models: intakeModels(gateway, settings.support_model, settings.planner_model || settings.fast_model), settings}
 }
 
 export const REALTIME_ASSEMBLY_SHUTDOWN_GRACE_MS = 1_000
@@ -157,7 +160,6 @@ function turnKey(sessionEpoch: number, userInputRevision: number): string {
 }
 
 export function configuredMemoryConsumer(settings: AssemblyOptions['settings'], mode: 'text'|'voice'): string|undefined {
-  if(settings.local_serving)return embeddingHash('sha256').update(JSON.stringify({provider:'openai-compatible',endpoint:settings.local_serving.llm.baseUrl,model:settings.local_serving.llm.model})).digest('hex')
   try {
     const selected = mode === 'text' || settings.pipeline_mode === 'cascaded' ? requireSelectedCascadedLlmConfig(settings) : undefined
     const voice = selected === undefined ? requireIntegratedRealtime(settings) : undefined
@@ -198,6 +200,10 @@ export interface RealtimeAssemblyOptions {
   readonly memoryConsumerFingerprint?: string
   readonly nextPlaybackGeneration?:()=>number
   readonly onProviderEvent?: (event:RealtimeProviderEvent)=>void
+  readonly taskSourceTodo?: (origin:string)=>{id:string;version:number}|undefined
+  readonly taskFrontendCurrent?: ()=>boolean
+  readonly taskConversationGeneration?: number
+  readonly taskConversationId?: string
   readonly sharedPersonal?: {host:PersonalAgentHost;memory:PersonalMemoryResource|undefined}
 
   readonly onUsage?: UsageReporter
@@ -224,10 +230,6 @@ export interface RealtimeAssemblyOptions {
   readonly controlledPreemptiveAlertReconnect?: boolean
   readonly preemptiveAlertHistoryRecovery?: PreemptiveAlertHistoryRecovery
   readonly preemptiveAlertHistoryPairs?: number
-  /** @deprecated Compatibility options for existing environment/configuration keys. */
-  readonly controlledGuardReconnect?: boolean
-  readonly guardHistoryRecovery?: PreemptiveAlertHistoryRecovery
-  readonly guardHistoryPairs?: number
   readonly codingTarget?: CodingTargetController
   readonly projectConfirmation?: ProjectConfirmationController
   readonly projectAdapter?: ProjectExecutorAdapter
@@ -291,6 +293,7 @@ export class RealtimeAssembly {
     canProcess:(id,purpose)=>this.#personalMemory?.canProcessEvidence?.(id,purpose)??Promise.resolve(false),
     processingStamp:ids=>this.#personalMemory?.processingStamp?.(ids)??Promise.resolve(null),
     record:input=>this.#personalMemory?.recordEvidence?.(input)??Promise.reject(Error('memory_unavailable')),
+    recordBatch:async inputs=>{const memory=this.#personalMemory;if(memory?.recordEvidenceBatch)return await memory.recordEvidenceBatch(inputs);const out=[];for(const input of inputs)out.push(await this.#knowledgeLedger.record(input));return out},
     read:id=>this.#personalMemory?.readEvidence?.(id)??Promise.resolve(null),
     remove:id=>this.#personalMemory?.forgetSource?.(id)??Promise.reject(Error('memory_unavailable')),
   }
@@ -324,7 +327,11 @@ export class RealtimeAssembly {
     readonly idFactory: () => string
     readonly wallClockNow: () => number
     readonly unbindSuggestionSelected?: () => void
-    readonly sharedPersonal?: {host:PersonalAgentHost;memory:PersonalMemoryResource|undefined}
+    readonly taskSourceTodo?: (origin:string)=>{id:string;version:number}|undefined
+  readonly taskFrontendCurrent?: ()=>boolean
+  readonly taskConversationGeneration?: number
+  readonly taskConversationId?: string
+  readonly sharedPersonal?: {host:PersonalAgentHost;memory:PersonalMemoryResource|undefined}
     readonly personalMemory?: PersonalMemoryResource
     readonly createPersonalMemory?: () => PersonalMemoryResource
     readonly personalMemoryTurnTracker: PersonalMemoryTurnTracker
@@ -349,20 +356,21 @@ export class RealtimeAssembly {
     this.#sharedPersonal = input.sharedPersonal !== undefined
     this.personalAgent = input.sharedPersonal?.host ?? new PersonalAgentHost({
       newsLanguage: input.core.personalAgentConfig?.newsLanguage ?? 'en',
-      path: input.core.personalAgentConfig?.path ?? join(realpathSync(tmpdir()), `nova-personal-${randomUUID()}.json`),
+      path: input.core.personalAgentConfig?.path ?? join(mkdtempSync(join(realpathSync(tmpdir()), 'nova-personal-')), 'personal.json'),
       userScope: input.core.personalAgentConfig?.userScope ?? 'local', memory:()=>this.#personalMemory,
       pool: input.core.runtime.core.suggestions,
       evidence: ref => { try {const [channel,seq]=parseMemoryRef(ref);const item=input.core.runtime.memory.channels.get(channel)?.items.find(item=>item.seq===seq);if(!item)return null;const work=item.content.work_id??item.content.delegate_id;return {subject_key:typeof work==='string'?'task:'+work:ref,source:{type:typeof work==='string'?'task':'conversation',ref},...(typeof work==='string'?{task_ref:{work_id:work}}:{})}}catch{return null}},
       context:()=>{const view=compileContextView(input.core.runtime.memory,input.core.runtime.core.floor.state,input.core.runtime.clock.now(),{suggestions:input.core.runtime.core.suggestions.all(),triggerKind:'discovery_tick'});return {...view,channels:view.channels.slice(-8),affordances:view.affordances.slice(-8),in_flight:view.in_flight.slice(-8)}},
       onTick: snapshot=>{input.core.runtime.post({kind:'discovery_tick',payload:{local_date:snapshot.local_date,weekday:snapshot.weekday,timezone:snapshot.timezone}})},
       evidenceRefs:()=>[...input.core.runtime.memory.channels.values()].flatMap(channel=>channel.items.slice(-4).map(item=>`${item.channel}:${item.seq}`)).slice(-16),
-      ...(input.core.personalAgentConfig?{generateProfile:input.core.personalAgentConfig.surrogate.generateProfile,generateContext:input.core.personalAgentConfig.surrogate.generateContext,rankNews:input.core.personalAgentConfig.surrogate.rankNews,understand:input.core.personalAgentConfig.surrogate.understand,prepareBrief:(snapshot,slot,signal)=>input.core.personalAgentConfig!.surrogate.prepareBrief(snapshot,slot,signal),prepareProposal:(snapshot,proposal,signal)=>input.core.personalAgentConfig!.surrogate.prepareProposal(snapshot,proposal,signal),summarizeMemory:(entries,signal)=>input.core.personalAgentConfig!.surrogate.summarizeMemory(entries,signal),discover:(snapshot,signal)=>input.core.personalAgentConfig!.surrogate.discover(snapshot,signal)}:{}),
+      ...input.core.personalAgentConfig?.models,
       ...(input.service.inputCapabilities.includes('text_input')?{act:async item=>input.service.submitText(`请帮我处理这条建议：${item.title}`)}:{}),
     })
     if (!this.#sharedPersonal) this.personalAgent.setRetrieval(input.retrieval)
     this.#unsubscribePersonalEvents=input.core.runtime.observe((event,current)=>{
       if(current===false)return
       if(event.kind==='handoff'&&input.core.runtime.claimedHandoff(event.seq)){
+        const boundTask=this.personalAgent.tasks.list().find(task=>task.work_ids.includes(event.payload.delegate_id));if(boundTask){void this.personalAgent.taskOutcome(event.payload.delegate_id,event.payload.outcome,event.payload.content,event.payload.refs).catch(()=>this.#diagnose('task_outcome_persistence_failed'));return}
         const title=event.payload.outcome==='ok'?'任务已完成':`任务结束：${event.payload.outcome}`
         void this.personalAgent.taskResult(event.payload.delegate_id,title).catch(()=>{ /* optional host projection failure */ })
         if (event.payload.outcome === 'ok' && this.#personalMemory instanceof SubstrateMemoryResource) {
@@ -809,18 +817,23 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     }
   }
   const projectConfirmation = options.sharedPersonal ? options.projectConfirmation : projectAdapter?.confirmationController ?? options.projectConfirmation
+  const taskIntakes=new Map<string,Readonly<IntakeSession>>()
   const commitProjectOperation = projectAdapter === undefined
     ? options.commitProjectOperation
     : (async (operation: ConfirmedProjectOperation) => {
       const targetRevision = options.codingTarget?.revision
       const result = await projectAdapter.commitConfirmed(
         operation,
-        (request, reason, capability, launchAuthorized) => core.runtime.dispatchConfirmedExternal(
-          request,
-          reason,
-          capability,
-          launchAuthorized,
-        ),
+        async(request, reason, capability, launchAuthorized) => {
+          const intake=taskIntakes.get(operation.proposal_id),tasks=options.sharedPersonal?.host.tasks
+          let grant:TaskDispatchContext|undefined
+          if(tasks&&options.taskConversationId){
+            const task=intake?.task_fence?tasks.get(intake.task_fence.task_id):await tasks.delegate('proposal:'+operation.proposal_id,{conversation_id:options.taskConversationId,...(options.taskConversationGeneration===undefined?{}:{conversation_generation:options.taskConversationGeneration}),goal:intake?.slots.goal.note??operation.work_order!,acceptance:intake?[intake.slots.acceptance.note].filter(Boolean):[],origin_ref:operation.origin_ref})
+            grant=tasks.continuationContext(intake?.task_fence??{task_id:task.id,control_revision:task.control_revision,goal_revision:task.goal_revision})
+            await tasks.setRoute(grant.fence,service.agentNameForChannel(request.executor)??request.executor)
+          }
+          return core.runtime.dispatchConfirmedExternal(request,reason,capability,()=>launchAuthorized()&&(grant?.stillWanted()??true),grant)
+        },
         projectConfirmation,
       )
       if (result.accepted && options.codingTarget && targetRevision !== undefined) {
@@ -845,7 +858,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       signal?.throwIfAborted()
       const conversation = core.runtime.memory.channels.get('conversation')
       const sources = recentDispatchSources(conversation?.items ?? [])
-      const recovery = sessionHolder.current?.deliveryRecoveryContext()
+      const recovery = provider.responseAdaptationMode === 'session_setup' ? undefined : sessionHolder.current?.deliveryRecoveryContext()
       const context = {
         content: [preferences?.content, recovery?.content].filter(Boolean).join('\n') || null,
         ...(recovery?.content ? {delivery_version: recovery.version} : {}),
@@ -944,10 +957,11 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   const resolvedIntakeModels = options.intake?.models
   const resolveCancelTarget: CancelTargetResolver = resolvedIntakeModels === undefined
     ? () => Promise.resolve(null)
-    : (instruction, running) => resolvedIntakeModels.resolveCancelTarget(instruction, running)
+    : (instruction, running) => resolvedIntakeModels.targets.resolveWork(instruction, running, AbortSignal.timeout(15_000))
   const agentDispatchPort = {
     cancelPendingDispatch: (id: string) => core.runtime.cancelPendingDispatch(id),
-    dispatch: (request: {
+    dispatch: async (request: {
+      readonly taskContext?: TaskDispatchContext
       readonly channel: string
       readonly op: string
       readonly request: Readonly<Record<string, JsonValue>>
@@ -957,6 +971,13 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       // This is the runtime-side fence paired with the controller's last check. It must be
       // immediately adjacent to dispatchExternal so a superseding user turn cannot start work.
       if (!request.stillWanted()) return {accepted: false, delegate_id: null}
+      let taskContext=request.taskContext
+      if(!taskContext&&options.sharedPersonal&&options.taskConversationId&&request.op==='run'&&typeof request.request.work_order==='string'){
+        const task=await options.sharedPersonal.host.tasks.delegate('dispatch:'+idFactory(),{conversation_id:options.taskConversationId,...(options.taskConversationGeneration===undefined?{}:{conversation_generation:options.taskConversationGeneration}),goal:request.request.work_order,acceptance:[],origin_ref:request.origin_ref})
+        taskContext=options.sharedPersonal.host.tasks.continuationContext({task_id:task.id,control_revision:task.control_revision,goal_revision:task.goal_revision})
+      }
+      if(!request.stillWanted())return {accepted:false,delegate_id:null}
+      if(taskContext){await options.sharedPersonal!.host.tasks.setRoute(taskContext.fence,service.agentNameForChannel(request.channel)??request.channel);return core.runtime.dispatchTaskExternal({executor:request.channel,op:request.op,request:request.request,origin_ref:taskContext.origin_ref},USER_AWAITED_TOOL,taskContext)}
       return core.runtime.dispatchExternal({
         executor: request.channel, op: request.op, request: request.request, origin_ref: request.origin_ref,
       }, USER_AWAITED_TOOL, undefined, request.stillWanted)
@@ -998,6 +1019,8 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
         ...(previousAssistantReply === undefined ? {} : {previousAssistantReply}),
       }).then(() => undefined)
     }}),
+    onIntakePrepared:(intake,proposal)=>{taskIntakes.clear();taskIntakes.set(proposal.proposal_id,structuredClone(intake))},
+    ...(options.sharedPersonal && options.taskConversationId ? {taskHost:{...(options.taskSourceTodo?{sourceTodo:options.taskSourceTodo}:{}),wake:taskId=>options.sharedPersonal!.host.wakeTask(taskId),cancel:(requestId,fence)=>options.sharedPersonal!.host.cancelTask(requestId,fence,{kind:'nova'}),...(options.taskFrontendCurrent?{isCurrent:options.taskFrontendCurrent}:{}),tasks:options.sharedPersonal.host.tasks,conversation_id:options.taskConversationId,...(options.taskConversationGeneration===undefined?{}:{conversation_generation:options.taskConversationGeneration})}} : {}),
     provider: providerSession,
     runtime: core.runtime,
     tools: core.tools,
@@ -1013,19 +1036,30 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       )) satisfies NonNullable<IntakeOptions['attachEvidence']>}),
       roster: () => projectAdapter.roster(),
       running: () => projectAdapter.running().filter(work=>options.sharedPersonal===undefined||core.runtime.inFlightDelegate(work.work_id)!==undefined),
-      activeProject: () => options.codingTarget?.activeProject() ?? (options.sharedPersonal ? null : projectAdapter.publicProjectView(false).workspace_display_name),
-      resolveTarget: (decision: CoordinatorDecision) => {if(options.codingTarget)return options.codingTarget.resolveTarget(decision);if(options.sharedPersonal&&decision.project===null)throw new ProjectResolutionError('unknown_project',{reason:'explicit_project_required'});return projectAdapter.resolveIntakeTarget(decision)},
+      ...(options.codingTarget ? {boundTarget: () => ({workspace_id: options.codingTarget!.target?.workspace_id ?? null, revision: options.codingTarget!.revision})} : {}),
+      activeProject: () => options.codingTarget ? options.codingTarget.activeProject() : (options.sharedPersonal ? null : projectAdapter.publicProjectView(false).workspace_display_name),
+      resolveTarget: (decision: CoordinatorDecision,taskContext?:TaskDispatchContext) => {if(options.codingTarget)return options.codingTarget.resolveTarget(decision,taskContext);if(options.sharedPersonal&&decision.project===null)throw new ProjectResolutionError('unknown_project',{reason:'explicit_project_required'});return projectAdapter.resolveIntakeTarget(decision,undefined,taskContext)},
       // Spec 08: the coordinator's decision rides with the work order; the adapter re-resolves at run time.
-      dispatch: async (intake: IntakeSession, stillWanted?: () => boolean) => {
-        const targetRevision = options.codingTarget?.revision
-        const admission = await core.runtime.dispatchExternal({
+      dispatch: async (intake: IntakeSession, stillWanted?: () => boolean): Promise<IntakeAdmission> => {
+        const targetRevision = intake.bound_target?.revision
+        let admitted = false
+        const wanted = () => (stillWanted?.() ?? true) && (admitted || targetRevision === undefined || targetRevision === options.codingTarget?.revision)
+        if (!wanted()) return {accepted: false, code: 'superseded'}
+        const tasks=options.sharedPersonal?.host.tasks
+        const dispatchRequest={
         executor: projectAdapter.manifest.name, op: 'run', origin_ref: intake.origin_ref,
         request: {
           work_order: intake.work_order!, project: intake.target?.workspace_display_name ?? null,
           ...(intake.target?.session_id ? {session_id: intake.target.session_id} : {}),
           session: options.codingTarget && !intake.target?.session_id ? 'new' : intake.decision?.session ?? 'latest', ...(intake.title === null ? {} : {title: intake.title}),
         },
-      }, USER_AWAITED_TOOL, undefined, stillWanted)
+      }
+        const admission:RuntimeDispatchResult|'superseded'=tasks&&options.taskConversationId
+          ?await admitIntakeTask(tasks,{intake_id:intake.intake_id,task_fence:intake.task_fence,conversation_id:options.taskConversationId,conversation_generation:options.taskConversationGeneration,goal:intake.slots.goal.note,acceptance:[intake.slots.acceptance.note].filter(Boolean),origin_ref:intake.origin_ref,route:service.agentNameForChannel(projectAdapter.manifest.name)??projectAdapter.manifest.name},wanted,grant=>core.runtime.dispatchTaskExternal(dispatchRequest,USER_AWAITED_TOOL,grant,undefined,wanted))
+          :await core.runtime.dispatchExternal(dispatchRequest,USER_AWAITED_TOOL,undefined,wanted)
+        if (admission === 'superseded') return {accepted: false, code: 'superseded'}
+        // Admission transfers ownership before accepted() advances the remembered target revision.
+        admitted = admission.accepted
         if (admission.accepted && options.codingTarget && targetRevision !== undefined) {
           const selection = intake.target?.workspace_id ? {workspace_id: intake.target.workspace_id, session_id: intake.target.session_id} : null
           try { await options.codingTarget.accepted(selection, admission.delegate_id ?? undefined, targetRevision) }
@@ -1033,9 +1067,15 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
         }
         return admission
       },
-      steer: (intake: IntakeSession, project: string | null, instruction: string, stillWanted?: () => boolean) => {if(options.sharedPersonal&&!projectAdapter.running().some(work=>work.project===project&&core.runtime.inFlightDelegate(work.work_id)!==undefined))throw new ProjectResolutionError('unknown_project',{reason:'work_not_owned'});return core.runtime.dispatchExternal({
-        executor: projectAdapter.manifest.name, op: 'steer', origin_ref: intake.origin_ref, request: {instruction, project},
-      }, USER_AWAITED_TOOL, undefined, stillWanted)},
+      steer: (intake: IntakeSession, project: string | null, instruction: string, stillWanted?: () => boolean) => {
+        const work=projectAdapter.running().find(work=>work.project===project&&core.runtime.inFlightDelegate(work.work_id)!==undefined)
+        if(options.sharedPersonal&&!work)throw new ProjectResolutionError('unknown_project',{reason:'work_not_owned'})
+        const tasks=options.sharedPersonal?.host.tasks,task=tasks?.list().find(task=>work&&task.work_ids.includes(work.work_id))
+        if(options.sharedPersonal&&!task)throw Error('task_not_found')
+        if(task&&intake.task_fence&&intake.task_fence.task_id!==task.id)throw Error('task_work_mismatch')
+        const request={executor:projectAdapter.manifest.name,op:'steer',origin_ref:task?.origin_ref??intake.origin_ref,request:{instruction,project,...(work?{work_id:work.work_id}:{})}}
+        return task&&tasks?core.runtime.dispatchTaskExternal(request,USER_AWAITED_TOOL,tasks.continuationContext(intake.task_fence??{task_id:task.id,goal_revision:task.goal_revision,control_revision:task.control_revision}),undefined,stillWanted):core.runtime.dispatchExternal(request,USER_AWAITED_TOOL,undefined,stillWanted)
+      },
       record: (intake: IntakeSession, kind: string, data: Readonly<Record<string, JsonValue>>) => {
         core.runtime.memory.append(projectAdapter.manifest.name, {
           ts: core.runtime.clock.now(), trust: 'trusted_system', priority: USER_PRIORITY - 1,
@@ -1062,17 +1102,15 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       options.onCaption?.(frame)
     }}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
-    ...(options.controlledPreemptiveAlertReconnect === undefined && options.controlledGuardReconnect === undefined
+    ...(options.controlledPreemptiveAlertReconnect === undefined
       ? {}
-      : {controlledPreemptiveAlertReconnect: options.controlledPreemptiveAlertReconnect
-        ?? options.controlledGuardReconnect}),
-    ...(options.preemptiveAlertHistoryRecovery === undefined && options.guardHistoryRecovery === undefined
+      : {controlledPreemptiveAlertReconnect: options.controlledPreemptiveAlertReconnect}),
+    ...(options.preemptiveAlertHistoryRecovery === undefined
       ? {}
-      : {preemptiveAlertHistoryRecovery: options.preemptiveAlertHistoryRecovery
-        ?? options.guardHistoryRecovery}),
-    ...(options.preemptiveAlertHistoryPairs === undefined && options.guardHistoryPairs === undefined
+      : {preemptiveAlertHistoryRecovery: options.preemptiveAlertHistoryRecovery}),
+    ...(options.preemptiveAlertHistoryPairs === undefined
       ? {}
-      : {preemptiveAlertHistoryPairs: options.preemptiveAlertHistoryPairs ?? options.guardHistoryPairs}),
+      : {preemptiveAlertHistoryPairs: options.preemptiveAlertHistoryPairs}),
     ...(projectConfirmation === undefined
       ? {}
       : {projectConfirmation}),
@@ -1339,16 +1377,16 @@ export function composeRealtime(
   options: Omit<RealtimeAssemblyOptions, 'core' | 'provider' | 'idFactory'> & {readonly settings: AssemblyOptions['settings']; readonly idFactory: () => string},
   providerTuning: Required<Pick<RealtimeAssemblyOptions, 'controlledPreemptiveAlertReconnect' | 'preemptiveAlertHistoryRecovery' | 'preemptiveAlertHistoryPairs'>>,
 ): RealtimeAssembly {
-  const local = (options.createPersonalMemory as {localMemoryConfig?:{path:string;userId:string;extractionModel:string;extraction?:{baseUrl:string;apiKey:string;model:string};embedding:{baseUrl:string;apiKey:string;model:string;dimensions?:number}}} | undefined)?.localMemoryConfig
-  let sharedClient: WorkspaceGraphStoreClient | undefined
-  const getClient = () => sharedClient ??= new WorkspaceGraphStoreClient(memoryPath(options.settings.workspace_graph_path.replace(/^~(?=\/)/u, memoryHome())))
-  const sharedEmbedding=core.knowledge?.embedding??(local?new DashScopeEmbeddingProvider({baseUrl:local.embedding.baseUrl,apiKey:local.embedding.apiKey,model:local.embedding.model,...(local.embedding.dimensions===undefined?{}:{dims:local.embedding.dimensions})}):undefined)
-  const memoryGateway=local?new OpenAIModelGateway({baseUrl:(local.extraction??local.embedding).baseUrl,apiKey:(local.extraction??local.embedding).apiKey,clock:new RealClock(),...(options.settings.local_serving?{thinkingControl:'chat-template' as const,structuredOutput:'json-schema' as const}:{})}):core.gateway
+  const local = (options.createPersonalMemory as {localMemoryConfig?:{path:string;userId:string;extractionModel:string;embedding:{baseUrl:string;apiKey:string;model:string}}} | undefined)?.localMemoryConfig
+  let sharedClient: MemoryLedgerClient | undefined
+  const getClient = () => sharedClient ??= new MemoryLedgerClient(memoryPath(options.settings.workspace_graph_path.replace(/^~(?=\/)/u, memoryHome())))
+  const sharedEmbedding=core.knowledge?.embedding??(local?new DashScopeEmbeddingProvider({baseUrl:local.embedding.baseUrl,apiKey:local.embedding.apiKey,model:local.embedding.model}):undefined)
+  const memoryGateway=local?new OpenAIModelGateway({baseUrl:local.embedding.baseUrl,apiKey:local.embedding.apiKey,clock:new RealClock()}):core.gateway
   const useLocalLedger=local!==undefined||(core.knowledge!==undefined&&options.createPersonalMemory===undefined)
   const createPersonalMemory = useLocalLedger ? () => {
     const memory = new SubstrateMemoryResource({client:getClient(),userId:local?.userId??options.settings.memory_user_id,
-      ...(sharedEmbedding?{embedding:sharedEmbedding,embeddingFingerprint:embeddingHash('sha256').update((options.settings.local_serving?.embedding.baseUrl??(core.knowledge?options.settings.model_base_url:local!.embedding.baseUrl))+'|'+sharedEmbedding.id).digest('hex')} : {}),
-      extractionFingerprint:embeddingHash('sha256').update((local?.extraction?.baseUrl??local?.embedding.baseUrl??options.settings.model_base_url)+'|'+(local?.extractionModel??options.settings.fast_model)).digest('hex'),
+      ...(sharedEmbedding?{embedding:sharedEmbedding,embeddingFingerprint:embeddingHash('sha256').update((core.knowledge?options.settings.model_base_url:local!.embedding.baseUrl)+'|'+sharedEmbedding.id).digest('hex')} : {}),
+      extractionFingerprint:embeddingHash('sha256').update((local?.embedding.baseUrl??options.settings.model_base_url)+'|'+(local?.extractionModel??options.settings.fast_model)).digest('hex'),
       personalMemoryEnabled:local!==undefined,inputConsent:local!==undefined,includeWorkspaceGraph:false,
       conversationProviders: [...new Set((['text','voice'] as const).map(mode=>configuredMemoryConsumer(options.settings,mode)).filter((value): value is string=>value!==undefined))],
       consolidation:{enabled:options.settings.memory_consolidation_enabled,timezone:options.settings.memory_consolidation_timezone,hour:options.settings.memory_consolidation_hour},
@@ -1360,7 +1398,7 @@ export function composeRealtime(
     let opened=false
     return {open:async()=>{await memory.open();opened=true},close:async()=>{opened=false;await memory.close()},
       recall:(_query,queryOptions)=>opened?Promise.resolve({source:'personal',state:'empty',scope:queryOptions?.scope??'any',hits:[],degraded:false}):Promise.reject(Error('memory_unavailable')),
-      processingStamp:ids=>memory.processingStamp(ids),canProcessEvidence:(...args)=>memory.canProcessEvidence(...args),processingGrant:(...args)=>memory.processingGrant(...args),setProcessingConsent:(...args)=>memory.setProcessingConsent(...args),recordEvidence:input=>memory.recordEvidence(input),readEvidence:id=>memory.readEvidence(id),forgetSource:id=>memory.forgetSource(id),
+      processingStamp:ids=>memory.processingStamp(ids),canProcessEvidence:(...args)=>memory.canProcessEvidence(...args),processingGrant:(...args)=>memory.processingGrant(...args),setProcessingConsent:(...args)=>memory.setProcessingConsent(...args),recordEvidence:input=>memory.recordEvidence(input),recordEvidenceBatch:inputs=>memory.recordEvidenceBatch(inputs),readEvidence:id=>memory.readEvidence(id),forgetSource:id=>memory.forgetSource(id),...(memory.forgetSources?{forgetSources:(refs:readonly string[])=>memory.forgetSources(refs)}:{}),
     } satisfies PersonalMemoryResource
   } : options.createPersonalMemory
   const memoryConsumerFingerprint = options.memoryConsumerFingerprint ?? configuredMemoryConsumer(options.settings,options.memoryReadMode ?? 'voice')

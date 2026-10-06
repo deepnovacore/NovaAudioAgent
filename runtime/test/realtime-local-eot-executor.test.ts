@@ -31,7 +31,7 @@ test('standalone production factory runs native VAD and EOT and commits an audio
     endpointing = new LiveKitVolcEndpointing({surface: prepared.surface, executor: prepared.executor,
       config: {vadThreshold: 0.5, vadPreRollMs: 260, vadMinSpeechMs: 250,
         vadSilenceEndMs: 300, vadSpeechPadMs: 30, vadMaxUtteranceMs: 60_000}})
-    const speech = await readFile(new URL('../../../fixtures/realtime/volcengine/v1/endpointing/speech-16k-s16le.pcm', import.meta.url))
+    const speech = await readFile(new URL('../../../assets/endpointing/volcengine-v1/speech-16k-s16le.pcm', import.meta.url))
     const input = Buffer.concat([speech, Buffer.alloc(16_000 * 2 * 3)])
     const events = []
     for (let offset = 0; offset < input.length; offset += 1_024) {

@@ -94,7 +94,7 @@ test('real HTTP discovers exact frontend allowlist, calls original alias, classi
     const result = await adapter.dispatch(alias, {value: 'query'}, context(alias))
     assert.equal(result.outcome, 'ok'); assert.equal(result.trust, 'untrusted_external')
     assert.deepEqual(local.stats(), {listed: 1, called: 1, deleted: 0})
-    const core = buildAssembly({settings: loadSettings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'fixture'}), externalMcp: prepared})
+    const core = buildAssembly({settings: loadSettings({MODEL_API_KEY: 'fixture'}), externalMcp: prepared})
     assert.deepEqual(core.tools.schemas.map(schema => (schema.function as {name: string}).name).sort(), ['memory__recall', 'memory__evidence', 'mcp__external__write', `mcp__external__${alias}`].sort())
     await core.stop()
     assert.equal(local.stats().deleted, 1)
@@ -281,7 +281,7 @@ test('real service carries private origin through queued dispatch; local onset d
   const pending = new Promise<void>(resolve => {release = resolve})
   let captured: ExecutorDispatchContext | undefined
   adapter.dispatch = async (op, args, ctx) => {captured = ctx; entered(); await pending; return originalDispatch(op, args, ctx)}
-  const core = buildAssembly({settings: loadSettings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'fixture'}), externalMcp: prepared})
+  const core = buildAssembly({settings: loadSettings({MODEL_API_KEY: 'fixture'}), externalMcp: prepared})
   const assembly = buildRealtimeAssembly({core, provider: fixtureProvider(), onDiagnostic: () => undefined})
   try {
     await assembly.start()
@@ -371,7 +371,7 @@ test('actual desktop entry awaits discovery and owns cleanup when final exact fr
   const document = {version: 1, frontbrainToolBudget: 1, modules: {search: {enabled: false}, coding: {enabled: false}, camera: {enabled: false}},
     mcpServers: {external: {transport: 'streamable-http', url: local.url, exposeTo: {frontbrain: true}, tools: {lookup: enabled}}}}
   const replacements = {
-    [new URL('../src/config/config.js', import.meta.url).href]: `import {loadSettings as load} from ${JSON.stringify(configUrl)}; export {requireIntegratedRealtime} from ${JSON.stringify(configUrl)}; export function loadSettings(environment, textConversations) {return {...load({NOVA_AUDIO_AGENT_MODEL_API_KEY:'fixture', DASHSCOPE_API_KEY:'fixture', NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER:'qwen'}, textConversations),executors:[]}}`,
+    [new URL('../src/config/config.js', import.meta.url).href]: `import {loadSettings as load} from ${JSON.stringify(configUrl)}; export {renamedEnvironmentWarnings, requireBlockingCredentials, requireIntegratedRealtime, withoutUncredentialedModules} from ${JSON.stringify(configUrl)}; export function loadSettings(environment, textConversations) {return {...load({MODEL_API_KEY:'fixture', DASHSCOPE_API_KEY:'fixture', CASCADE_LLM_PROVIDER:'qwen'}, textConversations),executors:[]}}`,
     [new URL('../src/config/capability-registry.js', import.meta.url).href]: `import {parseCapabilityRegistry} from ${JSON.stringify(registryUrl)}; export function loadCapabilityRegistry() {return parseCapabilityRegistry(${JSON.stringify(document)})}`,
     [new URL('../src/desktop/desktop-session.js', import.meta.url).href]: `export {buildDesktopRealtimeComposition} from ${JSON.stringify(desktopUrl)};
       export async function runDesktopEntryWithStopSources({construct}) {
@@ -388,7 +388,7 @@ test('actual desktop entry awaits discovery and owns cleanup when final exact fr
   }`
   const script = `import {register} from 'node:module'; register('data:text/javascript,'+encodeURIComponent(${JSON.stringify(hook)}),import.meta.url); await import(${JSON.stringify(new URL('../src/desktop-entry.js', import.meta.url).href)});`
   try {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {stdio: ['ignore', 'pipe', 'pipe'], env: {PATH: process.env.PATH!, NOVA_AUDIO_AGENT_DESKTOP_TOKEN: 'a'.repeat(32)}})
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {stdio: ['ignore', 'pipe', 'pipe'], env: {PATH: process.env.PATH!, DESKTOP_TOKEN: 'a'.repeat(32)}})
     let stdout = ''; let stderr = ''
     child.stdout.on('data', chunk => {stdout += String(chunk)}); child.stderr.on('data', chunk => {stderr += String(chunk)})
     const result = await new Promise<number | null>((resolve, reject) => {child.on('error', reject); child.on('exit', resolve)})
@@ -422,7 +422,7 @@ test('startup cancellation closes a real stdio child stuck in tools/list without
 
 test('enabled frontend servers require prepared discovery and prepared registry supplies module gates', async () => {
   const capabilities = registry('http://127.0.0.1/mcp')
-  const settings = loadSettings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'fixture'})
+  const settings = loadSettings({MODEL_API_KEY: 'fixture'})
   assert.throws(() => buildAssembly({settings, capabilities}), /external_mcp_discovery_required/u)
   const prepared = await prepareExternalMcp(parseCapabilityRegistry({version: 1, modules: {coding: {enabled: false}}}))
   try {

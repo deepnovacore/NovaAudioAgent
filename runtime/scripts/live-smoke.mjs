@@ -30,7 +30,7 @@ if (values.list) {
   if ((values.provider || values.model) && selected.some(suite => suite.id !== 'text-tools')) throw new Error('--provider/--model apply only to text-tools; configure other suites through environment')
   const environment = {...(values['env-file'] ? parseEnv(await readFile(values['env-file'], 'utf8')) : {}), ...process.env}
   const usesText=selected.some(suite=>suite.id==='text-tools')
-  const fixtureText = usesText ? await readFile(join(root, 'fixtures/live/text-tools.json'), 'utf8') : ''
+  const fixtureText = usesText ? await readFile(join(root, 'tests/fixtures/live/text-tools.json'), 'utf8') : ''
   const cases = usesText ? validateFixtures(JSON.parse(fixtureText)).cases.filter(entry => !values.case || entry.id === values.case) : []
   if (usesText && !cases.length) throw new Error('unknown or empty case selection')
   const output = resolve(values.output ?? join(tmpdir(), `nova-live-${randomUUID()}.json`))

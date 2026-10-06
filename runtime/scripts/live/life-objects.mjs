@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {mkdtemp,realpath,writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join,isAbsolute} from 'node:path'
-import {WorkspaceGraphStoreClient} from '../../dist/src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../../dist/src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../../dist/src/memory-substrate/resource.js'
 import {PersonalAgentHost} from '../../dist/src/personal-agent/host.js'
 import {SuggestionPool} from '../../dist/src/core/suggestions.js'
@@ -16,7 +16,7 @@ const report={version:1,module:'life-objects',layer:'runtime-live',synthetic:tru
 let memory,host,sequence=0
 const gateway={async *stream(){throw Error('Unexpected model call')},complete(){return Promise.reject(Error('Unexpected model call'))}}
 async function open(){
- memory=new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(join(directory,'ledger.sqlite')),userId:'synthetic-life',gateway,model:'synthetic',inputConsent:true,conversationProviders:['synthetic'],consolidation:{enabled:false}})
+ memory=new SubstrateMemoryResource({client:new MemoryLedgerClient(join(directory,'ledger.sqlite')),userId:'synthetic-life',gateway,model:'synthetic',inputConsent:true,conversationProviders:['synthetic'],consolidation:{enabled:false}})
  await memory.open()
  host=new PersonalAgentHost({path:join(directory,'host.json'),userScope:'synthetic-life',memory:()=>memory,pool:new SuggestionPool(),evidence:()=>null})
  await host.open()

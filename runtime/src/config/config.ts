@@ -1,4 +1,3 @@
-import {localServingSchema} from './local-serving.js'
 import {parseCapabilityRegistry, type CapabilityRegistry} from './capability-registry.js'
 import { z } from 'zod'
 import { stripLikePython } from '../text/python-text.js'
@@ -7,11 +6,11 @@ import {supportsVision} from '../model/vision-capability.js'
 export const proactivityPresetSchema = z.enum(['conservative', 'balanced', 'eager'])
 const pipelineModeSchema = z.enum(['integrated', 'cascaded'])
 const promptLanguageSchema = z.enum(['zh-CN', 'en'])
-const integratedProviderNameSchema = z.enum(['qwen', 'stepfun'])
+const integratedProviderNameSchema = z.enum(['qwen', 'stepfun', 'openai', 'gemini'])
 const cascadedEndpointingProviderNameSchema = z.enum(['auto'])
-const cascadedAsrProviderNameSchema = z.enum(['volcengine'])
-const cascadedLlmProviderNameSchema = z.enum(['qwen', 'ark', 'deepseek'])
-const cascadedTtsProviderNameSchema = z.enum(['volcengine'])
+const cascadedAsrProviderNameSchema = z.enum(['volcengine', 'gemini', 'self-hosted'])
+const cascadedLlmProviderNameSchema = z.enum(['qwen', 'ark', 'deepseek', 'openai', 'gemini', 'self-hosted'])
+const cascadedTtsProviderNameSchema = z.enum(['volcengine', 'gemini', 'self-hosted'])
 const qwenGuardHistoryRecoverySchema = z.enum(['none', 'packed'])
 const qwenGuardHistoryPairsSchema = z.union([z.literal(1), z.literal(2), z.literal(4)])
 /** Validity of a name is decided by assembly (`resolveExecutors`), which knows the registered adapters. */
@@ -27,10 +26,11 @@ const volcFloatSchema = z.custom<number>(value => typeof value === 'number')
 export const DASHSCOPE_COMPATIBLE_BASE_URL =
   'https://dashscope.aliyuncs.com/compatible-mode/v1'
 export const STEPFUN_COMPATIBLE_BASE_URL = 'https://api.stepfun.com/v1'
+export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
+export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai'
 const STEPFUN_SUPPORT_MODEL = 'step-3.7-flash'
 
 export const settingsSchema = z.object({
-  local_serving: localServingSchema.nullable().default(null),
   model_base_url: z.url().default(DASHSCOPE_COMPATIBLE_BASE_URL),
   model_api_key: z.string().nullable().default(null),
   openrouter_api_key: z.string().nullable().default(null),
@@ -39,7 +39,7 @@ export const settingsSchema = z.object({
   watch_model: z.string().nullable().default(null),
   conversation_vision_enabled: z.boolean().default(false),
   monitor_camera_device_id: z.string().max(256).refine(value => !/[\x00-\x1f]/u.test(value)).default(''),
-  surrogate_model: z.string().default('qwen-plus'),
+  support_model: z.string().default('qwen-plus'),
   compressor_model: z.string().default('qwen-flash'),
   language: promptLanguageSchema.default('zh-CN'),
   news_language: promptLanguageSchema.default('en'),
@@ -49,6 +49,12 @@ export const settingsSchema = z.object({
   cascade_asr_provider: cascadedAsrProviderNameSchema.default('volcengine'),
   cascade_llm_provider: cascadedLlmProviderNameSchema.default('deepseek'),
   cascade_llm_model: z.string().nullable().default(null),
+  self_hosted_asr_url: z.string().default(''),
+  self_hosted_llm_base_url: z.string().default(''),
+  self_hosted_tts_url: z.string().default(''),
+  self_hosted_asr_api_key: z.string().nullable().default(null),
+  self_hosted_llm_api_key: z.string().nullable().default(null),
+  self_hosted_tts_api_key: z.string().nullable().default(null),
   cascade_tts_provider: cascadedTtsProviderNameSchema.default('volcengine'),
   camera_module_enabled: z.boolean().default(true),
   qwen_realtime_url: z.string().default('wss://dashscope.aliyuncs.com/api-ws/v1/realtime'),
@@ -57,6 +63,17 @@ export const settingsSchema = z.object({
   stepfun_realtime_url: z.string().default('wss://api.stepfun.com/v1/realtime'),
   stepfun_realtime_model: z.string().default('stepaudio-3-realtime-preview'),
   stepfun_realtime_voice: z.string().default(''),
+  openai_api_key: z.string().nullable().default(null),
+  gemini_api_key: z.string().nullable().default(null),
+  gemini_asr_model: z.string().default('gemini-3.5-flash'),
+  gemini_tts_model: z.string().default('gemini-3.8-flash-tts'),
+  gemini_tts_voice: z.string().default('Kore'),
+  openai_realtime_url: z.string().default('wss://api.openai.com/v1/realtime'),
+  openai_realtime_model: z.string().default('gpt-realtime-2.1-mini'),
+  openai_realtime_voice: z.string().default('marin'),
+  gemini_realtime_url: z.string().default('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'),
+  gemini_realtime_model: z.string().default('gemini-3.8-live'),
+  gemini_realtime_voice: z.string().default('Kore'),
   stepfun_api_key: z.string().nullable().default(null),
   dashscope_api_key: z.string().nullable().default(null),
   ark_api_key: z.string().nullable().default(null),
@@ -110,7 +127,6 @@ export const settingsSchema = z.object({
   generate_plan: z.boolean().default(true),
   planner_model: z.string().default(''),
   progress_bubbles: progressBubblesSchema.default('milestones'),
-  capabilities_config_path: z.string().default('~/.nova-audio-agent/capabilities.json'),
   search_provider: searchProviderSchema.default('tavily'),
   search_mcp_url: z.string().default(''),
   search_mcp_tool: z.string().default('web_search'),
@@ -172,10 +188,10 @@ export interface VolcengineRealtimeConfig {
 
 export interface CascadedSelection {
   readonly endpointingProvider: 'auto'
-  readonly asrProvider: 'volcengine'
-  readonly llmProvider: 'qwen' | 'ark' | 'deepseek'
+  readonly asrProvider: CascadedAsrProviderName
+  readonly llmProvider: CascadedLlmProviderName
   readonly llmModel: string
-  readonly ttsProvider: 'volcengine'
+  readonly ttsProvider: CascadedTtsProviderName
 }
 
 export interface CascadedCredentials {
@@ -196,7 +212,6 @@ interface LocalPersonalMemoryConfig {
   readonly connection: 'local'
   readonly provider: 'voicemem' | 'mem0'
   readonly extractionModel: string
-  readonly extraction?: {readonly baseUrl:string; readonly apiKey:string; readonly model:string}
   readonly path: string
   readonly userId: string
   readonly embedding: {
@@ -226,89 +241,120 @@ export class ConfigurationError extends Error {
   }
 }
 
-export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textConversations = false): Settings {
-  let serving: unknown = null
-  if (environment.NOVA_AUDIO_AGENT_LOCAL_SERVING !== undefined) {
-    try { serving = localServingSchema.parse(JSON.parse(environment.NOVA_AUDIO_AGENT_LOCAL_SERVING)) } catch { throw new ConfigurationError('invalid NOVA_AUDIO_AGENT_LOCAL_SERVING') }
+/** Names the credentials the selected voice pipeline cannot start without, so the host can ask for exactly those. */
+export class BlockingConfigurationError extends ConfigurationError {
+  constructor(readonly pipeline: PipelineMode, readonly missing: readonly string[]) {
+    super(`缺少 ${missing.join(', ')}`)
+    this.name = 'BlockingConfigurationError'
   }
-  const pipelineMode = serving === null ? parsePipelineMode(environment.NOVA_AUDIO_AGENT_PIPELINE_MODE) : 'cascaded'
+}
+
+/** Environment names that were renamed without an alias; the old name is ignored, so its presence deserves a startup warning. */
+export const RENAMED_ENVIRONMENT: Readonly<Record<string, string>> = {SURROGATE_MODEL: 'SUPPORT_MODEL'}
+
+/** One `[config-warning]` line per renamed variable still set in the environment. */
+export function renamedEnvironmentWarnings(environment: NodeJS.ProcessEnv): readonly string[] {
+  return Object.entries(RENAMED_ENVIRONMENT)
+    .filter(([removed]) => environment[removed] !== undefined)
+    .map(([removed, current]) => `[config-warning] ${removed} is no longer read; rename it to ${current}`)
+}
+
+export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textConversations = false): Settings {
+  const pipelineMode = parsePipelineMode(environment.PIPELINE_MODE)
   const integratedProvider = pipelineMode === 'integrated'
-    ? parseIntegratedProvider(environment.NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER)
+    ? parseIntegratedProvider(environment.INTEGRATED_PROVIDER)
     : undefined
   const cascadedProviders = pipelineMode === 'cascaded'
     ? {
       endpointing: parseCascadedEndpointingProvider(
-        environment.NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER,
+        environment.CASCADE_ENDPOINTING_PROVIDER,
       ),
-      asr: parseCascadedAsrProvider(environment.NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER),
-      llm: parseCascadedLlmProvider(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER),
-      tts: parseCascadedTtsProvider(environment.NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER),
+      asr: parseCascadedAsrProvider(environment.CASCADE_ASR_PROVIDER),
+      llm: parseCascadedLlmProvider(environment.CASCADE_LLM_PROVIDER),
+      tts: parseCascadedTtsProvider(environment.CASCADE_TTS_PROVIDER),
     }
     : undefined
-  const configuredExecutor = optionalString(environment.NOVA_AUDIO_AGENT_EXECUTOR)
+  const configuredExecutor = optionalString(environment.EXECUTOR)
   const executor = configuredExecutor === undefined || configuredExecutor === ''
     ? null
     : configuredExecutor
-  const executors = parseExecutors(environment.NOVA_AUDIO_AGENT_EXECUTORS, configuredExecutor ?? '')
+  const executors = parseExecutors(environment.EXECUTORS, configuredExecutor ?? '')
   // StepFun support chat defaults to its own model. fast_model keeps its DashScope default
   // because local memory extraction reaches it through the DashScope embedding connection;
   // an empty watch or planner model would fall back to it, so empty counts as unset there.
-  const stepfunSupport = integratedProvider === 'stepfun'
-    && (optionalSecret(environment.NOVA_AUDIO_AGENT_MODEL_API_KEY) ?? '').trim() === ''
+  const stepfunSupport = !textConversations && integratedProvider === 'stepfun'
+    && (optionalSecret(environment.MODEL_API_KEY) ?? '').trim() === ''
   const supportDefault = (value: string | undefined): string | undefined =>
-    value ?? (stepfunSupport ? STEPFUN_SUPPORT_MODEL : undefined)
+    value ?? (stepfunSupport ? STEPFUN_SUPPORT_MODEL : !textConversations && !(environment.MODEL_API_KEY ?? '').trim() && integratedProvider === 'openai' ? 'gpt-6-luna' : !textConversations && !(environment.MODEL_API_KEY ?? '').trim() && integratedProvider === 'gemini' ? 'gemini-3.5-flash-lite' : undefined)
   const candidate = {
-    local_serving: serving,
-    model_base_url: optionalString(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL),
-    model_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_MODEL_API_KEY),
+    self_hosted_asr_url: optionalString(environment.SELF_HOSTED_ASR_URL),
+    self_hosted_llm_base_url: optionalString(environment.SELF_HOSTED_LLM_BASE_URL),
+    self_hosted_tts_url: optionalString(environment.SELF_HOSTED_TTS_URL),
+    self_hosted_asr_api_key: optionalSecret(environment.SELF_HOSTED_ASR_API_KEY),
+    self_hosted_llm_api_key: optionalSecret(environment.SELF_HOSTED_LLM_API_KEY),
+    self_hosted_tts_api_key: optionalSecret(environment.SELF_HOSTED_TTS_API_KEY),
+
+    openai_api_key: optionalSecret(environment.OPENAI_API_KEY),
+    gemini_api_key: optionalSecret(environment.GEMINI_API_KEY),
+    gemini_asr_model: optionalString(environment.GEMINI_ASR_MODEL),
+    gemini_tts_model: optionalString(environment.GEMINI_TTS_MODEL),
+    gemini_tts_voice: optionalString(environment.GEMINI_TTS_VOICE),
+    openai_realtime_url: optionalString(environment.OPENAI_REALTIME_URL),
+    openai_realtime_model: optionalString(environment.OPENAI_REALTIME_MODEL),
+    openai_realtime_voice: optionalString(environment.OPENAI_REALTIME_VOICE),
+    gemini_realtime_url: optionalString(environment.GEMINI_REALTIME_URL),
+    gemini_realtime_model: optionalString(environment.GEMINI_REALTIME_MODEL),
+    gemini_realtime_voice: optionalString(environment.GEMINI_REALTIME_VOICE),
+    model_base_url: optionalString(environment.MODEL_BASE_URL),
+    model_api_key: optionalSecret(environment.MODEL_API_KEY),
     openrouter_api_key: optionalSecret(environment.OPENROUTER_API_KEY),
     tavily_api_key: optionalSecret(environment.TAVILY_API_KEY),
-    fast_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_FAST_MODEL),
-    watch_model: supportDefault(emptyAsUnset(rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_WATCH_MODEL))),
-    ...(supportsVision('qwen', environment.NOVA_AUDIO_AGENT_WATCH_MODEL ?? '')
-      || environment.NOVA_AUDIO_AGENT_MEMORY_CONNECTION?.trim() === 'local'
+    fast_model: rawEnvironmentValue(environment.FAST_MODEL),
+    watch_model: supportDefault(emptyAsUnset(rawEnvironmentValue(environment.WATCH_MODEL))),
+    ...(supportsVision('qwen', environment.WATCH_MODEL ?? '')
+      || environment.MEMORY_CONNECTION?.trim() === 'local'
       ? {dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY)} : {}),
-    ...(supportsVision('ark', environment.NOVA_AUDIO_AGENT_WATCH_MODEL ?? '')
+    ...(supportsVision('ark', environment.WATCH_MODEL ?? '')
       ? {ark_api_key: optionalSecret(environment.ARK_API_KEY),
-          volcengine_ark_base_url: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL)} : {}),
-    conversation_vision_enabled: optionalBoolean(environment.NOVA_AUDIO_AGENT_CONVERSATION_VISION_ENABLED),
-    monitor_camera_device_id: optionalString(environment.NOVA_AUDIO_AGENT_MONITOR_CAMERA_DEVICE_ID),
-    surrogate_model: supportDefault(rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_SURROGATE_MODEL)),
-    compressor_model: supportDefault(rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_COMPRESSOR_MODEL)),
-    language: parsePromptLanguageSetting(environment.NOVA_AUDIO_AGENT_LANGUAGE),
-    news_language: parseSelector(promptLanguageSchema, environment.NOVA_AUDIO_AGENT_NEWS_LANGUAGE, 'en', 'NOVA_AUDIO_AGENT_NEWS_LANGUAGE'),
+          volcengine_ark_base_url: rawEnvironmentValue(environment.VOLCENGINE_ARK_BASE_URL)} : {}),
+    conversation_vision_enabled: optionalBoolean(environment.CONVERSATION_VISION_ENABLED),
+    monitor_camera_device_id: optionalString(environment.MONITOR_CAMERA_DEVICE_ID),
+    support_model: supportDefault(rawEnvironmentValue(environment.SUPPORT_MODEL)),
+    compressor_model: supportDefault(rawEnvironmentValue(environment.COMPRESSOR_MODEL)),
+    language: parsePromptLanguageSetting(environment.PROMPT_LANGUAGE),
+    news_language: parseSelector(promptLanguageSchema, environment.NEWS_LANGUAGE, 'en', 'NEWS_LANGUAGE'),
     pipeline_mode: pipelineMode,
     camera_module_enabled: optionalBoolean(
-      environment.NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED,
+      environment.CAMERA_MODULE_ENABLED,
     ),
     ...(pipelineMode === 'integrated' ? {
-      ...(textConversations ? {cascade_llm_provider: parseCascadedLlmProvider(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER),
-        cascade_llm_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL),
+      ...(textConversations ? {cascade_llm_provider: parseCascadedLlmProvider(environment.CASCADE_LLM_PROVIDER),
+        cascade_llm_model: rawEnvironmentValue(environment.CASCADE_LLM_MODEL),
         ark_api_key: optionalSecret(environment.ARK_API_KEY), deepseek_api_key: optionalSecret(environment.DEEPSEEK_API_KEY),
-        volcengine_ark_base_url: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL)} : {}),
+        volcengine_ark_base_url: rawEnvironmentValue(environment.VOLCENGINE_ARK_BASE_URL)} : {}),
       integrated_provider: integratedProvider,
-      qwen_realtime_url: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL),
-      qwen_realtime_model: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL),
-      qwen_realtime_voice: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE)
-        ?? (environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL?.startsWith('qwen3.5-omni-') ? 'Ethan'
-          : environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL === 'qwen-audio-3.1-realtime-plus' ? 'longanqian_v3.1' : undefined),
+      qwen_realtime_url: optionalString(environment.QWEN_REALTIME_URL),
+      qwen_realtime_model: optionalString(environment.QWEN_REALTIME_MODEL),
+      qwen_realtime_voice: optionalString(environment.QWEN_REALTIME_VOICE)
+        ?? (environment.QWEN_REALTIME_MODEL?.startsWith('qwen3.5-omni-') ? 'Ethan'
+          : environment.QWEN_REALTIME_MODEL === 'qwen-audio-3.1-realtime-plus' ? 'longanqian_v3.1' : undefined),
       dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY),
-      stepfun_realtime_url: optionalString(environment.NOVA_AUDIO_AGENT_STEPFUN_REALTIME_URL),
-      stepfun_realtime_model: optionalString(environment.NOVA_AUDIO_AGENT_STEPFUN_REALTIME_MODEL),
-      stepfun_realtime_voice: optionalString(environment.NOVA_AUDIO_AGENT_STEPFUN_REALTIME_VOICE),
+      stepfun_realtime_url: optionalString(environment.STEPFUN_REALTIME_URL),
+      stepfun_realtime_model: optionalString(environment.STEPFUN_REALTIME_MODEL),
+      stepfun_realtime_voice: optionalString(environment.STEPFUN_REALTIME_VOICE),
       stepfun_api_key: optionalSecret(environment.STEPFUN_API_KEY),
       qwen_controlled_guard_reconnect: optionalBoolean(
-        environment.NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT,
+        environment.QWEN_CONTROLLED_GUARD_RECONNECT,
       ),
-      qwen_guard_history_recovery: environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY,
+      qwen_guard_history_recovery: environment.QWEN_GUARD_HISTORY_RECOVERY,
       qwen_guard_history_pairs: optionalQwenGuardHistoryPairs(
-        environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS,
+        environment.QWEN_GUARD_HISTORY_PAIRS,
       ),
     } : {
       cascade_endpointing_provider: cascadedProviders!.endpointing,
       cascade_asr_provider: cascadedProviders!.asr,
       cascade_llm_provider: cascadedProviders!.llm,
-      cascade_llm_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL),
+      cascade_llm_model: rawEnvironmentValue(environment.CASCADE_LLM_MODEL),
       cascade_tts_provider: cascadedProviders!.tts,
       ...(cascadedProviders!.llm === 'qwen'
         ? {dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY)}
@@ -317,91 +363,88 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textC
           : {ark_api_key: optionalSecret(environment.ARK_API_KEY)}),
       ...(cascadedProviders!.llm === 'ark' ? {
         volcengine_ark_base_url: rawEnvironmentValue(
-          environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL,
+          environment.VOLCENGINE_ARK_BASE_URL,
         ),
       } : {}),
       doubao_asr_api_key: optionalSecret(environment.DOUBAO_ASR_API_KEY),
       doubao_bigmodel_api_key: optionalSecret(environment.DOUBAO_BIGMODEL_API_KEY),
-      doubao_asr_endpoint: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT),
+      doubao_asr_endpoint: rawEnvironmentValue(environment.DOUBAO_ASR_ENDPOINT),
       doubao_asr_resource_id: rawEnvironmentValue(
-        environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID,
+        environment.DOUBAO_ASR_RESOURCE_ID,
       ),
-      doubao_asr_voiceprint_enabled: optionalBoolean(environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_ENABLED),
-      doubao_asr_voiceprint_id: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_ID),
-      doubao_asr_voiceprint_name: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_NAME),
-      doubao_asr_voiceprint_health_url: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_HEALTH_URL),
+      doubao_asr_voiceprint_enabled: optionalBoolean(environment.DOUBAO_ASR_VOICEPRINT_ENABLED),
+      doubao_asr_voiceprint_id: rawEnvironmentValue(environment.DOUBAO_ASR_VOICEPRINT_ID),
+      doubao_asr_voiceprint_name: rawEnvironmentValue(environment.DOUBAO_ASR_VOICEPRINT_NAME),
+      doubao_asr_voiceprint_health_url: rawEnvironmentValue(environment.DOUBAO_ASR_VOICEPRINT_HEALTH_URL),
       doubao_asr_chunk_ms: optionalPydanticInteger(
-        environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS,
+        environment.DOUBAO_ASR_CHUNK_MS,
       ),
-      doubao_tts_endpoint: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT),
+      doubao_tts_endpoint: rawEnvironmentValue(environment.DOUBAO_TTS_ENDPOINT),
       doubao_tts_resource_id: rawEnvironmentValue(
-        environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID,
+        environment.DOUBAO_TTS_RESOURCE_ID,
       ),
-      doubao_tts_voice: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE),
+      doubao_tts_voice: rawEnvironmentValue(environment.DOUBAO_TTS_VOICE),
       doubao_tts_output_sample_rate: optionalPydanticInteger(
-        environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE,
+        environment.DOUBAO_TTS_OUTPUT_SAMPLE_RATE,
       ),
       volcengine_vad_threshold: optionalPydanticFloat(
-        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD,
+        environment.VOLCENGINE_VAD_THRESHOLD,
       ),
       volcengine_vad_pre_roll_ms: optionalPydanticInteger(
-        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS,
+        environment.VOLCENGINE_VAD_PRE_ROLL_MS,
       ),
       volcengine_vad_min_speech_ms: optionalPydanticInteger(
-        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS,
+        environment.VOLCENGINE_VAD_MIN_SPEECH_MS,
       ),
       volcengine_vad_silence_end_ms: optionalPydanticInteger(
-        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS,
+        environment.VOLCENGINE_VAD_SILENCE_END_MS,
       ),
       volcengine_vad_speech_pad_ms: optionalPydanticInteger(
-        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS,
+        environment.VOLCENGINE_VAD_SPEECH_PAD_MS,
       ),
       volcengine_vad_max_utterance_ms: optionalPydanticInteger(
-        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS,
+        environment.VOLCENGINE_VAD_MAX_UTTERANCE_MS,
       ),
     }),
     executor,
     executors,
     ...executorOwnedSettings(environment, executors),
-    coding_progress_narration: optionalString(environment.NOVA_AUDIO_AGENT_CODING_PROGRESS_NARRATION),
-    proactivity_preset: optionalString(environment.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET),
+    coding_progress_narration: optionalString(environment.CODING_PROGRESS_NARRATION),
+    proactivity_preset: optionalString(environment.PROACTIVITY_PRESET),
     suggestion_cooldown: optionalPydanticFloat(
-      environment.NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN,
+      environment.SUGGESTION_COOLDOWN,
     ),
-    fresh_window: optionalPydanticFloat(environment.NOVA_AUDIO_AGENT_FRESH_WINDOW),
+    fresh_window: optionalPydanticFloat(environment.FRESH_WINDOW),
     clarification_depth: parseClarificationDepth(
-      environment.NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH,
+      environment.CLARIFICATION_DEPTH,
     ),
-    plan_readback: parsePlanReadback(environment.NOVA_AUDIO_AGENT_PLAN_READBACK),
-    generate_plan: optionalBoolean(environment.NOVA_AUDIO_AGENT_GENERATE_PLAN),
-    planner_model: supportDefault(emptyAsUnset(optionalString(environment.NOVA_AUDIO_AGENT_PLANNER_MODEL))),
-    progress_bubbles: parseProgressBubbles(environment.NOVA_AUDIO_AGENT_PROGRESS_BUBBLES),
-    capabilities_config_path: optionalString(
-      environment.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG,
-    ),
-    search_provider: parseSearchProvider(environment.NOVA_AUDIO_AGENT_SEARCH_PROVIDER),
-    search_mcp_url: optionalString(environment.NOVA_AUDIO_AGENT_SEARCH_MCP_URL),
-    search_mcp_tool: optionalString(environment.NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL),
-    knowledge_path: optionalString(environment.NOVA_AUDIO_AGENT_KNOWLEDGE_PATH),
+    plan_readback: parsePlanReadback(environment.PLAN_READBACK),
+    generate_plan: optionalBoolean(environment.GENERATE_PLAN),
+    planner_model: supportDefault(emptyAsUnset(optionalString(environment.PLANNER_MODEL))),
+    progress_bubbles: parseProgressBubbles(environment.PROGRESS_BUBBLES),
+    search_provider: parseSearchProvider(environment.SEARCH_PROVIDER),
+    search_mcp_url: optionalString(environment.SEARCH_MCP_URL),
+    search_mcp_tool: optionalString(environment.SEARCH_MCP_TOOL),
+    knowledge_path: optionalString(environment.KNOWLEDGE_PATH),
     embedding_provider: parseEmbeddingProvider(
-      environment.NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER,
+      environment.EMBEDDING_PROVIDER,
     ),
-    embedding_model: optionalString(environment.NOVA_AUDIO_AGENT_EMBEDDING_MODEL),
-    blackboard_path: optionalString(environment.NOVA_AUDIO_AGENT_BLACKBOARD_PATH),
-    blackboard_owner_id: optionalString(environment.NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID),
-    memory_prerecall_enabled: optionalBoolean(environment.NOVA_AUDIO_AGENT_MEMORY_PRERECALL_ENABLED),
-    memory_consolidation_enabled: optionalBoolean(environment.NOVA_AUDIO_AGENT_MEMORY_CONSOLIDATION_ENABLED),
-    memory_consolidation_hour: optionalPydanticInteger(environment.NOVA_AUDIO_AGENT_MEMORY_CONSOLIDATION_HOUR),
-    memory_consolidation_timezone: environment.NOVA_AUDIO_AGENT_MEMORY_CONSOLIDATION_TIMEZONE,
-    memory_connection: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_CONNECTION),
-    ...((optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_CONNECTION) ?? 'local') === 'local'
+    embedding_model: optionalString(environment.EMBEDDING_MODEL),
+    blackboard_path: optionalString(environment.BLACKBOARD_PATH),
+    blackboard_owner_id: optionalString(environment.BLACKBOARD_OWNER_ID),
+    memory_prerecall_enabled: optionalBoolean(environment.MEMORY_PRERECALL_ENABLED),
+    memory_consolidation_enabled: optionalBoolean(environment.MEMORY_CONSOLIDATION_ENABLED),
+    memory_consolidation_hour: optionalPydanticInteger(environment.MEMORY_CONSOLIDATION_HOUR),
+    memory_consolidation_timezone: environment.MEMORY_CONSOLIDATION_TIMEZONE,
+    memory_connection: optionalString(environment.MEMORY_CONNECTION),
+    ...((optionalString(environment.MEMORY_CONNECTION) ?? 'local') === 'local'
       ? {dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY)} : {}),
-    memory_provider: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_PROVIDER),
-    memory_url: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_URL),
-    memory_token: optionalSecret(environment.NOVA_AUDIO_AGENT_MEMORY_TOKEN),
-    memory_path: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_PATH),
-    memory_user_id: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_USER_ID),
-    workspace_graph_path: optionalString(environment.NOVA_AUDIO_AGENT_MEMORY_LEDGER_PATH) ?? optionalString(environment.NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH),
+    memory_provider: optionalString(environment.MEMORY_PROVIDER),
+    memory_url: optionalString(environment.MEMORY_URL),
+    memory_token: optionalSecret(environment.MEMORY_TOKEN),
+    memory_path: optionalString(environment.MEMORY_PATH),
+    memory_user_id: optionalString(environment.MEMORY_USER_ID),
+    workspace_graph_path: optionalString(environment.MEMORY_LEDGER_PATH) ?? optionalString(environment.WORKSPACE_GRAPH_PATH),
   }
   const withoutUndefined = Object.fromEntries(
     Object.entries(candidate).filter(([, value]) => value !== undefined),
@@ -413,19 +456,10 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textC
       .map(configurationFieldName)
     throw new ConfigurationError(`invalid configuration: ${fields.join(', ')}`)
   }
-  if (environment.NOVA_AUDIO_AGENT_MEMORY_BACKEND !== undefined) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_MEMORY_BACKEND was removed; use NOVA_AUDIO_AGENT_MEMORY_CONNECTION')
+  if (environment.MEMORY_BACKEND !== undefined) {
+    throw new ConfigurationError('MEMORY_BACKEND was removed; use MEMORY_CONNECTION')
   }
   resolveMemoryConnection(result.data)
-  if (result.data.local_serving) {
-    const local=result.data.local_serving
-    const background=local.extraction??local.llm
-    if (result.data.memory_connection === 'remote') throw new ConfigurationError('local serving requires local or disabled memory')
-    return {...result.data, model_base_url:background.baseUrl, model_api_key:background.apiKey,
-      fast_model:background.model, surrogate_model:background.model,
-      planner_model:background.model, compressor_model:background.model, watch_model:background.model,
-      cascade_llm_model:local.llm.model, camera_module_enabled:false, conversation_vision_enabled:false}
-  }
   return result.data
 }
 
@@ -446,22 +480,21 @@ export function requirePersonalMemory(settings: Settings): PersonalMemoryConfig 
   if (connection === 'disabled') return null
   if (connection === 'remote') return Object.freeze({
     connection: 'remote',
-    url: requiredSetting(settings.memory_url, 'NOVA_AUDIO_AGENT_MEMORY_URL'),
-    token: requiredCredential(settings.memory_token, 'NOVA_AUDIO_AGENT_MEMORY_TOKEN'),
+    url: requiredSetting(settings.memory_url, 'MEMORY_URL'),
+    token: requiredCredential(settings.memory_token, 'MEMORY_TOKEN'),
   })
-  const serving = settings.local_serving
-  const extraction = serving ? (serving.extraction ?? serving.llm) : undefined
+  // Local memory is optional: without an embedding credential it stays off instead of blocking the voice pipeline.
+  if (stripLikePython(resolveModelApiKey(settings) ?? '') === '') return null
   return Object.freeze({
-    ...(extraction ? {extraction} : {}),
     connection: 'local',
     provider: settings.memory_provider ?? 'voicemem',
-    path: requiredSetting(settings.memory_path, 'NOVA_AUDIO_AGENT_MEMORY_PATH'),
-    userId: requiredSetting(settings.memory_user_id, 'NOVA_AUDIO_AGENT_MEMORY_USER_ID'),
-    extractionModel: extraction?.model ?? requiredSetting(settings.fast_model, 'NOVA_AUDIO_AGENT_FAST_MODEL'),
-    embedding: serving ? serving.embedding : Object.freeze({
-      baseUrl: secureEndpoint(settings.model_base_url, 'https', 'NOVA_AUDIO_AGENT_MODEL_BASE_URL'),
-      apiKey: requiredCredential(resolveModelApiKey(settings), 'DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY'),
-      model: requiredSetting(settings.embedding_model, 'NOVA_AUDIO_AGENT_EMBEDDING_MODEL'),
+    path: requiredSetting(settings.memory_path, 'MEMORY_PATH'),
+    userId: requiredSetting(settings.memory_user_id, 'MEMORY_USER_ID'),
+    extractionModel: requiredSetting(settings.fast_model, 'FAST_MODEL'),
+    embedding: Object.freeze({
+      baseUrl: secureEndpoint(settings.model_base_url, 'https', 'MODEL_BASE_URL'),
+      apiKey: requiredCredential(resolveModelApiKey(settings), 'DASHSCOPE_API_KEY 或 MODEL_API_KEY'),
+      model: requiredSetting(settings.embedding_model, 'EMBEDDING_MODEL'),
     }),
   })
 }
@@ -469,7 +502,7 @@ export function requirePersonalMemory(settings: Settings): PersonalMemoryConfig 
 function resolveMemoryConnection(settings: Settings): z.infer<typeof memoryConnectionSchema> {
   const connection = settings.memory_connection
   if (settings.memory_provider !== null && connection !== 'local') {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_MEMORY_PROVIDER is only valid for a local memory connection; remote engines are selected by the service')
+    throw new ConfigurationError('MEMORY_PROVIDER is only valid for a local memory connection; remote engines are selected by the service')
   }
   return connection
 }
@@ -479,45 +512,52 @@ export function requireQwenRealtime(settings: Settings): QwenRealtimeConfig {
   const model = stripLikePython(settings.qwen_realtime_model)
   const voice = stripLikePython(settings.qwen_realtime_voice)
   if (!url.startsWith('wss://')) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_URL 必须使用 wss://')
+    throw new ConfigurationError('QWEN_REALTIME_URL 必须使用 wss://')
   }
   if (model === '') {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL 不能为空')
+    throw new ConfigurationError('QWEN_REALTIME_MODEL 不能为空')
   }
   if (voice === '') {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE 不能为空')
+    throw new ConfigurationError('QWEN_REALTIME_VOICE 不能为空')
   }
   const realtimeKey = stripLikePython(settings.dashscope_api_key ?? '')
   const modelKey = stripLikePython(settings.model_api_key ?? '')
   const apiKey = realtimeKey || modelKey
   if (apiKey === '') {
-    throw new ConfigurationError('缺少 DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY')
+    throw new ConfigurationError('缺少 DASHSCOPE_API_KEY 或 MODEL_API_KEY')
   }
   return {url, model, voice, apiKey}
 }
 
 export function requireIntegratedRealtime(settings: Settings): QwenRealtimeConfig {
+  const provider = settings.integrated_provider
+  if (provider === 'openai' || provider === 'gemini') return Object.freeze({
+    url: secureEndpoint(settings[`${provider}_realtime_url`], 'wss', `${provider.toUpperCase()}_REALTIME_URL`),
+    model: requiredSetting(settings[`${provider}_realtime_model`], `${provider.toUpperCase()}_REALTIME_MODEL`),
+    voice: requiredSetting(settings[`${provider}_realtime_voice`], `${provider.toUpperCase()}_REALTIME_VOICE`),
+    apiKey: requiredCredential(settings[`${provider}_api_key`], `${provider.toUpperCase()}_API_KEY`),
+  })
   if (settings.integrated_provider === 'stepfun') {
-    const url = secureEndpoint(settings.stepfun_realtime_url, 'wss', 'NOVA_AUDIO_AGENT_STEPFUN_REALTIME_URL')
+    const url = secureEndpoint(settings.stepfun_realtime_url, 'wss', 'STEPFUN_REALTIME_URL')
     const model = stripLikePython(settings.stepfun_realtime_model)
     const voice = stripLikePython(settings.stepfun_realtime_voice)
     const apiKey = stripLikePython(settings.stepfun_api_key ?? '')
-    if (model === '') throw new ConfigurationError('NOVA_AUDIO_AGENT_STEPFUN_REALTIME_MODEL 不能为空')
+    if (model === '') throw new ConfigurationError('STEPFUN_REALTIME_MODEL 不能为空')
     if (apiKey === '') throw new ConfigurationError('缺少 STEPFUN_API_KEY')
     return Object.freeze({url, model, voice, apiKey})
   }
   const url = secureEndpoint(
     settings.qwen_realtime_url,
     'wss',
-    'NOVA_AUDIO_AGENT_QWEN_REALTIME_URL',
+    'QWEN_REALTIME_URL',
   )
   const model = stripLikePython(settings.qwen_realtime_model)
   const voice = stripLikePython(settings.qwen_realtime_voice)
   if (model === '') {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL 不能为空')
+    throw new ConfigurationError('QWEN_REALTIME_MODEL 不能为空')
   }
   if (voice === '') {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE 不能为空')
+    throw new ConfigurationError('QWEN_REALTIME_VOICE 不能为空')
   }
   const explicitKey = stripLikePython(settings.dashscope_api_key ?? '')
   const compatibleGenericKey = settings.model_base_url === DASHSCOPE_COMPATIBLE_BASE_URL
@@ -537,7 +577,6 @@ export function resolveModelApiKey(settings: Settings): string | null {
 
 /** Preset monitor models keep their credential on their own provider endpoint. */
 export function resolveWatchModelConnection(settings: Settings): {readonly baseUrl: string; readonly apiKey: string} | null {
-  if (settings.local_serving) return settings.local_serving.llm
   const model = stripLikePython(settings.watch_model ?? '')
   if (supportsVision('stepfun', model)) return {
     baseUrl: STEPFUN_COMPATIBLE_BASE_URL,
@@ -549,10 +588,72 @@ export function resolveWatchModelConnection(settings: Settings): {readonly baseU
       ?? (settings.model_base_url === DASHSCOPE_COMPATIBLE_BASE_URL ? settings.model_api_key : null), 'DASHSCOPE_API_KEY'),
   }
   if (supportsVision('ark', model)) return {
-    baseUrl: secureEndpoint(settings.volcengine_ark_base_url, 'https', 'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL'),
+    baseUrl: secureEndpoint(settings.volcengine_ark_base_url, 'https', 'VOLCENGINE_ARK_BASE_URL'),
     apiKey: requiredCredential(settings.ark_api_key, 'ARK_API_KEY'),
   }
   return null
+}
+
+/** The credential a vision watch model still needs, or null when it has one (or needs none). */
+export function missingWatchModelCredential(settings: Settings): string | null {
+  const model = stripLikePython(settings.watch_model ?? '')
+  if (supportsVision('qwen', model)) {
+    return stripLikePython(settings.dashscope_api_key
+      ?? (settings.model_base_url === DASHSCOPE_COMPATIBLE_BASE_URL ? settings.model_api_key : null) ?? '') === ''
+      ? 'DASHSCOPE_API_KEY' : null
+  }
+  if (supportsVision('ark', model)) return stripLikePython(settings.ark_api_key ?? '') === '' ? 'ARK_API_KEY' : null
+  return null
+}
+
+/** Knowledge embeds through the generic model gateway, so it needs that gateway's key. */
+export function missingKnowledgeCredential(settings: Settings): string | null {
+  if (resolveModelApiKey(settings)) return null
+  return settings.model_base_url === DASHSCOPE_COMPATIBLE_BASE_URL ? 'DASHSCOPE_API_KEY' : 'MODEL_API_KEY'
+}
+
+/** Camera watch and knowledge are optional: without their credential they are reported off rather than failing startup. */
+export function withoutUncredentialedModules(registry: CapabilityRegistry, settings: Settings): CapabilityRegistry {
+  const camera = registry.modules.camera.enabled ? missingWatchModelCredential(settings) : null
+  const knowledge = registry.modules.knowledge.enabled ? missingKnowledgeCredential(settings) : null
+  if (camera === null && knowledge === null) return registry
+  return {...registry, modules: {
+    ...registry.modules,
+    ...(camera === null ? {} : {camera: {enabled: false, reason: `missing_environment:${camera}`}}),
+    ...(knowledge === null ? {} : {knowledge: {enabled: false, exposeToCodex: false, reason: `missing_environment:${knowledge}`}}),
+  }}
+}
+
+/** Mirrors requireIntegratedRealtime and requireCascadedCredentials without throwing, for first-run guidance. */
+export function describeMissingBlockingCredentials(settings: Settings, textConversations = false): {readonly pipeline: PipelineMode; readonly missing: readonly string[]} {
+  const present = (value: string | null) => stripLikePython(value ?? '') !== ''
+  if (!textConversations && settings.pipeline_mode === 'integrated') {
+    if (settings.integrated_provider === 'openai' || settings.integrated_provider === 'gemini') return {pipeline: 'integrated', missing: present(settings[`${settings.integrated_provider}_api_key`]) ? [] : [`${settings.integrated_provider.toUpperCase()}_API_KEY`]}
+    if (settings.integrated_provider === 'stepfun') return {pipeline: 'integrated', missing: present(settings.stepfun_api_key) ? [] : ['STEPFUN_API_KEY']}
+    const compatibleGenericKey = settings.model_base_url === DASHSCOPE_COMPATIBLE_BASE_URL ? settings.model_api_key : null
+    return {pipeline: 'integrated', missing: present(settings.dashscope_api_key) || present(compatibleGenericKey) ? [] : ['DASHSCOPE_API_KEY']}
+  }
+  const llmField = cascadedCredentialField(settings.cascade_llm_provider)
+  return {pipeline: 'cascaded', missing: [...new Set([
+    ...(settings.cascade_llm_provider === 'self-hosted' || present(settings[llmField]) ? [] : [configurationFieldName(llmField)]),
+    ...(textConversations || settings.cascade_asr_provider === 'self-hosted' ? [] : settings.cascade_asr_provider === 'gemini' ? (present(settings.gemini_api_key) ? [] : ['GEMINI_API_KEY']) : (present(settings.doubao_asr_api_key) || present(settings.doubao_bigmodel_api_key) || settings.cascade_tts_provider === 'volcengine' ? [] : ['DOUBAO_ASR_API_KEY'])),
+    ...(textConversations || settings.cascade_tts_provider === 'self-hosted' ? [] : settings.cascade_tts_provider === 'gemini' ? (present(settings.gemini_api_key) ? [] : ['GEMINI_API_KEY']) : (present(settings.doubao_bigmodel_api_key) ? [] : ['DOUBAO_BIGMODEL_API_KEY'])),
+  ])]}
+}
+
+/** Host preflight over a launch environment; other configuration errors stay the runtime's to report. */
+export function describeMissingBlockingEnvironment(environment: NodeJS.ProcessEnv, textConversations = false): ReturnType<typeof describeMissingBlockingCredentials> | null {
+  try {
+    return describeMissingBlockingCredentials(loadSettings(environment, textConversations), textConversations)
+  } catch (error) {
+    if (error instanceof ConfigurationError) return null
+    throw error
+  }
+}
+
+export function requireBlockingCredentials(settings: Settings): void {
+  const {pipeline, missing} = describeMissingBlockingCredentials(settings)
+  if (missing.length > 0) throw new BlockingConfigurationError(pipeline, missing)
 }
 
 /** Keeps a selected provider credential on its fixed compatible endpoint. */
@@ -560,7 +661,6 @@ export function resolveSupportModelConnection(
   settings: Settings,
   selectedProvider: {readonly baseUrl: string; readonly apiKey: string},
 ): SupportModelConnection {
-  if (settings.local_serving) return {source:'generic', ...(settings.local_serving.extraction??settings.local_serving.llm)}
   const genericKey = stripLikePython(settings.model_api_key ?? '')
   return genericKey === ''
     ? Object.freeze({
@@ -573,18 +673,19 @@ export function resolveSupportModelConnection(
       baseUrl: secureEndpoint(
         settings.model_base_url,
         'https',
-        'NOVA_AUDIO_AGENT_MODEL_BASE_URL',
+        'MODEL_BASE_URL',
       ),
       apiKey: genericKey,
     })
 }
 
 export function resolveCascadedSelection(settings: Settings): CascadedSelection {
+  if (settings.cascade_llm_provider === 'self-hosted' && !settings.cascade_llm_model?.trim()) throw new ConfigurationError('缺少 CASCADE_LLM_MODEL')
   const llmModel = settings.cascade_llm_model === null
     ? (settings.cascade_llm_provider === 'qwen'
       ? 'qwen-plus'
-      : settings.cascade_llm_provider === 'deepseek' ? 'deepseek-flash' : 'doubao-seed-2-0-pro-260215')
-    : requiredSetting(settings.cascade_llm_model, 'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL')
+      : settings.cascade_llm_provider === 'openai' ? 'gpt-6-luna' : settings.cascade_llm_provider === 'gemini' ? 'gemini-3.5-flash-lite' : settings.cascade_llm_provider === 'deepseek' ? 'deepseek-flash' : 'doubao-seed-2-0-pro-260215')
+    : requiredSetting(settings.cascade_llm_model, 'CASCADE_LLM_MODEL')
   return Object.freeze({
     endpointingProvider: settings.cascade_endpointing_provider,
     asrProvider: settings.cascade_asr_provider,
@@ -598,13 +699,10 @@ export function requireCascadedCredentials(
   settings: Settings,
   selection: CascadedSelection,
 ): CascadedCredentials {
-  const llmApiKey = selection.llmProvider === 'qwen'
-    ? requiredCredential(settings.dashscope_api_key, 'DASHSCOPE_API_KEY')
-    : selection.llmProvider === 'deepseek'
-      ? requiredCredential(settings.deepseek_api_key, 'DEEPSEEK_API_KEY')
-      : requiredCredential(settings.ark_api_key, 'ARK_API_KEY')
-  const ttsApiKey = requiredCredential(settings.doubao_bigmodel_api_key, 'DOUBAO_BIGMODEL_API_KEY')
-  const asrApiKey = stripLikePython(settings.doubao_asr_api_key ?? '') || ttsApiKey
+  const field = cascadedCredentialField(selection.llmProvider)
+  const llmApiKey = selection.llmProvider === 'self-hosted' ? stripLikePython(settings.self_hosted_llm_api_key ?? '') : requiredCredential(settings[field], field.toUpperCase())
+  const ttsApiKey = selection.ttsProvider === 'self-hosted' ? stripLikePython(settings.self_hosted_tts_api_key ?? '') : selection.ttsProvider === 'gemini' ? requiredCredential(settings.gemini_api_key, 'GEMINI_API_KEY') : requiredCredential(settings.doubao_bigmodel_api_key, 'DOUBAO_BIGMODEL_API_KEY')
+  const asrApiKey = selection.asrProvider === 'self-hosted' ? stripLikePython(settings.self_hosted_asr_api_key ?? '') : selection.asrProvider === 'gemini' ? requiredCredential(settings.gemini_api_key, 'GEMINI_API_KEY') : requiredCredential(stripLikePython(settings.doubao_asr_api_key ?? '') || settings.doubao_bigmodel_api_key, 'DOUBAO_ASR_API_KEY')
   return Object.freeze({llmApiKey, asrApiKey, ttsApiKey})
 }
 
@@ -618,13 +716,13 @@ export function requireVolcengineRealtime(settings: Settings): VolcengineRealtim
     throw new ConfigurationError('缺少 DOUBAO_ASR_API_KEY 或 DOUBAO_BIGMODEL_API_KEY')
   }
   if (settings.doubao_asr_chunk_ms <= 0) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS 必须为正整数')
+    throw new ConfigurationError('DOUBAO_ASR_CHUNK_MS 必须为正整数')
   }
   if (settings.doubao_tts_output_sample_rate !== 24_000) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000')
+    throw new ConfigurationError('DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000')
   }
   if (!(settings.volcengine_vad_threshold > 0 && settings.volcengine_vad_threshold <= 1)) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内')
+    throw new ConfigurationError('VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内')
   }
   if (settings.volcengine_vad_pre_roll_ms < 0 || settings.volcengine_vad_speech_pad_ms < 0) {
     throw new ConfigurationError('火山 VAD pre-roll 与 speech pad 不能为负数')
@@ -637,24 +735,24 @@ export function requireVolcengineRealtime(settings: Settings): VolcengineRealtim
   }
   return Object.freeze({
     arkBaseUrl: secureEndpoint(settings.volcengine_ark_base_url, 'https',
-      'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL'),
+      'VOLCENGINE_ARK_BASE_URL'),
     arkModel: requiredSetting(settings.volcengine_ark_model,
-      'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL'),
+      'CASCADE_LLM_MODEL'),
     arkSupportModel: requiredSetting(settings.volcengine_ark_support_model,
-      'NOVA_AUDIO_AGENT_SURROGATE_MODEL'),
+      'SUPPORT_MODEL'),
     arkApiKey,
     asrEndpoint: secureEndpoint(settings.doubao_asr_endpoint, 'wss',
-      'NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT'),
+      'DOUBAO_ASR_ENDPOINT'),
     asrResourceId: requiredSetting(settings.doubao_asr_resource_id,
-      'NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID'),
+      'DOUBAO_ASR_RESOURCE_ID'),
     asrApiKey,
     asrChunkMs: settings.doubao_asr_chunk_ms,
     ttsEndpoint: secureEndpoint(settings.doubao_tts_endpoint, 'wss',
-      'NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT'),
+      'DOUBAO_TTS_ENDPOINT'),
     ttsResourceId: requiredSetting(settings.doubao_tts_resource_id,
-      'NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID'),
+      'DOUBAO_TTS_RESOURCE_ID'),
     ttsVoice: requiredSetting(settings.doubao_tts_voice,
-      'NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE'),
+      'DOUBAO_TTS_VOICE'),
     ttsApiKey,
     ttsOutputSampleRate: 24_000,
     vadThreshold: settings.volcengine_vad_threshold,
@@ -672,18 +770,18 @@ export function requireVolcengineRealtime(settings: Settings): VolcengineRealtim
  */
 const EXECUTOR_OWNED_SETTINGS: Readonly<Record<string, (environment: NodeJS.ProcessEnv) => Record<string, unknown>>> = {
   codex: environment => ({
-    codex_workspace: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_WORKSPACE),
-    codex_bin: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_BIN),
-    codex_prefix_args: optionalJsonStringArray(environment.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS),
-    codex_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_API_KEY),
-    codex_prewarm: optionalBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PREWARM),
-    codex_managed_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT),
-    codex_project_state_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT),
+    codex_workspace: optionalSecret(environment.CODEX_WORKSPACE),
+    codex_bin: optionalString(environment.CODEX_BIN),
+    codex_prefix_args: optionalJsonStringArray(environment.CODEX_PREFIX_ARGS),
+    codex_api_key: optionalSecret(environment.CODEX_API_KEY),
+    codex_prewarm: optionalBoolean(environment.CODEX_PREWARM),
+    codex_managed_root: optionalString(environment.CODEX_MANAGED_ROOT),
+    codex_project_state_root: optionalString(environment.CODEX_PROJECT_STATE_ROOT),
     codex_working_interval: optionalPydanticFloat(
-      environment.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL,
+      environment.CODEX_WORKING_INTERVAL,
     ),
     codex_approval_mode: parseExecutorApprovalMode(
-      environment.NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE,
+      environment.CODEX_APPROVAL_MODE,
     ),
   }),
 }
@@ -701,20 +799,20 @@ function parseExecutors(raw: string | undefined, fallback: string): string[] {
   if (raw === undefined || raw === '') return fallback === '' ? [] : [fallback]
   const names = raw.split(',').map(stripLikePython)
   if (names.some(name => name === '')) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_EXECUTORS contains an empty name')
+    throw new ConfigurationError('EXECUTORS contains an empty name')
   }
   if (new Set(names).size !== names.length) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_EXECUTORS contains duplicate names')
+    throw new ConfigurationError('EXECUTORS contains duplicate names')
   }
   return names
 }
 
 function parsePipelineMode(value: string | undefined): PipelineMode {
-  return parseSelector(pipelineModeSchema, value, 'integrated', 'NOVA_AUDIO_AGENT_PIPELINE_MODE')
+  return parseSelector(pipelineModeSchema, value, 'integrated', 'PIPELINE_MODE')
 }
 
 function parsePromptLanguageSetting(value: string | undefined): z.infer<typeof promptLanguageSchema> {
-  return parseSelector(promptLanguageSchema, value, 'zh-CN', 'NOVA_AUDIO_AGENT_LANGUAGE')
+  return parseSelector(promptLanguageSchema, value, 'zh-CN', 'PROMPT_LANGUAGE')
 }
 
 function parseIntegratedProvider(value: string | undefined): IntegratedProviderName {
@@ -722,7 +820,7 @@ function parseIntegratedProvider(value: string | undefined): IntegratedProviderN
     integratedProviderNameSchema,
     value,
     'qwen',
-    'NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER',
+    'INTEGRATED_PROVIDER',
   )
 }
 
@@ -731,7 +829,7 @@ function parseCascadedEndpointingProvider(value: string | undefined): CascadedEn
     cascadedEndpointingProviderNameSchema,
     value,
     'auto',
-    'NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER',
+    'CASCADE_ENDPOINTING_PROVIDER',
   )
 }
 
@@ -740,7 +838,7 @@ function parseCascadedAsrProvider(value: string | undefined): CascadedAsrProvide
     cascadedAsrProviderNameSchema,
     value,
     'volcengine',
-    'NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER',
+    'CASCADE_ASR_PROVIDER',
   )
 }
 
@@ -749,7 +847,7 @@ function parseCascadedLlmProvider(value: string | undefined): CascadedLlmProvide
     cascadedLlmProviderNameSchema,
     value,
     'qwen',
-    'NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER',
+    'CASCADE_LLM_PROVIDER',
   )
 }
 
@@ -758,7 +856,7 @@ function parseCascadedTtsProvider(value: string | undefined): CascadedTtsProvide
     cascadedTtsProviderNameSchema,
     value,
     'volcengine',
-    'NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER',
+    'CASCADE_TTS_PROVIDER',
   )
 }
 
@@ -780,7 +878,7 @@ function parseProgressBubbles(value: string | undefined): z.infer<typeof progres
 
 function parseEmbeddingProvider(value: string | undefined): z.infer<typeof embeddingProviderSchema> {
   return parseSelector(embeddingProviderSchema, value, 'dashscope',
-    'NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER (allowed: dashscope)')
+    'EMBEDDING_PROVIDER (allowed: dashscope)')
 }
 
 function parseSearchProvider(value: string | undefined): z.infer<typeof searchProviderSchema> {
@@ -924,19 +1022,25 @@ function configurationFieldName(field: string): string {
     tavily_api_key: 'TAVILY_API_KEY',
     openrouter_api_key: 'OPENROUTER_API_KEY',
   }
-  return aliases[field] ?? `NOVA_AUDIO_AGENT_${field.toUpperCase()}`
+  return aliases[field] ?? field.toUpperCase()
 }
 
 /** Injected settings never trigger ambient filesystem reads. Production passes its loaded registry explicitly. */
 export function capabilitiesFromSettings(settings: Settings): CapabilityRegistry {
-  return parseCapabilityRegistry({version: 1, modules: {
+  const needsDashscopeSearch = settings.search_mcp_url === ''
+    && (settings.search_provider === 'mcp' || !settings.tavily_api_key?.trim())
+  return withoutUncredentialedModules(parseCapabilityRegistry({version: 1, modules: {
     camera: {enabled: settings.camera_module_enabled},
     search: {provider: settings.search_provider, ...(settings.search_mcp_url === '' ? {} : {mcp: {
       url: settings.search_mcp_url, tool: settings.search_mcp_tool,
     }})},
   }}, {
-    ...(settings.search_provider !== 'mcp' || settings.search_mcp_url !== '' || settings.dashscope_api_key === null ? {} : {DASHSCOPE_API_KEY: settings.dashscope_api_key}),
+    ...(!needsDashscopeSearch || settings.dashscope_api_key === null ? {} : {DASHSCOPE_API_KEY: settings.dashscope_api_key}),
     ...(settings.search_provider !== 'tavily' || settings.tavily_api_key === null ? {} : {TAVILY_API_KEY: settings.tavily_api_key}),
-    ...(settings.search_mcp_tool === 'web_search' ? {} : {NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL: settings.search_mcp_tool}),
-  })
+    ...(settings.search_mcp_tool === 'web_search' ? {} : {SEARCH_MCP_TOOL: settings.search_mcp_tool}),
+  }), settings)
+}
+
+export function cascadedCredentialField(provider: CascadedLlmProviderName): 'dashscope_api_key' | 'ark_api_key' | 'deepseek_api_key' | 'openai_api_key' | 'gemini_api_key' | 'self_hosted_llm_api_key' {
+  return provider === 'self-hosted' ? 'self_hosted_llm_api_key' : provider === 'qwen' ? 'dashscope_api_key' : `${provider}_api_key`
 }

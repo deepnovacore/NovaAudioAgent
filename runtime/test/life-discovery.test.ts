@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {mkdtemp,realpath,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {WorkspaceGraphStoreClient} from '../src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../src/memory-substrate/resource.js'
 import {PersonalAgentHost} from '../src/personal-agent/host.js'
 import {SuggestionPool} from '../src/core/suggestions.js'
@@ -11,7 +11,7 @@ import {UnifiedRetrieval} from '../src/memory/retrieval.js'
 
 test('Life dates and state survive recall; completed objects cannot enter or retain reminders',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'nova-life-discovery-'))
- const memory=new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(join(root,'ledger.sqlite')),userId:'synthetic',model:'synthetic',inputConsent:true,conversationProviders:['synthetic'],gateway:{async *stream(){await Promise.resolve();throw Error('unexpected model')},complete(){return Promise.reject(Error('unexpected model'))}},consolidation:{enabled:false}})
+ const memory=new SubstrateMemoryResource({client:new MemoryLedgerClient(join(root,'ledger.sqlite')),userId:'synthetic',model:'synthetic',inputConsent:true,conversationProviders:['synthetic'],gateway:{async *stream(){await Promise.resolve();throw Error('unexpected model')},complete(){return Promise.reject(Error('unexpected model'))}},consolidation:{enabled:false}})
  const host=new PersonalAgentHost({path:join(root,'host.json'),userScope:'synthetic',memory:()=>memory,pool:new SuggestionPool(),evidence:()=>null})
  try{
   await memory.open();await host.open()

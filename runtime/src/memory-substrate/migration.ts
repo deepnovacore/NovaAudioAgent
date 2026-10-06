@@ -2,11 +2,11 @@ import {isPermanentlyPurged} from './purge.js'
 import {existsSync,lstatSync} from 'node:fs'
 import {z} from 'zod'
 import {canonicalJson} from '../text/canonical-json.js'
-import type {GraphDatabase} from '../workspace-graph/store.js'
+import type {LedgerDatabase} from '../memory-ledger/store.js'
 import {contentHash,memoryOperation} from './store.js'
 
 /** Read-only import. The legacy database remains untouched as the recovery copy. */
-export function migrateLegacyMemory(db:GraphDatabase,input:unknown,openLegacy:(path:string)=>GraphDatabase):number {
+export function migrateLegacyMemory(db:LedgerDatabase,input:unknown,openLegacy:(path:string)=>LedgerDatabase):number {
  const {path,user_id,entry_prefix,source_prefix}=z.object({path:z.string().min(1),user_id:z.string().min(1),entry_prefix:z.string().min(1),source_prefix:z.string().min(1)}).strict().parse(input)
  const marker=canonicalJson([path,user_id]);db.exec('CREATE TABLE IF NOT EXISTS memory_migrations(id TEXT PRIMARY KEY)')
  if(!existsSync(path))return 0

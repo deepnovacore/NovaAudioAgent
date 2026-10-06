@@ -22,7 +22,7 @@ Importing is not instant. The panel shows each source and reports failed jobs; r
 
 ## Where your data goes
 
-Passages are stored locally at `~/.nova-audio-agent/knowledge.sqlite` (override with `NOVA_AUDIO_AGENT_KNOWLEDGE_PATH`).
+Passages are stored locally at `~/.nova-audio-agent/knowledge.sqlite` (override with `KNOWLEDGE_PATH`).
 
 **Local storage does not mean local processing.** To make documents searchable, their text is sent to the configured embedding service — DashScope `text-embedding-v4` by default. Import only documents you are willing to send there. Content that looks like a credential is rejected before it is stored or sent.
 

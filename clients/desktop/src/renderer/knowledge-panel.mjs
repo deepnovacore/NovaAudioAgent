@@ -1,3 +1,4 @@
+import {onButton} from './button-action.mjs'
 import {t} from './locale.mjs'
 export function createKnowledgePanel({document, action}) {
   const node = name => document.querySelector(`#knowledge-${name}`)
@@ -28,7 +29,7 @@ export function createKnowledgePanel({document, action}) {
         for (const [name, label] of [['reindex', t("重建索引")], ['remove', t("移除")]]) {
           const button = element('button', label)
           button.type = 'button'
-          button.addEventListener('click', () => run({action: name, id: source.id}))
+          onButton(button, () => run({action: name, id: source.id}))
           row.append(button)
         }
         node('sources').append(row)
@@ -39,10 +40,10 @@ export function createKnowledgePanel({document, action}) {
     } catch {if (revision === epoch) node('status').textContent = t("知识库操作失败；请确认模块已启用、后端正在运行，或检查文档与服务连接。")}
     finally {busy = false; controls.forEach(value => {value.disabled = !enabled})}
   }
-  node('files').addEventListener('click', () => run({action: 'files'}))
-  node('folder').addEventListener('click', () => run({action: 'folder'}))
-  node('refresh').addEventListener('click', () => run({action: 'status'}))
-  node('add-url').addEventListener('click', () => run({action: 'url', url: node('url').value}))
+  onButton(node('files'), () => run({action: 'files'}))
+  onButton(node('folder'), () => run({action: 'folder'}))
+  onButton(node('refresh'), () => run({action: 'status'}))
+  onButton(node('add-url'), () => run({action: 'url', url: node('url').value}))
   return {render(view) {
     const next = view.capabilities?.runtime?.modules?.knowledge?.enabled === true
     const nextProvider = JSON.stringify([view.embeddingProvider, view.embeddingModel, view.modelBaseUrl])

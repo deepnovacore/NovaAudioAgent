@@ -10,6 +10,8 @@ const MAX_FILE=8*1024*1024
 const MAX_BATCH=64*1024*1024
 const MAX_ENTRIES=10_000
 const MARKER='.nova-memory.json'
+const LOCK_POLL_MS=25
+const LOCK_SLEEP=new Int32Array(new SharedArrayBuffer(4))
 const JOURNAL='.nova-memory-batch.json'
 const markerText='{"format":"nova-understanding","version":1}\n'
 const hasPath=(path:string)=>lstatSync(path,{throwIfNoEntry:false})!==undefined
@@ -18,6 +20,7 @@ const entryPath=(id:string)=>`entries/${digest(id)}.md`
 const failure=(code:string)=>new Error(`MEMORY_MARKDOWN_${code}`)
 const journalSchema=z.object({version:z.literal(1),operationId:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),baseCommit:z.string().regex(/^[a-f0-9]{40,64}$/).nullable(),files:z.array(z.object({path:z.string().regex(/^(entries\/[a-f0-9]{64}\.md|\.nova-memory\.json)$/),beforeHash:z.string().regex(/^[a-f0-9]{64}$/).nullable(),after:z.string().max(MAX_FILE)}).strict()).max(MAX_ENTRIES+1)}).strict()
 type Journal=z.infer<typeof journalSchema>
+interface LockOwner {owner:{pid:number;token:string};bytes:string;ino:number;dev:number}
 export interface MarkdownEdit {entry_id:string;expected_revision:number;content:EntryRevision['content'];path:string;hash:string}
 export type ApprovedMarkdownEdit=Pick<MarkdownEdit,'entry_id'|'expected_revision'|'path'|'hash'>
 export interface MarkdownSnapshot {revisions:EntryRevision[];edits:MarkdownEdit[];baselines:Record<string,string>}
@@ -58,7 +61,8 @@ export class MarkdownRepository {
  readonly root:string
  private baseline:Record<string,string>|undefined
  private initialized=false
- constructor(root:string){this.root=resolve(root)}
+ private readonly lockWaitMs:number
+ constructor(root:string,options:{lockWaitMs?:number}={}){this.root=resolve(root);this.lockWaitMs=options.lockWaitMs??0}
 
  /** Initializes an independent, local-only Git repository; never recovers an operation implicitly. */
  initialize():void {
@@ -89,18 +93,25 @@ export class MarkdownRepository {
   this.writeExclusive(contender,bytes)
   let acquired=false
   try {
-   for(let attempt=0;attempt<2;attempt++){
+   const deadline=Date.now()+this.lockWaitMs
+   for(let stale=0;;){
     try{linkSync(join(this.root,contender),lock);acquired=true;break}
     catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error}
-    const previous=this.lockOwner(lock)
+    let previous:LockOwner
+    try{previous=this.lockOwner(lock)}
+    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error}
     let dead=false
     try{process.kill(previous.owner.pid,0)}catch(error){dead=(error as NodeJS.ErrnoException).code==='ESRCH'}
-    if(!dead)throw failure('BUSY')
+    if(!dead){
+     if(Date.now()>=deadline)throw failure('BUSY')
+     Atomics.wait(LOCK_SLEEP,0,0,LOCK_POLL_MS)
+     continue
+    }
+    if(stale++>=1)throw failure('BUSY')
     const checked=this.lockOwner(lock)
     if(checked.bytes!==previous.bytes||checked.ino!==previous.ino||checked.dev!==previous.dev)throw failure('BUSY')
     unlinkSync(lock)
    }
-   if(!acquired)throw failure('BUSY')
    this.syncDirectory(this.root)
    return fn()
   }finally{
@@ -334,7 +345,7 @@ export class MarkdownRepository {
   if(!hasPath(this.root))mkdirSync(this.root,{recursive:true,mode:0o700})
   this.assertSafe(this.root,true);chmodSync(this.root,0o700)
  }
- private lockOwner(path:string):{owner:{pid:number;token:string};bytes:string;ino:number;dev:number} {
+ private lockOwner(path:string):LockOwner {
   const stat=lstatSync(path)
   if(stat.isSymbolicLink()||!stat.isFile()||stat.size>4096)throw failure('UNSAFE_PATH')
   const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW)

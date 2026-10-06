@@ -26,7 +26,7 @@ import { RealtimeRuntimeBridge, validParams, type BridgeRuntime, type PersonalMe
 import type { WakeReason } from '../src/core/slots.js'
 import { compileToolSchema } from '../src/core/tool-schema.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/bridge/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/realtime/bridge/v1')
 
 function parseManifest(entry: unknown): ExecutorManifest {
   const raw = {...entry as Record<string, unknown>}

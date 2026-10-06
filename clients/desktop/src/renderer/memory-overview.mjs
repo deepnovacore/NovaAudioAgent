@@ -1,4 +1,3 @@
-const excerpt=(text,limit=180)=>{const value=String(text??'').replace(/\s+/g,' ').trim();return value.length>limit?`${value.slice(0,limit)}…`:value}
 const text=(value,limit)=>typeof value==='string'&&value.trim().length>0&&value.length<=limit
 /** The host supplies synthesis; the client only checks references and falls back to actual excerpts. */
 export function memoryOverview(entries,provided) {
@@ -9,6 +8,5 @@ export function memoryOverview(entries,provided) {
  const valid=provided&&text(provided.summary,1200)&&Array.isArray(provided.sections)&&provided.sections.length>0&&provided.sections.length<=4&&provided.sections.every(section=>
   section&&text(section.title,80)&&text(section.summary,1200)&&Array.isArray(section.keywords)&&section.keywords.length<=5&&section.keywords.every(word=>text(word,80))&&Array.isArray(section.refs)&&section.refs.length>0&&section.refs.every(ref=>ref&&(typeof ref.version==='string'||typeof ref.version==='number')&&byId.has(ref.entry_id)&&byId.get(ref.entry_id).version===ref.version))
  if(valid)return {summary:provided.summary,coverage,generated:true,groups:provided.sections.map(section=>({...section,entries:[...new Set(section.refs.map(ref=>ref.entry_id))].map(id=>byId.get(id))}))}
- const excerpts=[...new Set(active.map(entry=>excerpt(entry.content)).filter(Boolean))].slice(0,3)
- return {summary:excerpts.join('\n\n')||(active.length?'这些记录暂时没有可显示的正文。':'暂无记忆。'),coverage,generated:false,groups:[]}
+ return {summary:active.length?'已记录的资料可在下方逐条查看。':'暂无记忆。',coverage,generated:false,groups:[]}
 }

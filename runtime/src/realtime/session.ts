@@ -11,7 +11,7 @@
  * authority. **Epoch** scopes provider-allocated identity: a reconnect starts a new one, and an id
  * from the old session must never satisfy a check in the new one.
  *
- * Every guard here is pinned by a scenario in `fixtures/realtime/session/v1/`, exported from the
+ * Every guard here is pinned by a scenario in `tests/fixtures/realtime/session/v1/`, exported from the
  * Python oracle. When changing one, delete it and confirm a named scenario goes red; a guard no
  * scenario distinguishes is either dead or a hole in the fixture set.
  */
@@ -28,6 +28,7 @@ import type {
 import { packRecoveryTurns, type RecoveryTurn } from './history.js'
 import {
   ItemDeliveryUncertainError,
+  ProviderResponseRejectedError,
   MAX_REALTIME_TEXT,
   hostFact,
   type HostContextItem,
@@ -44,6 +45,8 @@ import {
 
 /** A host response the session asked for and could not deliver. */
 export class RealtimeDeliveryError extends Error {}
+/** The response request may have reached the provider before its acknowledgement failed. */
+export class ResponseRequestUncertainError extends RealtimeDeliveryError {}
 
 /** What a fence took away from the host, so the caller can put it back in the queue. */
 export interface FenceInterruption {
@@ -58,6 +61,7 @@ export interface HostResponseDelivery {
 
 /** Just enough of the provider port for the session; the adapter implements more. */
 export interface SessionProvider {
+  reportPlayback?(input: PlaybackCompletion):Promise<void>
   readonly userResponseMode?: 'automatic' | 'requested'
   connect(options: {readonly tools: readonly Record<string, unknown>[]}): Promise<{
     readonly epoch: number
@@ -115,6 +119,7 @@ export class RealtimeSession {
   #providerReplacementRevision = 0
   #replacementEpoch: number | null | undefined
   #providerResponseId: string | null = null
+  #yielded: {responseId:string; callIds:readonly string[]} | null = null
   #hostPreemptResponseId: string | null = null
   #hostPreemptPending = false
   #providerTranscript = ''
@@ -218,7 +223,8 @@ export class RealtimeSession {
   /** No provider inference is outstanding, whatever the renderer is still playing. */
   get providerIdle(): boolean {
     return (
-      this.#state.pendingResponseCount === 0
+      this.#yielded === null
+      && this.#state.pendingResponseCount === 0
       && !this.#awaitingUserResponse
       && this.#pendingUserResponse === null
       && this.#userResponseRequest === null
@@ -272,6 +278,10 @@ export class RealtimeSession {
   responseIsToolContinuation(responseId: string): boolean {
     const items = this.#responseItems.get(this.#turnKey(responseId))
     return items !== undefined && items.length > 0 && items.every(item => item.kind === 'tool_output')
+  }
+
+  responseHostItemIds(responseId: string): readonly string[] {
+    return (this.#responseItems.get(this.#turnKey(responseId)) ?? []).map(item => item.host_item_id)
   }
 
   responseEventIds(responseId: string): readonly string[] {
@@ -566,20 +576,6 @@ export class RealtimeSession {
     return outcome
   }
 
-  /** @deprecated Compatibility alias for callers still using the legacy environment terminology. */
-  reconnectForGuard(options: {
-    readonly tools: readonly Record<string, unknown>[]
-    readonly oldGeneration: PlaybackGeneration
-    readonly confirmationTimeout?: number | null
-    readonly history?: readonly RecoveryTurn[]
-    readonly historyMode?: 'none' | 'packed'
-  }): Promise<'none' | 'empty' | 'packed' | 'degraded' | 'uncertain'> {
-    if (options.historyMode !== undefined && options.historyMode !== 'none' && options.historyMode !== 'packed') {
-      return Promise.reject(new TypeError(`unknown Guard history recovery arm: ${String(options.historyMode)}`))
-    }
-    return this.reconnectForPreemptiveAlert(options)
-  }
-
   async #replaceProviderSession(
     tools: readonly Record<string, unknown>[],
   ): Promise<{readonly epoch: number}> {
@@ -595,6 +591,7 @@ export class RealtimeSession {
 
   /** The fields that belong to one provider session and none other. */
   #resetForNewProviderSession(): void {
+    this.#yielded = null
     this.#confirmedRecoveryVersion = -1
     this.#recoveryResponses.clear()
     this.#responseQuestions.clear()
@@ -766,6 +763,7 @@ export class RealtimeSession {
       this.#provider.ensureResponse === undefined
       || this.#userResponseRequest !== null
       || this.#providerResponseId !== null
+      || this.#yielded !== null
       || this.#state.pendingResponseCount > 0
       || this.#floor.state === 'user_speaking'
       || this.#playback.current !== null
@@ -888,7 +886,8 @@ export class RealtimeSession {
       await this.#provider.createResponse(intent)
     } catch (cause) {
       this.#state.discardPendingResponse(pending)
-      throw new RealtimeDeliveryError(`response request failed: ${String(cause)}`)
+      if(cause instanceof ProviderResponseRejectedError)throw cause
+      throw new ResponseRequestUncertainError(`response request failed: ${String(cause)}`)
     }
     for (const eventId of eventIds) this.#state.markEventResponded(eventId)
     this.#state.pruneHostEventLedgers(eventIds)
@@ -924,6 +923,13 @@ export class RealtimeSession {
         return this.#acceptAudioDelta(event.response_id, event.pcm)
       case 'response_transcript_final':
         return this.#acceptTranscriptFinal(event.response_id, event.text)
+      case 'response_yielded': {
+        const turn=this.#state.providerTurn(event.response_id)
+        if(this.#providerResponseId!==event.response_id || turn?.phase!=='active' || turn.locally_fenced)return false
+        const accepted=this.#acceptTerminal(event.response_id, 'yielded', event.session_epoch)
+        if(accepted)this.#yielded={responseId:event.response_id,callIds:event.call_ids}
+        return accepted
+      }
       case 'response_terminal':
         return this.#acceptTerminal(event.response_id, event.status, event.session_epoch, event.origin)
       case 'user_speech_started':
@@ -939,7 +945,7 @@ export class RealtimeSession {
           && !this.#responseItems.has(this.#turnKey(this.#providerResponseId))) {
           this.#responseQuestions.set(this.#turnKey(this.#providerResponseId), this.#latestQuestion)
         }
-        return this.#acceptTranscriptTerminal(event.item_id, event.kind)
+        return this.#acceptTranscriptTerminal(event.item_id, event.kind, event.response_expected !== false)
       case 'user_transcript_failed':
         return this.#acceptTranscriptTerminal(event.item_id, event.kind)
       case 'provider_error':
@@ -1175,7 +1181,7 @@ export class RealtimeSession {
 
   #acceptTerminal(
     responseId: string,
-    status: 'completed' | 'cancelled' | 'failed',
+    status: 'completed' | 'cancelled' | 'failed' | 'yielded',
     eventEpoch: number,
     origin?: Extract<RealtimeProviderEvent, {kind: 'response_terminal'}>['origin'],
   ): boolean {
@@ -1200,13 +1206,14 @@ export class RealtimeSession {
     // Audio may have created a fenced turn before its start event. Its exact request still
     // needs settlement, even if the provider proceeds directly to a terminal.
     if (this.#matchesUserResponseRequest(origin)) this.#releaseUserResponseRequest()
-    if (turn.phase === 'completed' || turn.phase === 'cancelled' || turn.phase === 'failed') {
+    if ((turn.phase === 'yielded' && status === 'yielded') || turn.phase === 'completed' || turn.phase === 'cancelled' || turn.phase === 'failed') {
       // Applied once. A retransmission must not deliver the utterance twice, and a contradictory
       // status arriving later must not reopen a decided turn.
       return false
     }
     // An unrelated/quarantined terminal cannot disarm the outstanding request's pre-start fence.
     if (this.#userResponseRequest === null) this.#awaitingUserResponse = false
+    if(this.#yielded?.responseId===responseId && status!=='yielded')this.#yielded=null
     turn.phase = status
     if (this.#providerResponseId === responseId) {
       this.#providerResponseId = null
@@ -1214,7 +1221,7 @@ export class RealtimeSession {
     }
     if (this.#state.premapResponseId === responseId) this.#state.clearPremapAudio()
 
-    if (status === 'completed') {
+    if (status === 'completed' || status === 'yielded') {
       if (this.#playback.current?.response_id !== responseId) {
         this.#recoveryResponses.delete(this.#turnKey(responseId))
         this.#responseQuestions.delete(this.#turnKey(responseId))
@@ -1289,6 +1296,7 @@ export class RealtimeSession {
   async #acceptTranscriptTerminal(
     itemId: string,
     kind: 'user_transcript_final' | 'user_transcript_failed',
+    responseExpected = true,
   ): Promise<boolean> {
     if (!this.#state.acceptUserTranscriptTerminal(itemId)) return false
     this.#state.acceptUserTurn(itemId)
@@ -1302,7 +1310,7 @@ export class RealtimeSession {
     }
     // A final transcript is a question the provider owes an answer to, so the session is no longer
     // idle even though no response has started.
-    this.#awaitingUserResponse = true
+    if (responseExpected) this.#awaitingUserResponse = true
     return true
   }
 
@@ -1583,11 +1591,6 @@ export class RealtimeSession {
     return true
   }
 
-  /** @deprecated Compatibility alias for callers still using the legacy environment terminology. */
-  alertGuardHandoff(generation: PlaybackGeneration): boolean {
-    return this.alertPreemptiveAlertHandoff(generation)
-  }
-
   /**
    * Release an exactly-identified fenced generation without inventing delivery evidence.
    *
@@ -1622,6 +1625,11 @@ export class RealtimeSession {
     return started
   }
 
+  #reportDelivery(completion: PlaybackCompletion):void {
+    void this.#provider.reportPlayback?.(completion).catch(() => undefined)
+    this.#onDelivery(completion)
+  }
+
   playbackDone(
     utteranceId: string,
     generationEpoch: number,
@@ -1640,7 +1648,7 @@ export class RealtimeSession {
     if (completion.disposition !== 'spoken') {
       this.#releaseInterruptedSuggestionAuthority(completion.response_id, completion.session_epoch)
       this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-      this.#onDelivery(completion)
+      this.#reportDelivery(completion)
       this.#floor = this.#floor.onSpeakEnd(utteranceId)
       this.#state.advanceSnapshot()
       return completion
@@ -1662,7 +1670,7 @@ export class RealtimeSession {
     if (answered && this.#latestQuestion?.id === answered.id) this.#latestQuestion = null
     this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
     this.#onSpoken(completion.text)
-    this.#onDelivery(completion)
+    this.#reportDelivery(completion)
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     this.#state.advanceSnapshot()
     return completion
@@ -1685,7 +1693,7 @@ export class RealtimeSession {
     if (completion === null) return null
     this.#releaseInterruptedSuggestionAuthority(completion.response_id, completion.session_epoch)
     this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-    this.#onDelivery(completion)
+    this.#reportDelivery(completion)
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     return completion
   }
@@ -1723,7 +1731,7 @@ export class RealtimeSession {
     const completion = this.#playback.recordCleared(utteranceId, generationEpoch, playedMs)
     if (completion !== null) {
       this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-      this.#onDelivery(completion)
+      this.#reportDelivery(completion)
     }
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     if (
@@ -1794,11 +1802,9 @@ export class RealtimeSession {
     const accepted = options.accepted ?? null
     switch (event.kind) {
       case 'user_transcript_delta':
-        if(event.replace)this.#state.resetUserCaptionTarget()
+        if (event.replace) this.#state.resetUserCaptionTarget()
         this.#state.trackUserCaption(event.item_id)
         return {...this.#state.appendCaption({role: 'user', text: event.text, final: false}), message_id: `user:${this.sessionEpoch}:${event.item_id}`}
-      case 'user_transcript_failed':
-        return this.#state.clearUserCaption(event.item_id)?{role:'user',text:'',final:true,message_id:`user:${this.sessionEpoch}:${event.item_id}`}:null
       case 'user_transcript_final': {
         // A final the reducer refused is not the user's turn, so it must not reach the display.
         if (accepted === false) return null
@@ -1870,6 +1876,12 @@ export class RealtimeSession {
     options: {readonly originSpoken?: boolean} = {},
   ): Promise<'requested' | 'retryable' | 'rejected'> {
     if (intents.length === 0) throw new TypeError('tool continuation requires at least one intent')
+    const yielded=this.#yielded
+    if(yielded){
+      const ids=intents.map(intent=>intent.item.call_id)
+      if(ids.some(id=>id===null||!yielded.callIds.includes(id)))return 'rejected'
+      if(yielded.callIds.some(id=>!ids.includes(id)))return 'retryable'
+    }
     if (
       this.#state.pendingResponseCount > 0
       || this.#providerResponseId !== null
@@ -1895,7 +1907,14 @@ export class RealtimeSession {
       }
     }
     const providerIntent = this.#mergeContinuationIntents(intents, options.originSpoken ?? false)
-    await this.#createResponse(providerIntent, intents)
+    try{await this.#createResponse(providerIntent, intents)}catch(error){
+      if(error instanceof ProviderResponseRejectedError){
+        if(yielded&&this.#yielded===yielded)await this.#provider.cancelResponse(yielded.responseId)
+        return 'rejected'
+      }
+      throw error
+    }
+    if(this.#yielded===yielded)this.#yielded=null
     return 'requested'
   }
 

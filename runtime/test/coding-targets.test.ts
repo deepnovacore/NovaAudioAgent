@@ -12,11 +12,11 @@ test('conversation targets retain exact sessions across global focus changes and
     await value.adapter.initialize()
     const a = new CodingTargetController(value.adapter.targetPort)
     const b = new CodingTargetController(value.adapter.targetPort)
-    const original = (await a.list()).find(target => target.session_id !== null)!
+    const original = await a.port.validate((await a.list()).find(target => target.session_id !== null)!)
     assert.deepEqual(Object.keys(original).sort(), ['executor', 'project', 'session_id', 'title', 'workspace_id'])
     await a.setTarget(original)
     await run(value, 'another task', {session: 'new', title: 'Another'})
-    const latest = (await b.list()).find(target => target.title === 'Another')!
+    const latest = await b.port.validate((await b.list()).find(target => target.title === 'Another')!)
     assert.deepEqual(await value.adapter.targetPort.forWork!('delegate-another task'), latest)
     await b.setTarget(latest)
     assert.notEqual(latest.session_id, original.session_id)
@@ -26,14 +26,14 @@ test('conversation targets retain exact sessions across global focus changes and
     await value.store.selectWorkspace('beta')
     assert.deepEqual(await value.adapter.targetPort.forWork!('delegate-another task'), latest, 'work binding ignores later global focus')
     assert.equal((await a.resolveTarget(work)).workspace_id, original.workspace_id)
-    assert.equal((await a.resolveTarget({...work, project: 'beta'})).workspace_id, beta.workspace_id)
+    assert.equal((await a.resolveTarget({...work, project: 'beta', session: 'new'})).workspace_id, beta.workspace_id)
     const resolved = await a.resolveTarget(work)
     const request = {work_order: 'continue original', project: resolved.workspace_display_name, session: 'latest', session_id: resolved.session_id!}
     assert.equal((await value.adapter.dispatch('run', request, context('run', request, value.clock))).outcome, 'ok')
     assert.equal(value.factory.bindings.at(-1)?.resumeThreadId, 'thread-existing')
     assert.equal(await value.adapter.targetPort.forWork!('unknown-work'), null)
     await a.setTarget({...original, session_id: null})
-    assert.equal((await a.resolveTarget(work)).session_id, null, 'project-only target starts a new session')
+    assert.equal((await a.resolveTarget({...work, session: 'new'})).session_id, null, 'project-only target starts a new session')
     await a.setTarget(null)
     await assert.rejects(a.resolveTarget(work), {code: 'unknown_project'})
   } finally {
@@ -124,7 +124,7 @@ test('exact validation and defaults remain valid after sessions and projects lea
   const value = await fixture({preexistingSession: true})
   try {
     await value.adapter.initialize()
-    const first = (await value.adapter.targetPort.list()).find(item => item.session_id !== null)!
+    const first = await value.adapter.targetPort.validate((await value.adapter.targetPort.list()).find(item => item.session_id !== null)!)
     for (let index = 0; index < 21; index++) {
       const session = await value.store.beginSession(first.workspace_id, `Recent ${index}`)
       await value.store.markSessionReady(session.session_id, `thread-recent-${index}`)
@@ -144,9 +144,47 @@ test('exact validation and defaults remain valid after sessions and projects lea
     await controller.setTarget(original)
     assert.equal((await controller.resolveTarget(work)).session_id, original.session_id)
     await controller.setTarget({workspace_id: hiddenProject.workspace_id, session_id: null})
-    assert.equal((await controller.resolveTarget(work)).workspace_id, hiddenProject.workspace_id)
+    assert.equal((await controller.resolveTarget({...work, session: 'new'})).workspace_id, hiddenProject.workspace_id)
   } finally {
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})
   }
+})
+
+
+test('two bound workspaces stay independent of global focus and continuation requires an exact session', async () => {
+  const value = await fixture({preexistingSession: true})
+  try {
+    await value.adapter.initialize()
+    const a = new CodingTargetController(value.adapter.targetPort)
+    const b = new CodingTargetController(value.adapter.targetPort)
+    const original = await a.port.validate((await a.list()).find(target => target.session_id !== null)!)
+    await a.setTarget(original)
+    const beta = await value.store.createManaged('beta')
+    await b.setTarget({workspace_id: beta.workspace_id, session_id: null})
+    await value.store.createManaged('global-third')
+    await value.store.selectWorkspace('global-third')
+    assert.equal((await a.resolveTarget({...work, session: 'new'})).workspace_id, original.workspace_id)
+    assert.equal((await b.resolveTarget({...work, session: 'new'})).workspace_id, beta.workspace_id)
+    assert.equal((await a.resolveTarget(work)).session_id, original.session_id)
+    for (const [controller, decision] of [[b, work], [a, {...work, project: 'beta'}]] as const) {
+      await assert.rejects(controller.resolveTarget(decision), {code: 'unknown_session', detail: {reason: 'continuation_target_required'}})
+    }
+    await b.setTarget(null)
+    await assert.rejects(b.resolveTarget({...work, session: 'new'}), {code: 'unknown_project'})
+    await assert.rejects(b.resolveTarget({...work, project: 'alpha'}), {code: 'unknown_session'})
+  } finally {await value.adapter.close(); await rm(value.root, {recursive: true, force: true})}
+})
+
+
+test('picker directory metadata comes from the registered workspace and never enters stored coding targets', async () => {
+  const value = await fixture()
+  try {
+    await value.adapter.initialize()
+    const choice = (await value.adapter.targetPort.list())[0]!
+    assert.equal(choice.directory, (await value.store.resolveWorkspace('alpha')).canonical_path)
+    const controller = new CodingTargetController(value.adapter.targetPort)
+    await controller.setTarget(choice)
+    assert.deepEqual(Object.keys(controller.target!).sort(), ['executor', 'project', 'session_id', 'title', 'workspace_id'])
+  } finally {await value.adapter.close(); await rm(value.root, {recursive: true, force: true})}
 })

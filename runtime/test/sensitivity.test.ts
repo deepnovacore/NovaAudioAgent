@@ -342,3 +342,20 @@ test('does not redact the safe line after empty authorization headers', () => {
   assert.deepEqual(policy.scrub('detail', 'Authorization:\nafter'), {kind: 'clean'})
   assert.deepEqual(policy.scrub('detail', 'Proxy-Authorization:\nafter'), {kind: 'clean'})
 })
+
+test('query-level URL redaction never exposes a credential that whole-URL screening would catch', async () => {
+  const {redactUrlQueryCredentials} = await import('../src/memory/sensitivity.js')
+  const policy = new SensitiveContentPolicy()
+  const screened = (text: string) => {
+    const pre = redactUrlQueryCredentials(text), result = policy.scrub('executor_observation', pre)
+    return result.kind === 'clean' ? pre : result.kind === 'redacted' ? result.value : '[redacted]'
+  }
+  assert.equal(screened('see https://example.test/read?token=abc&view=summary now'), 'see https://example.test/read?token=[REDACTED]&view=summary now')
+  assert.equal(screened('https://example.test/?token=a&token=second-secret&view=1'), 'https://example.test/?token=[REDACTED]&token=[REDACTED]&view=1')
+  for (const leaky of [
+    'https://example.test/?token=first#access%5Ftoken=second-secret',
+    'https://example.test/?view=1#token=second-secret',
+    'https://example.test/?access%5Ftoken=second-secret',
+    'https://user:second-secret@example.test/?token=first',
+  ]) assert.doesNotMatch(screened(`result ${leaky} done`), /second-secret/u, leaky)
+})

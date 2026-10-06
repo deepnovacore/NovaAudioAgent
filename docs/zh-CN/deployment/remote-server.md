@@ -29,14 +29,14 @@ npm run build --workspace @nova-audio-agent/runtime
 ```sh
 mkdir -p "$HOME/.nova-remote"
 chmod 700 "$HOME/.nova-remote"
-export NOVA_AUDIO_AGENT_SERVER_PORT=19876
-export NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE="$HOME/.nova-remote/client-token"
+export SERVER_PORT=19876
+export SERVER_TOKEN_FILE="$HOME/.nova-remote/client-token"
 npm run server:token-init --workspace @nova-audio-agent/runtime
 ```
 
 初始化会生成一个随机的 128 位小写十六进制 token，权限为 0600，并拒绝覆盖任何已存在的文件。加载器拒绝相对路径、符号链接、非普通文件、非本用户属主，以及 0600 以外的权限。设备独立凭据请使用下方二维码配对。手动兜底方式是在本机读取该文件，再把 token 填入手机端由 Keychain 支持的连接设置；不要把它放进 URL、shell 参数、日志或 Git。
 
-模型/执行器配置需显式写入私有环境文件，例如 `$HOME/.nova-remote/server.env`（0600），沿用既有的 Runtime 环境变量约定。该文件是 Node `--env-file` 文件，不是 shell 脚本，需写绝对路径，不会展开 `$HOME`/`~`。至少配置所需的 pipeline 及其凭据。使用 Codex 还需设置 `NOVA_AUDIO_AGENT_EXECUTORS=codex`、绝对路径的 `NOVA_AUDIO_AGENT_CODEX_WORKSPACE`，并把 `NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT` 指向预期的私有状态目录。无界面入口不读取 Electron Settings，也不从 cwd 推断项目。Codex 登录及可执行文件/资源路径配置必须对运行该服务的同一用户可用；GUI 应用的环境变量不会被继承。
+模型/执行器配置需显式写入私有环境文件，例如 `$HOME/.nova-remote/server.env`（0600），沿用既有的 Runtime 环境变量约定。该文件是 Node `--env-file` 文件，不是 shell 脚本，需写绝对路径，不会展开 `$HOME`/`~`。至少配置所需的 pipeline 及其凭据。使用 Codex 还需设置 `EXECUTORS=codex`、绝对路径的 `CODEX_WORKSPACE`，并把 `CODEX_PROJECT_STATE_ROOT` 指向预期的私有状态目录。无界面入口不读取 Electron Settings，也不从 cwd 推断项目。Codex 登录及可执行文件/资源路径配置必须对运行该服务的同一用户可用；GUI 应用的环境变量不会被继承。
 
 兼容管线见[支持矩阵](../support-matrix.md)。远程音频使用单声道 PCM16 LE，输入 16000 Hz、输出 24000 Hz；不兼容的格式会被拒绝。
 
@@ -120,7 +120,7 @@ macOS 上可使用窗口模式进行配对和设备撤销，此模式需要 Xcod
 npm run server:pair --workspace @nova-audio-agent/runtime -- --window wss://你的主机.ts.net
 ```
 
-将 token 文件及 `${NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE}.devices.json` 保存在 0700 私有目录中，两个文件都应仅允许服务用户访问。设备存储最多支持 32 台设备，只能由一个进程写入，不要在服务运行时编辑。
+将 token 文件及 `${SERVER_TOKEN_FILE}.devices.json` 保存在 0700 私有目录中，两个文件都应仅允许服务用户访问。设备存储最多支持 32 台设备，只能由一个进程写入，不要在服务运行时编辑。
 
 Tailscale Serve 必须转发整个服务，包括 `/client/v1`、`/client/pair` 和 `/client/pair-admin`。管理请求需要主机 token，设备 token 没有管理其他设备的权限。撤销一台设备不会影响其他设备凭据。
 

@@ -17,7 +17,7 @@ Nova 的记忆分为若干层，分别承担会话状态恢复、跨对话记忆
 
 <a id="session-recovery-store"></a>
 
-L0 黑板由专用 SQLite Worker 持久化（`runtime/src/memory/blackboard-session.ts`、`blackboard-store.ts`、`blackboard-worker.ts`），因此对话能跨重启保留。保留量受三个彼此独立的限制约束：条目存活 7 天、最多 1000 条、最多 8MB，超限时先丢弃最旧的条目。数据库路径由 `NOVA_AUDIO_AGENT_BLACKBOARD_PATH` 指定（默认 `~/.nova-audio-agent/blackboard.sqlite`），并按 `NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID` 区分归属。
+L0 黑板由专用 SQLite Worker 持久化（`runtime/src/memory/blackboard-session.ts`、`blackboard-store.ts`、`blackboard-worker.ts`），因此对话能跨重启保留。保留量受三个彼此独立的限制约束：条目存活 7 天、最多 1000 条、最多 8MB，超限时先丢弃最旧的条目。数据库路径由 `BLACKBOARD_PATH` 指定（默认 `~/.nova-audio-agent/blackboard.sqlite`），并按 `BLACKBOARD_OWNER_ID` 区分归属。
 
 该存储只负责恢复会话历史，不是可查询的长期记忆，不受限制的长期记忆检索仍被推迟（[设计约束](07-decision-record.md)）。
 
@@ -25,7 +25,7 @@ L0 黑板由专用 SQLite Worker 持久化（`runtime/src/memory/blackboard-sess
 
 <a id="personal-memory-engines"></a>
 
-三个引擎通过统一接口接入（`runtime/src/memory/personal-memory.ts`），由 `NOVA_AUDIO_AGENT_MEMORY_CONNECTION` 和 `NOVA_AUDIO_AGENT_MEMORY_PROVIDER` 选择；记忆关闭时，`factory.ts` 返回 `undefined`，不会分配任何存储。
+三个引擎通过统一接口接入（`runtime/src/memory/personal-memory.ts`），由 `MEMORY_CONNECTION` 和 `MEMORY_PROVIDER` 选择；记忆关闭时，`factory.ts` 返回 `undefined`，不会分配任何存储。
 
 **mem0（显式选择的替代引擎）** 会先把来源写入自身账本，再让模型看到它们。每个来源在 `pending → learned` 之间流转，被删除时变为 `forgotten`；`recall()` 只返回 `learned` 的来源，并在异步抽取调用之后再次检查状态，避免在用户同时删除记忆时返回已经失效的内容。待学习记录在后台异步处理，通过互斥锁保证只有一个进程执行抽取（`learning-lock.db`，`PRAGMA busy_timeout=0`），第二个进程会快速失败，而不会重复同样的工作。同一来源重复提交不会重复入库。存储按用户隔离：`memory.sqlite.mem0/<sha256(userId)>/`，其中 `ledger.db` 与 mem0 SDK 自带的向量数据库放在一起。
 

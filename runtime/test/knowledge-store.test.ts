@@ -201,6 +201,35 @@ test('maxSources refuses a second source but permits reindexing the existing sou
   assert.equal((await client.recall('updated', [0, 1], 'embed-a', 1))[0]?.text, 'updated durable result')
 })
 
+test('a whole-computer store can open with a source limit above the generic default',async t=>{
+ const directory=await mkdtemp(join(await realpath(tmpdir()),'nova-knowledge-computer-limit-'))
+ const client=new KnowledgeStoreClient({path:join(directory,'knowledge.sqlite'),maxSources:2000})
+ t.after(async()=>{await client.close();await rm(directory,{recursive:true,force:true})})
+ await client.open()
+ assert.deepEqual(await client.listSources(),[])
+})
+
+test('transactionally replaces a source at capacity and preserves the old source on replacement failure', async t => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'nova-knowledge-capacity-replace-'))
+  const client = new KnowledgeStoreClient({path: join(directory, 'knowledge.sqlite'), maxSources: 1})
+  t.after(async () => {await client.close(); await rm(directory, {recursive: true, force: true})})
+  await client.open()
+  const original = source(), replacement = {...source('source-b'), locator: original.locator, fingerprint: 'b'.repeat(64)}
+  await client.replaceSource({source: original, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Original', text: 'original durable text', token_estimate: 3, vector: [1, 0]}]})
+  await assert.rejects(client.replaceSource({source: replacement, replaces_source_id: original.id, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Broken', text: 'bad vector', token_estimate: 2, vector: [1]}]}),
+  (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'STORE_INVALID_INPUT')
+  await assert.rejects(client.replaceSource({source: {...replacement, locator: '/tmp/different-notes.md'}, replaces_source_id: original.id, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Mismatched', text: 'must not replace', token_estimate: 3, vector: [1, 0]}]}),
+  (error: unknown) => error instanceof KnowledgeStoreClientError && error.code === 'STORE_INVALID_INPUT')
+  assert.deepEqual((await client.listSources()).map(item => item.id), [original.id])
+  await client.replaceSource({source: replacement, replaces_source_id: original.id, provider_id: 'embed-a', dims: 2,
+    chunks: [{heading_path: 'Replacement', text: 'replacement durable text', token_estimate: 3, vector: [0, 1]}]})
+  assert.deepEqual((await client.listSources()).map(item => item.id), [replacement.id])
+  assert.equal((await client.recall('replacement', [0, 1], 'embed-a', 1))[0]?.text, 'replacement durable text')
+})
+
 test('reindex preserves chunk identity and detects content changes as stale', async t => {
   const client = await store(t)
   await client.replaceSource({

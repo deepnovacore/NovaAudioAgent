@@ -247,7 +247,7 @@ export class CodexLiveAdapter implements ExecutorAdapter {
       let raw: SteerTransportResult
       try {
         raw = await awaitOperation(
-          () => this.#core.transport.steer({instruction}, deadline.transport),
+          () => this.#core.transport.steer({instruction}, context.beforeWrite?{...deadline.transport,beforeWrite:context.beforeWrite}:deadline.transport),
           deadline,
         )
       } catch (error) {

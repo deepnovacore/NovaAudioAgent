@@ -1,5 +1,7 @@
 import {randomUUID} from 'node:crypto'
 import {personalCommandSchema} from '../personal-agent/contracts.js'
+import {BlockingConfigurationError} from '../config/config.js'
+import {DEFAULT_FRONTBRAIN_TOOL_BUDGET} from '../config/capability-registry.js'
 import type {CapabilityStatus} from '../config/capability-registry.js'
 import type {DesktopStopParentSource} from './desktop-session.js'
 import {reportUsage, type UsageReport} from '../realtime/usage.js'
@@ -9,6 +11,9 @@ export interface DesktopCapabilityState extends Partial<CapabilityStatus> {
   readonly toolCount: number | null
   readonly toolBudget: number
   readonly state: 'running' | 'startup_failed'
+  readonly reason?: 'configuration_required'
+  readonly pipeline?: 'integrated' | 'cascaded'
+  readonly missing?: readonly string[]
 }
 /** Utility IPC only: the renderer WebSocket never admits these host operations. */
 export function installDesktopControl(options: {
@@ -64,6 +69,14 @@ export function installDesktopControl(options: {
     reportUsage(port === undefined ? undefined : value => port.postMessage({type: 'nova.usage', report: value}), report)
   }}
 }
+/** Names the missing pipeline keys so the host can ask for exactly those instead of a bare configuration error. */
+export function desktopConfigurationFailure(error: unknown): DesktopCapabilityState | undefined {
+  if (!(error instanceof BlockingConfigurationError)) return undefined
+  const missing = error.missing.filter(name => /^[A-Z][A-Z0-9_]{0,63}$/u.test(name)).slice(0, 4)
+  return {state: 'startup_failed', toolCount: null, toolBudget: DEFAULT_FRONTBRAIN_TOOL_BUDGET,
+    reason: 'configuration_required', pipeline: error.pipeline, missing}
+}
+
 export function desktopBudgetFailure(error: unknown): DesktopCapabilityState | undefined {
   const value = error as {readonly code?: unknown; readonly toolCount?: unknown; readonly toolBudget?: unknown}
   if (value?.code !== 'frontbrain_tool_budget_exceeded' || typeof value.toolCount !== 'number' || typeof value.toolBudget !== 'number'

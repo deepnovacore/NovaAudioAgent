@@ -97,7 +97,7 @@ try {
   const file = values['env-file'] ? parseEnv(await readFile(values['env-file'], 'utf8')) : {}
   const environment = {...file, ...process.env}
   const settings = loadSettings({...environment,
-    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded', NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark'})
+    PIPELINE_MODE: 'cascaded', CASCADE_LLM_PROVIDER: 'ark'})
   const config = requireSelectedCascadedRealtimeConfig(settings)
   passed(phase)
   const clock = new RealClock()

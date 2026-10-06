@@ -1,3 +1,4 @@
+import {onButton} from './button-action.mjs'
 import {floatToPcm16} from './audio.mjs'
 import {t} from './locale.mjs'
 
@@ -90,7 +91,7 @@ export function createVoiceprintPanel({document, api, stage}) {
   url.addEventListener('change',()=>{stage({voiceprintUploadUrl:url.value.trim()}); void check()})
   enabled.addEventListener('change',()=>stage({voiceprintEnabled:enabled.checked}))
   cancel.addEventListener('click',()=>abort?.abort())
-  register.addEventListener('click',async()=>{
+  onButton(register,async()=>{
     if (busy || !healthy) return
     busy = true; abort = new AbortController(); paint()
     const signal = abort.signal

@@ -16,7 +16,7 @@
       "requires": [
         [
           "DASHSCOPE_API_KEY",
-          "NOVA_AUDIO_AGENT_MODEL_API_KEY"
+          "MODEL_API_KEY"
         ]
       ],
       "timeoutMs": 240000,
@@ -60,7 +60,7 @@
       "requires": [
         [
           "DASHSCOPE_API_KEY",
-          "NOVA_AUDIO_AGENT_MODEL_API_KEY"
+          "MODEL_API_KEY"
         ]
       ],
       "timeoutMs": 120000,
@@ -81,27 +81,11 @@
       "requires": [
         [
           "DASHSCOPE_API_KEY",
-          "NOVA_AUDIO_AGENT_MODEL_API_KEY"
+          "MODEL_API_KEY"
         ]
       ],
       "timeoutMs": 180000,
       "scope": "Real surrogate progress decisions; not frontend tool selection."
-    },
-    {
-      "id": "qwen-clarification-legacy",
-      "layer": "model-routing",
-      "requires": [],
-      "timeoutMs": 60000,
-      "retired": "Stale import and missing agent descriptors; use text-tools for current frontend routing, coordinator for intake. Voice replacement remains uncovered.",
-      "scope": "Historical voice clarification smoke; not an acceptance gate."
-    },
-    {
-      "id": "qwen-routing-legacy",
-      "layer": "model-routing",
-      "requires": [],
-      "timeoutMs": 60000,
-      "retired": "Handwritten legacy codex__status schema differs from current hidden operations; not current-product acceptance.",
-      "scope": "Historical memory/status voice routing."
     },
     {
       "id": "project",

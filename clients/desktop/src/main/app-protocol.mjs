@@ -23,6 +23,7 @@ const RENDERER_ENTRY_PATHS = Object.freeze([
   '/capture-worklet.mjs',
   '/memory-board.html',
   '/settings.html',
+  '/setup.html',
 ])
 
 function relativeRendererRoute(from, specifier) {

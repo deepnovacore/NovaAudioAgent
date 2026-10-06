@@ -20,9 +20,9 @@ test('local mail incomplete scans retain current evidence and persist continuati
  const {MacMailClient}=await import('../src/connectors/macos/mail.js')
  const {ComposioConnector}=await import('../src/connectors/composio/index.js')
  const {SubstrateMemoryResource}=await import('../src/memory-substrate/resource.js')
- const {WorkspaceGraphStoreClient}=await import('../src/workspace-graph/store-client.js')
+ const {MemoryLedgerClient}=await import('../src/memory-ledger/store-client.js')
  const root=await mkdtemp(join(tmpdir(),'nova-local-mail-'));let incomplete=false,capped=false
- const memory=new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),userId:'fixture',model:'fixture',gateway:{async *stream(){await Promise.resolve();throw Error('unexpected model call')},complete(){throw Error('unexpected model call')}}})
+ const memory=new SubstrateMemoryResource({client:new MemoryLedgerClient(join(root,'memory.sqlite')),userId:'fixture',model:'fixture',gateway:{async *stream(){await Promise.resolve();throw Error('unexpected model call')},complete(){throw Error('unexpected model call')}}})
  const mail=new MacMailClient('/fixture')
  mail.request=(input:unknown)=>{
   const request=input as {command:string}

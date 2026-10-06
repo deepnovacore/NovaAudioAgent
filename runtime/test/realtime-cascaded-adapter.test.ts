@@ -1041,7 +1041,7 @@ test('ASR open and finish failures recover on the next utterance', async () => {
         event.kind === 'response_terminal' && event.status === 'completed'))
       assert.deepEqual(watching.events.find(event => event.kind === 'provider_error'), {
         kind: 'provider_error', session_epoch: 1,
-        code: `volcengine_asr_${failure}`, recoverable: true,
+        code: `cascaded_asr_${failure}`, recoverable: true,
       })
       assert.equal(watching.events.some(event => event.kind === 'user_transcript_failed'), true)
       if (failure === 'start') {
@@ -1113,7 +1113,7 @@ test('an ASR append failure is recoverable and a later utterance still completes
   const failure = watching.events.find(event => event.kind === 'provider_error')
   assert.deepEqual(failure, {
     kind: 'provider_error', session_epoch: 1,
-    code: 'volcengine_asr_append', recoverable: true,
+    code: 'cascaded_asr_append', recoverable: true,
   })
   assert.equal(watching.events.some(event => event.kind === 'user_transcript_failed'), true)
   assert.equal(failed.closed, true)
@@ -1150,7 +1150,7 @@ test('ASR receive failure keeps the speech identity until VAD stop releases the 
   const watching = observe(adapter)
   await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
   await waitFor('ASR receive failure', () => watching.events.some(event =>
-    event.kind === 'provider_error' && event.code === 'volcengine_asr_receive'))
+    event.kind === 'provider_error' && event.code === 'cascaded_asr_receive'))
   await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
   await waitFor('speech end after ASR receive failure', () => watching.events.some(event =>
     event.kind === 'user_speech_ended'))
@@ -1690,7 +1690,7 @@ test('TTS retries once before audio with every prior chunk, and never retries af
   assert.equal(afterClient.opens, 1)
   assert.equal(afterEvents.some(event => event.kind === 'response_audio_delta'), true)
   assert.equal(afterEvents.some(event => event.kind === 'provider_error'
-    && event.code === 'volcengine_tts_receive'), true)
+    && event.code === 'cascaded_tts_receive'), true)
   assert.equal(terminalStatus(afterEvents), 'failed')
   assert.equal(afterEvents.find(event => event.kind === 'response_terminal')?.reason, 'tts_failure')
   assert.equal(afterFirst.closed, true)
@@ -1728,7 +1728,7 @@ test('TTS never opens a third session after the one permitted retry also fails',
   const events = await settleWithin('single TTS retry', collecting)
   assert.equal(client.opens, 2)
   assert.equal(events.some(event => event.kind === 'provider_error'
-    && event.code === 'volcengine_tts_receive'), true)
+    && event.code === 'cascaded_tts_receive'), true)
   assert.equal(terminalStatus(events), 'failed')
 })
 
@@ -2797,8 +2797,8 @@ test('connect warms one silent TTS session without waiting and first response cl
   assert.equal(terminalStatus(await collecting), 'completed')
   assert.equal(opens, 1)
   assert.deepEqual(session.texts, ['你好。'])
-  const start = telemetry.records.find(record => record.kind === 'volcengine.tts.prewarm')!
-  const ready = telemetry.records.find(record => record.kind === 'volcengine.tts.prewarm.ready')!
+  const start = telemetry.records.find(record => record.kind === 'cascaded.tts.prewarm')!
+  const ready = telemetry.records.find(record => record.kind === 'cascaded.tts.prewarm.ready')!
   assert.equal(start.payload.open_id, ready.payload.open_id)
   assert.equal(typeof ready.payload.duration_ms, 'number')
   await adapter.close()
@@ -2815,7 +2815,7 @@ test('unused TTS expires once and only a later user speech start replenishes it'
   })
   await adapter.connect({tools: [], signal: new AbortController().signal})
   for (let i = 0; i < 10; i++) await Promise.resolve()
-  assert.equal(telemetry.records.filter(record => record.kind === 'volcengine.tts.prewarm.ready').length, 1)
+  assert.equal(telemetry.records.filter(record => record.kind === 'cascaded.tts.prewarm.ready').length, 1)
   t.mock.timers.tick(30_000)
   for (let i = 0; i < 30; i++) await Promise.resolve()
   assert.deepEqual(first.operations, ['open', 'cancel', 'close'])

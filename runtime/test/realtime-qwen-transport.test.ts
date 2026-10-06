@@ -234,3 +234,15 @@ test('a pre-aborted signal rejects without opening a socket', async () => {
     await server.close()
   }
 })
+
+
+test('Gemini opt-in decodes binary JSON WebSocket frames',async()=>{
+ const server=await harness()
+ try {
+  const socket=await webSocketQwenConnector({endpoint:server.endpoint,headers:{},openTimeout:5,signal:new AbortController().signal,binaryJson:true})
+  const peer=await server.peer
+  peer.send(Buffer.from('{"setupComplete":{}}'))
+  assert.equal(await receiveWithin(socket,1000),'{"setupComplete":{}}')
+  await socket.close()
+ } finally {await server.close()}
+})

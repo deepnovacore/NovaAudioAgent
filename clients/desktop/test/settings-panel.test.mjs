@@ -1,4 +1,7 @@
-import {t, localizeDocument} from '../src/renderer/locale.mjs'
+import * as voicePreset from '../src/renderer/voice-preset.mjs'
+import {onButton} from '../src/renderer/button-action.mjs'
+import {createStartupNotice, startupMessage} from '../src/renderer/startup-notice.mjs'
+import {t, localizeDocument, currentLanguage} from '../src/renderer/locale.mjs'
 import {createPhonePanel} from '../src/renderer/phone-panel.mjs'
 import {frontendUsageText, renderFrontendUsage} from '../src/renderer/frontend-usage.mjs'
 import assert from 'node:assert/strict'
@@ -72,7 +75,7 @@ async function mountSettingsPanel(initialView, apiOverrides = {}) {
   }
   let push
   runInNewContext(script.replace(/^import[\s\S]*?from '[^']+'\n/gm, ''), {
-    t, localizeDocument, createPhonePanel, ...settingsController, ...settingsCategories, ...voiceChoice, createSecretRevisions, frontendUsageText, renderFrontendUsage,
+    onButton, t, currentLanguage, createStartupNotice, startupMessage, localizeDocument, createPhonePanel, ...voicePreset, ...settingsController, ...settingsCategories, ...voiceChoice, createSecretRevisions, frontendUsageText, renderFrontendUsage,
     createCapabilitiesEditor: () => ({render() {}}),
     createImPanel: () => ({load: () => Promise.resolve()}),
     createConnectionsPanel: () => ({load: () => Promise.resolve()}),
@@ -534,7 +537,7 @@ test('settings allows only inline QR images while keeping network and scripts lo
   const meta = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/)
   assert.ok(meta, 'the settings page declares a CSP')
   for (const directive of board) assert.ok(meta[1].includes(directive), `CSP keeps ${directive}`)
-  assert.doesNotMatch(html.replace(/<a class="key-link"[^>]+>获取密钥 ↗<\/a>/g, ''), /https?:\/\//)
+  assert.doesNotMatch(html.replace(/<a class="key-link"[^>]+>获取密钥 ↗<\/a>/g, '').replace(/placeholder="https:\/\/host\/(?:v1|tts)"/g, ''), /https?:\/\//)
   assert.match(html, /<html lang="zh-CN">/)
 })
 
@@ -585,7 +588,6 @@ test('both voice fields offer presets while keeping a bounded custom id path', (
   assert.match(script, /QWEN_VOICES/)
   assert.match(script, /VOLCENGINE_TTS_VOICES/)
   assert.match(script, /bindVoicePicker\('integratedVoice', integratedVoicePreset, integratedVoiceCustom\)/)
-  assert.match(script, /bindVoicePicker\('cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom\)/)
 })
 
 test('every API key is a password field with a badge, hint, and clear button', () => {
@@ -593,6 +595,8 @@ test('every API key is a password field with a badge, hint, and clear button', (
     'composioApiKey',
     'dashscopeApiKey',
     'stepfunApiKey',
+    'openaiApiKey',
+    'geminiApiKey',
     'tavilyApiKey',
     'openrouterApiKey',
     'arkApiKey',
@@ -610,7 +614,7 @@ test('every API key is a password field with a badge, hint, and clear button', (
   assert.match(html, /Codex/)
   assert.match(html, /Ark/)
   assert.match(html, /火山语音/)
-  assert.equal((html.match(/type="password"/g) || []).length, 8)
+  assert.equal((html.match(/type="password"/g) || []).length, 13)
 })
 
 test('API keys live in a collapsed semantic disclosure with a readable summary', () => {
@@ -693,7 +697,7 @@ test('settings preserve approval, planning, and progress controls alongside the 
     assert.match(html, new RegExp(`<input type="radio" name="planReadback" value="${value}"`))
   }
   assert.doesNotMatch(html, /id="plannerModel"/)
-  assert.match(html, /<input type="checkbox" id="generatePlan">/)
+  assert.match(html, /<input type="checkbox" role="switch" id="generatePlan">/)
   for (const value of ['off', 'milestones', 'all']) {
     assert.match(html, new RegExp(`<input type="radio" name="progressBubbles" value="${value}"`))
   }
@@ -774,8 +778,8 @@ test('workspace actions use refresh wording and omit managed terminology from UI
   assert.match(html, />清空全部工作区<\/button>/u)
   assert.match(script, /正在刷新 Codex/u)
   assert.match(script, /Codex 刷新完成/u)
-  assert.doesNotMatch(html, /重新扫描|托管/u)
-  assert.doesNotMatch(script, /重新扫描|托管/u)
+  assert.doesNotMatch(html, /重新扫描|(?<!自)托管/u)
+  assert.doesNotMatch(script, /重新扫描|(?<!自)托管/u)
 })
 
 
@@ -1018,7 +1022,7 @@ test('failed application exposes recovery without clearing unsaved drafts or acc
   assert.equal(controller.snapshot().view.settingsRecoveryAvailable, true)
   assert.equal(controller.snapshot().view.integratedModel, 'bad-model')
   assert.match(html, /id="settings-restore" hidden>恢复上次可用设置/)
-  assert.match(script, /settingsRestore\.addEventListener\('click',[\s\S]*api\.retryBackend\(\)/)
+  assert.match(script, /onButton\(settingsRestore,[\s\S]*api\.retryBackend\(\)/)
 })
 
 
@@ -1064,7 +1068,7 @@ test('the sidebar renders one button per category with the first current', () =>
   }
   assert.match(html, /id="category-general" data-category="general" aria-current="true">/)
   assert.equal((html.match(/class="nav-item"/g) || []).length, settingsCategories.SETTINGS_CATEGORIES.length)
-  assert.equal((html.match(/tabindex="-1"/g) || []).length, settingsCategories.SETTINGS_CATEGORIES.length - 1)
+  assert.equal((html.match(/class="nav-item"[^>]*tabindex="-1"/g) || []).length, settingsCategories.SETTINGS_CATEGORIES.length - 1)
 })
 
 test('sidebar navigation cycles vertically and passes other keys through', () => {
@@ -1365,10 +1369,13 @@ test('pairing polling keeps the QR and regenerate button stable while manual ref
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(imageWrites, 0)
   pending = deferred()
-  await panel.click('#phone-primary')
+  const refresh = panel.click('#phone-primary')
+  assert.equal(button.attributes['aria-busy'], 'true')
   assert.equal(button.disabled, true)
   assert.equal(button.textContent, '正在准备…')
   pending.resolve({...ready, image: 'data:image/png;base64,new'})
+  await refresh
+  assert.equal(button.attributes['aria-busy'], 'false')
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(qr.src, 'data:image/png;base64,new')
   assert.equal(button.disabled, false)
@@ -1412,4 +1419,63 @@ test('phone settings stage together and open pairing only after persistence succ
   failed.node('#phone-server-port').listeners.input()
   await failed.click('#phone-pairing-open')
   assert.equal(opened, 1)
+})
+
+test('startup retry reports backend status without managed workspace recovery wording', async () => {
+  const failed=publicView({backendStatus:'stopped',startup:{stage:'failed',code:'workspace_not_found'}})
+  const connected=publicView({startup:{stage:'ready'}})
+  const panel=await mountSettingsPanel(failed,{retryBackend:async()=>connected})
+  assert.equal(panel.node('#startup-retry').hidden,false)
+  await panel.click('#startup-retry')
+  assert.equal(panel.node('#startup-retry').hidden,true)
+  assert.equal(panel.node('#status').textContent,'后台已连接')
+  assert.doesNotMatch(panel.node('#workspace-action-status').textContent,/工作区恢复/)
+  panel.push(publicView({backendStatus:'reconnecting',startup:{stage:'reconnecting'}}))
+  assert.equal(panel.node('#startup-retry').hidden,true)
+})
+
+test('language restart hint follows the applied language across live updates', async () => {
+  const language = currentLanguage()
+  const panel = await mountSettingsPanel(publicView({language}))
+  assert.equal(panel.node('#language-restart-hint').hidden, true)
+  panel.push(publicView({language: language === 'en' ? 'zh-CN' : 'en'}))
+  assert.equal(panel.node('#language-restart-hint').hidden, false)
+  panel.push(publicView({language}))
+  assert.equal(panel.node('#language-restart-hint').hidden, true)
+})
+
+
+test('secret category tabs preserve unsaved keys and support keyboard navigation', async () => {
+  const panel = await mountSettingsPanel(publicView())
+  panel.node('#dashscopeApiKey').value = 'unsaved-fixture'
+  panel.click('#secret-tab-connections')
+  assert.equal(panel.node('#secret-panel-models').hidden, true)
+  assert.equal(panel.node('#secret-tab-connections').attributes['aria-selected'], 'true')
+  panel.node('#secret-tab-connections').listeners.keydown({key: 'ArrowLeft', preventDefault() {}})
+  assert.equal(panel.node('#secret-panel-models').hidden, false)
+  assert.equal(panel.node('#secret-tab-models').focused, 1)
+  assert.equal(panel.node('#secret-tab-connections').tabIndex, -1)
+  assert.equal(panel.node('#dashscopeApiKey').value, 'unsaved-fixture')
+})
+
+test('self-hosted preset import stages included endpoints until Save and clears stale token drafts', async () => {
+  const {patch} = voicePreset.parseVoicePreset(JSON.stringify({schema: 'nova.voice-preset', version: 1, name: 'Local', llm: {provider: 'self-hosted', baseUrl: 'http://127.0.0.1:8000/v1', model: 'local-model'}}))
+  const calls = []
+  const panel = await mountSettingsPanel(publicView({selfHostedLlmBaseUrl: 'https://old.example/v1'}), {
+    voicePreset: async () => ({name: 'Local', patch}),
+    set: async commit => {calls.push(commit); return publicView({...commit.settingsPatch, secretsPresent: {selfHostedLlmApiKey: false}})},
+  })
+  panel.node('#selfHostedLlmApiKey').value = 'old-token-draft'
+  panel.node('#selfHostedLlmApiKey').listeners.input()
+  await panel.click('#voice-preset-import')
+  assert.equal(calls.length, 0)
+  assert.equal(panel.node('#selfHostedLlmBaseUrl').value, patch.selfHostedLlmBaseUrl)
+  assert.equal(panel.node('#selfHostedLlmApiKey').value, '')
+  assert.equal(panel.node('#self-hosted-llm-settings').hidden, false)
+  await panel.click('#settings-save')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].settingsPatch.pipelineMode, 'cascaded')
+  assert.equal(calls[0].settingsPatch.cascadedLlmModels['self-hosted'], 'local-model')
+  assert.equal(calls[0].settingsPatch.secrets.selfHostedLlmApiKey, '')
+  assert.equal(Object.hasOwn(calls[0].settingsPatch, 'cascadedAsrProvider'), false)
 })

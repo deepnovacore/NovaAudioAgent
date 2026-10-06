@@ -4,9 +4,10 @@ import {createReadStream} from 'node:fs'
 import {readFile, readdir} from 'node:fs/promises'
 import {join, resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
+import {releaseChannel} from './release-channel.mjs'
 
 export async function verifyCandidateArtifacts(root, version) {
-  assert.match(version ?? '', /^\d+\.\d+\.\d+$/u)
+  releaseChannel(version)
   const names = ['macos-arm64-app.zip', 'macos-arm64.dmg', 'windows-x64-portable.zip', 'windows-x64.exe', 'linux-x64.AppImage', 'linux-x64.deb']
     .map(suffix => `nova-audio-agent-${version}-${suffix}`)
   names.push(`nova-audio-agent-server-${version}.tgz`)

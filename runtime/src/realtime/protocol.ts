@@ -206,12 +206,11 @@ export const workspaceContextInjectionSchema = workspaceContextDeliveryRecordSch
   },
 )
 
-export type WorkspaceContextDeliveryCapability = z.infer<typeof workspaceContextDeliveryCapabilitySchema>
-export type WorkspaceContextDelivery = z.infer<typeof workspaceContextDeliverySchema>
 export type WorkspaceContextDeliveryRecord = z.infer<typeof workspaceContextDeliveryRecordSchema>
 
 export const hostResponseKindSchema = z.enum([
   'host_fact',
+  'task_continuation',
   'tool_result',
   'delegation_acknowledgement',
 ])
@@ -222,6 +221,7 @@ export const hostResponseIntentSchema = z.object({
   task_summary: boundedText().nullable().default(null),
   origin_spoken: z.boolean().default(false),
 }).strict().superRefine((intent, context) => {
+  if(intent.kind==='task_continuation'&&intent.item.kind!=='recovery')context.addIssue({code:'custom',path:['item'],message:'task continuation requires recovery context'})
   if (intent.item.kind === 'workspace_context') {
     context.addIssue({
       code: 'custom',
@@ -282,6 +282,8 @@ export const itemIdentitySchema = z.object({
   session_epoch: epochSchema,
   host_item_id: realtimeIdentifierSchema,
   provider_item_id: realtimeIdentifierSchema,
+  /** Omission preserves older adapters; staged means local ownership, not remote acknowledgment. */
+  delivery: z.enum(['staged', 'acknowledged']).optional(),
 }).strict()
 
 export type SessionIdentity = z.infer<typeof sessionIdentitySchema>
@@ -326,14 +328,16 @@ export const userSpeechEndedSchema = sessionEvent(z.literal('user_speech_ended')
 })
 export const userTranscriptDeltaSchema = sessionEvent(
   z.literal('user_transcript_delta'),
-  {...itemTextShape, replace:z.boolean().optional()},
+  {...itemTextShape, replace: z.boolean().optional()},
 )
 export const userTranscriptFailedSchema = sessionEvent(z.literal('user_transcript_failed'), {
   item_id: realtimeIdentifierSchema,
 })
 export const userTranscriptFinalSchema = sessionEvent(
   z.literal('user_transcript_final'),
-  {...itemTextShape, input_kind:z.literal('text').optional()},
+  {...itemTextShape, input_kind:z.literal('text').optional(),
+    /** Independent transcription streams do not prove a new response is owed. */
+    response_expected:z.boolean().optional()},
 )
 /** Provider evidence, never a host turn identity or an authorization decision.
  * Omission preserves automatic-provider legacy correlation; explicit unknown must not claim a user item.
@@ -392,6 +396,14 @@ export const responseTerminalSchema = sessionEvent(z.literal('response_terminal'
   status: z.enum(['completed', 'cancelled', 'failed']),
   reason: boundedText(),
 })
+/** A generation segment yielded to tools. It is not a completed provider turn.
+ * All calls in this segment precede this event; continuation uses a new response id.
+ */
+export const responseYieldedSchema = sessionEvent(z.literal('response_yielded'), {
+  response_id: realtimeIdentifierSchema,
+  reason: z.literal('tool_calls'),
+  call_ids: z.array(realtimeIdentifierSchema).min(1).max(128).refine(ids => new Set(ids).size === ids.length),
+})
 export const responseCancelRejectedSchema = sessionEvent(z.literal('response_cancel_rejected'), {
   response_id: realtimeIdentifierSchema,
   cancel_request_id: realtimeIdentifierSchema,
@@ -415,6 +427,7 @@ export const realtimeProviderEventSchema = z.discriminatedUnion('kind', [
   toolCallReadySchema,
   itemConfirmedSchema,
   responseTerminalSchema,
+  responseYieldedSchema,
   responseCancelRejectedSchema,
   providerErrorEventSchema,
 ])
@@ -438,6 +451,9 @@ export const responseAdaptationContextSchema = z.object({
 }).strict()
 
 export interface RealtimeProvider {
+  /** Session-setup guidance cannot carry rolling source/recovery catalogs without interrupting live turns. */
+  readonly responseAdaptationMode?: 'mutable' | 'session_setup'
+  reportPlayback?(input: {readonly response_id:string; readonly played_ms:number | null; readonly disposition:string}, signal:AbortSignal):Promise<void>
   setLanguage?(language?: PromptLanguage): Promise<void>
 
   /** Automatic providers may start before transcript final; requested providers wait for the host.
@@ -494,6 +510,9 @@ export class RealtimeProtocolError extends Error {
     this.name = 'RealtimeProtocolError'
   }
 }
+
+/** A response was rejected before any request bytes were sent. */
+export class ProviderResponseRejectedError extends RealtimeProtocolError {}
 
 export class ItemDeliveryUncertainError extends Error {
   readonly session_epoch: number

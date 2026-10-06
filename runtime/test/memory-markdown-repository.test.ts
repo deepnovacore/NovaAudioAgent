@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {mkdtempSync,readFileSync,writeFileSync,readdirSync,rmSync,statSync,symlinkSync,mkdirSync,renameSync,linkSync} from 'node:fs'
+import {mkdtempSync,readFileSync,writeFileSync,readdirSync,rmSync,statSync,symlinkSync,mkdirSync,renameSync,linkSync,existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
-import {execFileSync} from 'node:child_process'
+import {execFileSync,spawn} from 'node:child_process'
 import {MarkdownRepository} from '../src/memory-substrate/markdown-repository.js'
 import type {EntryRevision} from '../src/memory-substrate/store.js'
 
@@ -143,6 +143,24 @@ test('repository locks recover confirmed dead owners without stealing a live loc
  writeFileSync(lock,JSON.stringify({pid:process.pid,token:'live-test-owner'}))
  assert.throws(()=>repo.withLock(()=>undefined),/BUSY/)
  assert.equal((JSON.parse(readFileSync(lock,'utf8')) as {token:string}).token,'live-test-owner')
+})
+
+test('a waiting repository takes the lock once a live owner releases it, and still reports BUSY after its budget',t=>{
+ const root=fixture(t);new MarkdownRepository(root).initialize()
+ const lock=join(root,'.nova-memory.lock')
+ const holder=spawn(process.execPath,['-e',`const fs=require('fs');fs.writeFileSync(${JSON.stringify(lock)},JSON.stringify({pid:process.pid,token:'other-process'}));setTimeout(()=>{fs.unlinkSync(${JSON.stringify(lock)});process.exit(0)},500)`],{stdio:'ignore'})
+ t.after(()=>{holder.kill()})
+ const sleep=(ms:number)=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms)
+ for(let waited=0;!existsSync(lock);waited+=10){assert.ok(waited<5000,'holder never took the lock');sleep(10)}
+ const waiting=new MarkdownRepository(root,{lockWaitMs:5000})
+ const started=Date.now()
+ assert.equal(waiting.withLock(()=>waiting.open([first])).revisions.length,1)
+ assert.ok(Date.now()-started>=100,'it waited for the owner instead of failing at once')
+ writeFileSync(lock,JSON.stringify({pid:process.pid,token:'live-test-owner'}))
+ const impatient=new MarkdownRepository(root,{lockWaitMs:150})
+ const before=Date.now()
+ assert.throws(()=>impatient.withLock(()=>undefined),/BUSY/)
+ assert.ok(Date.now()-before>=150,'BUSY only after the wait budget is spent')
 })
 
 test('only a host-admitted exact file edit can authorize normalized correction content',t=>{

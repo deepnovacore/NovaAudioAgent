@@ -1,11 +1,11 @@
-import type {GraphDatabase} from '../workspace-graph/store.js'
-import {LogicalWorkspaceSchema,WorkspaceInstanceSchema,RelationCardSchema} from '../workspace-graph/models.js'
+import type {LedgerDatabase} from '../memory-ledger/store.js'
+import {LogicalWorkspaceSchema,WorkspaceInstanceSchema,RelationCardSchema} from '../memory-ledger/models.js'
 import {SensitivePathPolicy} from '../memory/sensitivity.js'
 import {canonicalJson} from '../text/canonical-json.js'
 import {contentHash,type EntryRevision} from './store.js'
-type GraphSqlInput=Parameters<ReturnType<GraphDatabase['prepare']>['run']>[number]
-const changed=new WeakSet<GraphDatabase>()
-export function consumeWorkspaceProjectionChange(db:GraphDatabase):boolean{const result=changed.has(db);changed.delete(db);return result}
+type LedgerSqlInput=Parameters<ReturnType<LedgerDatabase['prepare']>['run']>[number]
+const changed=new WeakSet<LedgerDatabase>()
+export function consumeWorkspaceProjectionChange(db:LedgerDatabase):boolean{const result=changed.has(db);changed.delete(db);return result}
 
 const kinds=['LogicalWorkspace','WorkspaceInstance','RelationCard'] as const
 type Kind=typeof kinds[number]
@@ -31,13 +31,13 @@ const definitions={
  WorkspaceInstance:{table:'workspace_instances',columns:['instance_id','logical_workspace_id','display_name','path_label','branch','repository_fingerprint','status','first_seen_at','last_seen_at','revision'],keys:['instance_id']},
  RelationCard:{table:'relation_cards',columns:['source_logical_id','target_logical_id','relation_type','confidence','reason','first_seen_at','last_seen_at','status','revision'],keys:['source_logical_id','target_logical_id','relation_type']},
 }
-function available(db:GraphDatabase):boolean{
+function available(db:LedgerDatabase):boolean{
  const count=db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('logical_workspaces','workspace_instances','relation_cards','relation_evidence')").get()?.count
  if(Number(count)===0)return false
  if(Number(count)!==4)throw Error('STORE_WORKSPACE_SCHEMA')
  return true
 }
-function projectionStamp(db:GraphDatabase):string{return canonicalJson([
+function projectionStamp(db:LedgerDatabase):string{return canonicalJson([
  db.prepare('SELECT * FROM logical_workspaces ORDER BY logical_workspace_id').all(),
  db.prepare('SELECT * FROM workspace_instances ORDER BY instance_id').all(),
  db.prepare('SELECT * FROM relation_cards ORDER BY source_logical_id,target_logical_id,relation_type').all(),
@@ -48,9 +48,9 @@ function validate(row:EntryRevision,previous?:EntryRevision|null):Record<string,
  if(!isKind(row.kind)||row.entry_id!=='workspace:'+row.kind+':'+contentHash(key(row.kind,content)))throw Error('STORE_WORKSPACE_IDENTITY')
  return content
 }
-function write(db:GraphDatabase,kind:Kind,content:Record<string,unknown>):void{
+function write(db:LedgerDatabase,kind:Kind,content:Record<string,unknown>):void{
  const {table,columns,keys}=definitions[kind],all=[...columns,'payload_json']
- db.prepare(`INSERT INTO ${table}(${all.join(',')}) VALUES(${all.map(()=>'?').join(',')}) ON CONFLICT(${keys.join(',')}) DO UPDATE SET ${all.filter(field=>!keys.includes(field)).map(field=>`${field}=excluded.${field}`).join(',')}`).run(...columns.map(field=>content[field] as GraphSqlInput),canonicalJson(content))
+ db.prepare(`INSERT INTO ${table}(${all.join(',')}) VALUES(${all.map(()=>'?').join(',')}) ON CONFLICT(${keys.join(',')}) DO UPDATE SET ${all.filter(field=>!keys.includes(field)).map(field=>`${field}=excluded.${field}`).join(',')}`).run(...columns.map(field=>content[field] as LedgerSqlInput),canonicalJson(content))
  if(kind==='RelationCard'){
   const relation=RelationCardSchema.parse(content)
   db.prepare('DELETE FROM relation_evidence WHERE source_logical_id=? AND target_logical_id=? AND relation_type=?').run(relation.source_logical_id,relation.target_logical_id,relation.relation_type)
@@ -58,7 +58,7 @@ function write(db:GraphDatabase,kind:Kind,content:Record<string,unknown>):void{
  }
 }
 /** Single-row projection inside the owning merge transaction; never removes unrelated cards. */
-export function projectWorkspaceRevision(db:GraphDatabase,next:EntryRevision,previous?:EntryRevision|null):void{
+export function projectWorkspaceRevision(db:LedgerDatabase,next:EntryRevision,previous?:EntryRevision|null):void{
  if(!isKind(next.kind)||!available(db))return
  const stamp=projectionStamp(db)
  if(next.op!=='tombstone'){write(db,next.kind,validate(next,previous));if(stamp!==projectionStamp(db))changed.add(db);return}
@@ -66,11 +66,11 @@ export function projectWorkspaceRevision(db:GraphDatabase,next:EntryRevision,pre
  const content=validate(previous),{table,keys}=definitions[next.kind]
  if(next.kind!==previous.kind||next.entry_id!==previous.entry_id)throw Error('STORE_WORKSPACE_IDENTITY')
  if(next.kind==='RelationCard')db.prepare('DELETE FROM relation_evidence WHERE source_logical_id=? AND target_logical_id=? AND relation_type=?').run(content.source_logical_id as string,content.target_logical_id as string,content.relation_type as string)
- db.prepare(`DELETE FROM ${table} WHERE ${keys.map(field=>`${field}=?`).join(' AND ')}`).run(...keys.map(field=>content[field] as GraphSqlInput))
+ db.prepare(`DELETE FROM ${table} WHERE ${keys.map(field=>`${field}=?`).join(' AND ')}`).run(...keys.map(field=>content[field] as LedgerSqlInput))
  if(stamp!==projectionStamp(db))changed.add(db)
 }
 /** Rebuild all typed projections from accepted current revisions inside the index transaction. */
-export function rebuildWorkspaceProjections(db:GraphDatabase,revisions:EntryRevision[]):void{
+export function rebuildWorkspaceProjections(db:LedgerDatabase,revisions:EntryRevision[]):void{
  if(!available(db))return
  const stamp=projectionStamp(db)
  const latest=new Map<string,EntryRevision>()

@@ -64,8 +64,8 @@ test('public project roster respects the wire limit without deleting stored work
     const stored = await value.store.snapshot()
 
     assert.equal(stored.workspaces.length, 12)
-    assert.equal(agentRoster.length, 10)
-    assert.deepEqual(view.roster.map(entry => entry.name), agentRoster.map(entry => entry.name))
+    assert.equal(agentRoster.length, 12)
+    assert.deepEqual(view.roster.map(entry => entry.name), agentRoster.slice(0, 10).map(entry => entry.name))
     assert.equal(view.roster.length, 10)
     assert.doesNotThrow(() => projectStateMessage(view))
   } finally {

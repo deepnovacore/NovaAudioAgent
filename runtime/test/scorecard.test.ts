@@ -14,7 +14,7 @@ import {
 } from '../eval/scorecard.js'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const fixtureRoot = resolve(repositoryRoot, 'fixtures/product/v1')
+const fixtureRoot = resolve(repositoryRoot, 'tests/fixtures/product/v1')
 
 interface ScorecardDocument {
   readonly schema_version: number

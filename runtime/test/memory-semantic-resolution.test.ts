@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {WorkspaceGraphStoreClient} from '../src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../src/memory-substrate/resource.js'
 import type {ModelGateway} from '../src/model/model-gateway.js'
 import type {EntryRevision} from '../src/memory-substrate/store.js'
@@ -24,7 +24,7 @@ test('semantic decisions keep one spicy preference through paraphrase, temporal 
   const items:Record<string,ReturnType<typeof entry>>={initial:entry('spicy','我不吃辣'),paraphrase:entry('avoid-spice','辣的菜我都不吃'),temporal:entry('recent-spice','最近可以吃一点辣','2099-10-01T00:00:00Z'),after:entry('changed-key','我很能吃辣')}
   return Promise.resolve(reply({entries:[items[prompt.source]!]}))
  }}
- let client=new WorkspaceGraphStoreClient(path),resource=new SubstrateMemoryResource({client,userId:'chain',gateway,model:'fixture',inputConsent:true})
+ let client=new MemoryLedgerClient(path),resource=new SubstrateMemoryResource({client,userId:'chain',gateway,model:'fixture',inputConsent:true})
  try{
   await resource.open();await remember(resource,'one','initial');const first=(await resource.list()).entries[0]!
   await remember(resource,'two','paraphrase');assert.equal((await resource.list()).entries.length,1);assert.equal((await resource.get(first.id))?.version,1)
@@ -33,7 +33,7 @@ test('semantic decisions keep one spicy preference through paraphrase, temporal 
   const stored=(await client.memory('list',{}) as EntryRevision[])[0]!;assert.equal(stored.valid_until,'2099-10-01T00:00:00Z');assert.equal(stored.evidence_refs.length,2);assert.equal(stored.origin,'stated')
   await resource.correct(first.id,2,'医生要求：不吃辣',{type:'conversation',ref:'correction',observed_at:now()})
   await remember(resource,'four','after');assert.equal((await resource.list()).entries.length,1);assert.equal((await resource.get(first.id))?.content,'医生要求：不吃辣')
-  await resource.close();client=new WorkspaceGraphStoreClient(path);resource=new SubstrateMemoryResource({client,userId:'chain',gateway,model:'fixture',inputConsent:true});await resource.open();await resource.flush()
+  await resource.close();client=new MemoryLedgerClient(path);resource=new SubstrateMemoryResource({client,userId:'chain',gateway,model:'fixture',inputConsent:true});await resource.open();await resource.flush()
   assert.equal((await resource.get(first.id))?.content,'医生要求：不吃辣');assert.equal((await resource.get(first.id))?.version,3);assert.equal(resolves,3)
  }finally{await resource.close();await rm(root,{recursive:true,force:true})}
 })
@@ -41,7 +41,7 @@ test('semantic decisions keep one spicy preference through paraphrase, temporal 
 test('fabricated semantic target rejects the batch and leaves extraction pending',async()=>{
  const root=await mkdtemp(join(tmpdir(),'nova-resolution-fabricated-'));let calls=0
  const gateway:ModelGateway={async *stream(){ /* complete only */ },complete(request){const prompt=JSON.parse(request.prompt) as ResolutionPrompt;return Promise.resolve(reply(prompt.candidates?{decisions:[{candidate_index:0,action:'update',target_id:'personal:another-user:invented'}]}:{entries:[entry(++calls===1?'spicy':'avoid-spice','我不吃辣')]}))}}
- const client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'fabrication',gateway,model:'fixture',inputConsent:true})
+ const client=new MemoryLedgerClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'fabrication',gateway,model:'fixture',inputConsent:true})
  try{await resource.open();await remember(resource,'one','initial');await remember(resource,'two','paraphrase');assert.equal((await resource.list()).entries.length,1);assert.equal((await client.memory('pending_evidence',{source_prefix:resource.prefix,provider:'fixture'}) as unknown[]).length,1)}finally{await resource.close();await rm(root,{recursive:true,force:true})}
 })
 
@@ -52,7 +52,7 @@ for(const scenario of ['revoked','stale-update','stale-noop'] as const)test(`sem
   if(prompt.candidates){start();await gate;return reply({decisions:[{candidate_index:0,action:scenario==='stale-noop'?'no_change':'update',target_id:prompt.existing[0]!.id}]})}
   return reply({entries:[entry(++calls===1?'spicy':'new-spicy','最近可以吃一点辣')]})
  }}
- const client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'race',gateway,model:'fixture',inputConsent:true})
+ const client=new MemoryLedgerClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'race',gateway,model:'fixture',inputConsent:true})
  try{
   await resource.open();await remember(resource,'one','initial');const old=(await client.memory('list',{}) as EntryRevision[])[0]!
   await resource.remember({sourceId:'two',sessionId:'synthetic',sequence:2,occurredAt:now(),text:'new',confirmed:true})
@@ -71,7 +71,7 @@ test('resolver never sees another user, another kind, or evidence without the ac
   if(prompt.candidates){seen.push(prompt.existing);return Promise.resolve(reply({decisions:[{candidate_index:0,action:'update',target_id:prompt.existing[0]!.id}]}))}
   return Promise.resolve(reply({entries:[entry(++extracted===1?'spicy':'drift','我不吃辣')]}))
  }}
- const client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'scope',gateway,model:'fixture',extractionFingerprint:'actual-provider',inputConsent:true})
+ const client=new MemoryLedgerClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'scope',gateway,model:'fixture',extractionFingerprint:'actual-provider',inputConsent:true})
  try{
   await resource.open();await remember(resource,'one','initial');const old=(await client.memory('list',{}) as EntryRevision[])[0]!
   for(const [id,kind,provider] of [[resource.prefix+'blocked','preference','wrong-provider'],['personal:another:entry','preference','actual-provider'],[resource.prefix+'todo','plan','actual-provider']] as const){
@@ -91,7 +91,7 @@ for(const revokeUnselected of [false,true])test(`multiple relevant entries use t
   if(prompt.candidates){exposed=prompt.existing;start();await gate;return reply({decisions:[{candidate_index:0,action:'update',target_id:prompt.existing.find(row=>row.text==='我不吃辣')!.id}]})}
   return reply({entries:[entry(++calls===1?'spicy':'new-spicy',calls===1?'我不吃辣':'我最近可以吃一点辣')]})
  }}
- const client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'multiple',gateway,model:'fixture',inputConsent:true})
+ const client=new MemoryLedgerClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'multiple',gateway,model:'fixture',inputConsent:true})
  try{
   await resource.open();await remember(resource,'one','initial');const old=(await resource.list()).entries[0]!
   const id=resource.prefix+'dessert',evidenceId=id+':e'
@@ -114,6 +114,6 @@ test('re-extracting the same evidence with a changed key still resolves the exis
  const gateway:ModelGateway={async *stream(){ /* complete only */ },complete(request){const prompt=JSON.parse(request.prompt) as ResolutionPrompt
   return Promise.resolve(reply(prompt.candidates?{decisions:[{candidate_index:0,action:'no_change',target_id:prompt.existing[0]!.id}]}:{entries:[entry(++extracts===1?'spicy':'avoid-chili','我不吃辣')]}))
  }}
- const resource=new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),userId:'same-evidence',gateway,model:'fixture',inputConsent:true})
+ const resource=new SubstrateMemoryResource({client:new MemoryLedgerClient(join(root,'memory.sqlite')),userId:'same-evidence',gateway,model:'fixture',inputConsent:true})
  try{await resource.open();await remember(resource,'one','initial');const first=(await resource.list()).entries[0]!;await resource.reextract(first.id);assert.equal((await resource.list()).entries.length,1);assert.equal((await resource.get(first.id))?.version,1)}finally{await resource.close();await rm(root,{recursive:true,force:true})}
 })

@@ -32,8 +32,8 @@ model, MCP or Codex resources are constructed.
 ```sh
 mkdir -p "$HOME/.nova-remote"
 chmod 700 "$HOME/.nova-remote"
-export NOVA_AUDIO_AGENT_SERVER_PORT=19876
-export NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE="$HOME/.nova-remote/client-token"
+export SERVER_PORT=19876
+export SERVER_TOKEN_FILE="$HOME/.nova-remote/client-token"
 npm run server:token-init --workspace @nova-audio-agent/runtime
 ```
 
@@ -46,9 +46,9 @@ Set model/executor configuration explicitly in a private environment file, for
 example `$HOME/.nova-remote/server.env` (0600), using the existing Runtime environment
 contract. This is a Node `--env-file` file, not a shell script; use absolute paths,
 not `$HOME`/`~` expansion. At minimum choose/configure the desired pipeline and its
-credentials. Codex additionally requires `NOVA_AUDIO_AGENT_EXECUTORS=codex` and an
-absolute `NOVA_AUDIO_AGENT_CODEX_WORKSPACE`. Set
-`NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT` to the intended private state directory.
+credentials. Codex additionally requires `EXECUTORS=codex` and an
+absolute `CODEX_WORKSPACE`. Set
+`CODEX_PROJECT_STATE_ROOT` to the intended private state directory.
 The headless entry does not read Electron Settings or infer a project from cwd.
 Codex login and any executable/resource-path configuration must be available to the
 same user running the service; a GUI application's environment is not inherited.
@@ -150,7 +150,7 @@ On macOS, the windowed pairing and device-revocation interface requires Xcode Co
 npm run server:pair --workspace @nova-audio-agent/runtime -- --window wss://YOUR-HOST.ts.net
 ```
 
-Keep the token file and `${NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE}.devices.json` in a private 0700 directory; both files must be private to the service user. The device store supports up to 32 devices and must have only one writer. Do not edit it while the service is running.
+Keep the token file and `${SERVER_TOKEN_FILE}.devices.json` in a private 0700 directory; both files must be private to the service user. The device store supports up to 32 devices and must have only one writer. Do not edit it while the service is running.
 
 Tailscale Serve must forward the whole service, including `/client/v1`, `/client/pair` and `/client/pair-admin`. Each management request requires the host token; a device token cannot manage other devices. Revoking one device does not revoke other device credentials.
 

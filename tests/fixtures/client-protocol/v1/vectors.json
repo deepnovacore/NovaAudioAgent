@@ -1,0 +1,143 @@
+[
+  {
+    "name": "first",
+    "hex": "4e4f564100407b227574746572616e63655f6964223a227574746572616e63652d31222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0000ff7f0080",
+    "valid": true,
+    "expected": {
+      "utterance_id": "utterance-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm_hex": "0000ff7f0080"
+    },
+    "personal_protocol": {
+      "hello": {
+        "type": "hello",
+        "protocol_version": 1,
+        "capabilities": [
+          "personal"
+        ]
+      },
+      "ready_capability": "personal",
+      "max_personal_json_bytes": 1048576,
+      "coalesce_ms": 250,
+      "reload": {
+        "type": "personal.state",
+        "revision": 9,
+        "reload_required": true
+      },
+      "result_reload": {
+        "type": "personal.result",
+        "request_id": "mutate-1",
+        "ok": true,
+        "reload_required": true
+      },
+      "news_projection": {
+        "enabled": true,
+        "refreshing": false,
+        "items": [
+          {
+            "id": "article-1",
+            "title": "Example article",
+            "summary": "Summary",
+            "url": "https://example.com/article",
+            "read": false,
+            "saved": false
+          }
+        ],
+        "saved": []
+      },
+      "workbench_context_projection": {
+        "status": "ready",
+        "recap": {
+          "text": "Recently busy",
+          "projects": [
+            {
+              "name": "Nova",
+              "line": "Workbench"
+            }
+          ]
+        },
+        "cards": [
+          {
+            "id": "card-1",
+            "tab": "todos",
+            "title": "Try one task",
+            "body": "Body",
+            "why": "Why now",
+            "next": "Next step",
+            "source_count": 2
+          }
+        ]
+      },
+      "profile_preparation_projection": {
+        "status": "ready",
+        "draft": {
+          "about": "Draft about",
+          "work": [
+            {
+              "title": "Project",
+              "text": "What it does"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "unicode",
+    "hex": "4e4f564100487b227574746572616e63655f6964223a225c75386265645c75393766332d5c7534653030222c2267656e65726174696f6e5f65706f6368223a322c2273657175656e6365223a317d4e4f5641",
+    "valid": true,
+    "expected": {
+      "utterance_id": "语音-一",
+      "generation_epoch": 2,
+      "sequence": 1,
+      "pcm_hex": "4e4f5641"
+    }
+  },
+  {
+    "name": "safe-integer",
+    "hex": "4e4f564100457b227574746572616e63655f6964223a2275222c2267656e65726174696f6e5f65706f6368223a393030373139393235343734303939312c2273657175656e6365223a307d0000",
+    "valid": true,
+    "expected": {
+      "utterance_id": "u",
+      "generation_epoch": 9007199254740991,
+      "sequence": 0,
+      "pcm_hex": "0000"
+    }
+  },
+  {
+    "name": "bad-magic",
+    "hex": "004f564100027b7d0000",
+    "valid": false
+  },
+  {
+    "name": "short",
+    "hex": "4e4f56",
+    "valid": false
+  },
+  {
+    "name": "truncated-header",
+    "hex": "4e4f564100107b7d",
+    "valid": false
+  },
+  {
+    "name": "oversized-header",
+    "hex": "4e4f5641ffff",
+    "valid": false
+  },
+  {
+    "name": "odd-pcm",
+    "hex": "4e4f564100367b227574746572616e63655f6964223a2275222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d00",
+    "valid": false
+  },
+  {
+    "name": "unsafe-integer",
+    "hex": "4e4f564100457b227574746572616e63655f6964223a2275222c2267656e65726174696f6e5f65706f6368223a393030373139393235343734303939322c2273657175656e6365223a307d0000",
+    "valid": false
+  },
+  {
+    "name": "zero-epoch",
+    "hex": "4e4f564100367b227574746572616e63655f6964223a2275222c2267656e65726174696f6e5f65706f6368223a302c2273657175656e6365223a307d0000",
+    "valid": false
+  }
+]

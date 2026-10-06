@@ -14,6 +14,15 @@ test('profile adjustments use canonical news interests without copying collectio
  h.buttons.length=0;renderProfile(h.panel,args);await h.buttons.find(b=>b.textContent==='完成调整').action()
  assert.deepEqual(h.calls,[['news.configure',{enabled:true,explore:false,interests:['AI'],expected_version:3}]])
 })
+test('guessed interests read as unconfirmed on the profile page until the user keeps them',async t=>{
+ const h=harness(t),flatten=node=>[node,...node.children.flatMap(flatten)],news={enabled:true,explore:false,profile_version:1,interests_seeded:true,interests:[{id:'ai',text:'AI',weight:1},{id:'d',text:'设计',weight:1}]}
+ renderProfile(h.panel,{...h,state:{profile:{version:2,about:'Me'}},news})
+ assert.ok(flatten(h.panel).some(n=>n.textContent==='从 Profile 猜的 · 待确认'));assert.ok(!flatten(h.panel).some(n=>n.textContent==='已保存'))
+ await h.buttons.find(b=>b.textContent==='就用这些').action()
+ assert.deepEqual(h.calls,[['news.configure',{enabled:true,explore:false,interests:['AI','设计'],expected_version:1}]])
+ h.panel.children.length=0;h.buttons.length=0;renderProfile(h.panel,{...h,state:{profile:{version:2,about:'Me'}},news:{...news,interests_seeded:false,profile_version:2}})
+ assert.ok(flatten(h.panel).some(n=>n.textContent==='已保存'));assert.ok(!h.buttons.some(b=>b.textContent==='就用这些'))
+})
 test('news conversion previews editable fields and writes only after explicit save',async t=>{
  const h=harness(t),news={enabled:true,mode:'timeline',pending:0,sources:[],interests:[],items:[{id:'a',source_id:'bbc',title:'Article title',summary:'Public excerpt',url:'https://www.bbc.com/news/a',content_hash:'hash',ranking:null}],saved:[]}
  renderNews(h.panel,{...h,news});await h.buttons.find(b=>b.textContent==='转为个人事项')?.action()
@@ -41,6 +50,12 @@ test('disabled feeds can be enabled in place without a settings detour',async t=
  const h=harness(t);renderNews(h.panel,{...h,news:{enabled:false,mode:'timeline',pending:0,profile_version:0,sources:[],interests:[],items:[],saved:[]}})
  assert.ok(h.buttons.find(b=>b.textContent==='开启资讯'));assert.equal(h.buttons.find(b=>b.textContent==='前往设置'),undefined);assert.equal(h.calls.length,0)
 })
+test('disconnected Feeds does not present a false news-loading state',t=>{
+ const h=harness(t);renderNews(h.panel,{...h,news:undefined,connected:false})
+ const copy=h.panel.children.map(node=>node.textContent).join(' ')
+ assert.match(copy,/资讯暂不可用/u)
+ assert.doesNotMatch(copy,/正在连接资讯/u)
+})
 test('life forms start collapsed behind an add button and reopen for edits',async t=>{
  const h=harness(t);renderLife(h.panel,{...h,kind:'todo',state:{todos:[{id:'t',kind:'todo',title:'A',note:'',version:1,status:'open'}],ideas:[],goals:[]},delegate(){}})
  const flatten=node=>[node,...node.children.flatMap(flatten)];const form=()=>flatten(h.panel).find(n=>n.className==='life-form')
@@ -57,7 +72,7 @@ test('profile starts with a readable preview and editing is optional',async t=>{
  const flatten=node=>[node,...node.children.flatMap(flatten)]
  assert.equal(flatten(h.panel).filter(n=>n.tag==='textarea').length,0)
  assert.ok(flatten(h.panel).some(n=>n.textContent==='I build audio tools'))
- await h.buttons.find(b=>b.textContent==='编辑介绍').action()
+ await h.buttons.find(b=>b.textContent==='编辑概览').action()
  h.panel.children=[];h.buttons.length=0;renderProfile(h.panel,args)
  assert.equal(flatten(h.panel).filter(n=>n.tag==='textarea').length,1)
  assert.equal(h.calls.length,0)
@@ -76,8 +91,60 @@ test('a failed save preserves the exact draft across newer generated suggestions
  args.warmup.draft.interests=[{text:'Other topic'}];h.buttons.length=0;renderProfile(h.panel,args)
  await h.buttons.find(b=>b.textContent==='完成调整').action();assert.deepEqual(h.local.interestEdit.interests,['My topic']);assert.ok(h.local.interestError)
 })
-test('a user-cleared profile and interests are not repopulated by generated defaults',t=>{
- const h=harness(t);renderProfile(h.panel,{...h,state:{profile:{version:3,about:''}},news:{enabled:false,explore:true,profile_version:2,interests:[]},warmup:{status:'ready',draft:{about:{text:'Old suggestion'},interests:[{text:'Voice'}]}}})
- assert.equal(h.buttons.find(b=>b.textContent==='确认介绍'),undefined)
+test('a user-cleared profile and interests are not repopulated by generated defaults',async t=>{
+ const h=harness(t);renderProfile(h.panel,{...h,state:{profile:{version:3,about:''}},news:{enabled:false,explore:true,profile_version:2,interests:[]},warmup:{status:'ready',draft:{about:{text:'Old suggestion',refs:[{entry_id:'s',version:'v'}]},work:[{title:'Old project',text:'Old work',refs:[{entry_id:'s',version:'v'}]}],interests:[{text:'Voice'}]},sources:[{id:'s',version:'v',label:'project/readme.md'}]}})
+ const flatten=node=>[node,...node.children.flatMap(flatten)]
+ assert.equal(flatten(h.panel).some(n=>n.textContent==='Old suggestion'||n.textContent==='Old project'),false)
+ assert.equal(flatten(h.panel).some(n=>n.className==='profile-work-item'),false)
+ assert.ok(flatten(h.panel).some(n=>n.textContent==='你已清空个人介绍，可以随时重新写一段。'))
+ await h.buttons.find(b=>b.textContent==='自己写一段').action()
+ assert.equal(h.local.profile.about,'')
  assert.equal(h.buttons.find(b=>b.textContent==='开启资讯').disabled,true)
+})
+test('generated work is readable and its sources stay hidden until asked for',t=>{
+ const h=harness(t);renderProfile(h.panel,{...h,state:{profile:{version:0,about:''}},news:{enabled:false,explore:true,profile_version:0,interests:[]},warmup:{status:'ready',draft:{about:{text:'Builds audio software',refs:[{entry_id:'s',version:'v'}]},work:[{title:'Audio Agent',text:'Works on voice interaction',refs:[{entry_id:'s',version:'v'}]}],interests:[]},sources:[{id:'s',version:'v',label:'NovaAudioAgent/README.md'}]}})
+ const flatten=node=>[node,...node.children.flatMap(flatten)],nodes=flatten(h.panel)
+ assert.ok(nodes.some(n=>n.textContent==='Builds audio software'))
+ assert.ok(nodes.some(n=>n.className==='profile-work-item'))
+ const popovers=nodes.filter(n=>n.className==='source-popover')
+ assert.equal(popovers.length,2,'about and the work item each carry their sources')
+ assert.ok(popovers.every(n=>n.hidden===true),'sources are not part of the reading flow')
+ assert.ok(!nodes.some(n=>n.tag==='details'||n.textContent==='查看来源'&&n.tag==='summary'))
+ assert.ok(popovers[0].children.flatMap(flatten).some(n=>n.textContent==='NovaAudioAgent/README.md'))
+ assert.equal(nodes.filter(n=>n.className==='source-info'&&n['aria-label']==='查看来源').length,2)
+ assert.equal(h.buttons.some(b=>b.textContent==='确认介绍'),false)
+})
+test('a background profile refresh keeps the draft on screen without a status box or skeleton',t=>{
+ const h=harness(t),flatten=node=>[node,...node.children.flatMap(flatten)]
+ const draft={about:{text:'Builds audio software',refs:[{entry_id:'s',version:'v'}]},work:[],interests:[]},base={...h,state:{profile:{version:0,about:''}},news:{enabled:false,explore:true,profile_version:0,interests:[]}}
+ renderProfile(h.panel,{...base,warmup:{status:'working',draft,sources:[{id:'s',version:'v',label:'Nova/README.md'}]}})
+ let nodes=flatten(h.panel)
+ assert.ok(nodes.some(n=>n.textContent==='Builds audio software'))
+ assert.ok(!nodes.some(n=>n.className==='warmup-status'||n.className==='warmup-skeleton'))
+ const first=harness(t);renderProfile(first.panel,{...base,...first,warmup:{status:'working',draft:null,sources:[]}});nodes=flatten(first.panel)
+ assert.ok(nodes.some(n=>n.className==='warmup-status'));assert.ok(nodes.some(n=>n.className==='warmup-skeleton'))
+})
+test('a news card keeps its actions in one row and its recommendation basis out of the reading flow',async t=>{
+ const h=harness(t),flatten=node=>[node,...node.children.flatMap(flatten)]
+ const news={enabled:true,mode:'personalized',pending:0,sources:[{id:'bbc',name:'BBC'}],interests:[{id:'ai',text:'AI',weight:1}],saved:[],items:[
+  {id:'a',source_id:'bbc',title:'Ranked',summary:'x',url:'https://www.bbc.com/news/a',content_hash:'h',ranking:{reason:'与你关注的 AI 相关',matches:[{interest_id:'ai',score:0.9,quote:'voice models'}]}},
+  {id:'b',source_id:'bbc',title:'Unranked',summary:'y',url:'https://www.bbc.com/news/b',content_hash:'h',ranking:null},
+ ]}
+ renderNews(h.panel,{...h,news})
+ const [ranked,plain]=h.panel.children.filter(n=>n.dataset?.articleId)
+ const row=card=>card.children.find(n=>n.className==='card-actions')
+ assert.deepEqual(row(ranked).children.map(n=>n.textContent),['阅读原文','收藏','转为个人事项','多看「AI」','少看「AI」'])
+ assert.ok(row(ranked).children.slice(3).every(n=>n.className==='quiet'))
+ const popover=ranked.children.find(n=>n.className==='source-popover');assert.equal(popover.hidden,true)
+ assert.ok(flatten(popover).some(n=>n.textContent==='AI：voice models'))
+ assert.ok(!flatten(h.panel).some(n=>n.tag==='details'&&n.children.some(c=>c.textContent==='推荐依据')))
+ assert.ok(!plain.children.some(n=>n.className==='source-info'),'no basis, no icon')
+ assert.ok(!flatten(h.panel).some(n=>/先按时间给你看/u.test(n.textContent??'')),'interests exist, so no timeline note')
+ h.panel.children.length=0;renderNews(h.panel,{...h,news:{...news,interests:[],items:[]}})
+ assert.ok(flatten(h.panel).some(n=>/先按时间给你看/u.test(n.textContent??'')),'without interests the page says it is a timeline for now')
+ h.panel.children.length=0;renderNews(h.panel,{...h,news:{...news,interests_seeded:true,items:[]}})
+ assert.ok(flatten(h.panel).some(n=>/从你的 Profile 里猜的/u.test(n.textContent??'')),'guessed interests ask to be saved before they rank')
+ assert.ok(flatten(h.panel).some(n=>/猜的：AI。/u.test(n.textContent??'')),'the note lists exactly what the button keeps')
+ h.calls.length=0;await h.buttons.findLast(b=>b.textContent==='就用这些').action()
+ assert.deepEqual(h.calls,[['news.configure',{enabled:true,explore:true,interests:['AI'],expected_version:0}]],'keeping the guesses saves them unchanged')
 })

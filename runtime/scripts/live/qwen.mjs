@@ -4,7 +4,7 @@
  * Deliberately not a unit test: it needs a credential and the network, so it is a
  * separate command and it fails loudly rather than skipping when unconfigured.
  *
- *   NOVA_AUDIO_AGENT_MODEL_API_KEY=... node runtime/scripts/live-smoke.mjs --target=qwen
+ *   MODEL_API_KEY=... node runtime/scripts/live-smoke.mjs --target=qwen
  *
  * Reads the same variables the Python runtime reads, so a working Python setup
  * needs no new configuration.
@@ -38,18 +38,18 @@ const setting = name => process.env[name] ?? file[name]
 const stepfun = process.env.NOVA_LIVE_REALTIME_PROVIDER === 'stepfun'
 
 const apiKey = stepfun ? setting('STEPFUN_API_KEY')
-  : setting('DASHSCOPE_API_KEY') ?? setting('NOVA_AUDIO_AGENT_MODEL_API_KEY')
+  : setting('DASHSCOPE_API_KEY') ?? setting('MODEL_API_KEY')
 if (apiKey === undefined || apiKey === '') {
-  console.error(stepfun ? 'missing STEPFUN_API_KEY' : 'missing DASHSCOPE_API_KEY or NOVA_AUDIO_AGENT_MODEL_API_KEY')
+  console.error(stepfun ? 'missing STEPFUN_API_KEY' : 'missing DASHSCOPE_API_KEY or MODEL_API_KEY')
   process.exit(2)
 }
 
-const url = stepfun ? setting('NOVA_AUDIO_AGENT_STEPFUN_REALTIME_URL') ?? 'wss://api.stepfun.com/v1/realtime'
-  : setting('NOVA_AUDIO_AGENT_QWEN_REALTIME_URL') ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
-const model = stepfun ? setting('NOVA_AUDIO_AGENT_STEPFUN_REALTIME_MODEL') ?? 'stepaudio-3-realtime-preview'
-  : setting('NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL') ?? 'qwen-audio-3.0-realtime-plus'
-const voice = stepfun ? setting('NOVA_AUDIO_AGENT_STEPFUN_REALTIME_VOICE') ?? ''
-  : setting('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE') ?? 'longanqian'
+const url = stepfun ? setting('STEPFUN_REALTIME_URL') ?? 'wss://api.stepfun.com/v1/realtime'
+  : setting('QWEN_REALTIME_URL') ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
+const model = stepfun ? setting('STEPFUN_REALTIME_MODEL') ?? 'stepaudio-3-realtime-preview'
+  : setting('QWEN_REALTIME_MODEL') ?? 'qwen-audio-3.0-realtime-plus'
+const voice = stepfun ? setting('STEPFUN_REALTIME_VOICE') ?? ''
+  : setting('QWEN_REALTIME_VOICE') ?? 'longanqian'
 
 const adapter = new QwenAudioRealtimeAdapter({
   url,

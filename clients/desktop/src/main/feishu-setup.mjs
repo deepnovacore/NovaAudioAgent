@@ -4,7 +4,7 @@ import {join, resolve} from 'node:path'
 const setupMethods = new Set(['feishu.status', 'feishu.app.start', 'feishu.app.status', 'feishu.app.cancel', 'feishu.app.bind', 'feishu.login', 'feishu.complete'])
 export function createFeishuSetupOwner({Connector, environment = process.env}) {
   let owner = null, queue = Promise.resolve(), releasing = false
-  const configured = environment.NOVA_AUDIO_AGENT_BLACKBOARD_PATH ?? '~/.nova-audio-agent/blackboard.sqlite'
+  const configured = environment.BLACKBOARD_PATH ?? '~/.nova-audio-agent/blackboard.sqlite'
   const blackboard = resolve(configured.startsWith('~/') ? join(homedir(), configured.slice(2)) : configured)
   return {
     request(method, params) {
@@ -13,7 +13,7 @@ export function createFeishuSetupOwner({Connector, environment = process.env}) {
         if (releasing) throw new Error('IM connection changed')
         if (!owner) {
           owner = new Connector({bootstrapOnly: true,
-            executable: environment.NOVA_AUDIO_AGENT_FEISHU_CLI_PATH ?? 'lark-cli',
+            executable: environment.FEISHU_CLI_PATH ?? 'lark-cli',
             credentialRoot: join(blackboard + '.personal.json.feishu', 'credentials'),
             statePath: join(blackboard + '.personal.json.feishu', 'state.json'),
           })

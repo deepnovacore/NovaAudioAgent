@@ -35,18 +35,31 @@ will warn on first launch.
 npm install --global nova-audio-agent
 ```
 
-## Configure
+### Preview channel
 
-Open the desktop settings, which downloads the app on first run:
+The v0.3 preview uses npm's `preview` tag; `latest` stays on the stable release.
 
 ```bash
-novaaudio config
+# Install or update the preview
+npm install --global nova-audio-agent@preview
+novaaudio
+# Pin this preview exactly
+npm install --global nova-audio-agent@0.3.0-preview.1
+# Switch back to the stable CLI
+npm install --global nova-audio-agent@latest
 ```
 
-Then add the keys for the services you want:
+Quit Nova before switching channels. Both channels use the same local settings and data; switching the CLI does not roll back data changes. Back up your Nova data before trying a preview.
 
-- **[DashScope](https://platform.qianwenai.com)** — the default Qwen realtime voice service. Required.
-- **[Tavily](https://docs.tavily.com)** — web search. Optional.
+For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@preview` (or `@latest` for stable).
+
+## Configure
+
+Run `novaaudio`. The first launch downloads the app and opens a setup window
+that asks for one key and tests it before you start:
+
+- **[DashScope](https://platform.qianwenai.com)** — the default Qwen realtime voice service, plus memory, the camera and web search. Required.
+- **[Tavily](https://docs.tavily.com)** — web search through Tavily instead of Bailian. Optional.
 - **Codex** — a logged-in Codex executable, for coding tasks. Optional. See the [setup guide](https://deepnovacore.github.io/NovaAudioAgent/en/docs/getting-started).
 
 Allow microphone access when prompted.
@@ -72,7 +85,8 @@ Hover over the desktop orb to reach its controls.
 | --- | --- |
 | `novaaudio` or `novaaudio start` | Download the desktop app if needed, then launch it |
 | `novaaudio config` | Download the app if needed, then open its settings |
-| `novaaudio doctor` | Inspect platform support, local installation, and configuration status |
+| `novaaudio doctor` | Inspect platform support, local installation, and which keys the voice pipeline needs |
+| `novaaudio doctor --online` | Also test keys set in the environment against their provider |
 | `novaaudio --version` | Print the desktop release version used by the CLI |
 | `novaaudio --help` | Show command help |
 
@@ -84,8 +98,9 @@ The CLI downloads the matching desktop release from
 before launching it. It reuses the desktop client's encrypted settings store and
 never reads or prints secret values.
 
-Run `novaaudio doctor` to see which release is installed and whether your
-configuration is complete.
+Run `novaaudio doctor` to see which release is installed and which voice keys
+are still missing. `novaaudio config` opens the full settings for the other
+features.
 
 For headless Ubuntu 22.04+, install `nova-audio-agent-server` and use `novaaudio-server start`; `novaaudio-server pair wss://your-host.ts.net` shows a terminal pairing QR after configuring the service.
 

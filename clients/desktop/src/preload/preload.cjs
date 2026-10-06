@@ -12,10 +12,6 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
       ipcRenderer.on('nova:personal:presentation-request', listener)
       return () => ipcRenderer.removeListener('nova:personal:presentation-request', listener)
     },
-    setCollapsed: value => ipcRenderer.invoke('nova:personal:collapse', value),
-    openFeishuVerification: url => ipcRenderer.invoke('nova:personal:feishu-verification', url),
-    openConnectorAuthorization: url => ipcRenderer.invoke('nova:personal:connector-authorization', url),
-    chooseDirectory: () => ipcRenderer.invoke('nova:personal:directory'),
     onCollapsed: callback => {
       const listener = (_event, value) => { if (typeof value === 'boolean') callback(value) }
       ipcRenderer.on('nova:personal:collapsed', listener)
@@ -55,6 +51,19 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     ipcRenderer.on('nova:backend-status', listener)
     return () => ipcRenderer.removeListener('nova:backend-status', listener)
   },
+  setup: Object.freeze({
+    open: () => ipcRenderer.send('nova:setup:open'),
+    status: () => ipcRenderer.invoke('nova:setup:status'),
+    // The key travels into main for the probe or the save; replies never carry it back.
+    testKey: (key, value) => ipcRenderer.invoke('nova:setup:test-key', key, value),
+    save: choice => ipcRenderer.invoke('nova:setup:save', choice),
+    onChanged: callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, value) => callback(value)
+      ipcRenderer.on('nova:setup:changed', listener)
+      return () => ipcRenderer.removeListener('nova:setup:changed', listener)
+    },
+  }),
   orbMenu: Object.freeze({
     show: () => ipcRenderer.send('nova:orb-menu:show'),
     openSettings: category => ipcRenderer.send('nova:settings:open', category),
@@ -147,6 +156,11 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     move: (dx, dy) => ipcRenderer.send('nova:window-drag:move', { dx, dy }),
     end: () => ipcRenderer.send('nova:window-drag:end'),
   }),
+  windowControls: Object.freeze({
+    minimize: () => ipcRenderer.send('nova:window:control', 'minimize'),
+    toggleMaximize: () => ipcRenderer.send('nova:window:control', 'toggleMaximize'),
+    close: () => ipcRenderer.send('nova:window:control', 'close'),
+  }),
   windowLayout: Object.freeze({
     setConfirmationMode: value => {
       if (typeof value !== 'boolean') return false
@@ -178,9 +192,9 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     },
   }),
   settings: Object.freeze({
+    voicePreset: (action, settings) => ipcRenderer.invoke('nova:settings:voice-preset', action, settings),
     voiceprint: input => ipcRenderer.invoke('nova:settings:voiceprint', input),
     phoneAction: (action, deviceId) => ipcRenderer.invoke('nova:phone:action', action, deviceId),
-    openPairing: () => ipcRenderer.send('nova:pairing:open'),
     get: () => ipcRenderer.invoke('nova:settings:get'),
     rescanCodex: () => ipcRenderer.invoke('nova:codex:rescan'),
     retryBackend: () => ipcRenderer.invoke('nova:backend:retry'),

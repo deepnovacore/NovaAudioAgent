@@ -44,8 +44,10 @@ export function parseFeed(xml:string,source:NewsSource,now:Date):Article[]{
  parser.write(xml).close();if(!['rss','feed','rdf:rdf'].includes(root))throw Error('invalid_feed')
  return [...new Map(articles.map(a=>[a.id,a])).values()]
 }
+/** The only headers a feed read sends; the acceptance gate re-sends feed reads with exactly these. */
+export const FEED_HEADERS:Readonly<Record<string,string>>={Accept:'application/rss+xml, application/atom+xml, application/xml, text/xml','User-Agent':'NovaAudioAgent-News/0.3'}
 export async function fetchFeed(source:NewsSource,signal:AbortSignal,fetcher:typeof fetch=fetch,now=new Date()):Promise<Article[]>{
- const response=await fetcher(source.url,{signal,redirect:'error',headers:{Accept:'application/rss+xml, application/atom+xml, application/xml, text/xml','User-Agent':'NovaAudioAgent-News/0.3'}})
+ const response=await fetcher(source.url,{signal,redirect:'error',headers:FEED_HEADERS})
  if(!response.ok)throw Error('source_http_'+response.status)
  if(response.headers.get('content-type')?.includes('text/html'))throw Error('invalid_feed')
  if(Number(response.headers.get('content-length'))>1024*1024)throw Error('feed_too_large')

@@ -8,7 +8,7 @@ const ENDPOINT = /^ws:\/\/127\.0\.0\.1:([0-9]{1,5})\/$/u
 const MAX_CONTROL_BYTES = 16
 
 export function releaseSmokeSourceRollbackExitCode({environment, isPackaged}) {
-  return isPackaged && environment?.NOVA_AUDIO_AGENT_RELEASE_SMOKE === RELEASE_SMOKE_MODE
+  return isPackaged && environment?.RELEASE_SMOKE === RELEASE_SMOKE_MODE
     ? SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE
     : null
 }
@@ -20,7 +20,7 @@ export function createReleaseSmokeChannel({
   openOutput = () => createWriteStream('', {fd: 3, autoClose: false}),
   openInput = () => createReadStream('', {fd: 4, autoClose: false}),
 }) {
-  if (!isPackaged || environment?.NOVA_AUDIO_AGENT_RELEASE_SMOKE !== RELEASE_SMOKE_MODE) {
+  if (!isPackaged || environment?.RELEASE_SMOKE !== RELEASE_SMOKE_MODE) {
     return null
   }
   if (typeof onQuit !== 'function') throw new Error('release_smoke_invalid')

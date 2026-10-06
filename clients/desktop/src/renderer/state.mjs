@@ -40,7 +40,7 @@ const COMPACT_LABELS = Object.freeze({
   'audio-pipeline-error': t("音频管线错误"),
   disconnected: t("已断开"),
   reconnecting: t("重连中"),
-  'configuration-required': t("配置不完整"),
+  'configuration-required': t("配置不完整 · 点此设置"),
   'authentication-failed': t("鉴权失败"),
   'backend-unavailable': t("后台不可用"),
   error: t("出错"),
@@ -131,6 +131,8 @@ export function deriveOrbState(input) {
     statusLine: pendingConfirmation
       ? t("需要你的确认")
       : name === 'idle' && input.codex === 'preparing' ? t("正在安排任务") : compactOrbLabel(name),
+    // Only the missing-configuration line acts: it opens first-run setup.
+    statusAction: name === 'configuration-required' && !pendingConfirmation ? 'setup' : null,
     codexLabel,
     projectLabel,
     codexMode,

@@ -7,7 +7,7 @@ import {loadSettings, resolveModelApiKey} from '../../dist/src/config/config.js'
 import {OpenAIModelGateway} from '../../dist/src/model/model-gateway.js'
 import {RealClock} from '../../dist/src/core/clock.js'
 import {DashScopeEmbeddingProvider} from '../../dist/src/knowledge/embeddings.js'
-import {WorkspaceGraphStoreClient} from '../../dist/src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../../dist/src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../../dist/src/memory-substrate/resource.js'
 
 // Only synthetic facts leave this process. Never opens the user's memory database.
@@ -19,12 +19,12 @@ const gateway=new OpenAIModelGateway({baseUrl:settings.model_base_url,apiKey,clo
 const embedding=new DashScopeEmbeddingProvider({baseUrl:settings.model_base_url,apiKey,model:settings.embedding_model})
 let shutdown
 async function create() {
- if(!process.argv.includes('--production'))return new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(path),userId:'synthetic-live',gateway,model:settings.fast_model,embedding})
+ if(!process.argv.includes('--production'))return new SubstrateMemoryResource({client:new MemoryLedgerClient(path),userId:'synthetic-live',gateway,model:settings.fast_model,embedding})
  const {buildProductionComposition}=await import('../../dist/src/composition/production-composition.js')
  const capabilities=join(directory,'capabilities.json')
  await writeFile(capabilities,JSON.stringify({version:1,modules:{search:{enabled:false},coding:{enabled:false},camera:{enabled:false},knowledge:{enabled:false}}}))
  const cleanup=new Set(),stop=new AbortController()
- const composition=await buildProductionComposition({token:'a'.repeat(32),stop,ownership:{own:fn=>{cleanup.add(fn);return ()=>cleanup.delete(fn)}},onDiagnostic:()=>{},environment:{...process.env,NOVA_AUDIO_AGENT_PIPELINE_MODE:'cascaded',NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER:'deepseek',NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'local',NOVA_AUDIO_AGENT_MEMORY_LEDGER_PATH:path,NOVA_AUDIO_AGENT_MEMORY_PATH:join(directory,'legacy.sqlite'),NOVA_AUDIO_AGENT_MEMORY_USER_ID:'synthetic-live',NOVA_AUDIO_AGENT_BLACKBOARD_PATH:join(directory,'blackboard.sqlite'),NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG:capabilities,NOVA_AUDIO_AGENT_REALTIME_TELEMETRY:'',NOVA_AUDIO_AGENT_CODEX_WORKSPACE:directory,NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT:directory,NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT:directory,COMPOSIO_API_KEY:""}})
+ const composition=await buildProductionComposition({token:'a'.repeat(32),stop,ownership:{own:fn=>{cleanup.add(fn);return ()=>cleanup.delete(fn)}},onDiagnostic:()=>{},environment:{...process.env,PIPELINE_MODE:'cascaded',CASCADE_LLM_PROVIDER:'deepseek',MEMORY_CONNECTION:'local',MEMORY_LEDGER_PATH:path,MEMORY_PATH:join(directory,'legacy.sqlite'),MEMORY_USER_ID:'synthetic-live',BLACKBOARD_PATH:join(directory,'blackboard.sqlite'),CAPABILITIES_CONFIG:capabilities,REALTIME_TELEMETRY:'',CODEX_WORKSPACE:directory,CODEX_MANAGED_ROOT:directory,CODEX_PROJECT_STATE_ROOT:directory,COMPOSIO_API_KEY:""}})
  await composition.realtime.start()
  shutdown=async()=>{stop.abort();await composition.realtime.stop();for(const fn of [...cleanup].reverse())await fn()}
  assert.ok(composition.realtime.personalMemory instanceof SubstrateMemoryResource)

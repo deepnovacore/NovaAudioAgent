@@ -12,7 +12,7 @@ import {
 import { runSessionFixture } from './session-fixture-host.js'
 
 // The test runs as runtime/dist/test/*.js, so three levels up is the repository root.
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/session/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/realtime/session/v1')
 
 function scenarioDirectories(): string[] {
   return readdirSync(fixtureRoot, {withFileTypes: true})

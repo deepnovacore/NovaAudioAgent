@@ -13,7 +13,9 @@ export class BoundedJsonStore<T>{
  async write(state:T){const text=JSON.stringify(this.schema.parse(state));if(Buffer.byteLength(text)>this.limit)throw Error('store_capacity')
   const tmp=this.path+'.'+randomUUID()+'.tmp';let renamed=false
   try{const file=await open(tmp,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);try{await file.writeFile(text);await file.sync()}finally{await file.close()}
-   await rename(tmp,this.path);renamed=true;const dir=await open(dirname(this.path),constants.O_RDONLY);try{await dir.sync()}finally{await dir.close()}
+   await rename(tmp,this.path);renamed=true;
+   // Node cannot fsync directories on Windows; the file was synced before rename.
+   if(process.platform!=='win32'){const dir=await open(dirname(this.path),constants.O_RDONLY);try{await dir.sync()}finally{await dir.close()}}
   }finally{if(!renamed)await unlink(tmp).catch(()=>{/* optional cleanup/observer */})}
  }
 }

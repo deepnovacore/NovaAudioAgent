@@ -1,3 +1,4 @@
+import {sourceTagSchema} from './provenance.js'
 import {processingGrantSchema} from '../memory-substrate/source-state.js'
 import {z} from 'zod'
 
@@ -18,6 +19,7 @@ export const MemoryEntrySchema = z.object({
   id: text(256), version: MemoryVersionSchema, content: z.string().max(500),
   kind: z.enum(['fact', 'preference', 'plan', 'concern', 'commitment', 'entity', 'topic', 'todo', 'idea', 'goal', 'profile']),
   life:LifeMemorySchema.optional(),
+  sources:z.array(sourceTagSchema).max(256).optional(),
   editable:z.boolean().optional(),
   commitment:z.object({direction:z.enum(['owed_by_me','owed_to_me']),due:z.iso.datetime({offset:true}).nullable(),status:z.enum(['open','done','dropped']),counterparty:z.string().optional()}).strict().optional(), origin: z.enum(['stated', 'inferred']),
   source_refs: z.array(MemorySourceRefSchema).min(1).max(256),

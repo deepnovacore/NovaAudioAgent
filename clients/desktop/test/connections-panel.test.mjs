@@ -13,6 +13,34 @@ function harness(snapshot,{failState=false}={}){
  return {root,error,calls,chosen,opened,panel,document,api,tick:()=>tick(),button:label=>all(root).find(n=>n.tag==='button'&&n.textContent===label)}
 }
 const snapshot=(o={})=>({capabilities:{sources:true,discovery:true},sources:[{id:'s1',path:'/Users/me/notes',state:'connected',scanned:3,read:2,skipped:1,last_sync:'today'}],connectors:{available:false,memory_available:true},settings:{discovery_enabled:true,discovery_interval_minutes:30},...o})
+test('source authorization remains visible after refresh and new-source consent survives tab changes',async()=>{
+ const h=harness(()=>snapshot({sources:[{id:'s1',path:'/notes',state:'connected',processing_consent_required:false}]}));await h.panel.load()
+ assert.ok(all(h.root).some(n=>n.textContent==='已授权当前模型处理'))
+ const check=all(h.root).find(n=>n.tag==='input'&&n.type==='checkbox');check.checked=true;check.listeners.change()
+ await h.button('邮件与日历').listeners.click();await new Promise(r=>setImmediate(r))
+ await h.button('本机资料').listeners.click();await new Promise(r=>setImmediate(r))
+ assert.equal(all(h.root).find(n=>n.tag==='input'&&n.type==='checkbox').checked,true)
+ await h.panel.load();assert.ok(all(h.root).some(n=>n.textContent==='已授权当前模型处理'))
+})
+test('source action keeps its pending button mounted, rejects repeats and recovers after failure',async()=>{
+ const h=harness(snapshot);await h.panel.load()
+ let reject,calls=0;h.api.personalCommand=()=>{calls++;return new Promise((_,fail)=>{reject=fail})}
+ const sync=h.button('立即同步'),pending=sync.listeners.click()
+ assert.equal(h.button('立即同步'),sync);assert.equal(sync['aria-busy'],'true')
+ await sync.listeners.click();assert.equal(calls,1)
+ reject(Error('sync failed'));await pending
+ assert.equal(h.error.textContent,'sync failed');assert.equal(h.button('立即同步').disabled,false)
+})
+test('successful authorization closes the one-time confirmation and displays the persisted grant',async()=>{
+ let state=snapshot({sources:[]});const h=harness(()=>state);await h.panel.load()
+ h.api.personalCommand=async method=>{if(method==='state')return state;state=snapshot({sources:[{id:'computer',scope:'computer',state:'connected',processing_consent_required:false}]});return {id:'computer'}}
+ const check=all(h.root).find(n=>n.tag==='input'&&n.type==='checkbox');check.checked=true;check.listeners.change()
+ await h.button('授权本机全部可访问数据').listeners.click()
+ await h.panel.load()
+ assert.equal(all(h.root).find(n=>n.className==='source-add').open,false)
+ assert.ok(all(h.root).some(n=>n.textContent==='已授权当前模型处理'))
+ assert.equal(all(h.root).filter(n=>n.tag==='li').length,1)
+})
 test('load fetches state once and renders sources, connectors, brief and discovery from it',async()=>{
  const h=harness(snapshot);assert.ok(all(h.root).some(n=>n.textContent==='正在读取连接状态…'))
  await h.panel.load();assert.deepEqual(h.calls,[['state',{}]])
@@ -42,6 +70,15 @@ test('whole-computer authorization is explicit and never accepts a renderer supp
  const check=all(h.root).find(n=>n.tag==='input'&&n.type==='checkbox');check.checked=true;check.listeners.change()
  assert.equal(whole.disabled,false);await whole.listeners.click();await new Promise(r=>setImmediate(r))
  assert.deepEqual(h.calls.at(-2),['sources.authorize_computer',{consent:true}])
+})
+test('choosing a directory under a computer grant adds a removable priority',async()=>{
+ const h=harness(()=>snapshot({sources:[{id:'computer',scope:'computer',path:'/',priority_dirs:['/tmp/older'],state:'connected',scanned:2,read:1,skipped:0}]}))
+ await h.panel.load()
+ const check=all(h.root).find(n=>n.tag==='input'&&n.type==='checkbox');check.checked=true;check.listeners.change()
+ await h.button('选择优先整理的目录').listeners.click();await new Promise(r=>setImmediate(r))
+ assert.deepEqual(h.calls.at(-2),['sources.priority.add',{path:'/tmp/docs'}])
+ await h.button('移除优先目录').listeners.click();await new Promise(r=>setImmediate(r))
+ assert.deepEqual(h.calls.at(-2),['sources.priority.remove',{path:'/tmp/older'}])
 })
 test('English connections settings use secondary tabs without translating source data',async()=>{
  const {setLanguage}=await import('../src/renderer/locale.mjs');setLanguage('en')

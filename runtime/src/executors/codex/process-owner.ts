@@ -42,10 +42,6 @@ type CodexProcessOwnerError = HostPathError
 const binaryValues = new WeakMap<HostBinary, string>()
 const unconfirmedOwnerErrors = new WeakMap<CodexProcessOwnerError, OwnedCodexProcess>()
 
-export const CODEX_APP_SERVER_ARGV = codexAppServerArgv(resolveCodexLaunchProfile({
-  approvalMode: 'ask', project: false, foregroundBroker: false,
-}))
-
 export function unconfirmedCodexProcessOwnerError(owner: OwnedCodexProcess): CodexProcessOwnerError {
   const error = new CodexProcessOwnerError('spawn_failed')
   unconfirmedOwnerErrors.set(error, owner)

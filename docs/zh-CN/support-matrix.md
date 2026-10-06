@@ -16,6 +16,8 @@
 
 选择集成管线时配置较少；需要更换语言模型或开启对话视觉时，使用级联管线。两者都需要相应模型服务的凭据。
 
+集成模式也可选择 StepFun（`INTEGRATED_PROVIDER=stepfun`，预览特性），需配置 `STEPFUN_API_KEY`；或将 Qwen 模型切换为 `qwen-audio-3.1-realtime-plus`（通过 `QWEN_REALTIME_MODEL`）。
+
 ## 级联语言模型
 
 | 服务商 | 默认模型 | 对话视觉 | 凭据 |
@@ -44,5 +46,26 @@
 | 集成语音音色 | Qwen 实时语音 | `longanqian` |
 
 火山 ASR 优先使用 `DOUBAO_ASR_API_KEY`，未配置时使用 `DOUBAO_BIGMODEL_API_KEY`；TTS 使用后者。辅助模型与个人记忆可能仍需要百炼凭据，详见[核心配置](configuration.md)。
+
+## 声纹校验
+
+| 设置 | 行为 |
+|---|---|
+| 默认关闭 | 通过 `DOUBAO_ASR_VOICEPRINT_ENABLED` 开启 |
+| 注册说话人 | `DOUBAO_ASR_VOICEPRINT_ID` 与 `DOUBAO_ASR_VOICEPRINT_NAME` 标识已注册的声纹 |
+| 健康检查兜底 | 当 `DOUBAO_ASR_VOICEPRINT_HEALTH_URL` 不可达时，校验会自动关闭（失败即放行） |
+
+实现依据：[voiceprint](../../clients/desktop/src/main/voiceprint.mjs)。
+
+## 连接器
+
+| 连接器 | 权限 | 平台 |
+|---|---|---|
+| Google（Gmail、Calendar） | 只读，经 Composio | 跨平台 |
+| macOS 日历 | 只读 | 仅 macOS |
+| Apple Mail | 只读 | 仅 macOS |
+| 飞书 Feishu | 只读 | 跨平台 |
+
+配置与授权范围详见[信息来源与连接器](sources-and-connectors.md)。
 
 实现依据：[默认配置](../../runtime/src/config/config.ts)、[级联适配器选择](../../runtime/src/config/cascaded-realtime-config.ts)、[视觉模型白名单](../../runtime/src/model/vision-capability.ts)。

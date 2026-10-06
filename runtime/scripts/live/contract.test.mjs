@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url'
 import {surface, score, runTextCase} from './text-tools.mjs'
 import {validateFixtures, validateModuleReport, summary} from './validation.mjs'
 
-const fixture = JSON.parse(readFileSync(new URL('../../../fixtures/live/text-tools.json', import.meta.url)))
+const fixture = JSON.parse(readFileSync(new URL('../../../tests/fixtures/live/text-tools.json', import.meta.url)))
 test('fixture contract, current built-in surface and expectations cannot silently drift', () => {
   const parsed = validateFixtures(fixture)
   const full = surface()

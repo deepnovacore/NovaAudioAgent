@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {readFileSync} from 'node:fs'
-import {ClientCommands, decodeClientAudioFrame} from '../src/server/client-protocol.js'
+import {ClientCommands, clientReady, decodeClientAudioFrame} from '../src/server/client-protocol.js'
 
 test('remote command ledger delivers once, rejects mutation, and fences reconnects', async () => {
   const commands = new ClientCommands('connection-1')
@@ -39,7 +39,7 @@ test('remote decoder rejects unknown controls, oversized JSON and unsafe integer
 })
 
 test('shared Swift and TypeScript wire vectors decode identically', () => {
-  const vectors = JSON.parse(readFileSync(new URL('../../../fixtures/client-protocol/v1/vectors.json', import.meta.url), 'utf8')) as {
+  const vectors = JSON.parse(readFileSync(new URL('../../../tests/fixtures/client-protocol/v1/vectors.json', import.meta.url), 'utf8')) as {
     name: string; hex: string; valid: boolean;
     expected?: {utterance_id: string; generation_epoch: number; sequence: number; pcm_hex: string};
   }[]
@@ -50,4 +50,15 @@ test('shared Swift and TypeScript wire vectors decode identically', () => {
     assert.deepEqual({...frame, pcm: undefined, pcm_hex: Buffer.from(frame.pcm).toString('hex')},
       {...vector.expected, pcm: undefined}, vector.name)
   }
+})
+
+
+test('shared mobile capability fixture preserves legacy negotiation', () => {
+  interface PersonalFixture {hello:{capabilities:string[]};ready_capability:string;max_personal_json_bytes:number;reload:{revision:number;reload_required:boolean}}
+  const fixture=(JSON.parse(readFileSync(new URL('../../../tests/fixtures/client-protocol/v1/vectors.json',import.meta.url),'utf8')) as {personal_protocol:PersonalFixture}[])[0]!.personal_protocol
+  assert.ok(fixture.hello.capabilities.includes('personal'))
+  assert.ok((JSON.parse(clientReady('server','connection',undefined,true)) as {capabilities:string[]}).capabilities.includes(fixture.ready_capability))
+  assert.equal((JSON.parse(clientReady('server','connection')) as {capabilities:string[]}).capabilities.includes(fixture.ready_capability),false)
+  assert.equal(fixture.max_personal_json_bytes,1048576)
+  assert.deepEqual(fixture.reload,{type:'personal.state',revision:9,reload_required:true})
 })

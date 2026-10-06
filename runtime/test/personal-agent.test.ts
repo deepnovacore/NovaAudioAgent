@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PersonalAgentHost, type DiscoverySnapshot } from '../src/personal-agent/host.js';
+import { PersonalAgentHost, countSourceGroundedContextCards, type DiscoverySnapshot } from '../src/personal-agent/host.js';
+import type {ContextInput} from '../src/personal-agent/context-candidates.js';
 import { SuggestionPool } from '../src/core/suggestions.js';
 import type { MemoryEntry } from '../src/memory/entry.js';
 import type { PersonalMemoryResource } from '../src/memory/personal-memory.js';
@@ -15,6 +16,17 @@ import { ClientCommands } from '../src/server/client-protocol.js';
 const now = new Date('2026-09-11T10:00:00Z');
 const entry = (id = 'plan', version = 1): MemoryEntry => ({ id, version, content: 'Today prepare a demo', kind: 'plan', origin: 'stated', source_refs: [{ type: 'conversation', ref: 'conversation:1', observed_at: now.toISOString() }], observed_at: now.toISOString(), recorded_at: now.toISOString(), topic: 'work', status: 'active', corrected_to: null, confidence_note: null });
 const proposal = (id = 'plan', version = 1) => ({ kind: 'question' as const, summary: 'Check demo materials?', why_now: 'You said the demo is today', evidence_refs: [] as string[], memory_refs: [{ entry_id: id, version }] });
+test('acceptance source-to-card proof requires a current source ref and version',()=>{
+ const cards=[
+  {tab:'todos' as const,refs:[{entry_id:'source:file-a',version:'v2'}]},
+  {tab:'ideas' as const,refs:[{entry_id:'source:file-a',version:'v1'}]},
+  {tab:'ideas' as const,refs:[{entry_id:'memory:unrelated',version:3}]},
+  {tab:'ideas' as const,refs:[{entry_id:'memory:stated',version:4},{entry_id:'source:file-b',version:'v7'}]},
+ ];
+ const entries=[{kind:'file' as const,id:'source:file-a',version:'v2',content:'Current'}, {kind:'file' as const,id:'source:file-b',version:'v7',content:'Current'}];
+ assert.deepEqual(countSourceGroundedContextCards(cards,entries),{cards:2,todos:1,ideas:1,goals:0});
+ assert.deepEqual(countSourceGroundedContextCards([],entries),{cards:0,todos:0,ideas:0,goals:0});
+});
 test('discovery prioritizes dated open Life objects and excludes inactive objects without hiding history',async()=>{
  const f=await fixture()
  try{
@@ -48,6 +60,13 @@ test('batch notifications coalesce and ready at the same revision is not swallow
   await f.host.sourceChanged({revision:2,phase:'ready'});assert.equal(discoveries,3,'an older batch completing later still triggers discovery')
  }finally{await f.close()}
 })
+test('source progress updates publish status at most every two seconds without refreshing memory or discovery',async t=>{
+ const f=await fixture();let refreshes=0,discoveries=0
+ f.host.refreshMemory=()=>{refreshes++;return Promise.resolve()}
+ f.host.discover=()=>{discoveries++;return Promise.resolve()}
+ let notices=0;const unsubscribe=f.host.subscribe(()=>{notices++})
+ try{t.mock.timers.enable({apis:['setTimeout','Date']});for(let n=0;n<100;n++)f.host.sourceProgressChanged();assert.equal(notices,0);t.mock.timers.tick(2000);assert.equal(notices,1);for(let n=0;n<100;n++)f.host.sourceProgressChanged();t.mock.timers.tick(1999);assert.equal(notices,1);t.mock.timers.tick(1);assert.equal(notices,2);assert.equal(refreshes,0);assert.equal(discoveries,0)}finally{t.mock.timers.reset();unsubscribe();await f.close()}
+})
 test('failed batch refresh remains retryable and arrivals during refresh are drained',async()=>{
  const f=await fixture();const refresh=f.host.refreshMemory.bind(f.host);let fail=true,discoveries=0
  f.host.refreshMemory=async()=>{if(fail){fail=false;throw Error('temporary')}await refresh()}
@@ -61,7 +80,7 @@ test('failed batch refresh remains retryable and arrivals during refresh are dra
 })
 async function fixture() { const dir = await mkdtemp(join(await realpath(tmpdir()), 'nova-host-')); const entries = new Map([['plan', entry()]]); const memory = { get: (id: string) => Promise.resolve(entries.get(id) ?? null), list: () => Promise.resolve({ entries: [...entries.values()], cursor: null }) } as unknown as PersonalMemoryResource; const make = () => new PersonalAgentHost({ path: join(dir, 'feed.json'), userScope: 'local', memory: () => memory, pool: new SuggestionPool(), now: () => now, evidence: ref => ref.startsWith('task:') ? { subject_key: 'task:demo', source: { type: 'task', ref }, task_ref: { work_id: 'demo' } } : ref.startsWith('conversation:') ? {subject_key:ref,source:{type:'conversation',ref}} : null }); const host = make(); await host.open(); return { dir, entries, host, make, close: async () => { await host.close(); await rm(dir, { recursive: true, force: true }); } }; }
 test('ten positive deterministic admission cases with stable evidence; not live model quality', async () => { const f = await fixture(); try {
-    const cases=JSON.parse(readFileSync(new URL('../../../fixtures/personal-agent/v1/discovery-cases.json',import.meta.url),'utf8')) as {positive:{id:string;content:string;summary:string}[]};
+    const cases=JSON.parse(readFileSync(new URL('../../../tests/fixtures/personal-agent/v1/discovery-cases.json',import.meta.url),'utf8')) as {positive:{id:string;content:string;summary:string}[]};
     assert.equal(cases.positive.length,10);
     for (const example of cases.positive) {
         const id=example.id;
@@ -148,6 +167,24 @@ test('memory correction race rejects admission and invalidates pending delivery'
 finally {
     await f.close();
 } });
+test('batch evidence invalidation commits only on change and retracts dependent suggestions',async()=>{
+ const f=await fixture()
+ try{
+  const refs=['task:first','task:second'];const snapshot={...await f.host.discoverySnapshot(),evidence_refs:refs}
+  assert.equal(await f.host.admit({...proposal(),evidence_refs:refs},snapshot),'admitted')
+  const item=f.host.snapshot().feed[0]!,pool=f.host.options.pool
+  assert.equal(pool.get(item.suggestion_id!)?.status,'pending')
+  const before=f.host.snapshot().revision
+  await f.host.invalidateEvidenceMany(['task:first','task:first','unrelated'])
+  assert.equal(f.host.snapshot().revision,before+1)
+  assert.equal(f.host.snapshot().feed[0]!.lifecycle,'invalidated')
+  assert.equal(pool.get(item.suggestion_id!)?.status,'withdrawn')
+  const invalidated=f.host.snapshot().revision
+  await f.host.invalidateEvidenceMany(['task:first','task:second'])
+  await f.host.invalidateEvidenceMany([])
+  assert.equal(f.host.snapshot().revision,invalidated,'repeated and empty batches do not write the feed')
+ }finally{await f.close()}
+})
 test('delivery types remain independent and act requires explicit configured authorization', async () => { const f = await fixture(); try {
     await f.host.admit(proposal(), await f.host.discoverySnapshot());
     const id = f.host.snapshot().feed[0]!.id;
@@ -246,6 +283,20 @@ test('a supporting memory and a concrete task do not suppress each other in eith
   }finally{await f.close()}
  }
 })
+
+test('Feishu authorization status and login do not depend on model discovery', async () => {
+    const f = await fixture();
+    const host = new PersonalAgentHost({...f.host.options, path:join(f.dir,'feishu.json'), discover: () => Promise.reject(Error('模型请求失败（HTTPStatus400）'))});
+    try {
+        await host.open();
+        host.setFeishu({snapshot:()=>({available:true,configured:true,state:'unauthorized'}),open:()=>Promise.resolve(),close:()=>Promise.resolve(),command:()=>Promise.resolve({available:true,configured:true,state:'unauthorized'})});
+        for (const method of ['feishu.status','feishu.login','feishu.complete','feishu.bot.configure']) {
+            const result = await host.command({type:'personal.command',request_id:method,method,params:{}}) as {ok:boolean;data?:{state:string}};
+            assert.equal(result.ok,true,method);
+            assert.equal(result.data?.state,'unauthorized');
+        }
+    } finally { await host.close(); await f.close(); }
+});
 
 test('Feishu controls and delivery ledger stay separate from execution authorization', async () => {
     const f = await fixture();
@@ -380,6 +431,61 @@ test('failed orb transition can retry backlog admission without changing mode ag
  }finally{await f.close()}
 })
 
+for(const timing of ['before','during'] as const)test(`startup source notification ${timing} host loading preserves the owned store and drains after initialization`,async t=>{
+ const {PersonalStore,initialState}=await import('../src/personal-agent/store.js'),{readFile}=await import('node:fs/promises')
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'host-startup-source-')),path=join(dir,'personal.json'),store=new PersonalStore(path),state=initialState()
+ state.user_scope='local';state.revision=77;state.settings={discovery_enabled:false,discovery_interval_minutes:17};state.receipts.saved={payload:'unchanged',result:{ok:true}};state.dedupe=['retained']
+ state.conversations.items.find(item=>item.id==='chat:main')!.messages.push({id:'original',conversation_id:'chat:main',role:'assistant',text:'Original retained transcript',created_at:now.toISOString()});await store.write(state)
+ const original=await readFile(path,'utf8'),host=new PersonalAgentHost({path,userScope:'local',memory:()=>undefined,pool:new SuggestionPool(),evidence:()=>null})
+ let release=()=>undefined as void,opening:Promise<void>|undefined
+ try{
+  if(timing==='during'){
+   let entered!:()=>void;const started=new Promise<void>(r=>{entered=r}),gate=new Promise<void>(r=>{release=r})
+   // eslint-disable-next-line @typescript-eslint/unbound-method -- the wrapper preserves its receiver with read.call(this).
+   const read=PersonalStore.prototype.read
+   t.mock.method(PersonalStore.prototype,'read',async function(this:InstanceType<typeof PersonalStore>){const loaded=await read.call(this);if(this.path===path){entered();await gate}return loaded})
+   opening=host.open();await started
+  }
+  await host.sourceChanged({revision:1,phase:'ready'});assert.equal(await readFile(path,'utf8'),original)
+  release();await (opening??host.open());await host.sourceChanged({revision:1,phase:'ready'});assert.deepEqual(host.snapshot().conversations.messages.map(message=>message.text),['Original retained transcript'])
+  const restored=await store.read();assert.deepEqual(restored.receipts,state.receipts);assert.deepEqual(restored.settings,state.settings);assert.deepEqual(restored.dedupe,state.dedupe);assert.ok(restored.revision>77,'queued ready notification drained after loading')
+ }finally{release();await opening?.catch(()=>undefined);await host.close();await rm(dir,{recursive:true,force:true})}
+})
+
+test('all direct host store mutations reject outside the loaded lock lifetime',async()=>{
+ const {PersonalStore,initialState}=await import('../src/personal-agent/store.js'),{readFile}=await import('node:fs/promises')
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'host-write-lifetime-')),path=join(dir,'personal.json'),store=new PersonalStore(path);await store.write(initialState())
+ const host=new PersonalAgentHost({path,userScope:'local',memory:()=>undefined,pool:new SuggestionPool(),evidence:()=>null})
+ try{
+  const before=await readFile(path,'utf8');await assert.rejects(host.taskResult('early','Early result'),/personal_store_not_ready/);assert.equal(await readFile(path,'utf8'),before)
+  await host.open();await host.close();const closed=await readFile(path,'utf8');await host.sourceChanged();assert.equal(await readFile(path,'utf8'),closed)
+  await assert.rejects(host.taskResult('late','Late result'),/personal_store_not_ready/);assert.equal(await readFile(path,'utf8'),closed)
+ }finally{await host.close();await rm(dir,{recursive:true,force:true})}
+})
+
+test('optional queued discovery failure cannot block opening the loaded personal store',async()=>{
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'host-startup-discovery-')),host=new PersonalAgentHost({path:join(dir,'personal.json'),userScope:'local',memory:()=>undefined,pool:new SuggestionPool(),evidence:()=>null})
+ host.discover=()=>Promise.reject(Error('discovery offline'))
+ try{await host.sourceChanged({revision:1,phase:'ready'});await host.open();await assert.rejects(host.sourceChanged({revision:1,phase:'ready'}),/discovery offline/);assert.equal(host.snapshot().conversations.selected_id,'chat:main')}
+ finally{await host.close();await rm(dir,{recursive:true,force:true})}
+})
+
+test('shutdown persists an admitted command receipt before releasing write ownership',async()=>{
+ const {PersonalStore}=await import('../src/personal-agent/store.js')
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'host-shutdown-receipt-')),host=new PersonalAgentHost({path:join(dir,'personal.json'),userScope:'local',memory:()=>undefined,pool:new SuggestionPool(),evidence:()=>null})
+ let release!:()=>void,entered!:()=>void,closingConnector!:()=>void
+ const gate=new Promise<void>(r=>{release=r}),started=new Promise<void>(r=>{entered=r}),draining=new Promise<void>(r=>{closingConnector=r})
+ host.setConnectors({snapshot:()=>null,open:()=>Promise.resolve(),close:()=>{closingConnector();return Promise.resolve()},command:async()=>{entered();await gate;return {accepted:true}}})
+ let command:Promise<unknown>|undefined,closing:Promise<void>|undefined
+ try{
+  await host.open();command=host.command({type:'personal.command',request_id:'accepted-before-close',method:'connector.status',params:{}});await started
+  closing=host.close();assert.deepEqual(await Promise.race([host.command({type:'personal.command',request_id:'too-late',method:'state',params:{}}),new Promise<unknown>(resolve=>setImmediate(()=>resolve('admission_still_open')))]),{type:'personal.result',request_id:'too-late',ok:false,error:'unavailable'});await draining
+  release();const result=await command as {ok:boolean};assert.equal(result.ok,true);await closing
+  const stored=await new PersonalStore(host.path).read();assert.deepEqual(stored.receipts['accepted-before-close']?.result,{type:'personal.result',request_id:'accepted-before-close',ok:true,reload_required:true});assert.equal(stored.receipts['too-late'],undefined)
+  await assert.rejects(host.taskResult('late','Late result'),/personal_store_not_ready/)
+ }finally{release();await Promise.allSettled([command,closing]);await host.close();await rm(dir,{recursive:true,force:true})}
+})
+
 test('automatic generation requires current extraction consent for every evidence reference',async()=>{
  const f=await fixture();try{
   const row={...entry(),evidence_refs:['one','two']};const memory=f.host.options.memory()!;
@@ -390,11 +496,24 @@ test('automatic generation requires current extraction consent for every evidenc
  }finally{await f.close()}
 })
 
-test('profile warmup generates grounded suggestions without writing facts or enabling news',async()=>{
+test('a stated idea and an authorized file can generate together without rejecting the batch',async()=>{
+ const f=await fixture();const idea={...entry('idea'),content:'想法：简化首次使用',evidence_refs:['conversation:idea']}
+ const memory={...f.host.options.memory()!,get:(id:string)=>Promise.resolve(id==='idea'?idea:null),canProcessEvidence:()=>Promise.resolve(true)}
+ const file:ContextInput={kind:'file',id:'source:note',version:'v1',content:'An idea for simpler setup.',source_id:'source',file_id:'note',root:'/project',rel_path:'notes.md',role:'document',mtime_ms:1,priority:2}
+ let seen:string[]=[]
+ const host=new PersonalAgentHost({...f.host.options,path:join(f.dir,'context-host.json'),memory:()=>memory,generateContext:entries=>{seen=entries.flatMap(item=>item.refs.map(ref=>ref.entry_id));return Promise.resolve({cards:[]})}})
+ host.setSources({list:()=>[],command:()=>Promise.resolve({}),contextEntries:()=>[file]})
+ try{await host.open();host.workbenchContext.update([idea,file]);await host.workbenchContext.refresh();assert.deepEqual(new Set(seen),new Set(['idea','source:note']));assert.equal(host.workbenchContext.snapshot().status,'ready')}
+ finally{await host.close();await f.close()}
+})
+
+test('profile warmup generates grounded suggestions without writing facts, and seeds news interests once',async()=>{
  const f=await fixture();await f.host.close();let calls=0
  f.entries.set('plan',{...entry(),evidence_refs:['e:plan']});const memory={...f.host.options.memory()!,canProcessEvidence:()=>Promise.resolve(true)}
  const host=new PersonalAgentHost({...f.host.options,memory:()=>memory,generateProfile:entries=>{calls++;return Promise.resolve({about:null,interests:[{text:'Product design',refs:[{entry_id:entries[0]!.id,version:entries[0]!.version!}]}]})}})
- try{await host.open();await host.profileWarmup.refresh();const state=host.snapshot();assert.equal(state.profile_preparation.status,'ready');assert.equal(state.life.profile.about,'');assert.equal(state.news.enabled,false);assert.deepEqual(state.news.interests,[])
+ try{await host.open();await host.profileWarmup.refresh();const state=host.snapshot();assert.equal(state.profile_preparation.status,'ready');assert.equal(state.life.profile.about,'');assert.equal(state.news.enabled,true,'news is on by default')
+  for(let i=0;i<100&&!host.snapshot().news.interests.length;i++)await new Promise(r=>setTimeout(r,5))
+  assert.deepEqual(host.snapshot().news.interests.map(i=>i.text),['Product design'],'Profile interests seed an unconfigured feed')
   await host.refreshMemory();await host.profileWarmup.refresh();assert.equal(calls,1,'ordinary snapshot reads do not restart warmup')
   f.entries.clear();await host.sourceChanged();await host.profileWarmup.refresh();assert.equal(host.snapshot().profile_preparation.draft,null)
  }finally{await host.close();await f.close()}
@@ -413,9 +532,43 @@ test('profile warmup requires current consent for every evidence reference',asyn
  }finally{await host.close();await f.close()}
 })
 
-test('authorized local excerpts seed interest drafts as inferred context and revoke cleanly',async()=>{
+test('active authorized project documents can ground a profile draft without becoming memory',async()=>{
  const f=await fixture();await f.host.close();let available=true,calls=0;
- const host=new PersonalAgentHost({...f.host.options,generateProfile:entries=>{calls++;assert.equal(entries[0]!.origin,'inferred');return Promise.resolve({about:null,interests:[{text:'Design',refs:[{entry_id:entries[0]!.id,version:entries[0]!.version!}]}]})}});
- host.setSources({list:()=>[],contextEntries:()=>available?[{id:'source:document',version:'v1',content:'Product design notes'}]:[],command:()=>Promise.resolve({})});
- try{await host.open();await host.profileWarmup.refresh();assert.equal(calls,1);assert.equal(host.profileWarmup.snapshot().draft?.about,null);available=false;await host.sourceChanged();assert.equal(host.profileWarmup.snapshot().draft,null)}finally{await host.close();await f.close()}
+ const host=new PersonalAgentHost({...f.host.options,generateProfile:entries=>{calls++;assert.equal(entries[0]!.origin,'inferred');return Promise.resolve({about:{text:'Design systems',refs:[{entry_id:entries[0]!.id,version:entries[0]!.version!}]},work:[{title:'Design',text:'Builds design systems',refs:[{entry_id:entries[0]!.id,version:entries[0]!.version!}]}],interests:[]})}});
+ host.setSources({list:()=>[],contextEntries:()=>available?[{kind:'file',id:'source:document',version:'v1',content:'Product design notes',source_id:'s',file_id:'f',root:'/project',rel_path:'project/notes.md',role:'document',mtime_ms:Date.now(),priority:2}]:[],command:()=>Promise.resolve({})});
+ try{await host.open();const existing=host.snapshot().memory.entries.length;await host.profileWarmup.refresh();assert.equal(calls,1);assert.equal(host.profileWarmup.snapshot().draft?.work.length,1);assert.equal(host.snapshot().memory.entries.length,existing);available=false;await host.sourceChanged();assert.equal(host.profileWarmup.snapshot().draft,null)}finally{await host.close();await f.close()}
+})
+
+test('adopting a goal suggestion creates one goal even across retries and a failed dismiss',async()=>{
+ const f=await fixture()
+ try{
+  const card={id:'goal-card',candidate_id:'goal-card',tab:'goals' as const,title:'让 Nova 成为每天在用的助手',body:'一周里大部分事情都交给它。',why:null,next:'先把待办页跑顺',refs:[]}
+  const context=f.host.workbenchContext as unknown as {snapshot:()=>unknown;dismiss:(id:string)=>Promise<void>};const real=context.snapshot.bind(context)
+  let failures=1;const dismissed:string[]=[]
+  context.snapshot=()=>({...(real() as object),cards:[card,{...card,id:'todo-card',tab:'todos'}]})
+  context.dismiss=id=>{if(failures-->0)return Promise.reject(Error('disk_full'));dismissed.push(id);return Promise.resolve()}
+  const adopt=(request_id:string,id='goal-card')=>f.host.command({type:'personal.command',request_id,method:'context.adopt',params:{id}}) as Promise<{ok:boolean;error?:string}>
+  assert.equal((await adopt('first')).ok,false,'the dismiss failure surfaces')
+  assert.equal((await adopt('second')).ok,true);assert.equal((await adopt('third')).ok,true)
+  const goals=f.host.life.snapshot().goals
+  assert.equal(goals.length,1);assert.equal(goals[0]!.title,card.title);assert.equal(goals[0]!.note,'先从：先把待办页跑顺');assert.equal(goals[0]!.success_criteria,card.body)
+  card.title='让 Nova 真正成为每天在用的助手'
+  assert.equal((await adopt('reworded')).ok,true,'a regenerated card with the same id is already adopted')
+  assert.equal(f.host.life.snapshot().goals.length,1)
+  assert.deepEqual(dismissed,['goal-card','goal-card','goal-card'])
+  assert.equal((await adopt('todo','todo-card')).ok,false,'only a goal suggestion can be adopted')
+ }finally{await f.close()}
+})
+
+test('source invalidation hides generated cards even when memory refresh fails',async()=>{
+ const f=await fixture();await f.host.close();let available=true
+ const host=new PersonalAgentHost({...f.host.options,generateContext:candidates=>Promise.resolve({cards:candidates.slice(0,1).map(candidate=>({candidate_id:candidate.candidate_id,tab:candidate.tab,title:'Review design',body:'Suggested from a local document.',why:null,next:null,refs:candidate.refs.map(ref=>({entry_id:ref.entry_id,version:ref.version}))}))})})
+ const file:ContextInput={kind:'file',id:'source:document',version:'v1',content:'TODO: review the product design notes.',source_id:'source',file_id:'document',root:'/project',rel_path:'design.md',role:'document',mtime_ms:1,priority:2}
+ host.setSources({list:()=>[],contextEntries:()=>available?[file]:[],command:()=>Promise.resolve({})})
+ try{
+  await host.open();await host.workbenchContext.refresh();assert.equal(host.snapshot().workbench_context.cards.length,1)
+  available=false;host.refreshMemory=()=>Promise.reject(Error('temporary_refresh_failure'))
+  await assert.rejects(host.sourceChanged(),/temporary_refresh_failure/)
+  assert.equal(host.snapshot().workbench_context.cards.length,0)
+ }finally{await host.close();await f.close()}
 })

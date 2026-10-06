@@ -262,6 +262,8 @@ body[data-opaque="1"] {
   transition: opacity 140ms ease;
 }
 
+#orb:focus-visible { outline: 2px solid #a6d6ff; outline-offset: 2px; }
+
 /* Keyboard focus (:focus-visible) keeps the rail open; plain click focus must
    not, or one click would pin the rail visible after the pointer leaves. */
 body:hover #orb-rail,
@@ -356,6 +358,12 @@ body:hover #orb-rail,
    --palette-* so the hover palette tour (which still re-themes the orb
    canvas and the confirmation popup) never rotates this text's colour. */
 #state-label { color: #f5f5f7; }
+#state-label[data-action='setup'] {
+  pointer-events: auto;
+  cursor: pointer;
+  border-color: rgba(255, 196, 120, .5);
+}
+#state-label[data-action='setup']:focus-visible { outline: 2px solid #a6d6ff; outline-offset: 1px; }
 #aec-label {
   color: #d6d6d6;
   font-size: 10px;
@@ -725,7 +733,7 @@ body:hover #orb-rail,
     color: white;
     border: 2px solid white;
   }
-  .capture-indicator { z-index: 1; }
+  .capture-indicator, .unread-indicator { z-index: 1; }
   #state-label, #codex-label, #aec-label, #caption {
     color: white;
     background: black;

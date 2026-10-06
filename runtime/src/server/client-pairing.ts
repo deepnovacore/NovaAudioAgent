@@ -95,6 +95,15 @@ export class ClientPairing {
     return hello.token
   }
 
+  /** Resolve only validated credentials; expose opaque device IDs, never credential hashes. */
+  clientIdentity(token: string): string {
+    secret.parse(token)
+    if(equal(token,this.master))return 'remote:master'
+    const device=this.#devices.find(device=>equal(device.hash,hash(token)))
+    if(!device)throw new Error('authentication failed')
+    return 'remote:'+device.id
+  }
+
   track(token: string, disconnect: () => void): () => void {
     const key = hash(token)
     const connections = this.#connections.get(key) ?? new Set<() => void>()

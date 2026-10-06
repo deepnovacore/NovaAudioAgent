@@ -29,7 +29,7 @@ test('Feishu does not authorize reading or bot delivery by rendering and keeps d
  const v=view({available:true,configured:true,state:'ready',chats:[{id:'chat-1',name:'测试会话'}]})
  assert.deepEqual(v.commands,[])
  const checks=v.nodes.filter(node=>node.tag==='input')
- assert.ok(checks.every(node=>node.checked===false&&node.role==='switch'))
+ assert.ok(checks.every(node=>node.checked===false));assert.equal(checks[0].role,undefined);assert.equal(checks.at(-1).role,'switch')
  const save=v.button('完成配置');assert.equal(save.disabled,true)
  checks[0].checked=true;checks[0].listeners.change();checks[1].checked=true;checks[1].listeners.change()
  assert.equal(save.disabled,false);await save.action()
@@ -40,6 +40,14 @@ test('Feishu does not authorize reading or bot delivery by rendering and keeps d
  const confirmation=v.nodes.find(node=>node['aria-label']==='确认删除飞书历史');assert.equal(confirmation.hidden,true)
  await v.button('删除本地历史').action();assert.equal(confirmation.hidden,false)
  await v.button('确认删除本地历史').action();assert.equal(v.commands.at(-1).method,'feishu.delete')
+})
+test('expired user authorization offers reauthorization without replacing the app',async()=>{
+ const v=view({available:true,configured:true,state:'unauthorized',auth_issue:'expired',chats:[]})
+ assert.ok(v.nodes.some(node=>node.text?.includes('授权已过期')))
+ assert.ok(v.nodes.some(node=>node.text?.includes('无需重新绑定应用')))
+ assert.equal(v.button('绑定已有应用'),undefined)
+ await v.button('重新授权飞书').action()
+ assert.deepEqual(v.commands,[{method:'feishu.login',params:{}}])
 })
 test('unconfigured deployment does not offer OAuth or expose credentials',()=>{
  assert.doesNotThrow(()=>view(null))
@@ -79,7 +87,7 @@ test('read-only project entries have no correction or forget controls',async()=>
  const articles=body.querySelectorAll('article')
  const buttons=topic=>articles.find(article=>article.querySelector('h4')?.textContent===topic).querySelectorAll('button').map(button=>button.textContent)
  assert.deepEqual(buttons('只读项目'),['接着聊'])
- assert.deepEqual(buttons('个人记忆'),['纠正','忘记','接着聊'])
+ assert.deepEqual(buttons('个人记忆'),['接着聊','纠正','忘记'])
  const expiredToggle=()=>body.querySelectorAll('label').find(label=>label.children.some(child=>child.text==='包含已过期')).children[0]
  const toggle=expiredToggle();assert.equal(toggle.checked,false)
  toggle.checked=true;const pending=toggle.listeners.change();const request=sent.at(-1)
@@ -138,6 +146,17 @@ test('settings waits for status without claiming CLI is missing',async()=>{
  assert.match(text(),/正在读取/);assert.doesNotMatch(text(),/安装|lark-cli/)
  const pending=panel.load();assert.match(text(),/正在读取/)
  respond({available:false});await pending;assert.match(text(),/lark-cli/)
+})
+
+test('sync attachment warnings keep connection and consent controls available',async()=>{
+ const root=new Node('main'),error=new Node('p')
+ const document={querySelector:selector=>selector==='#im-connection'?root:error,createElement:tag=>new Node(tag),createTextNode:text=>new Node('text',text)}
+ globalThis.document=document
+ const panel=createImPanel({document,api:{feishuCommand:()=>Promise.resolve({available:true,configured:true,state:'ready',scope_configured:true,processing_consent_required:false,error:'8 条附件未提取正文'})}})
+ await panel.load()
+ assert.ok(root.querySelectorAll('button').some(node=>node.textContent==='立即同步'))
+ assert.ok(root.querySelectorAll('input').some(node=>node.checked===true))
+ assert.ok(root.querySelectorAll('p').some(node=>node.textContent==='8 条附件未提取正文'))
 })
 
 test('text captions never duplicate persisted users; voice captions and generation states remain visible',()=>{
@@ -245,22 +264,28 @@ test('Feishu processing consent is independent and provider changes require a fr
  assert.equal(label.children[0].checked,false);assert.equal(label.children[0].disabled,true)
 })
 
-test('coding target picker keeps exact host pairs and ignores stale conversation loads',async()=>{
+test('coding target menu lives in the composer, appears only with a coding executor and drives conversations.target',async()=>{
  const body=new Node('body'),shell=new Node('div');body.append(shell)
- globalThis.window={addEventListener(){}};globalThis.document={addEventListener(){},body,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag),visibilityState:'hidden',hasFocus:()=>false,createTextNode:text=>new Node('text',text),querySelector:()=>shell}
+ globalThis.window={addEventListener(){}};globalThis.document={addEventListener(){},removeEventListener(){},body,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag),visibilityState:'hidden',hasFocus:()=>false,createTextNode:text=>new Node('text',text),querySelector:()=>shell}
  const sent=[];const view=mountPersonalView({send:frame=>(sent.push(frame),true),start:async()=>{},stop:async()=>{},tasks:()=>({tasks:[]}),results:()=>[],api:{orbMenu:{},personal:{}}});await view.controller.connect()
- const snapshot=(revision,id)=>view.receive({type:'personal.state',revision,conversations:{selected_id:id,voice_id:null,items:[{id:'a',kind:'chat',title:'A'},{id:'b',kind:'chat',title:'B'}],messages:[]},memory:{entries:[]}})
+ const snapshot=(revision,id,target=null)=>view.receive({type:'personal.state',revision,conversations:{selected_id:id,voice_id:null,items:[{id:'a',kind:'chat',title:'A'},{id:'b',kind:'chat',title:'B',coding_target:target}],messages:[]},memory:{entries:[]}})
  const reply=data=>{const request=sent.at(-1);view.receive({type:'personal.result',request_id:request.request_id,ok:true,data})}
  const flush=async()=>{await Promise.resolve();await Promise.resolve();await Promise.resolve()}
  snapshot(1,'a')
- const load=body.querySelectorAll('button').find(node=>node.textContent==='选择项目会话')
- const select=body.querySelectorAll('select').find(node=>node['aria-label']==='此对话的编程目标')
+ assert.equal(body.querySelectorAll('select').some(node=>node['aria-label']==='执行工作区'),false,'the two disabled selects are gone')
+ assert.equal(body.querySelectorAll('button').some(node=>node.textContent==='刷新工作区'),false)
+ const menu=()=>{const all=n=>[n,...n.children.flatMap(all)];return all(body).find(node=>node.className==='target-menu')}
+ assert.equal(menu().hidden,true,'no coding executor announced yet')
+ view.receive({type:'executor.state',state:'idle'})
+ assert.equal(menu().hidden,false)
+ const chip=body.querySelectorAll('button').find(node=>node.className==='target-chip')
  const target={workspace_id:'ws-1',session_id:'session-7',project:'Project',title:'Session',executor:'codex'}
- load.listeners.click();assert.equal(sent.at(-1).method,'conversations.targets');snapshot(2,'b');reply({targets:[target]});await flush();assert.equal(select.children.length,1)
- load.listeners.click();reply({targets:[target]});await flush();assert.equal(select.children.length,2)
- select.value=select.children[1].value;select.listeners.change();assert.deepEqual(sent.at(-1).params,{id:'b',target:{workspace_id:'ws-1',session_id:'session-7'}})
- snapshot(3,'a');reply({});await flush();assert.equal(select.value,'');assert.equal(select.children.length,1)
- assert.equal(sent.filter(frame=>frame.method==='conversations.target').length,1)
+ chip.listeners.click();assert.equal(sent.at(-1).method,'conversations.targets')
+ reply({targets:[{...target,session_id:null,directory:'/registered/one'},{...target,directory:'/registered/one'}]});await flush()
+ const item=text=>body.querySelectorAll('button').find(node=>node.className==='target-item'&&node.textContent===text)
+ item('Project').listeners.click();assert.deepEqual(sent.at(-1).params,{id:'a',target:{workspace_id:'ws-1',session_id:null}})
+ reply({});snapshot(2,'a',{...target,session_id:null});await flush()
+ item('Session').listeners.click();assert.deepEqual(sent.at(-1).params,{id:'a',target:{workspace_id:'ws-1',session_id:'session-7'}})
 })
 
 test('opening a waiting approval never acknowledges an unseen card',async()=>{

@@ -156,7 +156,7 @@ test('a missing model credential is refused without echoing configuration', () =
     () => buildAssembly({settings: settings({model_api_key: null})}),
     (error: unknown) => {
       assert.ok(error instanceof AssemblyError)
-      assert.match(error.message, /NOVA_AUDIO_AGENT_MODEL_API_KEY/u)
+      assert.match(error.message, /MODEL_API_KEY/u)
       // The name is enough to act on; no value may appear.
       assert.doesNotMatch(error.message, /assembly-test-key|dashscope/u)
       return true
@@ -170,20 +170,14 @@ test('model credential validation wins when both production credentials are abse
       settings: settings({model_api_key: null, tavily_api_key: null}),
     }),
     (error: unknown) => error instanceof AssemblyError
-      && error.message === '缺少 DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY',
+      && error.message === '缺少 DASHSCOPE_API_KEY 或 MODEL_API_KEY',
   )
 })
 
-test('production search requires Tavily without exposing credential values', () => {
-  assert.throws(
-    () => buildAssembly({settings: settings({tavily_api_key: null})}),
-    (error: unknown) => {
-      assert.ok(error instanceof AssemblyError)
-      assert.match(error.message, /TAVILY_API_KEY/u)
-      assert.doesNotMatch(error.message, /tavily-test-key/u)
-      return true
-    },
-  )
+test('production search without Tavily or DashScope is left out instead of blocking startup', () => {
+  const assembly = buildAssembly({settings: settings({tavily_api_key: null})})
+  assert.equal(assembly.manifests.some(manifest => manifest.name === 'search'), false)
+  assert.equal([...assembly.tools.bindings.keys()].includes('search__search'), false)
 })
 
 test('the compiled tool schema advertises always-on adapters before configured executors', () => {

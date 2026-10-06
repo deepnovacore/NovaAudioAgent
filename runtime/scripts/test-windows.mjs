@@ -17,6 +17,7 @@ const directory = resolve(import.meta.dirname, '../dist/test')
 // CI covers Windows-specific process and filesystem authority here; the full
 // portable suite remains available via test:win and runs on macOS/Linux in CI.
 const platformTests = [
+  'presentation-storage.test.js',
   'codex-windows-guardian.test.js',
   'codex-project-platform-policy.test.js',
   'project-native-resource.test.js',

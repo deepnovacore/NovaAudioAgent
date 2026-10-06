@@ -40,6 +40,8 @@ export function browserWindowOptions(preload, launchId, { opaque = false } = {})
     minWidth: DORMANT_ORB_WINDOW_SIZE.width,
     minHeight: DORMANT_ORB_WINDOW_SIZE.height,
     frame: false,
+    // Let an unfocused macOS orb receive both clicks of a double-click.
+    acceptFirstMouse: true,
     // Compositors without a working transparent-visuals path (opted into via
     // NOVA_ORB_OPAQUE) get a solid plate instead of a broken/black surface.
     transparent: !opaque,
@@ -103,6 +105,16 @@ export function settingsWindowOptions(preload, launchId) {
     minWidth: 620,
     minHeight: 520,
     title: t("设置"),
+  })
+}
+
+export function setupWindowOptions(preload, launchId) {
+  return panelWindowOptions(preload, launchId, {
+    width: 720,
+    height: 640,
+    minWidth: 520,
+    minHeight: 520,
+    title: t("开始使用 Nova"),
   })
 }
 

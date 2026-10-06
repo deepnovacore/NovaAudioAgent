@@ -5,7 +5,7 @@ import {randomUUID} from 'node:crypto'
 export const USAGE_FIELDS = ['inputTokens', 'outputTokens', 'inputTextTokens', 'inputAudioTokens', 'outputTextTokens', 'outputAudioTokens', 'cachedTokens', 'reasoningTokens', 'audioDurationMs', 'characters']
 export const PRICE_DATE = '2026-09-08'
 export function publicUsageReport(value) {
-  if (!value || !['qwen', 'ark', 'deepseek', 'volcengine'].includes(value.provider)
+  if (!value || !['qwen', 'stepfun', 'ark', 'deepseek', 'volcengine', 'openai', 'gemini'].includes(value.provider)
     || !['realtime', 'llm', 'asr', 'tts'].includes(value.service) || !['complete', 'missing'].includes(value.status)
     || typeof value.id !== 'string' || !value.id || value.id.length > 256
     || typeof value.model !== 'string' || !value.model || value.model.length > 256) return null

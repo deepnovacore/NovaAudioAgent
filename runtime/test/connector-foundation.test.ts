@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {DatabaseSync} from 'node:sqlite'
 import {connectorSourceId,initializeSourceState,assertSourceStateSchema} from '../src/memory-substrate/source-state.js'
-import {WorkspaceGraphStoreClient} from '../src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../src/memory-ledger/store-client.js'
 import type {SourceConnection} from '../src/memory-substrate/source-state.js'
 import {initializeMemory,memoryOperation,EvidenceRecordSchema,CandidateSchema,type MemoryOperation,type EntryRevision} from '../src/memory-substrate/store.js'
 
@@ -54,7 +54,7 @@ test('undelivered source phases survive later batches and paginate beyond 200 re
 
 test('v3 migration preserves evidence and suppression and does not reset source clock',async()=>{
  const root=await mkdtemp(join(tmpdir(),'nova-source-migration-'));const path=join(root,'memory.sqlite')
- let client=new WorkspaceGraphStoreClient(path)
+ let client=new MemoryLedgerClient(path)
  try{
   await client.open();await client.close()
   const old=new DatabaseSync(path)
@@ -63,16 +63,16 @@ test('v3 migration preserves evidence and suppression and does not reset source 
   old.prepare('INSERT INTO memory_suppressed VALUES(?)').run('forgotten')
   old.prepare('INSERT INTO memory_evidence VALUES(?,?,?,?)').run('e','s','h','{"preserve":true}')
   old.close()
-  client=new WorkspaceGraphStoreClient(path);await client.open();await client.close()
+  client=new MemoryLedgerClient(path);await client.open();await client.close()
   const upgraded=new DatabaseSync(path)
   assert.equal(upgraded.prepare('SELECT MAX(version) n FROM schema_migrations').get()!.n,4)
   assert.equal(upgraded.prepare('SELECT COUNT(*) n FROM memory_suppressed').get()!.n,1)
   assert.equal(upgraded.prepare('SELECT payload_json FROM memory_evidence WHERE id=?').get('e')!.payload_json,'{"preserve":true}')
   upgraded.exec('UPDATE source_clock SET revision=7');upgraded.close()
-  client=new WorkspaceGraphStoreClient(path);await client.open();await client.close()
+  client=new MemoryLedgerClient(path);await client.open();await client.close()
   const again=new DatabaseSync(path);assert.equal(again.prepare('SELECT revision FROM source_clock').get()!.revision,7)
   again.exec('INSERT INTO schema_migrations VALUES(999,0)');again.close()
-  client=new WorkspaceGraphStoreClient(path);await assert.rejects(client.open(),{code:'STORE_SCHEMA_UNSUPPORTED'})
+  client=new MemoryLedgerClient(path);await assert.rejects(client.open(),{code:'STORE_SCHEMA_UNSUPPORTED'})
  }finally{await client.close();await rm(root,{recursive:true,force:true})}
 })
 
@@ -141,7 +141,7 @@ test('object activation withdraws derived memory, reuses A, and ignores metadata
 })
 
 test('unfinished pages and generation cleanup resume from disk without skipping bodies or deleting new data',async()=>{
- const root=await mkdtemp(join(tmpdir(),'nova-page-resume-')),path=join(root,'memory.sqlite');let client=new WorkspaceGraphStoreClient(path)
+ const root=await mkdtemp(join(tmpdir(),'nova-page-resume-')),path=join(root,'memory.sqlite');let client=new MemoryLedgerClient(path)
  try{
   await client.open();await client.memory('source_connection',{action:'create',id:'c',namespace:'n'})
   let c=await client.memory('source_connection',{action:'fence',id:'c',state:'connected',expected_epoch:0}) as SourceConnection
@@ -150,7 +150,7 @@ test('unfinished pages and generation cleanup resume from disk without skipping 
   await client.memory('source_apply_page',page)
   const changes=ids.slice(0,20).map(id=>{const source_id=connectorSourceId('n',0,id);return {object_key:id,source_id,semantic_hash:id,metadata:{},status:'current',evidence:[EvidenceRecordSchema.parse({id,source_id,source_kind:'mail',locator:id,observed_at:new Date().toISOString(),recorded_at:new Date().toISOString(),raw_text:id,hash:id,trust:'untrusted_external'})]}})
   const body={...page,page_id:'body',changes,pending_ids:ids.slice(20)}
-  await client.memory('source_apply_page',body);await client.close();client=new WorkspaceGraphStoreClient(path);await client.open()
+  await client.memory('source_apply_page',body);await client.close();client=new MemoryLedgerClient(path);await client.open()
   c=await client.memory('source_connection',{action:'get',id:'c'}) as SourceConnection
   assert.equal(c.pending_ids.length,180);assert.equal(c.checkpoint,null)
   assert.equal((await client.memory('source_apply_page',body) as {applied:boolean}).applied,false)
@@ -160,7 +160,7 @@ test('unfinished pages and generation cleanup resume from disk without skipping 
   const old=c.fence
   c=await client.memory('source_connection',{action:'delete_begin',id:'c',expected_epoch:c.fence.epoch}) as SourceConnection
   assert.equal(c.fence.generation,1);assert.deepEqual(c.deleting,[0])
-  await client.close();client=new WorkspaceGraphStoreClient(path);await client.open()
+  await client.close();client=new MemoryLedgerClient(path);await client.open()
   assert.equal((await client.memory('source_connection',{action:'delete_step',id:'c',limit:10}) as {remaining:boolean}).remaining,true)
   c=await client.memory('source_connection',{action:'fence',id:'c',state:'connected',expected_epoch:c.fence.epoch}) as SourceConnection
   const source_id=connectorSourceId('n',1,'m0'),change={...changes[0]!,source_id,evidence:[{...changes[0]!.evidence[0]!,id:'new-m0',source_id}]}

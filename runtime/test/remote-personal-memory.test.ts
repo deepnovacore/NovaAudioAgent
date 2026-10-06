@@ -102,11 +102,11 @@ test('remote memory accepts only HTTPS or numeric loopback HTTP without embedded
 
 
 test('HTTP memory configuration requires explicit host URL and credential without local model settings', () => {
-  const env = {NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'remote', NOVA_AUDIO_AGENT_MEMORY_URL:'http://127.0.0.1:8030', NOVA_AUDIO_AGENT_MEMORY_TOKEN:'test-owner'}
+  const env = {MEMORY_CONNECTION:'remote', MEMORY_URL:'http://127.0.0.1:8030', MEMORY_TOKEN:'test-owner'}
   assert.deepEqual(requirePersonalMemory(loadSettings(env)), {connection:'remote',url:'http://127.0.0.1:8030',token:'test-owner'})
   assert.ok(personalMemoryFactory(loadSettings(env))?.() instanceof RemotePersonalMemoryResource)
-  assert.throws(() => requirePersonalMemory(loadSettings({...env,NOVA_AUDIO_AGENT_MEMORY_URL:''})))
-  assert.throws(() => requirePersonalMemory(loadSettings({...env,NOVA_AUDIO_AGENT_MEMORY_TOKEN:''})))
+  assert.throws(() => requirePersonalMemory(loadSettings({...env,MEMORY_URL:''})))
+  assert.throws(() => requirePersonalMemory(loadSettings({...env,MEMORY_TOKEN:''})))
 })
 
 test('remote connection failure never opens a local memory store', async () => {
@@ -116,10 +116,10 @@ test('remote connection failure never opens a local memory store', async () => {
   const address = server.address()
   assert.ok(address && typeof address !== 'string')
   const resource = personalMemoryFactory(loadSettings({
-    NOVA_AUDIO_AGENT_MEMORY_CONNECTION:'remote',
-    NOVA_AUDIO_AGENT_MEMORY_URL:`http://127.0.0.1:${address.port}`,
-    NOVA_AUDIO_AGENT_MEMORY_TOKEN:'test-owner',
-    NOVA_AUDIO_AGENT_MEMORY_PATH:join(directory,'must-not-exist.sqlite'),
+    MEMORY_CONNECTION:'remote',
+    MEMORY_URL:`http://127.0.0.1:${address.port}`,
+    MEMORY_TOKEN:'test-owner',
+    MEMORY_PATH:join(directory,'must-not-exist.sqlite'),
   }))!()
   try {
     assert.ok(resource instanceof RemotePersonalMemoryResource)

@@ -19,7 +19,7 @@ test('server commands reuse runtime entry, credentials and terminal pairing', as
     config: {initializeServerToken: path => calls.push(['token', path]), loadServerConfig: () => ({port: 19876, token: 'private'})},
     pair: {terminalPair: async config => calls.push(['pair', config])},
   }
-  const options = {environment: {NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: '/tmp/private-token'}, write: () => {}, load: async name => modules[name]}
+  const options = {environment: {SERVER_TOKEN_FILE: '/tmp/private-token'}, write: () => {}, load: async name => modules[name]}
   assert.equal(await main(['start'], options), 0)
   assert.equal(await main(['token-init'], options), 0)
   assert.equal(await main(['pair', 'wss://example.test'], options), 0)

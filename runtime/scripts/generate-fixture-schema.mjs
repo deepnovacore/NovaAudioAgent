@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { runtimeFixtureJsonSchema } from '../dist/eval/fixtures.js'
 
 const targets = [
-  [resolve(import.meta.dirname, '../../fixtures/runtime/v1/schema.json'), runtimeFixtureJsonSchema()],
+  [resolve(import.meta.dirname, '../../tests/fixtures/runtime/v1/schema.json'), runtimeFixtureJsonSchema()],
 ]
 
 for (const [target, schema] of targets) {

@@ -18,8 +18,10 @@ test('source startup smoke removes ambient product controls without mutating the
   const parentEnvironment = {
     Path: 'C:\\Windows\\System32',
     SystemRoot: 'C:\\Windows',
-    NOVA_AUDIO_AGENT_BACKEND: 'python',
-    nova_audio_agent_desktop_video_file: 'C:\\private\\camera.mp4',
+    BACKEND: 'python',
+    pipeline_mode: 'cascaded',
+    ENV_FILE: 'C:\\private\\.env',
+    desktop_video_file: 'C:\\private\\camera.mp4',
     NOVA_ORB_OPAQUE: '1',
     ELECTRON_RUN_AS_NODE: '1',
     home: 'C:\\private\\old-home',
@@ -36,7 +38,7 @@ test('source startup smoke removes ambient product controls without mutating the
     HOME: 'C:\\smoke\\home',
     USERPROFILE: 'C:\\smoke\\home',
   })
-  assert.equal(parentEnvironment.NOVA_AUDIO_AGENT_BACKEND, 'python')
+  assert.equal(parentEnvironment.BACKEND, 'python')
   assert.equal(parentEnvironment.ELECTRON_RUN_AS_NODE, '1')
 })
 

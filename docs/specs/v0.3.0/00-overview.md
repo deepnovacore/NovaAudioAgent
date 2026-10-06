@@ -7,24 +7,23 @@
 > 里程碑从 M5 续编号，双轨并行、各自小步。**2026-09-11 已授权按 M5–M7 实施。2026-09-12 决定：M8 邮件 / 日历与飞书 IM
 > 留在 v0.3.0（M8-Mail、M8-IM），推翻 09-11 移至 v0.4.0 的划分；M9 执行器仍在 v0.4.0。**
 >
-> 起点：[产品定位与架构设计讨论稿（2026-09-10）](../../design-notes/2026-09-10-nova-personal-agent-product-architecture.zh-CN.md)。
+> 起点：产品定位与架构设计讨论稿（2026-09-10，已不在仓库）。
 > 本系列吸收其结论并把脑暴敲定的决策写成契约；讨论稿保留为背景和参考来源。
 
 This series is the product and engineering contract for the next minor line after
 `v0.2.0`. Each volume owns one boundary. Implementation plans and code land only
 after the corresponding volume is agreed. The public architecture volumes under
-[`docs/archs/`](../../archs/00-overview.md) remain the source of invariants; specs
+[`docs/en/archs/`](../../en/archs/00-overview.md) remain the source of invariants; specs
 here propose deltas and never silently rewrite those volumes.
 
 | Volume | Topic | 轨道 |
 |---|---|---|
 | [01 多入口与主窗口](01-multi-entry-and-main-window.md) | 文字 / 全双工语音 / 长按草稿共用一个输入框；主窗口从现有桌面长出，悬浮窗为收起态；共享主机状态 | B |
-| [02 需求发现与动态页](02-need-discovery-and-feed.md) | 扩展 Surrogate 输出 proposal；低频检查；主机校验、入池、去重、交付记账；`feed_item` 契约 | A |
+| [02 需求发现与动态页](02-need-discovery-and-feed.md) | 扩展 Proactive 输出 proposal；低频检查；主机校验、入池、去重、交付记账；`feed_item` 契约 | A |
 | [03 用户视角记忆](03-user-memory-view.md) | `memory_entry` 投影；来源、stated/inferred；纠正与忘记的回写与传播；概览段落的覆盖声明 | A 与 B 交界 |
 | [04 来源与 connector](04-sources-and-connectors.md) | 用户配置的本地目录；一个邮件/日历 provider；飞书 IM 作为来源与投递渠道；授权、暂停、断开、删除；MCP 作为暴露方式 | C |
 | [06 记忆底座](06-memory-substrate.md) | 账本 / 条目 / 视图三阶段；`evidence_record` 与 `entry_revision` 契约；merge 唯一写入口；Discovery 拆为抽取与筛选 | A 与 C 交界 |
 | [07 Memory、信息渠道与交互（设计稿）](07-memory-channels-and-interaction.md) | A 留 SQLite、B／C Markdown + Git 权威；混合整理节奏；mem0 不进写路径；文本／语音／IM 读取策略；现状、差距及验收边界 | 共同，待评审 |
-| [STATUS](STATUS.zh-CN.md) | 白话进度页：里程碑、依赖、退出条件、待拍板事项 | 共同 |
 
 2026-09-21 新增 07 卷并于同日脑暴收敛为设计稿：理解层（B／C）以 Markdown + Git 为权威、原文账本留 SQLite；整理节奏为逐条入库加每日批量；mem0 不进写路径；飞书私聊纳入文本入口。D8 已追加对应修订；各卷实施契约待评审后另立计划，不代表功能已经实现。
 
@@ -43,7 +42,7 @@ M9-C Kimi Code / pi agent、M9-G GUI/AutoGLM、M9-Demo 仍在 [v0.4.0](../v0.4.0
 ## 与 v0.2.0 的关系
 
 - v0.2.0 的收尾项（真人语音验收、Windows 安装包与唤醒词验收、
-  [RELEASE-GATE](../v0.2.0/RELEASE-GATE.md)）留在原处，不并入本系列，也不因本系列而降级。
+  v0.2.0 RELEASE-GATE）留在原处，不并入本系列，也不因本系列而降级。
 - v0.2.0 定义的基础边界继续有效（具体完成度以其验收台账为准）：六工具 FrontBrain 面、执行器端口与角色路由、主机拥有的确认、
   能力注册表与 MCP、本地知识库、进度气泡、本地唤醒词、级联宿主调度。本系列在其上加层，不重写。
 - 分支策略沿用：dev 分支通过自动化门禁即可集成；合入 `main` 需要本系列各卷的验收台账，
@@ -62,7 +61,7 @@ M9-C Kimi Code / pi agent、M9-G GUI/AutoGLM、M9-Demo 仍在 [v0.4.0](../v0.4.0
 | D5 | **同一个输入框三态**：打字；长按录音，松手得到可编辑草稿，发送才算一轮；切到全双工，麦克风常开，输入框位置显示实时转写。 | 三种入口在协议上已分别对应 `input.text`、`input.dictation`、`input.audio`；UI 上收敛为一个控件，用户不用理解管线。 |
 | D6 | **两个主机拥有的契约对象**：`feed_item`（首页事项）与 `memory_entry`（用户视角的记忆投影，不是新存储）。UI 不持有任何权威副本。 | 它们是 A 轨与 B 轨的接口。A 轨产出并维护，B 轨渲染并回传用户动作。任务列表沿用已有的 `EXECUTOR_TASKS`。 |
 | D7 | **新开 v0.3.0 系列，里程碑从 M5 续编号。** | 定位转型在版本号上可见；v0.2.0 的"一句话目标"不被稀释。 |
-| D8 | **记忆收敛为一套三阶段底座（2026-09-12）。** A 账本只追加并**存原文**，用户删除来源数据时物理删除；B 条目是只追加的修订日志，merge 是唯一写入口，用户纠正与模型合并是同一种修订记录；C 视图只读重算，统一回忆融合 B 当前态与 A 原文索引；Knowledge 退为索引并继承外发同意。VoiceMem 与 历史工作区存储 改为写入方。Discovery 拆为入库抽取与 tick 筛选。飞书 IM 与邮件都在本版范围（M8-IM、M8-Mail）。 | 三套互不打通的记忆无法满足 D3 / D6 要求的逐条 ID、版本、纠正传播；按参考项目分层会加剧分散。可追溯是属性不是层。存原文换来重抽取能力，代价是字段级敏感策略、物理删除与保留期成为硬要求。详见 [06 卷](06-memory-substrate.md) 与 [对照记录](../../design-notes/2026-09-12-memory-references-comparison.zh-CN.md)。**2026-09-21 修订：** B／C 权威表示改为 Markdown + Git，A 仍为 SQLite；merge 唯一写入口不变。详见 [07 卷](07-memory-channels-and-interaction.md)。 |
+| D8 | **记忆收敛为一套三阶段底座（2026-09-12）。** A 账本只追加并**存原文**，用户删除来源数据时物理删除；B 条目是只追加的修订日志，merge 是唯一写入口，用户纠正与模型合并是同一种修订记录；C 视图只读重算，统一回忆融合 B 当前态与 A 原文索引；Knowledge 退为索引并继承外发同意。VoiceMem 与 历史工作区存储 改为写入方。Discovery 拆为入库抽取与 tick 筛选。飞书 IM 与邮件都在本版范围（M8-IM、M8-Mail）。 | 三套互不打通的记忆无法满足 D3 / D6 要求的逐条 ID、版本、纠正传播；按参考项目分层会加剧分散。可追溯是属性不是层。存原文换来重抽取能力，代价是字段级敏感策略、物理删除与保留期成为硬要求。详见 [06 卷](06-memory-substrate.md) 与 对照记录（已不在仓库）。**2026-09-21 修订：** B／C 权威表示改为 Markdown + Git，A 仍为 SQLite；merge 唯一写入口不变。详见 [07 卷](07-memory-channels-and-interaction.md)。 |
 
 ## Goals
 
@@ -102,7 +101,7 @@ M5-A proposal 闭环 ┘   memory_entry 钉住 ────┼── M6-A 记忆
 - **M7 起属于 C 轨（来源）**，依赖 M6-A 的记忆回写路径（来源删除要传播到记忆与 feed）。
 - **记忆底座**在 M6-A 已实现的 VoiceMem 路径之上收敛：06 卷 schema 与 fixtures，历史工作区存储 作为第一写入方迁入，VoiceMem 迁移路径待评审。
 - **M8-Mail 与 M8-IM 并行**，都依赖 M7 的来源管理路径与记忆底座（来源删除要物理删除账本行）；先上哪个真实账号验收待评审。
-- 不写日期。每个里程碑只写依赖与退出条件，见 [STATUS](STATUS.zh-CN.md)。
+- 不写日期。每个里程碑只写依赖与退出条件。
 
 ## 契约对象（概念定义）
 
@@ -113,8 +112,8 @@ M5-A proposal 闭环 ┘   memory_entry 钉住 ────┼── M6-A 记忆
 | `evidence_record` | 实际读到了什么、从哪来、什么时候 | 主机；账本行，只追加，存原文 | [06 卷](06-memory-substrate.md) |
 | `entry_revision` | 一条理解的某次修订：谁写的、依据什么、替代了哪次 | 主机；只经 merge 写入 | [06 卷](06-memory-substrate.md) |
 
-两者都是**接口内容，不是已发布的 wire schema**。落地时以 zod schema 与 `fixtures/` 下的
-golden 向量钉住，沿用 [client-v1](../../protocols/client-v1.md) 的 `client.command` /
+两者都是**接口内容，不是已发布的 wire schema**。落地时以 zod schema 与 `tests/fixtures/` 下的
+golden 向量钉住，沿用 [client-v1](../../en/protocols/client-v1.md) 的 `client.command` /
 `client.command_result` 承载方式。UI 不维护权威副本；重新打开界面从主机恢复。
 
 来源记录、个人记忆、proposal / suggestion、任务、首页事项五种对象的职责分工沿用讨论稿
@@ -132,9 +131,9 @@ golden 向量钉住，沿用 [client-v1](../../protocols/client-v1.md) 的 `clie
   真机验收未完成。
 - **主动机制**：`runtime/src/core/suggestions.ts`（`SuggestionPool`；kind `question | notify | followup`；
   status `pending | fired | withdrawn | expired`；`evidence_refs`、`expires_at`、`cooldown_until`、
-  `delivery_policy`）→ Surrogate（`runtime/src/model/prompting.ts` 的 `SURROGATE_SYSTEM`，只选择不生成、
+  `delivery_policy`）→ Proactive（`runtime/src/model/prompting.ts` 的 `SURROGATE_SYSTEM`，只选择不生成、
   不调用工具；输出契约 `speak / suggestion_id / progress_class / reason` 在 `runtime/src/core/ports.ts`
-  与 `runtime/src/model/model-adapters.ts`）→ `runtime/src/realtime/floor.ts` 仲裁 allow / preempt / defer。
+  与 `runtime/src/model/proactivity.ts`）→ `runtime/src/realtime/floor.ts` 仲裁 allow / preempt / defer。
   runtime 有黑板维护等内部定时器，但**没有用于需求发现的低频检查**；主动行为全部由执行器进度与
   观察事件触发。
 - **记忆**：`runtime/src/core/memory.ts`、`runtime/src/core/context-view.ts`（唯一面向模型的有界投影）、
@@ -150,7 +149,7 @@ golden 向量钉住，沿用 [client-v1](../../protocols/client-v1.md) 的 `clie
   Home Assistant、AutoGLM 在源码中不存在；`thirdparty/Open-AutoGLM` 仅为参考副本，未被引用。
 - **客户端**：桌面为 Electron（`clients/desktop/src/main/*.mjs`、`clients/desktop/src/renderer/*.mjs`，
   含 `task-banner.mjs` 解析 `EXECUTOR_TASKS`）；iOS 为 SwiftUI；
-  没有统一客户端 SDK，靠 `docs/protocols/client-v1.md` 与 `fixtures/client-protocol/v1/` 保持一致。
+  没有统一客户端 SDK，靠 `docs/protocols/client-v1.md` 与 `tests/fixtures/client-protocol/v1/` 保持一致。
 
 ## 部署边界
 
@@ -162,7 +161,7 @@ golden 向量钉住，沿用 [client-v1](../../protocols/client-v1.md) 的 `clie
 ## Invariants that must not regress
 
 - FrontBrain 前台工具面不因本系列扩大；新增能力通过执行器端口、直接 MCP 或主机内部路径接入。
-- Surrogate 只决定"是否值得开口、选哪条"，可以提出 proposal，但不生成给用户听的话、不调用工具、
+- Proactive 只决定"是否值得开口、选哪条"，可以提出 proposal，但不生成给用户听的话、不调用工具、
   不扩大自身权限或提高打扰等级。
 - 外部内容（文件正文、邮件、日历、MCP 返回）始终是低信任证据，不是系统指令，也不是用户授权。
 - 推断不升级为授权。记忆里的"用户可能想要"不能触发任何写操作或执行。

@@ -40,7 +40,7 @@ interface NfkcVectorFile {
 
 const vectorFile = JSON.parse(
   readFileSync(
-    resolve(import.meta.dirname, '../../../fixtures/runtime/unicode-nfkc-vectors.json'),
+    resolve(import.meta.dirname, '../../../tests/fixtures/runtime/unicode-nfkc-vectors.json'),
     'utf8',
   ),
 ) as NfkcVectorFile

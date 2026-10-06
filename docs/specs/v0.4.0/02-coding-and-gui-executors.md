@@ -6,8 +6,8 @@
 
 ## 1. 复用边界
 
-沿用 [07 执行器边界](../v0.2.0/07-executor-boundary.md) 与
-[08 coding 调度](../v0.2.0/08-project-and-work.md)。FrontBrain 仍表达用户意图，
+沿用 v0.2.0 的 07 执行器边界 与
+08 coding 调度。FrontBrain 仍表达用户意图，
 主机持有工作身份、授权与交付；coding controller 拥有 workspace/session 选择与调度。
 不得把后端的原生工具、会话状态机或具体 API 暴露成一组新的快脑原生工具。
 

@@ -1,3 +1,5 @@
+import {taskGrantService} from '../personal-agent/tasks.js'
+import type {TaskDispatchContext} from './task-tools.js'
 import type {CodingProgressNarrationState} from '../realtime/coding-progress-narration.js'
 import {createHash} from 'node:crypto'
 import type { Clock } from './clock.js'
@@ -21,6 +23,19 @@ import type {Suggestion} from './suggestions.js'
 
 export interface ModelPort {
   complete(call: ModelCall, signal: AbortSignal): Promise<unknown>
+}
+
+/** Only protocol-supported public display content, never reasoning or raw protocol payloads. */
+export interface ExecutorActivity {
+ readonly thread_id:string
+ readonly turn_id:string
+ readonly item_id:string
+ readonly stage:'started'|'completed'
+ readonly kind:'message'|'tool'|'artifact'
+ readonly sender?:'executor'|'user-to-executor'
+ readonly text:string
+ readonly refs:string[]
+ readonly text_truncated?:boolean
 }
 
 export interface ExecutorProgress {
@@ -53,9 +68,14 @@ export interface UserTurnAuthority {
 }
 
 export interface ExecutorDispatchContext {
+  readonly resourceWaiting?: (reason:string|null)=>Promise<void>
+  readonly instructionAccepted?: ()=>void
+  readonly beforeWrite?: () => void
+  readonly bindSession?: (sessionId:string)=>Promise<void>
   readonly clock: Clock
   readonly delegate: Delegate
   readonly signal: AbortSignal
+  readonly activity?: (payload: ExecutorActivity) => void
   readonly progress: (payload: ExecutorProgress) => void
   readonly observe?: (payload: ExecutorObservation) => void
   readonly userTurn?: UserTurnAuthority
@@ -73,6 +93,7 @@ export interface ExecutorAdapter {
    * branches) or whose synchronous-result decision depends on the arguments. Absent or `null`:
    * the op's `params` schema and `sync_result` flag apply.
    */
+  taskResource?():string|null
   admitRequest?(op: string, request: Readonly<Record<string, JsonValue>>): ExecutorAdmission | null
   dispatch(
     op: string,
@@ -128,6 +149,9 @@ export class CausalRuntime {
   readonly #pendingUserInputs = new Map<number, PendingUserInput>()
   readonly #hostExecutorCapabilities = new Map<string, object>()
   readonly #userTurns = new Map<string, UserTurnAuthority>()
+  readonly #instructionReceipts=new Map<string,(status:'accepted'|'failed'|'unknown')=>void>()
+  readonly #taskBindings=new Map<string,Promise<void>>()
+  readonly #taskGrants = new Map<string,TaskDispatchContext>()
   readonly #launchChecks = new Map<string, (() => boolean) | null>()
   readonly #shutdownGrace: number
   #state: 'new' | 'serving' | 'closed' = 'new'
@@ -300,6 +324,25 @@ export class CausalRuntime {
     return admission
   }
 
+  async dispatchTaskExternal(request:DelegateRequest,reason:WakeReason,grant:TaskDispatchContext,receipt?:(status:'accepted'|'failed'|'unknown')=>void,stillWanted?:()=>boolean):Promise<RuntimeDispatchResult>{
+    const tasks=taskGrantService(grant)
+    if(this.#failure!==undefined)throw this.#failure
+    if(this.#blackboard!==undefined&&!this.#memoryOpened)return {accepted:false,delegate_id:null,problem:'memory_not_ready'}
+    if(this.#state==='closed'||this.#memoryClosed||this.#clearing!==undefined)return {accepted:false,delegate_id:null,problem:'closed'}
+    const admission=this.core.dispatchTaskExternal(request,reason,grant)
+    if(admission.accepted&&admission.delegate_id){
+      const work=admission.delegate_id
+      this.#taskGrants.set(work,grant)
+      this.#launchChecks.set(work,()=>grant.stillWanted()&&(stillWanted?.()??true))
+      if(receipt)this.#instructionReceipts.set(work,receipt)
+      const binding=tasks.bindWork(grant.fence,work,undefined,request.op!=='steer')
+      this.#taskBindings.set(work,binding)
+      this.#notifyWork()
+      await binding
+    }
+    await this.flushMemory()
+    return admission
+  }
   cancelPendingDispatch(delegateId: string): boolean {
     if (!this.#launchChecks.has(delegateId)) return false
     this.#launchChecks.set(delegateId, null)
@@ -312,19 +355,27 @@ export class CausalRuntime {
     reason: WakeReason,
     capability: object,
     launchAuthorized: () => boolean,
+    taskContext?:TaskDispatchContext,
   ): Promise<RuntimeDispatchResult> {
     if (this.#state === 'closed' || this.#memoryClosed) return {accepted: false, delegate_id: null, problem: 'closed'}
     if (this.#clearing !== undefined) return {accepted: false, delegate_id: null, problem: 'conversation_clearing'}
     if (this.#blackboard !== undefined && !this.#memoryOpened) return {accepted: false, delegate_id: null, problem: 'memory_not_ready'}
     if (this.#failure !== undefined) throw this.#failure
     const epoch = this.core.conversationEpoch
+    if(taskContext){taskGrantService(taskContext);if(taskContext.origin_ref!==request.origin_ref)throw Error('invalid_origin_ref')}
     const admission = this.core.dispatchConfirmedExternal(
       request,
       reason,
       capability,
+      taskContext,
     )
     if (admission.accepted) {
       if (admission.delegate_id !== null) {
+        if(taskContext){
+          this.#taskGrants.set(admission.delegate_id,taskContext)
+          const binding=taskGrantService(taskContext).bindWork(taskContext.fence,admission.delegate_id,undefined,request.op!=='steer')
+          this.#taskBindings.set(admission.delegate_id,binding);void binding.catch(()=>{ /* launch owns the failed binding */ })
+        }
         this.#hostExecutorCapabilities.set(admission.delegate_id, capability)
         this.#launchChecks.set(admission.delegate_id, launchAuthorized)
       }
@@ -432,6 +483,8 @@ export class CausalRuntime {
       signal.removeEventListener('abort', onAbort)
       clearInterval(this.#maintenance)
       this.#state = 'closed'
+      for(const receipt of this.#instructionReceipts.values())receipt('unknown')
+      this.#instructionReceipts.clear();this.#taskBindings.clear();this.#taskGrants.clear()
       this.#acceptCompletions = false
       const stopped = new Error('causal runtime stopped before input was applied')
       for (const pending of this.#pendingUserInputs.values()) pending.reject(this.#failure ?? stopped)
@@ -506,7 +559,9 @@ export class CausalRuntime {
       })
     }
     this.#ownTask(
-      signal => {
+      async signal => {
+        const binding=this.#taskBindings.get(delegate.delegate_id);this.#taskBindings.delete(delegate.delegate_id)
+        if(binding)try{await binding}catch{return {outcome:'refused' as const,trust:'trusted_system' as const,content:{error:'stale_task'},refs:[]}}
         const userTurn = this.#userTurns.get(delegate.delegate_id)
         this.#userTurns.delete(delegate.delegate_id)
         const launchCheck = this.#launchChecks.get(delegate.delegate_id)
@@ -523,7 +578,15 @@ export class CausalRuntime {
           this.#hostExecutorCapabilities.delete(delegate.delegate_id)
           return Promise.resolve({outcome: 'refused', trust: 'trusted_system', content: {error: 'superseded'}, refs: []})
         }
+        const grant=this.#taskGrants.get(delegate.delegate_id);this.#taskGrants.delete(delegate.delegate_id)
+        const activityTasks=grant?taskGrantService(grant):undefined
+        let activitySession:string|undefined
         const context: ExecutorDispatchContext = {
+        ...(activityTasks?{resourceWaiting:(reason:string|null)=>activityTasks.resourceState(grant!.fence.task_id,reason)}:{}),
+        ...(activityTasks?{activity:(item:ExecutorActivity)=>{void Promise.resolve().then(()=>activityTasks.appendEvent({task_id:grant!.fence.task_id,work_id:delegate.delegate_id,thread_id:item.thread_id,turn_id:item.turn_id,item_id:item.item_id,stage:item.stage,...(activitySession?{session_id:activitySession}:{}),kind:item.kind,...(item.sender?{sender:item.sender}:{}),text:item.text,refs:item.refs,...(item.text_truncated?{text_truncated:true}:{})},JSON.stringify([delegate.delegate_id,item.thread_id,item.turn_id,item.item_id,item.stage]))).catch(()=>{this.core.diagnostics.push({code:'task_event_persistence_failed',details:{task_id:grant!.fence.task_id,work_id:delegate.delegate_id}});activityTasks.markReplayIncomplete(grant!.fence.task_id)})}}:{}),
+        instructionAccepted:()=>{this.#instructionReceipts.get(delegate.delegate_id)?.('accepted');this.#instructionReceipts.delete(delegate.delegate_id)},
+        ...(grant?{bindSession:async(sessionId:string)=>{const tasks=taskGrantService(grant);await tasks.bindWork(grant.fence,delegate.delegate_id,sessionId);activitySession=sessionId}}:{}),
+        ...(wanted === undefined ? {} : {beforeWrite:()=>{if(!wanted())throw Error('superseded')}}),
         ...(userTurn === undefined ? {} : {userTurn}),
         clock: this.#clock,
         delegate: structuredClone(delegate),
@@ -540,8 +603,8 @@ export class CausalRuntime {
         if (capability !== undefined) bindHostExecutorCapability(context, capability)
         return adapter.dispatch(delegate.op, structuredClone(delegate.request), context)
       },
-      output => this.core.postExecutorResult(dispatchIndex, output, this.#clock.now()),
-      () => this.core.postExecutorCompletion(dispatchIndex, {
+      output => {this.#instructionReceipts.get(delegate.delegate_id)?.((output as {outcome?:unknown})?.outcome==='unknown'?'unknown':(output as {outcome?:unknown})?.outcome==='ok'?'accepted':'failed');this.#instructionReceipts.delete(delegate.delegate_id);this.core.postExecutorResult(dispatchIndex, output, this.#clock.now())},
+      () => {this.#instructionReceipts.get(delegate.delegate_id)?.('unknown');this.#instructionReceipts.delete(delegate.delegate_id);this.core.postExecutorCompletion(dispatchIndex, {
         outcome: 'unknown',
         trust: 'trusted_system',
         content: {
@@ -550,7 +613,7 @@ export class CausalRuntime {
           detail: 'dispatch_failed',
         },
         refs: [],
-      }, this.#clock.now()),
+      }, this.#clock.now())},
       true,
     )
   }

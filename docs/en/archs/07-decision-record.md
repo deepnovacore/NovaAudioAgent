@@ -7,7 +7,7 @@ These boundaries keep real-time conversation responsive while background capabil
 | Scheduling | Apply events in order; run model calls and executor tasks asynchronously. |
 | State | Update runtime memory before generating a response. Provider history is not the source of truth. |
 | Speech | Only FrontBrain speaks through Floor. Nova may interrupt its own playback, never the user. |
-| Attention | Surrogate evaluates background suggestions; it is not another conversational agent. |
+| Attention | Proactive evaluates background suggestions; it is not another conversational agent. |
 | Execution | Extend capabilities through manifests, adapters and controllers, not capability-specific branches in Runtime. |
 | Authorization | The host owns approvals and project identity. Model output cannot grant permissions. |
 | Context and evidence | Give models bounded context. Retrieved text and images remain untrusted evidence. |

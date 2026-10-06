@@ -614,7 +614,7 @@ test('Qwen bounds missing metering tail after terminal without changing complete
 
 
 test('captured Qwen null argument delta preserves a complete call but cannot supply missing JSON', async () => {
-  const captured = JSON.parse(readFileSync(new URL('../../../fixtures/realtime/qwen/v1/tool-null-delta.json', import.meta.url), 'utf8')) as Record<string, unknown>[]
+  const captured = JSON.parse(readFileSync(new URL('../../../tests/fixtures/realtime/qwen/v1/tool-null-delta.json', import.meta.url), 'utf8')) as Record<string, unknown>[]
   for (const nullOnly of [false, true]) {
     const chunks = nullOnly ? [{id: 'empty', choices: [{delta: {tool_calls: [{index: 0, id: 'empty',
       function: {name: 'search', arguments: null}}]}, finish_reason: 'tool_calls'}]}] : captured
@@ -635,7 +635,7 @@ test('captured Qwen null argument delta preserves a complete call but cannot sup
 })
 
 test('captured Max null id delta preserves the established id without accepting missing or changed ids', async () => {
-  const captured = JSON.parse(readFileSync(new URL('../../../fixtures/realtime/qwen/v1/tool-null-id-delta.json', import.meta.url), 'utf8')) as {choices?: {delta: {tool_calls?: {id?: string | null}[]}}[]}[]
+  const captured = JSON.parse(readFileSync(new URL('../../../tests/fixtures/realtime/qwen/v1/tool-null-id-delta.json', import.meta.url), 'utf8')) as {choices?: {delta: {tool_calls?: {id?: string | null}[]}}[]}[]
   for (const mode of ['captured', 'missing', 'changed'] as const) {
     const chunks = structuredClone(captured)
     for (const chunk of chunks) for (const choice of chunk.choices ?? []) for (const call of choice.delta.tool_calls ?? []) {

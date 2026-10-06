@@ -1,5 +1,35 @@
-const { app, BrowserWindow } = require('electron')
-const { join } = require('node:path')
+const { app, BrowserWindow, safeStorage } = require('electron')
+const { join, resolve, sep } = require('node:path')
+const { mkdtempSync, mkdirSync, realpathSync } = require('node:fs')
+const { tmpdir } = require('node:os')
+const { fileURLToPath } = require('node:url')
+const assert = require('node:assert/strict')
+
+// macOS Electron paths do not follow Node's HOME/TMPDIR environment overrides.
+const fixtureRoot = realpathSync(mkdtempSync(join(tmpdir(), 'nova-orb-probe-')))
+const paths = {}
+for (const name of ['home', 'appData', 'userData', 'temp', 'cache', 'logs', 'sessionData', 'crashDumps']) {
+  const path = join(fixtureRoot, name)
+  mkdirSync(path, { mode: 0o700 })
+  app.setPath(name, path)
+  paths[name] = app.getPath(name)
+  assert.equal(paths[name], path)
+}
+Object.assign(process.env, { HOME: paths.home, USERPROFILE: paths.home, CODEX_HOME: join(paths.home, '.codex'), TMPDIR: paths.temp })
+mkdirSync(process.env.CODEX_HOME, { mode: 0o700 })
+const denied = { credentials: 0, network: 0, permissions: 0, windows: 0, navigation: 0 }
+const credentialMethods = [], permissionChecks = {}, permissionCheckDetails = []
+for (let object = safeStorage; object && object !== Object.prototype; object = Object.getPrototypeOf(object)) {
+  for (const name of Object.getOwnPropertyNames(object)) {
+    if (name === 'constructor' || credentialMethods.includes(name) || typeof safeStorage[name] !== 'function') continue
+    credentialMethods.push(name)
+    Object.defineProperty(safeStorage, name, { value: () => { denied.credentials++; throw Error('credential access forbidden in orb probe') } })
+  }
+}
+assert.ok(credentialMethods.includes('isEncryptionAvailable'))
+app.commandLine.appendSwitch('disable-background-networking')
+// Test-only: Chromium cookie encryption must not consult the real macOS keychain.
+if (process.platform === 'darwin') app.commandLine.appendSwitch('use-mock-keychain')
 
 const WINDOW_SIZE = 160
 // Mirrors DORMANT_ORB_WINDOW_SIZE in src/main/window-position.mjs; this probe is
@@ -23,14 +53,23 @@ app.whenReady().then(async () => {
     show: visualSmoke,
     transparent: true,
     backgroundColor: '#00000000',
-    webPreferences: {
-      backgroundThrottling: false,
-    },
   })
 
   try {
+    const session = window.webContents.session
+    session.setPermissionCheckHandler((_contents, permission, _origin, details) => {
+      permissionChecks[permission] = (permissionChecks[permission] ?? 0) + 1
+      permissionCheckDetails.push({ permission, mediaType: details.mediaType ?? null, isMainFrame: details.isMainFrame ?? null })
+      return false
+    })
+    session.setPermissionRequestHandler((_contents, _permission, callback) => { denied.permissions++; callback(false) })
+    window.webContents.setWindowOpenHandler(() => { denied.windows++; return { action: 'deny' } })
+    window.webContents.on('will-navigate', event => { denied.navigation++; event.preventDefault() })
     window.webContents.session.webRequest.onBeforeRequest((details, callback) => {
-      callback({ cancel: details.url.endsWith('/renderer/index.mjs') })
+      let local = false
+      try { const path = resolve(fileURLToPath(details.url)); local = ['../src', '../test/fixtures'].some(root => path.startsWith(resolve(__dirname, root) + sep)) } catch { /* Non-file URLs are forbidden. */ }
+      if (!local) denied.network++
+      callback({ cancel: !local || details.url.endsWith('/renderer/index.mjs') })
     })
     await window.loadFile(join(__dirname, '../src/renderer/index.html'))
     await window.webContents.insertCSS('#orb-rail { opacity: 1 !important; transition: none !important; }')
@@ -253,7 +292,7 @@ app.whenReady().then(async () => {
       shell.style.removeProperty('--bubble-orb-y')
     })()`)
 
-    // Use the production five-button rail, not the legacy three-button fixture.
+    // Use the production four-button rail, not the legacy three-button fixture.
     await window.loadFile(join(__dirname, '../src/renderer/index.html'))
     await window.webContents.insertCSS('#orb-rail { opacity: 1 !important; pointer-events: auto !important; transition: none !important; }')
     const confirmationLayouts = []
@@ -328,8 +367,15 @@ app.whenReady().then(async () => {
       }
       }
     }
+    const preferences = window.webContents.getLastWebPreferences()
+    const isolation = { fixtureRoot, paths, persistent: session.isPersistent(), credentialMethods, permissionChecks, permissionCheckDetails, denied,
+      preferences: { ...Object.fromEntries(['sandbox', 'contextIsolation', 'nodeIntegration', 'webSecurity'].map(key => [key, preferences[key]])),
+        backgroundThrottling: window.webContents.getBackgroundThrottling(),
+        preloadLoaded: await window.webContents.executeJavaScript("typeof window.novaAudioAgentDesktop?.windowLayout?.setDormant === 'function'") } }
+    for (const [name, path] of Object.entries(paths)) assert.equal(app.getPath(name), path)
+    assert.deepEqual(denied, { credentials: 0, network: 0, permissions: 0, windows: 0, navigation: 0 })
     await new Promise((resolve, reject) => {
-      process.stdout.write(`${JSON.stringify({ naturalProject, bubbleLayouts, boxShadow, secondaryDisplays, standbyStyles, contrastDiscSizes, dormantLayout, dormantWithBubbles, confirmationLayouts })}\n`, error => error ? reject(error) : resolve())
+      process.stdout.write(`${JSON.stringify({ isolation, naturalProject, bubbleLayouts, boxShadow, secondaryDisplays, standbyStyles, contrastDiscSizes, dormantLayout, dormantWithBubbles, confirmationLayouts })}\n`, error => error ? reject(error) : resolve())
     })
     if (visualSmoke) {
       window.center()

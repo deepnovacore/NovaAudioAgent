@@ -1,7 +1,8 @@
+import {selfHostedEndpoint} from './self-hosted.js'
 /** Pure normalization and validation for one selected cascaded provider graph. */
 
 import {
-  ConfigurationError,
+  ConfigurationError, OPENAI_BASE_URL, GEMINI_BASE_URL, cascadedCredentialField,
   DASHSCOPE_COMPATIBLE_BASE_URL,
   requireCascadedCredentials,
   resolveCascadedSelection,
@@ -13,7 +14,6 @@ import {stripLikePython} from '../text/python-text.js'
 export {DASHSCOPE_COMPATIBLE_BASE_URL} from './config.js'
 
 export interface AutoEndpointingConfig {
-  readonly maxSilenceMs?: number
   readonly vadThreshold: number
   readonly vadPreRollMs: number
   readonly vadMinSpeechMs: number
@@ -22,7 +22,22 @@ export interface AutoEndpointingConfig {
   readonly vadMaxUtteranceMs: number
 }
 
+export interface SelfHostedSpeechConfig {
+  readonly provider: 'self-hosted'
+  readonly endpoint: string
+  readonly apiKey: string
+}
+
+export interface GeminiSpeechConfig {
+  readonly provider: 'gemini'
+  readonly endpoint: string
+  readonly apiKey: string
+  readonly model: string
+  readonly voice: string
+}
+
 export interface VolcengineAsrConfig {
+  readonly provider?: 'volcengine'
   readonly endpoint: string
   readonly resourceId: string
   readonly apiKey: string
@@ -32,8 +47,7 @@ export interface VolcengineAsrConfig {
 }
 
 export interface QwenCascadedLlmConfig {
-  readonly streamTextWithTools?: boolean
-  readonly provider?: 'qwen' | 'deepseek' | 'openai-compatible'
+  readonly provider?: 'qwen' | 'deepseek' | 'openai' | 'gemini' | 'self-hosted'
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
@@ -46,6 +60,7 @@ export interface ArkCascadedLlmConfig {
 }
 
 export interface VolcengineTtsConfig {
+  readonly provider?: 'volcengine'
   readonly endpoint: string
   readonly resourceId: string
   readonly voice: string
@@ -54,15 +69,15 @@ export interface VolcengineTtsConfig {
 }
 
 export type SelectedCascadedLlmConfig =
-  | {readonly provider: 'qwen' | 'deepseek'; readonly config: QwenCascadedLlmConfig}
+  | {readonly provider: 'qwen' | 'deepseek' | 'openai' | 'gemini' | 'self-hosted'; readonly config: QwenCascadedLlmConfig}
   | {readonly provider: 'ark'; readonly config: ArkCascadedLlmConfig}
 
 export interface SelectedCascadedRealtimeConfig {
   readonly selection: CascadedSelection
   readonly endpointing: AutoEndpointingConfig
-  readonly asr: VolcengineAsrConfig
+  readonly asr: VolcengineAsrConfig | GeminiSpeechConfig | SelfHostedSpeechConfig
   readonly llm: SelectedCascadedLlmConfig
-  readonly tts: VolcengineTtsConfig
+  readonly tts: VolcengineTtsConfig | GeminiSpeechConfig | SelfHostedSpeechConfig
 }
 
 export function requireSelectedCascadedRealtimeConfig(
@@ -79,16 +94,16 @@ export function requireSelectedCascadedRealtimeConfig(
 
 /** Text sessions require only their selected LLM, independent of speech configuration. */
 export function requireSelectedCascadedLlmConfig(settings:Settings):SelectedCascadedLlmConfig {
-  if(settings.local_serving)return {provider:'qwen',config:{...settings.local_serving.llm,provider:'openai-compatible',streamTextWithTools:true}}
   const selection=resolveCascadedSelection(settings)
-  const apiKey=stripLikePython((selection.llmProvider==='qwen'?settings.dashscope_api_key:selection.llmProvider==='deepseek'?settings.deepseek_api_key:settings.ark_api_key)??'')
-  if(!apiKey)throw new ConfigurationError(`缺少 ${selection.llmProvider==='qwen'?'DASHSCOPE_API_KEY':selection.llmProvider==='deepseek'?'DEEPSEEK_API_KEY':'ARK_API_KEY'}`)
+  const field = cascadedCredentialField(selection.llmProvider)
+  const apiKey=stripLikePython(settings[field]??'')
+  if(!apiKey && selection.llmProvider !== 'self-hosted')throw new ConfigurationError(`缺少 ${field.toUpperCase()}`)
   return selection.llmProvider !== 'ark'
     ? Object.freeze({
       provider: selection.llmProvider,
       config: Object.freeze({
-        baseUrl: selection.llmProvider === 'deepseek' ? 'https://api.deepseek.com' : DASHSCOPE_COMPATIBLE_BASE_URL,
-        ...(selection.llmProvider === 'deepseek' ? {provider: 'deepseek' as const} : {}),
+        baseUrl: selection.llmProvider === 'self-hosted' ? selfHostedEndpoint(settings.self_hosted_llm_base_url, 'http', 'SELF_HOSTED_LLM_BASE_URL') : selection.llmProvider === 'openai' ? OPENAI_BASE_URL : selection.llmProvider === 'gemini' ? GEMINI_BASE_URL : selection.llmProvider === 'deepseek' ? 'https://api.deepseek.com' : DASHSCOPE_COMPATIBLE_BASE_URL,
+        ...(selection.llmProvider !== 'qwen' ? {provider: selection.llmProvider} : {}),
         apiKey: apiKey,
         model: selection.llmModel,
       }),
@@ -99,7 +114,7 @@ export function requireSelectedCascadedLlmConfig(settings:Settings):SelectedCasc
         baseUrl: secureEndpoint(
           settings.volcengine_ark_base_url,
           'https',
-          'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL',
+          'VOLCENGINE_ARK_BASE_URL',
         ),
         apiKey: apiKey,
         model: selection.llmModel,
@@ -107,9 +122,9 @@ export function requireSelectedCascadedLlmConfig(settings:Settings):SelectedCasc
     })
 }
 
-export function resolveEndpointingConfig(settings: Settings): AutoEndpointingConfig {
+function resolveEndpointingConfig(settings: Settings): AutoEndpointingConfig {
   if (!(settings.volcengine_vad_threshold > 0 && settings.volcengine_vad_threshold <= 1)) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内')
+    throw new ConfigurationError('VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内')
   }
   if (settings.volcengine_vad_pre_roll_ms < 0 || settings.volcengine_vad_speech_pad_ms < 0) {
     throw new ConfigurationError('火山 VAD pre-roll 与 speech pad 不能为负数')
@@ -121,25 +136,28 @@ export function resolveEndpointingConfig(settings: Settings): AutoEndpointingCon
     throw new ConfigurationError('火山 VAD max utterance 不能短于 min speech')
   }
   return Object.freeze({
-    ...(settings.local_serving?{maxSilenceMs:settings.local_serving.endpointing.maxSilenceMs}:{}),
     vadThreshold: settings.volcengine_vad_threshold,
     vadPreRollMs: settings.volcengine_vad_pre_roll_ms,
-    vadMinSpeechMs: settings.local_serving?.endpointing.minSpeechMs ?? settings.volcengine_vad_min_speech_ms,
-    vadSilenceEndMs: settings.local_serving?.endpointing.minSilenceMs ?? settings.volcengine_vad_silence_end_ms,
+    vadMinSpeechMs: settings.volcengine_vad_min_speech_ms,
+    vadSilenceEndMs: settings.volcengine_vad_silence_end_ms,
     vadSpeechPadMs: settings.volcengine_vad_speech_pad_ms,
     vadMaxUtteranceMs: settings.volcengine_vad_max_utterance_ms,
   })
 }
 
-export function requireSelectedCascadedAsrConfig(settings:Settings):VolcengineAsrConfig {
+export function requireSelectedCascadedAsrConfig(settings:Settings):VolcengineAsrConfig | GeminiSpeechConfig | SelfHostedSpeechConfig {
+  if(settings.cascade_asr_provider === 'self-hosted')return resolveAsrConfig(settings, stripLikePython(settings.self_hosted_asr_api_key ?? ''))
+  if(settings.cascade_asr_provider === 'gemini')return resolveGeminiSpeechConfig(settings, 'asr', stripLikePython(settings.gemini_api_key??''))
   const key=stripLikePython(settings.doubao_asr_api_key??'')||stripLikePython(settings.doubao_bigmodel_api_key??'')
   if(!key)throw new ConfigurationError('缺少 DOUBAO_ASR_API_KEY')
   return resolveAsrConfig(settings,key)
 }
 
-function resolveAsrConfig(settings: Settings, apiKey: string): VolcengineAsrConfig {
+function resolveAsrConfig(settings: Settings, apiKey: string): VolcengineAsrConfig | GeminiSpeechConfig | SelfHostedSpeechConfig {
+  if(settings.cascade_asr_provider === 'self-hosted')return {provider:'self-hosted', endpoint:selfHostedEndpoint(settings.self_hosted_asr_url, 'ws', 'SELF_HOSTED_ASR_URL'), apiKey}
+  if(settings.cascade_asr_provider === 'gemini')return resolveGeminiSpeechConfig(settings, 'asr', apiKey)
   if (settings.doubao_asr_chunk_ms <= 0) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS 必须为正整数')
+    throw new ConfigurationError('DOUBAO_ASR_CHUNK_MS 必须为正整数')
   }
   const voiceprint = settings.doubao_asr_voiceprint_enabled
     ? {id: settings.doubao_asr_voiceprint_id, name: settings.doubao_asr_voiceprint_name} : undefined
@@ -150,36 +168,38 @@ function resolveAsrConfig(settings: Settings, apiKey: string): VolcengineAsrConf
   }
   return Object.freeze({
     ...(voiceprint ? {voiceprint} : {}),
-    ...(settings.doubao_asr_voiceprint_health_url ? {voiceprintHealthUrl:secureEndpoint(settings.doubao_asr_voiceprint_health_url, 'https', 'NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_HEALTH_URL')} : {}),
+    ...(settings.doubao_asr_voiceprint_health_url ? {voiceprintHealthUrl:secureEndpoint(settings.doubao_asr_voiceprint_health_url, 'https', 'DOUBAO_ASR_VOICEPRINT_HEALTH_URL')} : {}),
     endpoint: secureEndpoint(
       settings.doubao_asr_endpoint,
       'wss',
-      'NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT',
+      'DOUBAO_ASR_ENDPOINT',
     ),
     resourceId: requiredSetting(
       settings.doubao_asr_resource_id,
-      'NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID',
+      'DOUBAO_ASR_RESOURCE_ID',
     ),
     apiKey,
     chunkMs: settings.doubao_asr_chunk_ms,
   })
 }
 
-function resolveTtsConfig(settings: Settings, apiKey: string): VolcengineTtsConfig {
+function resolveTtsConfig(settings: Settings, apiKey: string): VolcengineTtsConfig | GeminiSpeechConfig | SelfHostedSpeechConfig {
+  if(settings.cascade_tts_provider === 'self-hosted')return {provider:'self-hosted', endpoint:selfHostedEndpoint(settings.self_hosted_tts_url, 'http', 'SELF_HOSTED_TTS_URL'), apiKey}
+  if(settings.cascade_tts_provider === 'gemini')return resolveGeminiSpeechConfig(settings, 'tts', apiKey)
   if (settings.doubao_tts_output_sample_rate !== 24_000) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000')
+    throw new ConfigurationError('DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000')
   }
   return Object.freeze({
     endpoint: secureEndpoint(
       settings.doubao_tts_endpoint,
       'wss',
-      'NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT',
+      'DOUBAO_TTS_ENDPOINT',
     ),
     resourceId: requiredSetting(
       settings.doubao_tts_resource_id,
-      'NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID',
+      'DOUBAO_TTS_RESOURCE_ID',
     ),
-    voice: requiredSetting(settings.doubao_tts_voice, 'NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE'),
+    voice: requiredSetting(settings.doubao_tts_voice, 'DOUBAO_TTS_VOICE'),
     apiKey,
     outputSampleRate: 24_000,
   })
@@ -207,8 +227,9 @@ function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): s
   return normalized
 }
 
-/** Validate the selected graph without requiring credentials for unselected cloud services. */
-export function validateSelectedCascadedRealtimeConfig(settings:Settings):void {
-  if(settings.local_serving){resolveEndpointingConfig(settings);requireSelectedCascadedLlmConfig(settings);return}
-  requireSelectedCascadedRealtimeConfig(settings)
+function resolveGeminiSpeechConfig(settings: Settings, service: 'asr' | 'tts', apiKey: string): GeminiSpeechConfig {
+  if(!apiKey)throw new ConfigurationError('缺少 GEMINI_API_KEY')
+  return {provider:'gemini', endpoint:'https://generativelanguage.googleapis.com/v1beta', apiKey,
+    model:requiredSetting(settings[service === 'asr' ? 'gemini_asr_model' : 'gemini_tts_model'], `GEMINI_${service.toUpperCase()}_MODEL`),
+    voice:service === 'tts' ? requiredSetting(settings.gemini_tts_voice, 'GEMINI_TTS_VOICE') : settings.gemini_tts_voice}
 }

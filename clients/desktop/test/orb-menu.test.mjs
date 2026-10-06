@@ -22,7 +22,7 @@ test('orb restart applies saved settings through the shared transaction and repo
     const context = {
       t: value => value,
       Menu: {buildFromTemplate: value => { rows = value; return {popup() {}} }},
-      mainWindow: {}, settingsReady: true, lifecycleCoordinator: coordinator,
+      mainWindow: {}, presentationMode: 'orb', settingsReady: true, lifecycleCoordinator: coordinator,
       activeMcpSubmenu: () => [],
       applyDesktopSettings: async (patch, restart) => {
         called++
@@ -42,6 +42,36 @@ test('orb restart applies saved settings through the shared transaction and repo
     coordinator.busy = true
     runInNewContext(`${menuSource}\nshowOrbMenu('test')`, context)
     assert.equal(rows.find(row => row.label === '重启后台').enabled, false)
+  }
+})
+
+test('the orb menu offers all presentation modes through the shared transition', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf('function showOrbMenu(launchId) {')
+  const menuSource = source.slice(start, source.indexOf('\n}', start) + 2)
+  let rows
+  const requested = []
+  const context = {
+    t: value => value,
+    Menu: {buildFromTemplate: value => { rows = value; return {popup() {}} }},
+    mainWindow: {}, presentationMode: 'orb', settingsReady: true, lifecycleCoordinator: {busy: false},
+    activeMcpSubmenu: () => [],
+    requestPresentation: mode => requested.push(mode),
+  }
+  for(const mode of ['workbench','orb','background']){
+    context.presentationMode=mode
+    runInNewContext(`${menuSource}\nshowOrbMenu('test')`, context)
+    const modes=rows.find(row=>row.label==='显示模式').submenu
+    assert.deepEqual([...modes.map(row=>row.label)],['工作台','悬浮球','隐藏'])
+    assert.equal(modes.filter(row=>row.checked).length,1)
+    for(const [index,row] of modes.entries()){
+      assert.equal(row.type,'radio')
+      assert.equal(row.checked,['workbench','orb','background'][index]===mode)
+      row.click()
+    }
+    assert.deepEqual(requested.splice(0),['workbench','orb','background'])
+    assert.equal(rows.at(-1).label,'退出 Nova Audio Agent')
+    assert.ok(rows.some(row=>row.label==='设置…'))
   }
 })
 

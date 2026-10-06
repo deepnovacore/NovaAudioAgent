@@ -55,6 +55,7 @@ test('pins BrowserWindow isolation sandbox and ephemeral partition', () => {
   assert.equal(options.maxHeight, undefined)
   assert.equal(options.transparent, true)
   assert.equal(options.frame, false)
+  assert.equal(options.acceptFirstMouse, true, 'an inactive macOS orb must receive the first click')
   assert.equal(options.webPreferences.contextIsolation, true)
   assert.equal(options.webPreferences.nodeIntegration, false)
   assert.equal(options.webPreferences.sandbox, true)

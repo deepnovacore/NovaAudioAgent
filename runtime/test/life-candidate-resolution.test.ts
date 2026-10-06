@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {WorkspaceGraphStoreClient} from '../src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../src/memory-substrate/resource.js'
 import {emptyLifeState} from '../src/personal-agent/life.js'
 import {validateCandidate,type EvaluatedCandidate} from '../src/understanding/candidates.js'
@@ -17,8 +17,8 @@ function candidate(text:string,operation:'record'|'update'='record',patch?:Recor
 }
 const guard=()=>{/* fixture source stays current */}
 const signal=()=>new AbortController().signal
-async function setup(reply:(request:Parameters<ModelGateway['complete']>[0],client:WorkspaceGraphStoreClient)=>Promise<unknown>){
- const root=await mkdtemp(join(tmpdir(),'nova-life-resolution-')),client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite'))
+async function setup(reply:(request:Parameters<ModelGateway['complete']>[0],client:MemoryLedgerClient)=>Promise<unknown>){
+ const root=await mkdtemp(join(tmpdir(),'nova-life-resolution-')),client=new MemoryLedgerClient(join(root,'memory.sqlite'))
  const gateway:ModelGateway={async *stream(){/* complete only */},async complete(request){return {text:JSON.stringify(await reply(request,client))}}}
  const resource=new SubstrateMemoryResource({client,userId:'life-resolution',gateway,model:'fixture-model',extractionFingerprint:'authorized-extractor',inputConsent:true})
  await resource.open();const backend=resource.lifeBackend();await backend.load(emptyLifeState())

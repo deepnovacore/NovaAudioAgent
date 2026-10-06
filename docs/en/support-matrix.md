@@ -16,6 +16,8 @@ This matrix follows the adapters and capability allowlists in the current code. 
 
 Integrated mode needs fewer settings. Use cascaded mode to change the language model or enable conversation vision. Both require credentials for the selected services.
 
+Integrated mode can also use StepFun (`INTEGRATED_PROVIDER=stepfun`, preview) with `STEPFUN_API_KEY`, or switch the Qwen model to `qwen-audio-3.1-realtime-plus` (`QWEN_REALTIME_MODEL`).
+
 ## Cascaded language models
 
 | Provider | Default model | Conversation vision | Credential |
@@ -44,5 +46,26 @@ Conversation vision uses the selected cascaded language model. Loop Camera uses 
 | Integrated voice | Qwen realtime | `longanqian` |
 
 ASR uses `DOUBAO_ASR_API_KEY` when present, otherwise `DOUBAO_BIGMODEL_API_KEY`. TTS uses the latter. Supporting models and personal memory may still require DashScope credentials; see [configuration](configuration.md).
+
+## Voiceprint verification
+
+| Setting | Behavior |
+|---|---|
+| Opt-in | Off by default; enable with `DOUBAO_ASR_VOICEPRINT_ENABLED` |
+| Registered speaker | `DOUBAO_ASR_VOICEPRINT_ID` and `DOUBAO_ASR_VOICEPRINT_NAME` identify the enrolled voiceprint |
+| Health fallback | Verification disables itself (fails open) when `DOUBAO_ASR_VOICEPRINT_HEALTH_URL` is unreachable |
+
+Implementation: [voiceprint](../../clients/desktop/src/main/voiceprint.mjs).
+
+## Connectors
+
+| Connector | Access | Platform |
+|---|---|---|
+| Google (Gmail, Calendar) | Read, via Composio | Cross-platform |
+| macOS Calendar | Read | macOS only |
+| Apple Mail | Read | macOS only |
+| Feishu | Read-only | Cross-platform |
+
+See [sources and connectors](sources-and-connectors.md) for setup and scopes.
 
 Implementation: [defaults](../../runtime/src/config/config.ts), [cascaded adapter selection](../../runtime/src/config/cascaded-realtime-config.ts), [vision allowlist](../../runtime/src/model/vision-capability.ts).

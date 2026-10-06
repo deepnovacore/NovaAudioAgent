@@ -14,6 +14,7 @@
         <span class="eyebrow">NOVA</span>
         <h1>设置</h1>
       </div>
+      <div><p id="startup-status" role="status"></p><button id="startup-retry" type="button" hidden>重试</button></div>
       <span id="status" aria-live="polite"></span>
     </header>
     <nav class="settings-nav" id="settings-nav" aria-label="设置分类">
@@ -33,9 +34,13 @@
         <h2>语言 / Language</h2>
         <label for="language">语言 / Language</label>
         <select id="language"><option value="zh-CN">简体中文</option><option value="en">English</option></select>
-        <p class="hint">首次按系统首选语言设置；之后保留你的选择。界面语言将在重新打开 App 后生效。</p>
-        <p class="hint">AI 仅切换 system prompt 的语言，不保证回复始终使用该语言；不自动识别或切换语言，也不更换语音模型或音色。</p>
-        <p class="hint">AI 提示词在保存并重启后台后生效。</p>
+        <p id="language-restart-hint" class="hint" role="status" hidden>保存并重启后生效。</p>
+      </section>
+      <section class="setting-section" id="startup-view-section">
+        <h2>启动时打开</h2>
+        <label for="startup-view">默认界面</label>
+        <select id="startup-view"><option value="orb">Orb（悬浮球）</option><option value="workbench">Workbench（工作台）</option><option value="last">上次使用</option></select>
+        <p class="hint">下次启动时生效；上次使用会记住最后打开的悬浮球或工作台。</p>
       </section>
       <section class="setting-section" id="phone-connection-section">
         <div class="phone-heading"><div><h2>连接 iPhone</h2><p>将 iPhone 安全连接到这台 Nova。</p></div><span class="phone-badge" id="phone-state">私人设备连接</span></div>
@@ -169,7 +174,7 @@
             <option value="thorough" title="澄清时最多提出 5 个问题。">充分（最多 5 个问题）</option>
           </select>
         </div>
-        <label class="field"><input type="checkbox" id="generatePlan"> 执行前生成计划</label>
+        <label class="toggle-row"><input type="checkbox" role="switch" id="generatePlan"> 执行前生成计划</label>
         <p class="hint">关闭后直接整理工作单，仍保留必要的澄清和操作确认。</p>
         <fieldset id="plan-readback" class="segmented compact-segmented segmented-readback">
           <legend>规划回读</legend>
@@ -267,9 +272,12 @@
         <section id="integrated-pipeline">
           <div class="pipeline-card">
             <h3>集成式实时语音</h3>
+            <p id="gemini-live-limit" class="hint" hidden>Gemini Live 当前用于语音对话；语音执行任务请选择级联管线。</p>
             <div class="field">
               <label for="integratedProvider">服务商</label>
               <select id="integratedProvider">
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Google Gemini</option>
                 <option value="qwen">Qwen（通义）</option>
                 <option value="stepfun">StepFun（阶跃星辰）· 预览</option>
               </select>
@@ -293,6 +301,9 @@
             </div>
           </div>
         </section>
+        <div class="actions"><button id="voice-preset-import" type="button">导入自托管预设</button><button id="voice-preset-export" type="button">导出自托管预设</button></div>
+        <p class="hint">预设仅包含选中的自托管阶段，不包含密钥。导入后请保存。更换服务来源会清除旧密钥，请填写对应的新密钥。</p>
+        <p id="voice-preset-status" class="hint" role="status" aria-live="polite"></p>
         <section id="cascaded-pipeline" hidden>
           <p class="hint">相对集成式管线，多轮对话成本预计可节省约 <strong class="cost-saving">70%</strong>。实际取决于模型及语音用量。</p>
           <div class="pipeline-card">
@@ -300,9 +311,21 @@
             <div class="field">
               <label for="cascadedAsrProvider">服务</label>
               <select id="cascadedAsrProvider">
+                <option value="self-hosted">自托管</option>
                 <option value="volcengine">火山引擎 ASR</option>
+                <option value="gemini">Gemini ASR</option>
               </select>
             </div>
+            <div id="self-hosted-asr-settings" hidden>
+              <div class="field"><label for="selfHostedAsrUrl">自托管 ASR 地址</label><input id="selfHostedAsrUrl" type="url" placeholder="wss://host/asr" maxlength="2048" autocomplete="off" spellcheck="false"></div>
+              <div class="secret" data-key="selfHostedAsrApiKey">
+                <label for="selfHostedAsrApiKey">自托管 ASR 密钥（可选）</label>
+                <span class="badge" id="badge-selfHostedAsrApiKey">未设置</span><span class="key-usage" id="usage-selfHostedAsrApiKey"></span>
+                <input type="password" id="selfHostedAsrApiKey" autocomplete="off" spellcheck="false" placeholder="输入新密钥">
+                <button type="button" class="clear" data-key="selfHostedAsrApiKey">清除</button>
+              </div>
+            </div>
+            <div id="gemini-asr-settings" hidden><label for="geminiAsrModel">Gemini ASR 模型</label><input id="geminiAsrModel" type="text" maxlength="64" autocomplete="off"><p class="hint">说完一句后返回最终转录，不显示实时中间结果。</p></div>
             <section aria-label="声纹验证">
               <h4>声纹验证</h4>
               <p class="hint">声纹功能仅支持火山引擎 ASR。</p>
@@ -315,7 +338,7 @@
                 <blockquote id="voiceprint-reading" aria-labelledby="voiceprint-reading-label">今天的天气很晴朗，窗外的树叶随风轻轻摇动。我准备好开始新的工作，也愿意慢慢讲清楚自己的想法。</blockquote>
                 <p class="hint">保持平时说话的语速和音量，不要耳语或模仿音色。读完后如仍在录音，可从头再读一遍。</p>
                 <p id="voiceprint-identity" class="hint"></p>
-                <label><input id="voiceprint-enabled" type="checkbox">只接收已注册说话人的语音</label>
+                <label class="toggle-row"><input id="voiceprint-enabled" type="checkbox" role="switch">只接收已注册说话人的语音</label>
                 <div class="actions"><button id="voiceprint-register" type="button">录制 12 秒并注册</button><button id="voiceprint-cancel" type="button" hidden>取消录音</button></div>
               </div>
               <p id="voiceprint-status" class="hint" role="status" aria-live="polite"></p>
@@ -326,10 +349,22 @@
             <div class="field">
               <label for="cascadedLlmProvider">服务商</label>
               <select id="cascadedLlmProvider">
+                <option value="self-hosted">自托管</option>
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Google Gemini</option>
                 <option value="qwen">Qwen（通义）</option>
                 <option value="ark">Ark（火山方舟）</option>
                 <option value="deepseek">DeepSeek（官方）</option>
               </select>
+            </div>
+            <div id="self-hosted-llm-settings" hidden>
+              <div class="field"><label for="selfHostedLlmBaseUrl">自托管 LLM 地址</label><input id="selfHostedLlmBaseUrl" type="url" placeholder="https://host/v1" maxlength="2048" autocomplete="off" spellcheck="false"></div>
+              <div class="secret" data-key="selfHostedLlmApiKey">
+                <label for="selfHostedLlmApiKey">自托管 LLM 密钥（可选）</label>
+                <span class="badge" id="badge-selfHostedLlmApiKey">未设置</span><span class="key-usage" id="usage-selfHostedLlmApiKey"></span>
+                <input type="password" id="selfHostedLlmApiKey" autocomplete="off" spellcheck="false" placeholder="输入新密钥">
+                <button type="button" class="clear" data-key="selfHostedLlmApiKey">清除</button>
+              </div>
             </div>
             <div class="field">
               <label for="cascadedLlmModelPreset">当前模型</label>
@@ -342,10 +377,22 @@
             <div class="field">
               <label for="cascadedTtsProvider">服务</label>
               <select id="cascadedTtsProvider">
+                <option value="self-hosted">自托管</option>
                 <option value="volcengine">火山引擎 TTS</option>
+                <option value="gemini">Gemini TTS</option>
               </select>
             </div>
-            <div class="field">
+            <div id="self-hosted-tts-settings" hidden>
+              <div class="field"><label for="selfHostedTtsUrl">自托管 TTS 地址</label><input id="selfHostedTtsUrl" type="url" placeholder="https://host/tts" maxlength="2048" autocomplete="off" spellcheck="false"></div>
+              <div class="secret" data-key="selfHostedTtsApiKey">
+                <label for="selfHostedTtsApiKey">自托管 TTS 密钥（可选）</label>
+                <span class="badge" id="badge-selfHostedTtsApiKey">未设置</span><span class="key-usage" id="usage-selfHostedTtsApiKey"></span>
+                <input type="password" id="selfHostedTtsApiKey" autocomplete="off" spellcheck="false" placeholder="输入新密钥">
+                <button type="button" class="clear" data-key="selfHostedTtsApiKey">清除</button>
+              </div>
+            </div>
+            <div class="field" id="cascaded-tts-voice-settings">
+              <div id="gemini-tts-settings" hidden><label for="geminiTtsModel">Gemini TTS 模型</label><input id="geminiTtsModel" type="text" maxlength="64" autocomplete="off"><p class="hint">按回复分段合成并播放，每段需等待一次语音生成。</p></div>
               <label for="cascadedTtsVoicePreset">音色</label>
               <div class="voice-picker">
                 <select id="cascadedTtsVoicePreset"></select>
@@ -365,13 +412,11 @@
         </summary>
         <div class="secret-content">
           <p id="keyring-warning" class="warning" hidden>密钥将以明文保存(系统未提供钥匙串)</p>
-          <div class="secret" data-key="composioApiKey">
-            <label for="composioApiKey">Composio</label>
-            <span class="badge" id="badge-composioApiKey">未设置</span>
-            <span class="key-usage" id="usage-composioApiKey">应用连接；修改后重启运行时</span>
-            <input type="password" id="composioApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
-            <button type="button" class="clear" data-key="composioApiKey">清除并停用</button>
+          <div class="connections-tabs secret-tabs" role="tablist" aria-label="密钥分类">
+            <button type="button" id="secret-tab-models" role="tab" aria-selected="true" aria-controls="secret-panel-models">模型与语音</button>
+            <button type="button" id="secret-tab-connections" role="tab" aria-selected="false" aria-controls="secret-panel-connections" tabindex="-1">搜索与应用连接</button>
           </div>
+          <div id="secret-panel-models" role="tabpanel" aria-labelledby="secret-tab-models">
           <div class="secret" data-key="dashscopeApiKey">
             <label for="dashscopeApiKey">DashScope</label>
             <span class="badge" id="badge-dashscopeApiKey">未设置</span>
@@ -388,14 +433,6 @@
             <button type="button" class="clear" data-key="stepfunApiKey">清除</button>
             <a class="key-link" href="https://platform.stepfun.com/interface-key" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
           </div>
-          <div class="secret" data-key="tavilyApiKey">
-            <label for="tavilyApiKey">Tavily</label>
-            <span class="badge" id="badge-tavilyApiKey">未设置</span>
-            <span class="key-usage" id="usage-tavilyApiKey">当前未使用</span>
-            <input type="password" id="tavilyApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
-            <button type="button" class="clear" data-key="tavilyApiKey">清除</button>
-            <a class="key-link" href="https://app.tavily.com/" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
-          </div>
           <div class="secret" data-key="openrouterApiKey">
             <label for="openrouterApiKey">OpenRouter · Jev</label>
             <span class="badge" id="badge-openrouterApiKey">未设置</span>
@@ -403,6 +440,20 @@
             <input type="password" id="openrouterApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
             <button type="button" class="clear" data-key="openrouterApiKey">清除</button>
             <a class="key-link" href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+          </div>
+          <div class="secret" data-key="geminiApiKey">
+            <label for="geminiApiKey">Google Gemini</label>
+            <span class="badge" id="badge-geminiApiKey">未设置</span>
+            <span class="key-usage" id="usage-geminiApiKey">当前未使用</span>
+            <input type="password" id="geminiApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="geminiApiKey">清除</button>
+          </div>
+          <div class="secret" data-key="openaiApiKey">
+            <label for="openaiApiKey">OpenAI</label>
+            <span class="badge" id="badge-openaiApiKey">未设置</span>
+            <span class="key-usage" id="usage-openaiApiKey">当前未使用</span>
+            <input type="password" id="openaiApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="openaiApiKey">清除</button>
           </div>
           <div class="secret" data-key="deepseekApiKey">
             <label for="deepseekApiKey">DeepSeek（官方）</label>
@@ -427,6 +478,24 @@
             <input type="password" id="doubaoBigmodelApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
             <button type="button" class="clear" data-key="doubaoBigmodelApiKey">清除</button>
             <a class="key-link" href="https://console.volcengine.com/speech/new/setting/apikeys" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+          </div>
+          </div>
+          <div id="secret-panel-connections" role="tabpanel" aria-labelledby="secret-tab-connections" hidden>
+          <div class="secret" data-key="composioApiKey">
+            <label for="composioApiKey">Composio</label>
+            <span class="badge" id="badge-composioApiKey">未设置</span>
+            <span class="key-usage" id="usage-composioApiKey">应用连接；修改后重启运行时</span>
+            <input type="password" id="composioApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="composioApiKey">清除并停用</button>
+          </div>
+          <div class="secret" data-key="tavilyApiKey">
+            <label for="tavilyApiKey">Tavily</label>
+            <span class="badge" id="badge-tavilyApiKey">未设置</span>
+            <span class="key-usage" id="usage-tavilyApiKey">当前未使用</span>
+            <input type="password" id="tavilyApiKey" placeholder="输入新密钥；留空保持不变" autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" data-key="tavilyApiKey">清除</button>
+            <a class="key-link" href="https://app.tavily.com/" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+          </div>
           </div>
         </div>
       </details>

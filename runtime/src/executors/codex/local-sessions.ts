@@ -1,5 +1,5 @@
-import {readdir, realpath, stat} from 'node:fs/promises'
-import {join, isAbsolute} from 'node:path'
+import {readFile, readdir, realpath, stat} from 'node:fs/promises'
+import {basename, join, isAbsolute} from 'node:path'
 import {DatabaseSync} from 'node:sqlite'
 
 export interface LocalCodexSession {
@@ -58,4 +58,47 @@ export async function localRolloutAvailable(home: string, threadId: string): Pro
       throw error
     }
   } catch { return null } // Catalog inspection is advisory; app-server still validates any resume.
+}
+
+export interface LocalCodexProject {
+  readonly path: string
+  readonly name: string
+  readonly threadIds: readonly string[]
+}
+
+/** Desktop projects are explicit roots, not the execution cwd of recent threads.
+ * Missing desktop state retains CLI-only discovery; malformed state never expands it. */
+export async function readLocalCodexProjects(home: string): Promise<readonly LocalCodexProject[] | null> {
+  let state: Record<string, unknown>
+  try {
+    const path = join(home, '.codex-global-state.json')
+    if ((await stat(path)).size > 16 * 1024 * 1024) return []
+    const value: unknown = JSON.parse(await readFile(path, 'utf8'))
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+    state = value as Record<string, unknown>
+  } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : [] }
+  const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  const assignments = record(state['thread-project-assignments']), hints = record(state['thread-workspace-root-hints'])
+  const projects: LocalCodexProject[] = []
+  const saved = state['local-projects']
+  const entries = saved !== undefined ? Object.entries(record(saved)) :
+    (Array.isArray(state['electron-saved-workspace-roots']) ? state['electron-saved-workspace-roots'] : []).map((path, i) => [String(i), {rootPaths:[path]}] as const)
+  for (const [id, raw] of entries) {
+    const project = record(raw)
+    if (!Array.isArray(project.rootPaths)) continue
+    for (const path of project.rootPaths) {
+      if (typeof path !== 'string' || !isAbsolute(path)) continue
+      try {
+        const canonical = await realpath(path)
+        if (!(await stat(canonical)).isDirectory() || projects.some(item => item.path === canonical)) continue
+        const threadIds = Object.keys({...hints, ...assignments}).filter(thread => {
+          const assignment = record(assignments[thread])
+          if (assignments[thread] !== undefined) return assignment.projectKind === 'local' && assignment.projectId === id
+          return hints[thread] === path || hints[thread] === canonical
+        })
+        projects.push({path:canonical,name:[...(typeof project.name === 'string' && project.name.trim() ? project.name.trim() : basename(canonical))].slice(0,80).join(''),threadIds})
+      } catch { /* Only locally available project roots are selectable. */ }
+    }
+  }
+  return projects
 }

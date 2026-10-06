@@ -4,6 +4,9 @@ import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
+import { mkdtemp, mkdir, realpath, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
 
 const execFileAsync = promisify(execFile)
 const require = createRequire(import.meta.url)
@@ -12,15 +15,42 @@ const electron = require('electron')
 const probeTimeout = 30_000
 const probe = fileURLToPath(new URL('../scripts/orb-transparency-probe.cjs', import.meta.url))
 
+async function runProbe() {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'nova-orb-launch-'))
+  try {
+    for (const name of ['home', 'codex', 'tmp']) await mkdir(join(root, name), { mode: 0o700 })
+    const { stdout } = await execFileAsync(electron, [probe], { timeout: probeTimeout, env: {
+      PATH: '/opt/homebrew/bin:/usr/bin:/bin', LANG: 'en_US.UTF-8',
+      HOME: join(root, 'home'), USERPROFILE: join(root, 'home'), CODEX_HOME: join(root, 'codex'), TMPDIR: join(root, 'tmp'),
+      ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
+    } })
+    const result = JSON.parse(stdout.trim().split('\n').at(-1)), { isolation } = result
+    assert.ok(isolation.fixtureRoot.startsWith(join(root, 'tmp') + sep))
+    assert.equal((await stat(isolation.fixtureRoot)).mode & 0o777, 0o700)
+    assert.deepEqual(Object.keys(isolation.paths), ['home', 'appData', 'userData', 'temp', 'cache', 'logs', 'sessionData', 'crashDumps'])
+    for (const [name, path] of Object.entries(isolation.paths)) {
+      assert.equal(path, join(isolation.fixtureRoot, name))
+      assert.equal((await stat(path)).mode & 0o777, 0o700)
+    }
+    assert.equal(isolation.persistent, false)
+    assert.deepEqual(isolation.preferences, { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, backgroundThrottling: false, preloadLoaded: true })
+    // Chromium checks availability on each of the three page loads; all return false.
+    assert.deepEqual(isolation.permissionChecks, { media: 6, 'web-app-installation': 3, geolocation: 3 })
+    assert.ok(isolation.credentialMethods.includes('isEncryptionAvailable'))
+    assert.deepEqual(isolation.denied, { credentials: 0, network: 0, permissions: 0, windows: 0, navigation: 0 })
+    return result
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+}
+
 test('message reservations keep the full orb inside the native window at screen edges', {
   skip: process.platform !== 'darwin',
 }, async () => {
-  const { stdout } = await execFileAsync(electron, [probe], { timeout: probeTimeout })
-  const natural = JSON.parse(stdout.trim().split('\n').at(-1)).naturalProject
+  const result = await runProbe()
+  const natural = result.naturalProject
   assert.ok(natural['codex-label'].top >= natural['state-label'].bottom)
   assert.ok(natural['codex-label'].top >= natural['orb-rail'].bottom, 'restored workspace must clear controls')
   assert.ok(natural['codex-label'].bottom <= 160)
-  for (const layout of JSON.parse(stdout.trim().split('\n').at(-1)).bubbleLayouts) {
+  for (const layout of result.bubbleLayouts) {
     assert.equal(layout.actual.width, layout.expected.width)
     assert.equal(layout.actual.height, layout.expected.height)
     assert.ok(layout.orb.left >= -0.75 && layout.orb.right <= layout.width + 0.75)
@@ -46,11 +76,7 @@ test('message reservations keep the full orb inside the native window at screen 
 test('transparent orb renders without an outer shadow', {
   skip: process.platform !== 'darwin',
 }, async () => {
-  const { stdout } = await execFileAsync(electron, [probe], {
-    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' },
-    timeout: probeTimeout,
-  })
-  const result = JSON.parse(stdout.trim().split('\n').at(-1))
+  const result = await runProbe()
 
   assert.equal(result.boxShadow, 'none')
 })
@@ -58,11 +84,8 @@ test('transparent orb renders without an outer shadow', {
 test('the dormant bubble stays centred in the shrunken window', {
   skip: process.platform !== 'darwin',
 }, async () => {
-  const { stdout } = await execFileAsync(electron, [probe], {
-    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' },
-    timeout: probeTimeout,
-  })
-  const layout = JSON.parse(stdout.trim().split('\n').at(-1)).dormantLayout
+  const result = await runProbe()
+  const layout = result.dormantLayout
 
   // The window shrinks around its centre, so the drawing has to agree. #shell
   // centres its tracks vertically but not horizontally, and once the window is
@@ -106,11 +129,8 @@ test('the dormant bubble stays centred in the shrunken window', {
 test('bubble mode outranks resting so a stale attribute cannot hide the orb', {
   skip: process.platform !== 'darwin',
 }, async () => {
-  const { stdout } = await execFileAsync(electron, [probe], {
-    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' },
-    timeout: probeTimeout,
-  })
-  const collided = JSON.parse(stdout.trim().split('\n').at(-1)).dormantWithBubbles
+  const result = await runProbe()
+  const collided = result.dormantWithBubbles
 
   // Bubble mode absolutely positions the orb against coordinates computed for
   // its full size while resting shrinks it, and the two selectors carry equal
@@ -124,11 +144,8 @@ test('bubble mode outranks resting so a stale attribute cannot hide the orb', {
 test('the standby states yield their softened styling to high contrast', {
   skip: process.platform !== 'darwin',
 }, async () => {
-  const { stdout } = await execFileAsync(electron, [probe], {
-    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' },
-    timeout: probeTimeout,
-  })
-  const { normal, highContrast } = JSON.parse(stdout.trim().split('\n').at(-1)).standbyStyles
+  const result = await runProbe()
+  const { normal, highContrast } = result.standbyStyles
 
   // Normally the two standby states recede: a fainter rim and a less opaque
   // ground than idle's, and disconnected carries the amber semantic colour.
@@ -149,7 +166,7 @@ test('the standby states yield their softened styling to high contrast', {
   // resting's 40px box left a 2px speck inside an empty white ring until the
   // inset was scoped. Assert the disc keeps a usable share of whatever box it
   // is in rather than a fixed pixel size.
-  const { natural, resting } = JSON.parse(stdout.trim().split('\n').at(-1)).contrastDiscSizes
+  const { natural, resting } = result.contrastDiscSizes
   for (const [label, sample] of [['natural', natural], ['resting', resting]]) {
     const box = Number.parseFloat(sample.box)
     const disc = Number.parseFloat(sample.disc)
@@ -171,11 +188,7 @@ test('the standby states yield their softened styling to high contrast', {
 test('transparent orb hides every secondary text row', {
   skip: process.platform !== 'darwin',
 }, async () => {
-  const { stdout } = await execFileAsync(electron, [probe], {
-    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' },
-    timeout: probeTimeout,
-  })
-  const result = JSON.parse(stdout.trim().split('\n').at(-1))
+  const result = await runProbe()
 
   assert.deepEqual(result.secondaryDisplays, {
     'codex-label': 'none',
@@ -187,15 +200,11 @@ test('transparent orb hides every secondary text row', {
 test('confirmation capsule keeps a natural orb and compact controls visible through 150% zoom', {
   skip: process.platform !== 'darwin',
 }, async () => {
-  const { stdout } = await execFileAsync(electron, [probe], {
-    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' },
-    timeout: probeTimeout,
-  })
-  const result = JSON.parse(stdout.trim().split('\n').at(-1))
+  const result = await runProbe()
 
   for (const layout of result.confirmationLayouts) {
     const tolerance = 0.75
-    assert.equal(layout.controls.length, 5)
+    assert.equal(layout.controls.length, 4)
     for (const button of layout.controls) {
       assert.ok(button.top >= -tolerance && button.bottom <= layout.viewport.height + tolerance, `${button.id} clipped vertically`)
       assert.ok(button.left >= -tolerance && button.right <= layout.viewport.width + tolerance, `${button.id} clipped horizontally`)

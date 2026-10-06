@@ -7,8 +7,8 @@ import {cascadedProviderRegistries} from '../src/composition/cascaded-realtime-a
 test('desktop text graph connects without speech credentials or initializing audio or model requests',async()=>{
  let opens=0,audio=0,requests=0
  const unavailable=()=>{audio++;throw Error('audio factory must remain lazy')}
- const settings=loadSettings({NOVA_AUDIO_AGENT_PIPELINE_MODE:'integrated',NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER:'qwen',DASHSCOPE_API_KEY:'test-only',TAVILY_API_KEY:'test-only'},true)
- const assembly=buildProductionRealtimeAssembly({settings,textOnly:true,registries:{...cascadedProviderRegistries,asr:{volcengine:unavailable},tts:{volcengine:unavailable},endpointing:{auto:unavailable},llm:{...cascadedProviderRegistries.llm,qwen:()=>({open:()=>{opens++;return {stream:()=>{requests++;throw Error('unexpected model request')},abandonPendingResponse:()=>Promise.resolve(),close:()=>Promise.resolve()}}})}}})
+ const settings=loadSettings({PIPELINE_MODE:'integrated',CASCADE_LLM_PROVIDER:'qwen',DASHSCOPE_API_KEY:'test-only',TAVILY_API_KEY:'test-only'},true)
+ const assembly=buildProductionRealtimeAssembly({settings,textOnly:true,registries:{...cascadedProviderRegistries,asr:{'self-hosted':()=>{throw Error('unexpected self-hosted ASR')},gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:unavailable},tts:{'self-hosted':()=>{throw Error('unexpected self-hosted TTS')},gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:unavailable},endpointing:{auto:unavailable},llm:{...cascadedProviderRegistries.llm,qwen:()=>({open:()=>{opens++;return {stream:()=>{requests++;throw Error('unexpected model request')},abandonPendingResponse:()=>Promise.resolve(),close:()=>Promise.resolve()}}})}}})
  assert.equal(audio,0);assert.equal(requests,0)
  const signal=new AbortController().signal
  await assembly.provider.connect({tools:[],signal})
@@ -31,8 +31,8 @@ test('actual desktop production composition starts with text credentials only an
   const capabilities=path.join(dir,'capabilities.json')
   await writeFile(capabilities,JSON.stringify({version:1,modules:{search:{enabled:false},camera:{enabled:false},coding:{enabled:false},knowledge:{enabled:false}}}))
   composition=await buildProductionComposition({token:'00000000000000000000000000000000',stop,ownership:{own:cleanup=>{cleanups.add(cleanup);return()=>{cleanups.delete(cleanup)}}},onDiagnostic:()=>{/* no external logging */},environment:{
-   DASHSCOPE_API_KEY:'synthetic-text-key',NOVA_AUDIO_AGENT_PIPELINE_MODE:'integrated',NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG:capabilities,
-   NOVA_AUDIO_AGENT_REALTIME_TELEMETRY:path.join(dir,'telemetry.jsonl'),NOVA_AUDIO_AGENT_BLACKBOARD_PATH:path.join(dir,'blackboard.sqlite'),NOVA_AUDIO_AGENT_MEMORY_PATH:path.join(dir,'memory.sqlite'),NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH:path.join(dir,'workspace.sqlite'),
+   DASHSCOPE_API_KEY:'synthetic-text-key',PIPELINE_MODE:'integrated',CAPABILITIES_CONFIG:capabilities,
+   REALTIME_TELEMETRY:path.join(dir,'telemetry.jsonl'),BLACKBOARD_PATH:path.join(dir,'blackboard.sqlite'),MEMORY_PATH:path.join(dir,'memory.sqlite'),WORKSPACE_GRAPH_PATH:path.join(dir,'workspace.sqlite'),
   }})
   await composition.realtime.start()
   assert.equal(composition.realtime.provider.constructor.name,'CascadedRealtimeAdapter')

@@ -1,0 +1,17 @@
+name: nova_audio
+description: Native audio ownership for Nova mobile.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ^3.12.2
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.nova.nova_audio
+        pluginClass: NovaAudioPlugin
+      ios:
+        pluginClass: NovaAudioPlugin

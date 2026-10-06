@@ -10,4 +10,6 @@ Executors run background work while the foreground conversation continues. Nova 
 
 Loop Camera is the reader-facing feature name. Runtime uses the `vision` controller with internal `watch` / `guard` executors. It is separate from conversation vision, which captures one frame for a submitted turn.
 
+Delegated work is now a durable Task: it is visible on the [Tasks](../tasks.md) page with a goal and acceptance criteria, is verified against that criteria before Nova marks it complete, and its control can be taken over by the user or handed back to Nova at any point.
+
 New executors reuse dispatch, approval, progress, cancellation and result handoff. See [onboarding](../archs/10-executor-onboarding.md) and the [executor contract](../archs/05-executors.md). GUI-use plans are in the [roadmap](../archs/09-roadmap.md).

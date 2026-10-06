@@ -65,7 +65,7 @@ const SURROGATE_ORACLE_OUTPUT = '只输出 JSON：{"speak": true|false, "suggest
 const SURROGATE_NODE_OUTPUT = '先在 reason 中概括用户已要求的功能，再指出 summary 中超出这些要求和 previous_summary 的新增信息；若没有新增，必须说明没有新增并保持沉默。若用户明确要求静默则说明其适用范围。最后按档位分类并决定是否播报。只输出 JSON：{"reason": "一句内部理由", "progress_class": "routine_delta"|"milestone"|"blocker"|"action_required"|null, "speak": true|false, "suggestion_id": "s-N"|null}。'
 
 /** Apply the user's proactivity choice at the model decision boundary. */
-export function surrogateSystemPrompt(preset: ProactivityPreset): string {
+export function proactivitySystemPrompt(preset: ProactivityPreset): string {
   const policyStart = SURROGATE_SYSTEM.indexOf(SURROGATE_DEFAULT_POLICY_START)
   const policyEnd = SURROGATE_SYSTEM.indexOf(SURROGATE_DEFAULT_POLICY_END)
   if (policyStart < 0 || policyEnd <= policyStart) {
@@ -286,40 +286,3 @@ function projectLiveProgress(
   return content
 }
 
-export function renderFastBrainContext(
-  view: ContextView,
-  states: Readonly<Record<string, string>>,
-  includeTrigger = false,
-): string {
-  const rendered = renderContextView(view, includeTrigger)
-  const lines = [rendered, '', '## 视觉可见性']
-  const labels: Readonly<Record<string, string>> = {
-    attached: '图片就在你眼前',
-    record_only: '仅有记录；当前看不到这张图片',
-    unavailable: '图片已不可用',
-  }
-  const capturedAt = new Map<string, number>()
-  for (const channel of view.channels) {
-    for (const item of channel.recent) {
-      const ref = item.content.media_ref
-      const at = item.content.captured_at
-      if (typeof ref === 'string' && typeof at === 'number') capturedAt.set(ref, at)
-    }
-  }
-  const entries = Object.entries(states)
-  if (entries.length > 0) {
-    for (const [ref, state] of entries) {
-      let line = `- ${ref}：${labels[state] ?? state}`
-      const at = capturedAt.get(ref)
-      if (at !== undefined) {
-        const age = Math.max(0, view.now - at)
-        // captured_at is a float in the oracle, so it renders like every timestamp.
-        line += `；约 ${pythonFixedOne(age)} 秒前（核对 token t=${pythonFloat(at)}）`
-      }
-      lines.push(line)
-    }
-  } else {
-    lines.push('- 无')
-  }
-  return lines.join('\n')
-}

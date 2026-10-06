@@ -26,6 +26,8 @@ import type {
   SteerTransportResult,
   TransportOutcome,
 } from '../src/executors/codex/app-server-transport.js'
+import {CodexTransportError} from '../src/executors/codex/app-server-transport.js'
+import {context, runRequest, ProjectTransport, settleWithin} from './fixtures/codex/project-adapter-fixture.js'
 import {
   createCodexAssemblyResource,
   OwnedCodexBackendTransportFactory,
@@ -40,7 +42,7 @@ import {VirtualClock} from '../src/core/clock.js'
 import {loadSettings} from '../src/config/config.js'
 import type {ProjectCodexAdapter} from '../src/executors/codex/adapter-project.js'
 import type {NativeFileLockAuthority, NativeFileLockResult} from '../src/storage/native-file-lock.js'
-import type {PublicProjectView} from '../src/projects/project-store.js'
+import {ProjectStore, ProjectStateError, type PublicProjectView} from '../src/projects/project-store.js'
 import type {
   ProjectFileIdentity,
   ProjectRootFileAuthority,
@@ -294,9 +296,9 @@ function hostConfig(t: TestContext): ReturnType<typeof resolveCodexHostConfig> {
     homeDirectory: root,
   }
   return resolveCodexHostConfig(loadSettings({
-    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
-    NOVA_AUDIO_AGENT_CODEX_API_KEY: 'opaque-secret',
+    EXECUTOR: 'codex',
+    CODEX_WORKSPACE: workspace,
+    CODEX_API_KEY: 'opaque-secret',
   }), catalog)
 }
 
@@ -318,11 +320,11 @@ function projectHostConfig(t: TestContext, workspaceName = 'workspace'): {
   }
   t.after(() => { rmSync(root, {recursive: true, force: true}) })
   const config = resolveCodexHostConfig(loadSettings({
-    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
-    NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
-    NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
-    NOVA_AUDIO_AGENT_CODEX_PREWARM: 'false',
+    EXECUTOR: 'codex',
+    CODEX_WORKSPACE: workspace,
+    CODEX_MANAGED_ROOT: managedRoot,
+    CODEX_PROJECT_STATE_ROOT: stateRoot,
+    CODEX_PREWARM: 'false',
   }), {
     canonicalBinaries: [binary],
     canonicalWorkspaces: [workspace],
@@ -572,4 +574,293 @@ test('failed optional project prewarm is closed without failing certified startu
     assert.equal(transport.closes, 1)
     assert.ok(diagnostics.includes('project_prewarm_failed'))
   } finally { await resource.close() }
+})
+
+
+test('project construction preserves actionable state failures after transport cleanup', async t => {
+  const {config, stateRoot, managedRoot} = projectHostConfig(t)
+  assert.ok(config !== null)
+  for (const code of ['state_busy', 'state_lock_failed', 'state_permissions', 'workspace_not_found'] as const) {
+    const transport = new RecordingTransport()
+    const open = t.mock.method(ProjectStore, 'open', () => Promise.reject(new ProjectStateError(code)))
+    try {
+      await assert.rejects(createCodexAssemblyResource({config, composition: 'realtime',
+        projectHost: {nativeLocks: new DescriptorLockAuthority(), rootFiles: new DescriptorRootFileAuthority([stateRoot, managedRoot])},
+        transportFactory: {available: true, create: () => transport}, clock: new VirtualClock(), idFactory: () => 'startup-error',
+      }), error => error instanceof ProjectStateError && error.code === code)
+      assert.equal(transport.closes, 1)
+    } finally {open.mock.restore()}
+  }
+})
+
+function gate<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return {promise, resolve, reject}
+}
+
+class StartupTransport extends ProjectTransport {
+  readonly preflightEntered = gate<void>()
+  readonly warmEntered = gate<void>()
+  readonly closeEntered = gate<void>()
+  initialPreflight = Promise.resolve(PREFLIGHT)
+  warmResult: Promise<SafePreflightReport | null> = Promise.resolve(PREFLIGHT)
+  closeResult = Promise.resolve()
+  preflights = 0
+  binds = 0
+  connectionOnly = false
+  closed = false
+
+  constructor(runGate?: Promise<TransportOutcome>, onRun?: () => void) {
+    super('warm-thread', undefined, true, onRun, 0, runGate)
+  }
+
+  override preflight(): Promise<SafePreflightReport> {
+    this.preflightEntered.resolve()
+    return ++this.preflights === 1 ? this.initialPreflight : super.preflight()
+  }
+
+  prewarmConnection(): Promise<SafePreflightReport | null> {
+    this.connectionOnly = true
+    this.warmEntered.resolve()
+    return this.warmResult
+  }
+
+  bindProject(): void {
+    this.binds += 1
+    if (!this.connectionOnly || this.closed || this.binds > 1) throw new CodexTransportError('busy')
+  }
+
+  override async run(...args: Parameters<ProjectTransport['run']>): Promise<TransportOutcome> {
+    if (this.closed) return {classification: 'refused', code: 'busy', turnStartWritten: false, completion: null}
+    await this.warmResult
+    return await super.run(...args)
+  }
+
+  override close(): Promise<void> {
+    this.closed = true
+    this.closeCalls += 1
+    this.closeEntered.resolve()
+    return this.closeResult
+  }
+}
+
+async function prewarmFixture(t: TestContext, startup = new StartupTransport()) {
+  const {config, stateRoot, managedRoot} = projectHostConfig(t)
+  const clock = new VirtualClock()
+  const diagnostics: string[] = []
+  let creates = 0
+  const resource = await createCodexAssemblyResource({
+    config: {...config, prewarm: true}, composition: 'realtime', clock, idFactory: () => 'warm-regression',
+    onDiagnostic: code => {diagnostics.push(code)},
+    transportFactory: {available: true, create: () => ++creates === 1 ? startup
+      : new ProjectTransport('cold-thread', undefined, true, undefined, 0, undefined, new CodexTransportError('credential_missing'))},
+    projectHost: {nativeLocks: new DescriptorLockAuthority(), rootFiles: new DescriptorRootFileAuthority([stateRoot, managedRoot])},
+  })
+  t.after(async () => { startup.closeResult = Promise.resolve(); await resource.close() })
+  const dispatch = (id: string) => {
+    const request = runRequest(id, {session: 'new', title: id})
+    return settleWithin(id, resource.adapter.dispatch('run', request, context('run', request, clock, {delegateId: id})))
+  }
+  return {resource, startup, dispatch, diagnostics}
+}
+
+test('prewarm handoff: initial credential failure stays credential on both tasks', async t => {
+  const {resource, startup, dispatch, diagnostics} = await prewarmFixture(t)
+  const preflight = gate<SafePreflightReport>()
+  startup.initialPreflight = preflight.promise
+  const starting = resource.start()
+  const rejected = assert.rejects(starting, error => error instanceof CodexTransportError && error.code === 'credential_missing')
+  preflight.reject(new CodexTransportError('credential_missing'))
+  await rejected
+  const first = await dispatch('first'), second = await dispatch('second')
+  assert.deepEqual([first, second].map(result => [result.content.error ?? result.content.code, result.content.stage]),
+    [['credential_missing', 'credential'], ['credential_missing', 'credential']])
+  assert.equal(startup.binds, 0)
+  assert.equal(startup.workOrders.length, 0)
+  assert.equal(startup.closeCalls, 1)
+  assert.equal(diagnostics.includes('project_prewarm_failed'), false,
+    'mandatory certification failure must not add an optional-prewarm diagnostic')
+})
+
+test('prewarm handoff: pending certification uses a fresh task transport', async t => {
+  const {resource, startup, dispatch} = await prewarmFixture(t)
+  const preflight = gate<SafePreflightReport>()
+  startup.initialPreflight = preflight.promise
+  const starting = resource.start()
+  const rejected = assert.rejects(starting, {code: 'credential_missing'})
+  try {
+    await startup.preflightEntered.promise
+    const task = await dispatch('pending-preflight')
+    assert.equal(task.content.code, 'credential_missing')
+    assert.equal(task.content.stage, 'credential')
+    assert.equal(startup.binds, 0)
+  } finally {
+    preflight.reject(new CodexTransportError('credential_missing'))
+    await rejected
+  }
+})
+
+test('prewarm handoff: pending warmup and failed cleanup windows use fresh transports', async t => {
+  const {resource, startup, dispatch} = await prewarmFixture(t)
+  const warm = gate<SafePreflightReport | null>(), close = gate<void>()
+  startup.warmResult = warm.promise
+  startup.closeResult = close.promise
+  const starting = resource.start()
+  try {
+    await startup.warmEntered.promise
+    const pending = await dispatch('pending-warm')
+    warm.reject(new CodexTransportError('transport_lost'))
+    await startup.closeEntered.promise
+    const cleaning = await dispatch('cleaning-warm')
+    close.resolve()
+    await starting
+    const after = await dispatch('failed-warm')
+    assert.deepEqual([pending, cleaning, after].map(result => [result.content.code, result.content.stage]),
+      [['credential_missing', 'credential'], ['credential_missing', 'credential'], ['credential_missing', 'credential']])
+    assert.equal(startup.binds, 0)
+    assert.equal(startup.workOrders.length, 0)
+    assert.equal(startup.closeCalls, 1)
+  } finally {
+    warm.resolve(PREFLIGHT)
+    close.resolve()
+    await starting
+  }
+})
+
+test('prewarm handoff: ready transport is claimed once and genuine active work stays busy', async t => {
+  const runGate = gate<TransportOutcome>(), running = gate<void>()
+  const startup = new StartupTransport(runGate.promise, () => running.resolve())
+  const {resource, dispatch} = await prewarmFixture(t, startup)
+  await resource.start()
+  const first = dispatch('active-warm')
+  try {
+    await settleWithin('ready run entered', running.promise)
+    assert.equal(startup.binds, 1)
+    assert.equal(startup.closeCalls, 0, 'startup cleanup must not race the claimed task')
+    const concurrent = await dispatch('concurrent-warm')
+    assert.equal(concurrent.content.code, 'busy_project')
+    assert.equal(concurrent.content.work_id, 'active-warm')
+  } finally {
+    runGate.resolve({classification: 'completed', code: 'completed', turnStartWritten: true,
+      completion: {status: 'completed', final_text: 'done', internal_activity: 1}})
+  }
+  assert.equal((await first).outcome, 'ok')
+  const next = await dispatch('after-ready')
+  assert.equal(next.content.code, 'credential_missing')
+  assert.equal(next.content.stage, 'credential')
+  assert.equal(startup.binds, 1)
+  assert.equal(startup.closeCalls, 1, 'only task completion closed the claimed transport')
+})
+
+test('prewarm handoff: initial credential failure survives a different cleanup error', async t => {
+  const {resource, startup, dispatch} = await prewarmFixture(t)
+  const preflight = gate<SafePreflightReport>(), close = gate<void>()
+  startup.initialPreflight = preflight.promise
+  startup.closeResult = close.promise
+  const original = new CodexTransportError('credential_missing')
+  const rejected = assert.rejects(resource.start(), error => error === original)
+  preflight.reject(original)
+  try {
+    await settleWithin('initial failure cleanup entered', startup.closeEntered.promise)
+    close.reject(new CodexTransportError('transport_lost'))
+    await rejected
+    const result = await dispatch('after-cleanup-error')
+    assert.equal(result.content.code, 'credential_missing')
+    assert.equal(result.content.stage, 'credential')
+    assert.equal(startup.binds, 0)
+  } finally {
+    close.resolve()
+    await rejected
+  }
+})
+
+test('prewarm handoff: initial credential failure survives synchronous cleanup throw', async t => {
+  const {resource, startup, dispatch} = await prewarmFixture(t)
+  const preflight = gate<SafePreflightReport>()
+  startup.initialPreflight = preflight.promise
+  const close = t.mock.method(startup, 'close', () => {throw new CodexTransportError('transport_lost')})
+  const original = new CodexTransportError('credential_missing')
+  try {
+    const rejected = assert.rejects(resource.start(), error => error === original)
+    preflight.reject(original)
+    await rejected
+    const result = await dispatch('after-sync-cleanup-error')
+    assert.equal(result.content.code, 'credential_missing')
+    assert.equal(result.content.stage, 'credential')
+    assert.equal(startup.binds, 0)
+  } finally {close.mock.restore()}
+})
+
+test('prewarm handoff: shutdown revokes ready transport before cleanup settles', async t => {
+  const {resource, startup, dispatch} = await prewarmFixture(t)
+  await resource.start()
+  const close = gate<void>()
+  startup.closeResult = close.promise
+  const closing = resource.close()
+  const rejected = assert.rejects(closing, {code: 'transport_lost'})
+  try {
+    await startup.closeEntered.promise
+    const result = await dispatch('during-shutdown')
+    assert.equal(result.content.code, 'credential_missing')
+    assert.equal(result.content.stage, 'credential')
+    assert.equal(startup.binds, 0)
+  } finally {
+    close.reject(new CodexTransportError('transport_lost'))
+    await rejected
+  }
+})
+
+test('prewarm handoff: failed shutdown cannot publish a late warm connection', async t => {
+  const {resource, startup, dispatch} = await prewarmFixture(t)
+  const warm = gate<SafePreflightReport | null>(), close = gate<void>()
+  startup.warmResult = warm.promise
+  startup.closeResult = close.promise
+  const starting = resource.start()
+  await startup.warmEntered.promise
+  const rejected = assert.rejects(resource.close(), {code: 'transport_lost'})
+  close.reject(new CodexTransportError('transport_lost'))
+  await rejected
+  warm.resolve(PREFLIGHT)
+  await starting
+  const result = await dispatch('late-warm')
+  assert.equal(result.content.code, 'credential_missing')
+  assert.equal(result.content.stage, 'credential')
+  assert.equal(startup.binds, 0)
+})
+
+test('prewarm handoff: null warm result is not a ready connection', async t => {
+  const {resource, startup, dispatch} = await prewarmFixture(t)
+  startup.warmResult = Promise.resolve(null)
+  await resource.start()
+  const result = await dispatch('null-warm')
+  assert.equal(result.content.code, 'credential_missing')
+  assert.equal(result.content.stage, 'credential')
+  assert.equal(startup.binds, 0)
+})
+
+test('prewarm handoff: owned initial-failure cleanup retains the persistent home', async t => {
+  const {config, stateRoot, managedRoot} = projectHostConfig(t)
+  assert.ok(config.localCodexHome)
+  const sentinel = join(config.localCodexHome, 'retained.txt')
+  writeFileSync(sentinel, 'persistent fixture', {mode: 0o600})
+  const credentials = new CredentialSnapshotter({environment: {PATH: '/usr/bin:/bin', HOME: config.localCodexHome}})
+  const cleanup = t.mock.method(credentials, 'removeEphemeralHome', credentials.removeEphemeralHome.bind(credentials))
+  const resource = await createCodexAssemblyResource({
+    config: {...config, prewarm: true}, composition: 'realtime', clock: new VirtualClock(), idFactory: () => 'persistent-cleanup',
+    transportFactory: new OwnedCodexBackendTransportFactory({
+      processFactory: {spawn: () => Promise.reject(new Error('must not spawn'))}, credentialSnapshotter: credentials,
+      preflightRunner: {run: () => Promise.reject(new CodexTransportError('credential_missing'))},
+      schemaProbe: {generate: () => Promise.reject(new Error('must not probe schema'))},
+      ephemeralHomeFactory: () => {throw new Error('must not allocate ephemeral home')},
+    }),
+    projectHost: {nativeLocks: new DescriptorLockAuthority(), rootFiles: new DescriptorRootFileAuthority([stateRoot, managedRoot])},
+  })
+  try {
+    await assert.rejects(resource.start(), {code: 'credential_missing'})
+    assert.equal(cleanup.mock.callCount(), 1, 'failure cleanup must reach the real home owner')
+    assert.equal(readFileSync(sentinel, 'utf8'), 'persistent fixture')
+  } finally {await resource.close()}
+  assert.equal(readFileSync(sentinel, 'utf8'), 'persistent fixture')
 })

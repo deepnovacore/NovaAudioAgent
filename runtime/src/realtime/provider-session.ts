@@ -10,6 +10,7 @@ import {
   realtimeProviderEventSchema,
   responseAdaptationContextSchema,
   RealtimeProtocolError,
+  ProviderResponseRejectedError,
   sessionIdentitySchema,
   workspaceContextInjectionSchema,
   type HostContextItem,
@@ -225,9 +226,12 @@ export class RealtimeProviderSession {
     const owned = pcm.slice()
     const owner = this.#requiredConnectionOwner()
     try {
-      if (this.#responseAdaptationRequired?.() === true) {
+      // Requested-response providers only transcribe PCM here. Their model sees memory at
+      // createResponse/ensureResponse, which revalidate authorization before generating.
+      // Automatic providers can generate directly from PCM and still need the input fence.
+      if (this.userResponseMode === 'automatic' && this.#responseAdaptationRequired?.() === true) {
         await this.#refreshResponseAdaptation(owner, signal)
-      } else if (this.#audioAdaptationRefresh === undefined) {
+      } else if (this.userResponseMode === 'automatic' && this.#audioAdaptationRefresh === undefined) {
         const refresh = this.#refreshResponseAdaptation(owner, signal).catch(() => undefined).finally(() => {
           if (this.#audioAdaptationRefresh === refresh) this.#audioAdaptationRefresh = undefined
         })
@@ -374,6 +378,17 @@ export class RealtimeProviderSession {
     }
   }
 
+  async reportPlayback(input: {readonly session_epoch:number; readonly response_id:string; readonly played_ms:number | null; readonly disposition:string}):Promise<void> {
+    if (!this.#provider.reportPlayback || this.#state !== 'connected' || this.#identity?.epoch !== input.session_epoch) return
+    const owner = this.#requiredConnectionOwner()
+    try {
+      await this.#provider.reportPlayback(input, owner.controller.signal)
+      this.#assertCurrentConnection(owner)
+    } catch {
+      // Playback truncation is best effort: a failed report must not end a healthy session.
+    }
+  }
+
   async cancelResponse(responseId: string, signal?: AbortSignal): Promise<void> {
     const parsed = realtimeIdentifierSchema.parse(responseId)
     const owner = this.#requiredConnectionOwner()
@@ -497,7 +512,7 @@ export class RealtimeProviderSession {
         await failClosed()
         return
       }
-      const context = includeUserSources ? parsed.data : {revision: parsed.data.revision, content: parsed.data.content,
+      const context = includeUserSources && this.#provider.responseAdaptationMode !== 'session_setup' ? parsed.data : {revision: parsed.data.revision, content: parsed.data.content,
         ...(parsed.data.delivery_version === undefined ? {} : {delivery_version: parsed.data.delivery_version})}
       const signature = JSON.stringify({content: context.content, user_sources: context.user_sources})
       const previous = this.#responseAdaptationAttempt
@@ -567,6 +582,6 @@ function combinedSignal(primary: AbortSignal, secondary?: AbortSignal): AbortSig
 }
 
 function protocolFailure(message: string, error: unknown): Error {
-  if (error instanceof InternalProtocolError) return error
+  if (error instanceof InternalProtocolError || error instanceof ProviderResponseRejectedError) return error
   return new RealtimeProtocolError(message)
 }

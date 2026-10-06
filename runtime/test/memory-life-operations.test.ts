@@ -82,7 +82,7 @@ test('Life editable body normalization rejects oversized edits and does not bump
  const next=normalizeLifeContent('profile',{...previous,text:'手改内容'},previous)
  assert.deepEqual(next.life_data,{about:'手改内容',version:8})
  assert.deepEqual(normalizeLifeContent('profile',next,previous),next)
- assert.throws(()=>normalizeLifeContent('profile',{...previous,text:'字'.repeat(4001)},previous))
+ assert.throws(()=>normalizeLifeContent('profile',{...previous,text:'字'.repeat(5001)},previous))
 })
 
 test('editing one migrated object does not suppress the evidence of other legacy objects',()=>{
@@ -99,15 +99,15 @@ test('editing one migrated object does not suppress the evidence of other legacy
 test('Life evidence processing requires an explicit host provider grant, including legacy import',()=>{
  const {db,run}=setup(),processingGrant={revision:1,scope_revision:0,extraction_provider:'consented-model',embedding_provider:null}
  try{
-  const first=run('life_load',{namespace,legacy:empty()})
+  const first=run('life_load',{namespace,legacy:{...empty(),profile:{about:'legacy profile',version:1}}})
   let profile=(memoryOperation(db,'list',{}) as EntryRevision[]).find(r=>r.kind==='profile')!
   assert.equal(memoryOperation(db,'processing_stamp',{ids:profile.evidence_refs,purpose:'extraction',provider:'consented-model'}),null)
-  run('life_mutate',{namespace,expectedRevision:first.revision,requestId:'consented',input:{op:'profile',expected_version:0,about:'可整理内容'},processingGrant})
+  run('life_mutate',{namespace,expectedRevision:first.revision,requestId:'consented',input:{op:'profile',expected_version:1,about:'可整理内容'},processingGrant})
   profile=(memoryOperation(db,'list',{}) as EntryRevision[]).find(r=>r.kind==='profile')!
   assert.equal(typeof memoryOperation(db,'processing_stamp',{ids:profile.evidence_refs,purpose:'extraction',provider:'consented-model'}),'string')
   assert.equal(memoryOperation(db,'processing_stamp',{ids:profile.evidence_refs,purpose:'extraction',provider:'other-model'}),null)
   const grantedNamespace='personal:granted:life:'
-  run('life_load',{namespace:grantedNamespace,legacy:empty(),processingGrant})
+  run('life_load',{namespace:grantedNamespace,legacy:{...empty(),profile:{about:'granted legacy profile',version:1}},processingGrant})
   const imported=(memoryOperation(db,'list',{}) as EntryRevision[]).find(r=>r.entry_id.startsWith(grantedNamespace))!
   assert.equal(typeof memoryOperation(db,'processing_stamp',{ids:imported.evidence_refs,purpose:'extraction',provider:'consented-model'}),'string')
  }finally{db.close()}
@@ -122,5 +122,38 @@ test('host may register a previously missing legacy backup path without replacin
   assert.equal(read().legacy_path,'/synthetic/registered-life.json')
   run('life_load',{namespace,hostMigrationPath:'/synthetic/unrelated.json'})
   assert.equal(read().legacy_path,'/synthetic/registered-life.json')
+ }finally{db.close()}
+})
+
+
+test('empty cutover creates no Profile or migration evidence and explicit blank Profile remains durable',()=>{
+ const {db,run}=setup(),processingGrant={revision:1,scope_revision:0,extraction_provider:'consented-model',embedding_provider:null}
+ try{
+  let loaded=run('life_load',{namespace,legacy:empty(),processingGrant})
+  assert.deepEqual(memoryOperation(db,'list',{}),[])
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM memory_evidence').get()!.n,0)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM source_grants').get()!.n,0)
+  assert.notEqual(run('life_load',{namespace}),null)
+  loaded=run('life_mutate',{namespace,expectedRevision:loaded.revision,requestId:'blank-profile',input:{op:'profile',expected_version:0,about:''}})
+  assert.deepEqual(loaded.state.profile,{about:'',version:1})
+  const profile=(memoryOperation(db,'list',{}) as EntryRevision[])[0]!
+  assert.equal(profile.kind,'profile');assert.equal(profile.content.legacy,false)
+  assert.deepEqual(run('life_load',{namespace}).state.profile,{about:'',version:1})
+ }finally{db.close()}
+})
+
+test('failed Life revision insert rolls back evidence, processing grant and receipts together',()=>{
+ const {db,run}=setup(),processingGrant={revision:1,scope_revision:0,extraction_provider:'consented-model',embedding_provider:null}
+ try{
+  const loaded=run('life_load',{namespace,legacy:empty()})
+  const snapshot=()=>['memory_evidence','source_grants','memory_revisions','memory_life_meta'].map(table=>db.prepare('SELECT * FROM '+table).all())
+  const before=snapshot();let injected=false
+  const faulty={exec:db.exec.bind(db),close:db.close.bind(db),prepare:(sql:string)=>{if(sql==='INSERT INTO memory_revisions VALUES(?,?,?)'){assert.equal(db.prepare('SELECT COUNT(*) n FROM memory_evidence').get()!.n,1,'evidence is already in the transaction');assert.equal(db.prepare('SELECT COUNT(*) n FROM source_grants').get()!.n,1,'grant is already in the transaction');injected=true;throw Error('synthetic revision failure')}return db.prepare(sql)}}
+  const request={namespace,expectedRevision:loaded.revision,requestId:'atomic-profile',input:{op:'profile',expected_version:0,about:'retry me'},processingGrant}
+  assert.throws(()=>memoryOperation(faulty,'life_mutate',request),/synthetic revision failure/)
+  assert.equal(injected,true);assert.deepEqual(snapshot(),before)
+  run('life_mutate',request);run('life_mutate',request)
+  assert.equal((memoryOperation(db,'list',{}) as EntryRevision[]).filter(row=>row.kind==='profile').length,1)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM memory_evidence').get()!.n,1)
  }finally{db.close()}
 })

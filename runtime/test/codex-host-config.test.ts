@@ -61,9 +61,9 @@ test('host resolver is lazy without Codex and brands one allowlisted launch tupl
   assert.equal(inactive, null)
 
   const resolved = resolveCodexHostConfig(loadSettings({
-    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
-    NOVA_AUDIO_AGENT_CODEX_API_KEY: 'secret-must-remain-opaque',
+    EXECUTOR: 'codex',
+    CODEX_WORKSPACE: fixture.workspace,
+    CODEX_API_KEY: 'secret-must-remain-opaque',
   }), fixture.catalog)
   assert.ok(resolved !== null)
   assert.equal(resolved.codexApprovalMode, 'ask')
@@ -95,8 +95,8 @@ test('host resolver is lazy without Codex and brands one allowlisted launch tupl
 test('host resolver expands a leading tilde in the selected Codex workspace', t => {
   const fixture = hostFixture(t)
   const resolved = resolveCodexHostConfig(loadSettings({
-    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: '~/workspace',
+    EXECUTOR: 'codex',
+    CODEX_WORKSPACE: '~/workspace',
   }), fixture.catalog)
 
   assert.ok(resolved !== null)
@@ -137,10 +137,10 @@ test('host resolver never chmods a replacement for a newly created private root'
   try {
     assert.throws(
       () => resolveCodexHostConfig(loadSettings({
-        NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-        NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
-        NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
-        NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
+        EXECUTOR: 'codex',
+        CODEX_WORKSPACE: fixture.workspace,
+        CODEX_PROJECT_STATE_ROOT: stateRoot,
+        CODEX_MANAGED_ROOT: managedRoot,
       }), fixture.catalog),
       error => error instanceof CodexHostConfigurationError
         && error.code === 'codex_project_state_invalid',
@@ -193,10 +193,10 @@ for (const targetKind of ['state', 'managed'] as const) {
     try {
       try {
         resolveCodexHostConfig(loadSettings({
-          NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-          NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
-          NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
-          NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
+          EXECUTOR: 'codex',
+          CODEX_WORKSPACE: fixture.workspace,
+          CODEX_PROJECT_STATE_ROOT: stateRoot,
+          CODEX_MANAGED_ROOT: managedRoot,
         }), fixture.catalog)
       } catch (error) {
         failureCode = error instanceof CodexHostConfigurationError ? error.code : null
@@ -221,9 +221,9 @@ test('Windows resolver refuses to bootstrap a private root without native ACL au
   const stateRoot = join(fixture.root, 'missing-state')
   assert.throws(
     () => resolveCodexHostConfig(loadSettings({
-      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
-      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
+      EXECUTOR: 'codex',
+      CODEX_WORKSPACE: fixture.workspace,
+      CODEX_PROJECT_STATE_ROOT: stateRoot,
     }), fixture.catalog),
     error => error instanceof CodexHostConfigurationError
       && error.code === 'codex_project_state_invalid',
@@ -236,10 +236,10 @@ test('host resolver canonicalizes one direct Node launcher script', t => {
   const launcher = join(fixture.root, 'codex.js')
   writeFileSync(launcher, '#!/usr/bin/env node\n')
   const resolved = resolveCodexHostConfig(loadSettings({
-    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
-    NOVA_AUDIO_AGENT_CODEX_BIN: fixture.binary,
-    NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: JSON.stringify([launcher]),
+    EXECUTOR: 'codex',
+    CODEX_WORKSPACE: fixture.workspace,
+    CODEX_BIN: fixture.binary,
+    CODEX_PREFIX_ARGS: JSON.stringify([launcher]),
   }), fixture.catalog)
   assert.ok(resolved !== null)
   assert.deepEqual(resolved.binaryPrefixArgs, [realpathSync(launcher)])
@@ -249,9 +249,9 @@ test('selected Codex fails as host-unavailable when Task 8 has not supplied a ca
   const fixture = hostFixture(t)
   assert.throws(
     () => resolveCodexHostConfig(loadSettings({
-      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
-      NOVA_AUDIO_AGENT_CODEX_API_KEY: 'secret-never-echo',
+      EXECUTOR: 'codex',
+      CODEX_WORKSPACE: fixture.workspace,
+      CODEX_API_KEY: 'secret-never-echo',
     }), {
       canonicalBinaries: [],
       canonicalWorkspaces: [],
@@ -269,9 +269,9 @@ test('selected Codex fails as host-unavailable when Task 8 has not supplied a ca
 test('an explicit allowlisted absolute binary does not require an implicit catalog default', t => {
   const fixture = hostFixture(t)
   const resolved = resolveCodexHostConfig(loadSettings({
-    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
-    NOVA_AUDIO_AGENT_CODEX_BIN: fixture.binary,
+    EXECUTOR: 'codex',
+    CODEX_WORKSPACE: fixture.workspace,
+    CODEX_BIN: fixture.binary,
   }), {...fixture.catalog, defaultBinary: null})
   assert.ok(resolved !== null)
   assert.equal(hostBinaryPath(resolved.binary), fixture.binary)
@@ -280,8 +280,8 @@ test('an explicit allowlisted absolute binary does not require an implicit catal
 test('eager tool progress is enabled only by eager proactivity', t => {
   const fixture = hostFixture(t)
   for (const preset of ['conservative', 'balanced', 'eager']) {
-    const config = resolveCodexHostConfig(loadSettings({NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace, NOVA_AUDIO_AGENT_PROACTIVITY_PRESET: preset}), fixture.catalog)
+    const config = resolveCodexHostConfig(loadSettings({EXECUTOR: 'codex',
+      CODEX_WORKSPACE: fixture.workspace, PROACTIVITY_PRESET: preset}), fixture.catalog)
     assert.equal(config?.eagerProgress, preset === 'eager')
   }
 })

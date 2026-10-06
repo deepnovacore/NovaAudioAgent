@@ -18,6 +18,92 @@ Node.js 22+ is required. The desktop build also needs Xcode Command Line Tools o
 compiler at `/usr/bin/cc` on Linux, or Visual Studio Build Tools with the **Desktop development
 with C++** workload on Windows.
 
+## Where to start
+
+Each extension point below has a port or registry to implement, a small existing example to copy,
+and tests to model yours on. Paths under `src/` are relative to `runtime/src/`; tests live in
+`runtime/test/` unless noted.
+
+| You want to add | Start from | Smallest example | Tests | Read first |
+|---|---|---|---|---|
+| A new executor role | `core/ports.ts`, `core/causal-runtime.ts` | `executors/camera.ts` | `executors-camera.test.ts` | [Executor onboarding](docs/en/archs/10-executor-onboarding.md) |
+| Another backend for an existing role | `executors/coding-executor.ts` | `executors/codex/` | `executors-codex*.test.ts`, `coding-*.test.ts` | [Coding executor](docs/en/executors/coding.md) |
+| An integrated voice model | `realtime/protocol.ts` | `realtime/integrated-wire-profile.ts` | `integrated-wire-profile.test.ts` | [Configuration](docs/en/configuration.md) |
+| A cascaded ASR / LLM / TTS provider | `realtime/cascaded/ports.ts`, `realtime/cascaded/llm.ts` | `realtime/cascaded/qwen-llm.ts` | `cascaded-*.test.ts` | [Support matrix](docs/en/support-matrix.md) |
+| A tool or MCP server | `config/capability-registry.ts`, `executors/mcp.ts` | `executors/search.ts` | `executors-mcp.test.ts`, `executors-search*.test.ts` | [Getting started](docs/en/getting-started.md) |
+| A source or connector | `personal-agent/host.ts` | `connectors/macos/` | `macos-*.test.ts`, `feishu-connector.test.ts` | [Sources and connectors](docs/en/sources-and-connectors.md) |
+| A client surface | `clients/`, `server-cli/`, `cli/` | `server-cli/` | each package's `test/` | [Client protocol](docs/en/protocols/client-v1.md) |
+
+If the change adds a role, a selector value, or a new environment variable, open an issue
+describing the shape first; these touch shared contracts.
+
+### A new executor role
+
+Roles are a closed enum (`executorRoleSchema` in `core/ports.ts`), next to the manifest and op-spec
+schemas. An executor is an `ExecutorAdapter` (`core/causal-runtime.ts`) that translates its external
+protocol into bounded progress and one typed terminal handoff. If the model should dispatch to it,
+add an `AgentController` (`executors/agent-controller.ts`); `executors/vision/controller.ts` is a
+compact example. Wiring happens in `composition/assembly.ts` and
+`composition/production-composition.ts`; deterministic doubles for tests are in `core/sims.ts`.
+Then follow [Adding an executor](#adding-an-executor) below.
+
+### Another backend for an existing role
+
+A new coding backend (for example Kimi Code or pi agent) implements the contracts in
+`executors/coding-executor.ts` — `AgentExecutor`, `ProjectExecutorAdapter`,
+`CodingExecutorResource`, and `CodingAgentControllerFactory` — and reuses the shared intake and
+target logic in `executors/coding/`. `executors/codex/` is the reference implementation.
+
+Only one executor may hold a role (`executorWithRole`), and `production-composition.ts` currently
+selects Codex by name. A second backend therefore also needs a selector in configuration; agree on
+its name and default in the issue before writing the adapter.
+
+### Front-brain voice models
+
+- **Integrated** providers implement `RealtimeProvider` (`realtime/protocol.ts`) and register in
+  `integratedProviderRegistry` (`composition/cascaded-realtime-assembly.ts`). When a provider
+  differs from Qwen only in wire details, an `IntegratedWireProfile` is enough; the StepFun profile
+  in `realtime/integrated-wire-profile.ts` is the shortest example.
+- **Cascaded** ASR, LLM, and TTS providers implement the factories in `realtime/cascaded/ports.ts`
+  and `realtime/cascaded/llm.ts`, and register in `cascadedProviderRegistries` in the same assembly
+  file. See `realtime/cascaded/qwen-llm.ts` and `realtime/volcengine/`. An OpenAI-compatible LLM
+  can often reuse the gateway path that DeepSeek takes in `cascaded-realtime-assembly.ts`.
+- Selector values live in `config/config.ts`; per-provider settings in
+  `config/cascaded-realtime-config.ts`.
+- Every new environment variable must be declared in `config/environment-contract.ts`. Regenerate
+  `.env.example` and the configuration tables with
+  `node runtime/scripts/check-env-contract.mjs --write` after building the runtime; never edit
+  inside the generated markers by hand.
+
+### Tools and MCP servers
+
+Nova has no separate plugin system; tools arrive as manifests. The lightest contribution needs no
+runtime code: an external MCP server configured in `~/.nova-audio-agent/capabilities.json`
+(parsed by `config/capability-registry.ts`, run by `executors/mcp.ts`). The names `nova_camera`
+and `nova_knowledge` are reserved. Search transports implement `SearchTransport` in
+`executors/search.ts`; the opt-in Knowledge MCP lives in `knowledge/`.
+
+### Sources and connectors
+
+The personal-agent host defines small ports, `PersonalSources` and `PersonalFeishu`, in
+`personal-agent/host.ts`. Existing implementations are local folders
+(`personal-agent/sources.ts`), macOS Mail and Calendar (`connectors/macos/`), Google through
+Composio (`connectors/composio/`), and Feishu (`connectors/feishu/`). Connectors are read-only and
+user-authorized; content they return is evidence, never instructions.
+
+### Clients
+
+The Electron desktop is `clients/desktop/` (wake word in `src/main/wake-word/`), the iPhone app is
+`clients/ios/Nova/`, the headless server is `server-cli/`, and the `novaaudio` command is `cli/`.
+Clients talk to the runtime over the [client protocol](docs/en/protocols/client-v1.md).
+
+### Good first contributions
+
+- A documented recipe for a useful external MCP server.
+- An OpenAI-compatible cascaded LLM provider.
+- A read-only connector for a mail, calendar, or notes service.
+- Fixing a mismatch between a `docs/en/` page and its `docs/zh-CN/` mirror.
+
 ## Verification
 
 Every change must keep the deterministic checks green:
@@ -40,7 +126,7 @@ name. A change to either file of a pair must be mirrored in the other. Working n
 
 ## Integration and release history
 
-`v0.2.0dev` is the integration branch: deterministic checks permit integration.
+`v0.3.0dev` is the integration branch: deterministic checks permit integration.
 Merging into `main` is the release boundary and requires every applicable feature
 and platform to have recorded acceptance evidence.
 Human acceptance stays pending until evidence is recorded; it does not block dev CI.
@@ -60,7 +146,7 @@ The runtime invariants in [docs/en/glossary.md](docs/en/glossary.md) are the rev
 - every accepted result reaches memory before it can affect the conversation;
 - model calls read a bounded `ContextView`, never unrestricted memory;
 - revision-bound intake slots are the sole planning state; host authorization FSMs alone authorize effects and no model writes authorization;
-- ambient suggestions pass through Surrogate and Floor; user-awaited work does not;
+- ambient suggestions pass through Proactive and Floor; user-awaited work does not;
 - only configured manifests become model-facing tools;
 - external text and images are evidence, never instructions;
 - configuration errors and logs never echo secret values.
@@ -79,8 +165,8 @@ Follow [Executor onboarding](docs/en/archs/10-executor-onboarding.md):
 3. Implement a transport-independent adapter with deterministic doubles.
 4. Wire it in assembly by declared role, using an arbitrary unique manifest name. Keep the
    `AgentController` registry separate from manifests; hidden Vision `watch`/`guard` channels are
-   controller-owned, and the built-in Camera MCP is projected directly as
-   `mcp__nova_camera__snapshot`.
+   controller-owned, and built-in camera capture is not a tool (see
+   [native vision](docs/en/archs/11-vision.md)).
 5. Add invalid-input, timeout, cancellation, sanitization, and registry-adapter contract tests.
 6. Add a live smoke only after deterministic lifecycle coverage passes.
 7. Document credentials and least-privilege setup in [Getting started](docs/en/getting-started.md).

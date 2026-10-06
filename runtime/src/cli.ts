@@ -59,8 +59,8 @@ export async function main(
 ): Promise<number> {
   const cwd = options.cwd ?? resolve(import.meta.dirname, '../../..')
   const io = options.io ?? {write: text => process.stdout.write(text)}
-  const fixtureRoot = resolve(cwd, 'fixtures/runtime/v1')
-  const productFixtureRoot = resolve(cwd, 'fixtures/product/v1')
+  const fixtureRoot = resolve(cwd, 'tests/fixtures/runtime/v1')
+  const productFixtureRoot = resolve(cwd, 'tests/fixtures/product/v1')
   const [command, subcommand] = args
   if (command === 'fixture' && subcommand === 'check' && args.length === 2) {
     const count = await checkRuntimeFixtures(fixtureRoot)

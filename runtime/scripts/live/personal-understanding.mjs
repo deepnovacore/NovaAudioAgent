@@ -7,7 +7,7 @@ import {createHash,randomUUID} from 'node:crypto'
 import {loadSettings,resolveModelApiKey} from '../../dist/src/config/config.js'
 import {OpenAIModelGateway} from '../../dist/src/model/model-gateway.js'
 import {RealClock} from '../../dist/src/core/clock.js'
-import {WorkspaceGraphStoreClient} from '../../dist/src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../../dist/src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../../dist/src/memory-substrate/resource.js'
 import {createUnderstandingPipeline} from '../../dist/src/understanding/pipeline.js'
 import {createJevJudge} from '../../dist/src/understanding/jev.js'
@@ -25,7 +25,7 @@ const persist=async()=>{await mkdir(dirname(output),{recursive:true,mode:0o700})
 const pass=async label=>{report.checks.push(label);await persist();console.log('PASS',label)}
 const command=async(method,params)=>{const result=await host.command({type:'personal.command',request_id:randomUUID(),method,params});assert.equal(result.ok,true,JSON.stringify(result));return result.data}
 async function open(){
- client=new WorkspaceGraphStoreClient(join(directory,'synthetic.sqlite'))
+ client=new MemoryLedgerClient(join(directory,'synthetic.sqlite'))
  memory=new SubstrateMemoryResource({client,userId:'synthetic-life-cross-turn',gateway,model:settings.fast_model,extractionFingerprint:fingerprint,inputConsent:true,conversationProviders:[fingerprint],consolidation:{enabled:false}})
  await memory.open()
  host=new PersonalAgentHost({path:join(directory,'personal.json'),userScope:'synthetic-life-cross-turn',memory:()=>memory,pool:new SuggestionPool(),evidence:()=>null,now:()=>new Date(instant),understand:async(source,signal)=>{

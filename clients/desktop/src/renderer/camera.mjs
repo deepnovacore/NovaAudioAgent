@@ -113,10 +113,6 @@ export function cameraUnavailableMessage(requestId) {
   })
 }
 
-export function isCameraCaptureText(raw) {
-  return classifyCameraCaptureText(raw).kind !== 'other'
-}
-
 export function classifyCameraCaptureText(raw) {
   const request = parseCameraCapture(raw)
   if (request) return Object.freeze({kind: 'valid', request})
@@ -131,91 +127,6 @@ export function classifyCameraCaptureText(raw) {
     kind: 'malformed',
     requestId: requestIds.length === 1 ? requestIds[0] : null,
   })
-}
-
-export class RendererCameraToggle {
-  #cameraController
-  #requestPermission
-  #onState
-  #state = 'off'
-  #pending = null
-  #lastPermissionStatus = 'unavailable'
-
-  constructor({cameraController, requestPermission, onState = () => {}} = {}) {
-    if (!cameraController
-      || typeof cameraController.enableLocal !== 'function'
-      || typeof cameraController.disableLocal !== 'function'
-      || typeof requestPermission !== 'function'
-      || typeof onState !== 'function') throw new TypeError('invalid camera toggle')
-    this.#cameraController = cameraController
-    this.#requestPermission = requestPermission
-    this.#onState = onState
-  }
-
-  get state() {
-    return this.#state
-  }
-
-  async toggle() {
-    if (this.#pending) return this.#pending
-    if (this.#state === 'on') {
-      this.#cameraController.disableLocal()
-      this.#setState('off')
-      return this.#state
-    }
-    return this.ensureEnabled()
-  }
-
-  async ensureEnabled() {
-    if (this.#pending) return this.#pending
-    if (this.#state === 'on') return this.#state
-    this.#setState('requesting')
-    const pending = this.#enable()
-    this.#pending = pending
-    try {
-      return await pending
-    } finally {
-      if (this.#pending === pending) this.#pending = null
-    }
-  }
-
-  async admitForHost() {
-    await this.ensureEnabled()
-    if (this.#state === 'on') return 'granted'
-    if (this.#lastPermissionStatus === 'restricted') return 'restricted'
-    if (this.#state === 'denied') return 'denied'
-    return 'unavailable'
-  }
-
-  async #enable() {
-    try {
-      const permission = await this.#requestPermission()
-      this.#lastPermissionStatus = permissionStatuses.has(permission?.status)
-        ? permission.status
-        : 'unavailable'
-      if (permission?.status === 'denied' || permission?.status === 'restricted') {
-        this.#setState('denied')
-        return this.#state
-      }
-      const enabled = await this.#cameraController.enableLocal()
-      if (!enabled) {
-        this.#lastPermissionStatus = this.#cameraController.localAdmissionFailure
-          === 'permission_denied' ? 'denied' : 'unavailable'
-      }
-      this.#setState(enabled
-        ? 'on'
-        : this.#lastPermissionStatus === 'denied' ? 'denied' : 'unavailable')
-    } catch {
-      this.#lastPermissionStatus = 'unavailable'
-      this.#setState('unavailable')
-    }
-    return this.#state
-  }
-
-  #setState(state) {
-    this.#state = state
-    try { this.#onState(state) } catch { /* presentation cannot break the privacy gate */ }
-  }
 }
 
 export class RendererSocketRouter {

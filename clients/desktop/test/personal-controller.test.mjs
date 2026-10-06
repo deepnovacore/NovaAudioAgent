@@ -20,6 +20,11 @@ test('two text conversations send concurrently and receipts affect only their ow
  c.receive({type:'input.text_result',request_id:b.request_id,conversation_id:'a',ok:true});assert.ok(c.state('b').submission)
  c.receive({type:'input.text_result',request_id:b.request_id,conversation_id:'b',ok:true});assert.equal(c.state('b').submission,null)
 })
+test('text sent for a named conversation goes there; text that cannot be sent is kept in that draft',()=>{
+ const h=harness();h.snapshot('b');h.c.draft='B draft'
+ assert.equal(h.c.submitText('switch place','a'),true);assert.equal(h.sent.at(-1).conversation_id,'a');assert.equal(h.c.state('b').draft,'B draft')
+ assert.equal(h.c.submitText('second','a'),false,'a pending submission blocks the next');assert.equal(h.c.state('a').draft,'second')
+})
 test('voice owner blocks own text and all dictation, other text does not stop or steal capture',async()=>{
  const h=harness();await h.c.voice();assert.equal(h.starts,1);assert.equal(h.c.voiceId,'a');h.c.draft='blocked';assert.equal(await h.c.submit(),false)
  h.snapshot('b','a');h.c.draft='parallel text';const stops=h.stops;assert.equal(await h.c.submit(),true);assert.equal(h.stops,stops);assert.equal(h.c.mode,'voice')
@@ -42,6 +47,13 @@ test('reconnect replays every pending request with original conversation and hos
  c.receive({type:'input.text_result',request_id:a.request_id,conversation_id:'a',ok:true});assert.equal(c.state('a').draft,'')
  c.receive({type:'input.text_result',request_id:b.request_id,conversation_id:'b',ok:false,error:'outcome_unknown'});assert.equal(c.state('b').draft,'B request');assert.match(c.state('b').error,/无法确认/)
 })
+test('a cold-start disconnect before any connection never raises the alarming error',()=>{
+ const c=new PersonalController({send:()=>true,start:async()=>{},stop:async()=>{}})
+ c.disconnect();assert.equal(c.error,'');assert.equal(c.everConnected,false)
+})
+test('a real exit after connect still raises the disconnect error',()=>{
+ const {c}=harness();c.disconnect();assert.equal(c.error,'连接已断开，草稿已保留');assert.equal(c.everConnected,true)
+})
 test('rejected command remains an observable failure',async()=>{
  const {c,sent}=harness();const pending=c.command('memory.forget',{id:'x',expected_version:1});c.receive({type:'personal.result',request_id:sent.at(-1).request_id,ok:false,error:'version_conflict'});await assert.rejects(pending,/version_conflict/)
 })
@@ -58,6 +70,12 @@ test('dictation rejects wrong conversation and preserves draft when finish canno
 })
 test('empty transcription cannot erase the editable draft',async()=>{
  const {c}=harness();c.draft='keep';await c.dictate();const id=c.dictationId;await c.finish();c.receive({type:'input.transcription',id,text:''});assert.equal(c.draft,'keep');assert.match(c.error,/recognition_failed/)
+})
+test('dictation failures with a known cause say what went wrong and keep the draft',async()=>{
+ for(const [error,expected] of [['no_audio',/没有录到声音/],['no_speech',/没有听清/]]){
+  const {c}=harness();c.draft='keep';await c.dictate();const id=c.dictationId;await c.finish();c.receive({type:'input.transcription',id,error})
+  assert.equal(c.draft,'keep');assert.match(c.error,expected);assert.match(c.error,/原有草稿已保留/);assert.doesNotMatch(c.error,/recognition_failed/)
+ }
 })
 
 test('late microphone permission cannot stop a newer capture',async()=>{
@@ -144,4 +162,46 @@ test('failed background synchronization cannot be undone by a stale foreground s
  const hidden=h.c.setPresentation('background');h.ack(false);await assert.rejects(hidden,/mode rejected/)
  h.c.receive({type:'personal.state',revision:1,presentation_mode:'workbench',conversations:{selected_id:'a',voice_id:null,items:[]}})
  assert.equal(h.c.presentationMode,'background');assert.equal(h.c.presentationReady,false)
+})
+
+test('startup Orb selection is acknowledged before native presentation and survives reconnect', async () => {
+ const h=presentationHarness()
+ h.c.desiredPresentation='orb'
+ const ready=h.c.connect()
+ assert.equal(h.sent.at(-1).params.mode,'orb')
+ assert.deepEqual(h.applied,[])
+ h.ack();await ready
+ assert.equal(h.c.presentationMode,'orb')
+ assert.equal(h.c.collapsed,true)
+ assert.equal(h.starts,0)
+ h.c.disconnect()
+ const reconnect=h.c.connect();h.ack();await reconnect
+ assert.equal(h.c.presentationMode,'orb')
+})
+
+test('Todo source drafts stay per conversation and exact submission context survives reconnect',async()=>{
+ const h=harness(),source={id:'todo',version:4};h.c.draft='Todo help';h.c.state().source_todo=source;h.snapshot('b');h.c.draft='Other';assert.equal(h.c.state().source_todo,undefined);h.snapshot('a');assert.deepEqual(h.c.state().source_todo,source)
+ await h.c.submit();const first=h.sent.findLast(f=>f.type==='input.text');assert.deepEqual(first.source_todo,source);assert.equal(h.c.state().source_todo,null)
+ h.c.disconnect();assert.deepEqual(h.c.state('a').source_todo,source);await h.c.connect();assert.deepEqual(h.sent.findLast(f=>f.type==='input.text'),first)
+ h.c.receive({type:'input.text_result',request_id:first.request_id,conversation_id:'a',ok:false,error:'submission_failed'});h.snapshot('a');assert.deepEqual(h.c.state().source_todo,source);h.c.draft='';assert.equal(h.c.state().source_todo,null)
+})
+
+test('command rejection preserves host input delivery status without interpreting error text',async()=>{
+ const h=harness(),pending=h.c.command('tasks.input',{task_id:'t'}),request=h.sent.at(-1)
+ h.c.receive({type:'personal.result',request_id:request.request_id,ok:false,error:'arbitrary disk failure',input_status:'unknown'})
+ await assert.rejects(pending,error=>error.input_status==='unknown'&&error.message==='arbitrary disk failure')
+})
+
+test('a local pre-send rejection is explicitly failed rather than uncertain',async()=>{
+ const h=harness();h.c.disconnect();await assert.rejects(h.c.command('tasks.input',{task_id:'t'}),error=>error.input_status==='failed');assert.equal(h.sent.some(frame=>frame.method==='tasks.input'),false)
+})
+
+test('oversized personal projections show an error without replacing retained state or replaying commands',async()=>{
+ const {c,sent}=harness();const retained=c.snapshot
+ c.receive({type:'personal.error',error:'personal_frame_too_large'})
+ assert.match(c.error,/过大/);assert.equal(c.snapshot,retained);assert.equal(c.connected,true)
+ const pending=c.command('tasks.get',{task_id:'task'});const request=sent.at(-1),count=sent.length
+ c.receive({type:'personal.result',request_id:request.request_id,ok:false,error:'personal_frame_too_large',input_status:'unknown'})
+ await assert.rejects(pending,error=>error.input_status==='unknown'&&/过大/.test(error.message))
+ assert.equal(sent.length,count);assert.equal(c.snapshot,retained)
 })

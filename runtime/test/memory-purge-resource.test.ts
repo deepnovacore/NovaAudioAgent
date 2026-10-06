@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {WorkspaceGraphStoreClient} from '../src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../src/memory-substrate/resource.js'
 import type {PersonalMemoryResource} from '../src/memory/personal-memory.js'
 import type {ModelGateway} from '../src/model/model-gateway.js'
@@ -11,7 +11,7 @@ const now=()=>new Date().toISOString()
 const entry=(key:string,text:string)=>({key,text,topic:'饮食',kind:'preference',due:null,direction:null,status:null,valid_until:null})
 
 test('resource purge validates scope and version and immediately clears deleted model-facing content',async()=>{
- const root=await mkdtemp(join(tmpdir(),'nova-purge-resource-')),client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite'))
+ const root=await mkdtemp(join(tmpdir(),'nova-purge-resource-')),client=new MemoryLedgerClient(join(root,'memory.sqlite'))
  const gateway:ModelGateway={async *stream(){ /* complete only */ },complete(){return Promise.resolve({text:JSON.stringify({entries:[entry('spicy','SYNTHETIC_PURGE_SECRET')]})})}}
  const resource=new SubstrateMemoryResource({client,userId:'purge',gateway,model:'fixture',inputConsent:true,conversationProviders:['consumer']}),port:PersonalMemoryResource=resource
  try{
@@ -32,7 +32,7 @@ test('purge fences an already-running extraction even when the model changes its
  const root=await mkdtemp(join(tmpdir(),'nova-purge-pending-'));let calls=0,start!:()=>void,release!:()=>void
  const started=new Promise<void>(resolve=>{start=resolve}),gate=new Promise<void>(resolve=>{release=resolve})
  const gateway:ModelGateway={async *stream(){ /* complete only */ },async complete(){if(++calls===2){start();await gate}return {text:JSON.stringify({entries:[entry(calls===1?'spicy':'drifting-key','我不吃辣')]})}}}
- const client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'pending',gateway,model:'fixture',inputConsent:true}),port:PersonalMemoryResource=resource
+ const client=new MemoryLedgerClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'pending',gateway,model:'fixture',inputConsent:true}),port:PersonalMemoryResource=resource
  try{
   assert.ok(port.purgeEntry,'resource must expose the explicit local-user purge capability')
   await resource.open();await resource.remember({sourceId:'first',sessionId:'synthetic',sequence:1,text:'我不吃辣',occurredAt:now(),confirmed:true});await resource.flush();const first=(await resource.list()).entries[0]!
@@ -43,7 +43,7 @@ test('purge fences an already-running extraction even when the model changes its
 })
 
 test('incomplete purge receipts survive a blocked refresh and remain available after the row disappears',async()=>{
- const root=await mkdtemp(join(tmpdir(),'nova-purge-receipt-')),client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite'))
+ const root=await mkdtemp(join(tmpdir(),'nova-purge-receipt-')),client=new MemoryLedgerClient(join(root,'memory.sqlite'))
  const gateway:ModelGateway={async *stream(){ /* complete only */ },complete(){return Promise.resolve({text:'{"entries":[]}'})}}
  const resource=new SubstrateMemoryResource({client,userId:'receipts',gateway,model:'fixture'}),port:PersonalMemoryResource=resource
  const memory=client.memory.bind(client)

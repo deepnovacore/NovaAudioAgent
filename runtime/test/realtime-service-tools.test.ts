@@ -15,7 +15,7 @@ import {dispatchTurn, hostFact, intakePorts, parkedStream, realtimeServiceHarnes
 test('intake failures reach exported telemetry without raw provider errors', async () => {
   const {service, telemetry} = realtimeServiceHarness('pipeline', {agent: true, intake: intakePorts({
     models: {assess: () => Promise.reject(new GatewayError('HTTPStatus401')),
-      plan: () => Promise.resolve({}), resolveCancelTarget: () => Promise.resolve(null)},
+      plan: () => Promise.resolve({}), targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)}},
   })})
   await service.connect()
   await dispatchTurn(service, 'dispatch', {executor: 'codex', instruction: 'Build a page', origin_ref: 'conversation:1'})
@@ -28,7 +28,7 @@ test('intake failures reach exported telemetry without raw provider errors', asy
 })
 
 
-test('a tool call is admitted against the user turn that justifies it', async () => {
+for(const ending of ['completed','yielded'] as const) test(`a tool call retains user authority and continues after ${ending}`,  async () => {
   const {service, actions, session} = realtimeServiceHarness('pipeline')
   await service.connect()
 
@@ -78,7 +78,7 @@ test('a tool call is admitted against the user turn that justifies it', async ()
   assert.equal(service.executorState, 'running', 'the renderer is told Codex is working')
 
   // The response ends, so the batch becomes ready and the tool result reaches the provider.
-  await service.handleEvent({
+  await service.handleEvent(ending==='yielded'?{kind:'response_yielded',session_epoch:1,response_id:'r-1',reason:'tool_calls',call_ids:['call-1']}:{
     kind: 'response_terminal',
     session_epoch: 1,
     response_id: 'r-1',
@@ -1171,7 +1171,7 @@ test('dispatch on the coordinated coding executor opens the intake; a committed 
         slots: {goal: {state: 'stated', note: 'Improve login'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
         readiness: .25, intent_to_proceed: true, candidate_question: {owner: 'user', text: 'Which observable behavior?'}, discovery: [], early_exit: false, abandon: false})),
       plan: () => { return Promise.reject(new Error('not ready')) },
-      resolveCancelTarget: () => Promise.resolve(null),
+      targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
     },
     dispatch: current => { dispatched.push(current); return {accepted: true, delegate_id: 'd1'} },
   })
@@ -1212,7 +1212,7 @@ for (const race of ['assess-steer'] as const) {
             slots: {goal: {state: 'stated', note: 'adjust task'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
             readiness: .25, intent_to_proceed: true, candidate_question: null, discovery: [], early_exit: false, abandon: false}
         },
-        plan: () => { throw new Error('unexpected plan') }, resolveCancelTarget: () => Promise.resolve(null),
+        plan: () => { throw new Error('unexpected plan') }, targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
       },
       steer: (_current, _project, text) => { effects.push(text); return {accepted: true, delegate_id: 'running'} },
     })
@@ -1250,7 +1250,7 @@ for (const terminal of ['failed', 'empty'] as const) {
           kind: 'unclear', project: null, project_evidence: null, session: {mode: 'latest'},
           slots: {goal: {state: 'stated', note: 'task'}, scope: {state: 'missing', note: ''}, acceptance: {state: 'missing', note: ''}, constraints: {state: 'missing', note: ''}},
           readiness: .25, intent_to_proceed: false, candidate_question: null, discovery: [], early_exit: false, abandon: false}),
-        plan: () => { throw new Error('unexpected plan') }, resolveCancelTarget: () => Promise.resolve(null),
+        plan: () => { throw new Error('unexpected plan') }, targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)},
       },
       steer: (_current, _project, text) => { effects.push(text); return {accepted: true, delegate_id: 'd'} },
     })})
@@ -1287,7 +1287,7 @@ for (const terminal of ['failed', 'empty'] as const) {
 
 test('intake owns final queued-fact eligibility and workspace changes without service snapshot reads', async () => {
   const {service, injectedItems} = realtimeServiceHarness('pipeline', {projectTool: true, intake: intakePorts({
-    models: {assess: () => new Promise(() => undefined), plan: () => Promise.resolve(null), resolveCancelTarget: () => Promise.resolve(null)},
+    models: {assess: () => new Promise(() => undefined), plan: () => Promise.resolve(null), targets: {resolveIntake: () => Promise.reject(new Error('unexpected target call')), resolveWork: () => Promise.resolve(null)}},
   })})
   await service.connect()
   await speak(service, 'u1', 'Discuss the layout')
@@ -1340,7 +1340,7 @@ test('explicit response evidence cannot claim the current user through host or m
   assert.deepEqual(service.boundOriginsForTest, [['1:response-exact', 'user-evidence']])
 })
 
-test('bound tool-result continuations retain the original user evidence across multiple steps', async () => {
+for(const ending of ['completed','yielded'] as const) test(`bound ${ending} tool continuations retain user evidence across multiple steps`, async () => {
   const {service, injectedItems, runtimeDispatches} = realtimeServiceHarness('pipeline', {agent: true})
   await service.connect()
   try {
@@ -1353,7 +1353,7 @@ test('bound tool-result continuations retain the original user evidence across m
         item_id: `chain-tool-${step}`, call_id: `chain-call-${step}`, name: 'dispatch',
         arguments: {executor: 'codex', instruction: `Step ${step}`}})
       assert.equal(runtimeDispatches(), step, `step ${step} must retain its real user origin`)
-      await service.handleEvent({kind: 'response_terminal', session_epoch: 1, response_id: responseId,
+      await service.handleEvent(ending==='yielded'?{kind:'response_yielded',session_epoch:1,response_id:responseId,reason:'tool_calls',call_ids:[`chain-call-${step}`]}:{kind: 'response_terminal', session_epoch: 1, response_id: responseId,
         status: 'completed', reason: ''})
       const output = injectedItems.find(item => item.kind === 'tool_output' && item.call_id === `chain-call-${step}`)
       assert.ok(output)

@@ -69,7 +69,7 @@ test('canonical JSON pins cross-language number bytes by JSON numeric value', ()
 test('canonical JSON matches the shared cross-language vectors', () => {
   const path = resolve(
     import.meta.dirname,
-    '../../../fixtures/runtime/canonical-json-vectors.json',
+    '../../../tests/fixtures/runtime/canonical-json-vectors.json',
   )
   const vectors = JSON.parse(readFileSync(path, 'utf8')) as {
     readonly id: string

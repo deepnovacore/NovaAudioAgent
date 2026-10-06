@@ -116,7 +116,7 @@ test('desktop telemetry creates the app-state directory for the explicit default
   const directory = await mkdtemp(join(tmpdir(), 'nova-telemetry-env-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const telemetry = createRealtimeTelemetry({
-    NOVA_AUDIO_AGENT_REALTIME_TELEMETRY: '~/.nova-audio-agent/realtime-telemetry.jsonl',
+    REALTIME_TELEMETRY: '~/.nova-audio-agent/realtime-telemetry.jsonl',
   }, {clock: new VirtualClock(), homeDirectory: directory})
   telemetry.record('configured.default', {revision: 1})
   telemetry.close()
@@ -133,12 +133,12 @@ test('desktop telemetry accepts an explicit empty opt-out and expands custom hom
   t.after(() => rm(directory, { recursive: true, force: true }))
   const clock = new VirtualClock()
   const disabled = createRealtimeTelemetry({
-    NOVA_AUDIO_AGENT_REALTIME_TELEMETRY: '  ',
+    REALTIME_TELEMETRY: '  ',
   }, {clock, homeDirectory: directory})
   assert.ok(disabled instanceof NullTelemetry)
 
   const enabled = createRealtimeTelemetry({
-    NOVA_AUDIO_AGENT_REALTIME_TELEMETRY: '~/desktop-telemetry.jsonl',
+    REALTIME_TELEMETRY: '~/desktop-telemetry.jsonl',
   }, {clock, homeDirectory: directory})
   enabled.record('camera.admission', {
     executor: 'guard', status: 'denied', phase: 'pre_arm', admitted: false,

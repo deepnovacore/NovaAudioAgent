@@ -15,6 +15,7 @@ Coding delegates project work to Codex. Install Codex and sign in on the host co
 - Cancellation does not delete project files or session records.
 - Executors do not speak directly or approve operations for you.
 - The current integration uses `codex app-server`. Planned coding backends are not claims of present compatibility.
+- Delegated coding work is tracked as a durable Task on the [Tasks](../tasks.md) page, with acceptance criteria, verified completion, and the ability to take over or hand control back to Nova.
 
 See [getting started](../getting-started.md) for setup and the [executor contract](../archs/05-executors.md) for developer details.
 

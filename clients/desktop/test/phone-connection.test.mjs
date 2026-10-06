@@ -78,11 +78,12 @@ test('closing the panel during revoke or pre-create lookup cannot create another
   const body = source.slice(source.indexOf('async function cancelPhonePairing('), source.indexOf('function openPairingWindow('))
   for (const deferredType of ['pair.revoke', 'pair.list', 'settings']) {
     let release, creates = 0
-    const context = vm.createContext({URL, Set, app: {}, process: {platform: 'darwin'},
+    const context = vm.createContext({acceptance: null, URL, Set, app: {}, process: {platform: 'darwin'},
       currentSettings: {phoneConnectionEnabled: true, phoneServerUrl: 'wss://host.example'},
       phoneEpoch: 0, phoneConfig: {port: 19876, token: 'private'}, phoneImage: 'old', phoneIssuedDevices: new Set(),
       phonePayload: deferredType === 'pair.revoke' ? {code: 'a'.repeat(32), server: 'wss://host.example/client/v1'} : undefined,
       managedPhone: {running: true, start: async () => {}},
+      accessCredentials: operation => operation(),
       settingsWriter: () => new Promise(resolve => {release = resolve}),
       requestPhonePairing: async (_config, frame) => {
         if (frame.type === 'pair.create') creates++
@@ -97,6 +98,18 @@ test('closing the panel during revoke or pre-create lookup cannot create another
     release({devices: []})
     assert.equal((await pending).state, 'idle')
     assert.equal(creates, 0)
+  }
+})
+
+test('acceptance rejects phone actions before any settings, service, or pairing work', async () => {
+  const {readFile} = await import('node:fs/promises')
+  const vm = await import('node:vm')
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const body = source.slice(source.indexOf('async function cancelPhonePairing('), source.indexOf('function openPairingWindow('))
+  const context = vm.createContext({acceptance: {}, phoneEpoch: 0})
+  vm.runInContext(body, context)
+  for (const action of ['cancel', 'install', 'login', 'help', 'disable', 'enable', 'network', 'revoke', 'refresh']) {
+    await assert.rejects(context.phoneAction(action, 'device'), /acceptance_phone_disabled/)
   }
 })
 

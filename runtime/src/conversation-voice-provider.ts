@@ -1,8 +1,5 @@
-import {StreamingAsrClient} from './realtime/cascaded/streaming-asr.js'
 import {committedConversationPairsSchema} from './realtime/history.js'
-import {cascadedProviderRegistries,type CascadedProviderRegistries} from './composition/cascaded-realtime-assembly.js'
-import {BreezeTtsClient} from './realtime/cascaded/http-speech.js'
-import {requireSelectedCascadedLlmConfig,resolveEndpointingConfig} from './config/cascaded-realtime-config.js'
+import {selectedAsrFactory,selectedTtsFactory,cascadedProviderRegistries,type CascadedProviderRegistries} from './composition/cascaded-realtime-assembly.js'
 import {requireSelectedCascadedRealtimeConfig} from './config/cascaded-realtime-config.js'
 import type {buildCascadedTextProvider} from './cascaded-text-provider.js'
 import {capabilitiesFromSettings,requireIntegratedRealtime} from './config/config.js'
@@ -18,18 +15,16 @@ export type ConversationVoiceProviderOptions=Parameters<typeof buildCascadedText
 /** Provider-only voice ownership; the global host chooses which conversation may connect it. */
 export function buildCascadedVoiceProvider(options:ConversationVoiceProviderOptions,registry:CascadedProviderRegistries=cascadedProviderRegistries):RealtimeProvider {
   const history=options.history===undefined?undefined:committedConversationPairsSchema.parse(options.history)
-  const local=options.settings.local_serving
-  const selected=local?undefined:requireSelectedCascadedRealtimeConfig(options.settings),ids={next:options.idFactory}
-  const selectedLlm=requireSelectedCascadedLlmConfig(options.settings)
+  const selected=requireSelectedCascadedRealtimeConfig(options.settings),ids={next:options.idFactory}
   const capabilities=capabilitiesFromSettings(options.settings)
   const metering=(endpoint:string)=>options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,endpoint)!}
   const instructions=frontendInstructions({search:capabilities.modules.search.enabled,camera:options.captureFrame!==undefined,coding:capabilities.modules.coding.enabled,knowledge:capabilities.modules.knowledge.enabled},options.executorApproval===true)
-  const llm=registry.llm[selectedLlm.provider === 'deepseek' ? 'qwen' : selectedLlm.provider]({config:selectedLlm.config,clock:options.clock,ids,instructions,...metering(selectedLlm.config.baseUrl)})
+  const llm=registry.llm[selected.llm.provider === 'ark' ? 'ark' : 'qwen']({config:selected.llm.config,clock:options.clock,ids,instructions,...metering(selected.llm.config.baseUrl)})
   return new CascadedRealtimeProvider({
     language:options.settings.language,
-    endpointingFactory:registry.endpointing.auto({config:selected?.endpointing??resolveEndpointingConfig(options.settings),clock:options.clock}),
-    asrFactory:local?{openClient:()=>new StreamingAsrClient(local.asr)}:registry.asr.volcengine({config:selected!.asr,ids,...metering(selected!.asr.endpoint)}),
-    ttsFactory:local?{openClient:()=>new BreezeTtsClient(local.tts)}:registry.tts.volcengine({config:selected!.tts,ids,...metering(selected!.tts.endpoint)}),
+    endpointingFactory:registry.endpointing[selected.selection.endpointingProvider]({config:selected.endpointing,clock:options.clock}),
+    asrFactory:selectedAsrFactory(registry,{config:selected.asr,ids,...metering(selected.asr.endpoint)}),
+    ttsFactory:selectedTtsFactory(registry,{config:selected.tts,ids,...metering(selected.tts.endpoint)}),
     llmFactory:{open:()=>llm.open(history===undefined?undefined:{history})},
     idFactory:options.idFactory,
     ...(options.captureFrame===undefined?{}:{captureFrame:options.captureFrame}),

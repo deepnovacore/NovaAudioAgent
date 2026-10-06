@@ -31,17 +31,17 @@ export function initializeServerToken(path: string): void {
 
 export function loadServerConfig(environment: NodeJS.ProcessEnv = process.env): ServerConfig {
   requirePosixServerStorage()
-  const mediaMode = environment.NOVA_AUDIO_AGENT_SERVER_MEDIA_MODE ?? 'relay'
+  const mediaMode = environment.SERVER_MEDIA_MODE ?? 'relay'
   if (mediaMode !== 'relay' && mediaMode !== 'aoq_chat' && mediaMode !== 'aoq_runtime') throw new ServerConfigurationError('invalid server media mode')
-  const rawLanguage = (environment.NOVA_AUDIO_AGENT_LANGUAGE ?? '').trim()
+  const rawLanguage = (environment.PROMPT_LANGUAGE ?? '').trim()
   let language: PromptLanguage | undefined
   try { language = parsePromptLanguage(rawLanguage === '' ? undefined : rawLanguage) }
-  catch { throw new ServerConfigurationError('invalid configuration: NOVA_AUDIO_AGENT_LANGUAGE') }
-  const rawPort = environment.NOVA_AUDIO_AGENT_SERVER_PORT ?? ''
+  catch { throw new ServerConfigurationError('invalid configuration: PROMPT_LANGUAGE') }
+  const rawPort = environment.SERVER_PORT ?? ''
   if (!/^[0-9]+$/u.test(rawPort) || Number(rawPort) < 1 || Number(rawPort) > 65535) {
     throw new ServerConfigurationError('server port must be an integer from 1 to 65535')
   }
-  const path = tokenPath(environment.NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE)
+  const path = tokenPath(environment.SERVER_TOKEN_FILE)
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
     const stat = fstatSync(fd)
@@ -58,8 +58,6 @@ export function loadServerConfig(environment: NodeJS.ProcessEnv = process.env): 
 
 /** Remote v1 advertises the fixed PCM formats of these production adapters only. */
 export function validateRemoteAudioSettings(settings: Settings): void {
-  // Local HTTP adapters enforce mono PCM16: 16 kHz ASR and 24 kHz TTS.
-  if (settings.local_serving) return
   if (settings.pipeline_mode === 'integrated' && settings.integrated_provider === 'qwen') return
   if (settings.pipeline_mode === 'cascaded' && settings.cascade_asr_provider === 'volcengine'
     && settings.cascade_tts_provider === 'volcengine' && settings.doubao_tts_output_sample_rate === 24_000) return

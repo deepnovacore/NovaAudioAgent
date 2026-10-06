@@ -260,7 +260,7 @@ async function guardReconnectInputs(historyMode: 'none' | 'packed'): Promise<{
       delivery: 'spoken' as const, played_ms: 120, trust: 'trusted_system' as const,
     },
   ]
-  const outcome = await session.reconnectForGuard({
+  const outcome = await session.reconnectForPreemptiveAlert({
     tools: [], oldGeneration: generation, historyMode, history,
   })
   await session.deliverPreemptiveHostResponse({

@@ -1,0 +1,164 @@
+{
+  "cases": [
+    {
+      "action": "load",
+      "environment": {},
+      "id": "defaults"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "ARK_API_KEY": "fixture-ark-key",
+        "DASHSCOPE_API_KEY": "fixture-dash-key",
+        "DOUBAO_ASR_API_KEY": "fixture-asr-key",
+        "DOUBAO_BIGMODEL_API_KEY": "fixture-tts-key",
+        "CODEX_API_KEY": "fixture-codex-key",
+        "CODEX_BIN": "/fixture/bin/codex",
+        "CODEX_MANAGED_ROOT": "/fixture/managed",
+        "CODEX_PREWARM": "false",
+        "CODEX_PROJECT_STATE_ROOT": "/fixture/state",
+        "CODEX_WORKING_INTERVAL": "5",
+        "CODEX_WORKSPACE": "/fixture/workspace",
+        "COMPRESSOR_MODEL": "compressor",
+        "DOUBAO_ASR_CHUNK_MS": "320",
+        "DOUBAO_ASR_ENDPOINT": "wss://asr.example/ws/",
+        "DOUBAO_ASR_RESOURCE_ID": "asr-resource",
+        "DOUBAO_TTS_ENDPOINT": "wss://tts.example/ws/",
+        "DOUBAO_TTS_OUTPUT_SAMPLE_RATE": "24000",
+        "DOUBAO_TTS_RESOURCE_ID": "tts-resource",
+        "DOUBAO_TTS_VOICE": "tts-voice",
+        "EXECUTOR": "codex",
+        "EXECUTORS": "slow_sim,codex",
+        "FAST_MODEL": "fast-astral-😀",
+        "FRESH_WINDOW": "9.25",
+        "MODEL_API_KEY": "fixture-model-key",
+        "MODEL_BASE_URL": "https://model.example/v1",
+        "PROACTIVITY_PRESET": "eager",
+        "QWEN_CONTROLLED_GUARD_RECONNECT": "true",
+        "QWEN_GUARD_HISTORY_PAIRS": "2",
+        "QWEN_GUARD_HISTORY_RECOVERY": "packed",
+        "QWEN_REALTIME_MODEL": "qwen-model",
+        "QWEN_REALTIME_URL": "wss://qwen.example/realtime",
+        "QWEN_REALTIME_VOICE": "voice",
+        "REALTIME_PROVIDER": "volcengine",
+        "SUGGESTION_COOLDOWN": "7.5",
+        "SURROGATE_MODEL": "surrogate",
+        "VOLCENGINE_ARK_BASE_URL": "https://ark.example/v3/",
+        "VOLCENGINE_ARK_MODEL": "ark-primary",
+        "VOLCENGINE_ARK_SUPPORT_MODEL": "ark-support",
+        "VOLCENGINE_VAD_MAX_UTTERANCE_MS": "16000",
+        "VOLCENGINE_VAD_MIN_SPEECH_MS": "280",
+        "VOLCENGINE_VAD_PRE_ROLL_MS": "300",
+        "VOLCENGINE_VAD_SILENCE_END_MS": "600",
+        "VOLCENGINE_VAD_SPEECH_PAD_MS": "40",
+        "VOLCENGINE_VAD_THRESHOLD": "0.75",
+        "WATCH_MODEL": "watch-😀",
+        "TAVILY_API_KEY": "fixture-tavily-key"
+      },
+      "id": "all_preserved_overrides"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "CODEX_WORKING_INTERVAL": "\u001c5",
+        "EXECUTORS": "\u001cslow_sim, fast_sim, codex ",
+        "FAST_MODEL": "\u001cfast",
+        "SUGGESTION_COOLDOWN": "\u001c0",
+        "TAVILY_API_KEY": "\u001ctavily"
+      },
+      "id": "python_only_whitespace"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "EXECUTORS": "\u001cslow_sim, fast_sim ",
+        "FAST_MODEL": "\u001cfast",
+        "WATCH_MODEL": "\u001cwatch",
+        "TAVILY_API_KEY": "\u001ctavily"
+      },
+      "id": "python_only_string_whitespace"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "FAST_MODEL": "﻿fast﻿",
+        "WATCH_MODEL": "﻿watch﻿",
+        "TAVILY_API_KEY": "﻿key﻿"
+      },
+      "id": "bom_is_not_python_whitespace"
+    },
+    {
+      "action": "provider",
+      "environment": {
+        "MODEL_API_KEY": "fixture-model-key"
+      },
+      "id": "qwen_fallback_key"
+    },
+    {
+      "action": "provider",
+      "environment": {
+        "ARK_API_KEY": "fixture-ark-key",
+        "DOUBAO_BIGMODEL_API_KEY": "fixture-tts-key",
+        "REALTIME_PROVIDER": "volcengine"
+      },
+      "id": "volcengine_fallback_asr_key"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "QWEN_CONTROLLED_GUARD_RECONNECT": " true "
+      },
+      "id": "qwen_boolean_does_not_strip"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "QWEN_GUARD_HISTORY_PAIRS": " 2 "
+      },
+      "id": "qwen_history_does_not_strip"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "CODEX_WORKING_INTERVAL": "600",
+        "EXECUTORS": "fast_sim, codex",
+        "FRESH_WINDOW": "0",
+        "SUGGESTION_COOLDOWN": "0"
+      },
+      "id": "numeric_inclusive_bounds"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "CODEX_WORKING_INTERVAL": "601",
+        "EXECUTORS": "fast_sim, codex"
+      },
+      "id": "numeric_out_of_bounds"
+    },
+    {
+      "action": "provider",
+      "environment": {
+        "ARK_API_KEY": "fixture-ark-key",
+        "DOUBAO_BIGMODEL_API_KEY": "fixture-tts-key",
+        "DOUBAO_ASR_ENDPOINT": "https://invalid.example/asr",
+        "REALTIME_PROVIDER": "volcengine"
+      },
+      "id": "volcengine_secure_endpoint_rejected"
+    },
+    {
+      "action": "desktop_video",
+      "environment": {
+        "DESKTOP_VIDEO_FILE": "/fixture/cat-sofa.mp4"
+      },
+      "id": "desktop_video_absolute"
+    },
+    {
+      "action": "desktop_video",
+      "environment": {
+        "DESKTOP_VIDEO_FILE": "fixture/cat-sofa.mp4"
+      },
+      "id": "desktop_video_relative_rejected"
+    }
+  ],
+  "schema_version": 1
+}

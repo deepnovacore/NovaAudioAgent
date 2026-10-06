@@ -5,7 +5,7 @@ import { generateSessionTitle } from './session-title.js'
 import { sharedHomeOverrides } from './shared-home.js'
 import { assertApiKeyProvider,assertApiKeyThread,NOVA_API_PROVIDER } from './spawn-env.js'
 
-import type { ExecutorProgress } from '../../core/causal-runtime.js'
+import type { ExecutorProgress, ExecutorActivity } from '../../core/causal-runtime.js'
 import type { Clock } from '../../core/clock.js'
 import { RealClock, raceDeadline } from '../../core/clock.js'
 import { isWellFormed,stripLikePython } from '../../text/python-text.js'
@@ -119,6 +119,7 @@ type ValidatedCodexAppServerLaunchConfig = Omit<
 }
 
 export interface TransportDeadline {
+  readonly beforeWrite?: () => void
   readonly expiresAtMs: number
   readonly signal?: AbortSignal
 }
@@ -135,6 +136,7 @@ export interface RunInput { readonly workOrder: string; readonly threadName?: st
 export interface SteerInput { readonly instruction: string }
 
 export interface TransportObserver {
+  readonly onActivity?: (event:ExecutorActivity)=>void
   readonly onProgress?: (progress: ExecutorProgress) => void
   readonly onThreadReady?: (threadId: string) => void
   /** Codex renamed the thread (`thread/name/updated`); `null` clears the name. */
@@ -487,6 +489,8 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         }
       const projection = new AppServerTurnProjection({
         clock: this.#scheduler.clock,
+        sanitizePublicText:text=>{const sanitized=this.#sanitizeText(text.replace(/file:\/\/[^\s<>"']+/giu,'[FILE_REFERENCE]'),16000);return {text:sanitized.text,truncated:sanitized.originalChars>16000}},
+        onActivity:event=>observer.onActivity?.(event),
         workingInterval: this.#config.workingInterval,
         eagerProgress: this.#config.eagerProgress === true,
         ...(progress === undefined ? {} : {onProgress: progress}),
@@ -521,6 +525,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           if (session!.unexpectedServerRequest) {
             throw new CodexProtocolError('unexpected_server_request')
           }
+          deadline.beforeWrite?.()
           session!.turnStartAdmitted = true
           return {threadId: projection.threadId, input: [{type: 'text', text: workOrder}]}
         },
@@ -626,6 +631,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         () => {
           const pair = projection.activePair
           if (pair === null) throw new CodexProtocolError('stale_turn')
+          deadline.beforeWrite?.()
           expectedTurnId = pair[1]
           this.#sensitiveInputs.push(instruction)
           return {
@@ -972,7 +978,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         cwd: hostWorkspacePath(this.#config.workspace),
       }, deadline)
       if (this.#config.preserveHome && this.#sharedHomeOverrides === null) {
-        this.#sharedHomeOverrides = sharedHomeOverrides(configResponse, Object.keys(this.#config.managedMcp?.servers ?? {}))
+        this.#sharedHomeOverrides = sharedHomeOverrides(configResponse, this.#config.managedMcp)
         const cleanup = await this.#cleanup(session, false)
         if (!cleanup.complete || !cleanup.treeGone) throw new CodexTransportError('transport_lost')
         this.#session = null
@@ -1541,6 +1547,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     normalized = [...normalized].map(character => (
       isOtherCategory(character.codePointAt(0)!) ? ' ' : character
     )).join('')
+    normalized = redactApprovalDetail(normalized)
     normalized = normalized.replace(
       /(?:bearer[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+[A-Za-z0-9._~+\/-]+=*|(?:sk|rk|pk)-[A-Za-z0-9_./+=-]{8,})/giu,
       '[REDACTED]',

@@ -1043,13 +1043,13 @@ async function loadCapabilityFixtures(
   configuredResourcesPath?: string,
 ): Promise<EndpointingCapabilityFixtures | null> {
   if (signal.aborted) throw ABORTED
-  const relative = join('fixtures', 'realtime', 'volcengine', 'v1', 'endpointing')
+  const relative = join('assets', 'endpointing', 'volcengine-v1')
   const resourcesPath = configuredResourcesPath ?? (process as NodeJS.Process & {readonly resourcesPath?: unknown}).resourcesPath
   const candidates = typeof resourcesPath === 'string' && resourcesPath !== ''
     ? [join(resourcesPath, 'endpointing', 'volcengine-v1')]
     : [
         join(process.cwd(), relative),
-        fileURLToPath(new URL('../../../../../fixtures/realtime/volcengine/v1/endpointing/', import.meta.url)),
+        fileURLToPath(new URL('../../../../../assets/endpointing/volcengine-v1/', import.meta.url)),
       ]
   for (const directory of candidates) {
     try {

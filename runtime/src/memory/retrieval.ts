@@ -39,7 +39,6 @@ export class UnifiedRetrieval {
     rawRecall?: (query: string, limit: number, signal: AbortSignal) => Promise<readonly {evidence_id: string; score?: number}[]>;
   }) {}
 
-  get canPurgeEvidence(): boolean { return this.options.rawPurgeEvidence !== undefined; }
   async purgeEvidence(ids: readonly string[]): Promise<void> {
     if (!this.options.rawPurgeEvidence) throw Error('knowledge_purge_unavailable');
     await this.options.rawPurgeEvidence(ids);

@@ -1,0 +1,64 @@
+name: Bug report / 问题反馈
+description: Report a reproducible problem / 反馈可以复现的问题
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Nova Audio Agent. You may answer in English or Chinese.
+        感谢帮助改进 Nova Audio Agent，可以使用中文或英文填写。
+
+        Please search existing issues first. Remove API keys, personal information and private endpoints from attachments. Do not upload raw voice recordings or private runtime traces. Report vulnerabilities using SECURITY.md.
+        请先搜索已有 issue。附件请移除 API key、个人信息和私有地址，不要上传原始录音或私有运行轨迹。安全漏洞请按 SECURITY.md 中的方式反馈。
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 问题描述
+      description: What went wrong? / 遇到了什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Give the smallest sequence that reproduces the issue; note if it happens intermittently. / 请提供最短复现步骤；如果偶发，请说明。
+      placeholder: |
+        1. Open… / 打开……
+        2. Do… / 执行……
+        3. Observe… / 观察到……
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected and actual behavior / 预期与实际表现
+      placeholder: |
+        Expected / 预期：
+        Actual / 实际：
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Nova version / Nova 版本
+      description: Release version or commit SHA; say "unknown" if unavailable. / 发布版本或 commit SHA；无法获取时填写“未知”。
+      placeholder: 'e.g. v0.2.3 or commit SHA / 例如 v0.2.3 或 commit SHA'
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and client / 平台与客户端
+      description: OS version and desktop, browser, mobile or CLI client. / 操作系统版本，以及桌面端、浏览器、移动端或 CLI。
+      placeholder: 'e.g. macOS 15, desktop / 例如 macOS 15，桌面端'
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Model or provider (optional) / 模型或服务商（选填）
+      description: Include only public provider/model names, never credentials or private endpoints. / 仅填写公开的服务商和模型名称，不要填写凭证或私有地址。
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Additional context (optional) / 补充信息（选填）
+      description: Sanitized error messages, screenshots or relevant context. / 脱敏后的错误信息、截图或相关背景。

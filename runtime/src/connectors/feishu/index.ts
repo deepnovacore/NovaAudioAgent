@@ -7,6 +7,8 @@ import { createFeishuRunner, FeishuAppNotConfigured, object, parseFeishuJson, ty
 export const FEISHU_SCOPES = ['offline_access', 'im:chat:read', 'im:message:readonly', 'im:message.reactions:read'];
 export interface FeishuMessage {
   processing_consent?: ProcessingGrant;
+  message_id?: string; chat_id?: string; recipient_id?: string; sender_name?: string;
+  mention?: 'direct'|'all'|'none'|'unknown'; auto_capture?: boolean; source_url?: string;
   id: string; source_id: string; source_kind: 'im'; locator: string; raw_text: string;
   observed_at: string; retention_until: string; sender_id: string; account_id: string;
 }
@@ -16,6 +18,7 @@ export interface FeishuSnapshot {
   last_sync?: string; error?: string; bot_enabled: boolean; retention_days: 30; verification_url?: string;
   app_id?: string;
   scope_configured?: boolean;
+  auth_issue?: 'expired' | 'missing_scopes' | 'login_required';
   processing_consent_required?: boolean;
   app_setup?: {state: 'idle' | 'waiting' | 'ready' | 'error'; verification_url?: string; error?: string};
 }
@@ -27,7 +30,9 @@ interface Saved {
   bot: boolean; selected: string[]; cursors: Record<string, Cursor>; lastSync?: string;
   deliveries: Record<string, { nonce: string; message?: string; chat?: string }>;
   actions: string[];
-  generation: number; sources: string[];
+  generation: number; sources: string[]; mentionCaptureSince?: string;
+  /** Per chat: only mentions from this instant on may become Todos automatically; history never does. */
+  captureFrom?: Record<string, string>; consentSince?: string;
 }
 export interface FeishuOptions {
   executable: string; credentialRoot: string; statePath: string;
@@ -68,6 +73,29 @@ function messageText(row: Record<string, unknown>): string | null {
   })].filter(Boolean).join('\n');
 }
 
+
+/** Only provider top-level mentions identify the addressed user; quotations and rendered names do not. */
+export function structuredMention(row: Record<string, unknown>, openId: string): 'direct'|'all'|'none'|'unknown' {
+  if (!Array.isArray(row.mentions)) {
+    if ((row.msg_type ?? row.message_type) !== 'post') return 'unknown';
+    try {
+      const raw = object(row.body).content;
+      const content = typeof raw === 'string' ? object(JSON.parse(raw)) : object(raw);
+      const post = Array.isArray(content.content) ? content : object(content.zh_cn ?? content.en_us ?? Object.values(content)[0]);
+      if (!Array.isArray(post.content)) return 'unknown';
+      const nodes = post.content.flat().filter(node => node && typeof node === 'object') as Record<string, unknown>[];
+      const targets = nodes.filter(node => node.tag === 'at').map(node => node.user_id);
+      if (targets.includes(openId)) return 'direct';
+      if (targets.includes('all')) return 'all';
+      return targets.length ? 'none' : 'unknown';
+    } catch { return 'unknown'; }
+  }
+  const mentions = row.mentions.filter(item => item && typeof item === 'object') as Record<string, unknown>[];
+  if (mentions.some(item => (item.id_type === undefined || item.id_type === 'open_id') && item.id === openId)) return 'direct';
+  if (mentions.some(item => item.id === 'all')) return 'all';
+  return 'none';
+}
+
 function readSaved(value: unknown): Saved {
   const data = object(value);
   for (const key of ['paused', 'connected', 'bot']) if (typeof data[key] !== 'boolean') throw new Error('Invalid Feishu state');
@@ -83,6 +111,8 @@ function readSaved(value: unknown): Saved {
     if (!str(row.nonce) || ['message', 'chat'].some((key) => row[key] !== undefined && typeof row[key] !== 'string')) throw new Error('Invalid Feishu delivery');
   }
   if (data.scopeConfigured !== undefined && typeof data.scopeConfigured !== 'boolean') throw new Error('Invalid Feishu scope state');
+  if (data.consentSince !== undefined && !Number.isFinite(Date.parse(str(data.consentSince)))) throw new Error('Invalid Feishu consent state');
+  for (const from of Object.values(object(data.captureFrom))) if (!Number.isFinite(Date.parse(str(from)))) throw new Error('Invalid Feishu capture state');
   if(data.processingConsent!==undefined)processingGrantSchema.parse(data.processingConsent);
   return data as unknown as Saved;
 }
@@ -183,6 +213,8 @@ export class FeishuConnector {
     });
   }
   async status(signal?: AbortSignal): Promise<FeishuSnapshot> {
+    // Preserve the preflight error instead of attempting credential access with an unsupported CLI.
+    if (!this.view.available) return this.snapshot();
     let data: Record<string, unknown>;
     try {data = signal ? parseFeishuJson(await this.run(['auth', 'status', '--json', '--verify'], {signal})) : await this.json(['auth', 'status', '--json', '--verify']);}
     catch (error) {if (!(error instanceof FeishuAppNotConfigured)) throw error; data = {};}
@@ -194,22 +226,30 @@ export class FeishuConnector {
     const user = identities.user ? object(identities.user) : {};
     const scopes = Array.isArray(user.scopes ?? user.scope) ? user.scopes ?? user.scope : str(user.scope ?? user.scopes).split(/[ ,]+/);
     const id = str(user.openId ?? user.open_id);
-    const valid = data.verified !== false && (user.status === 'authenticated' || user.tokenStatus === 'valid' || user.authenticated === true);
+    // CLI --verify may refresh successfully while retaining the pre-refresh status.
+    const valid = data.verified !== false && user.verified !== false && (user.status === 'authenticated' || user.tokenStatus === 'valid' || user.authenticated === true
+      || user.status === 'needs_refresh' && user.verified === true);
     if (!app || !id || !valid || !FEISHU_SCOPES.every((scope) => (scopes as unknown[]).includes(scope))) {
+      if (app) this.view.auth_issue = user.tokenStatus === 'expired' ? 'expired' : valid && id ? 'missing_scopes' : 'login_required';
+      else delete this.view.auth_issue;
+      if(this.saved.processingConsent?.extraction_provider)await this.setProcessingConsent(false);
       this.view.state = 'unauthorized'; this.view.bot_enabled = false;
       this.saved.connected = false; this.saved.bot = false;
       this.listenerController?.abort(); await this.listener?.catch(() => { /* Authorization is no longer valid. */ });
       await this.save();
       return this.snapshot();
     }
+    delete this.view.auth_issue;
     const account = hash(JSON.stringify([app, user.tenantKey ?? user.tenant_key ?? null, id]));
     if (this.saved.account && this.saved.account !== account) {
+      await this.setProcessingConsent(false);
       this.listenerController?.abort(); await this.listener?.catch(() => { /* Fence the old identity. */ });
       await this.stopOwnedBus();
       const { sources, generation } = this.saved;
       this.saved = { ...fresh(), sources, generation: generation + 1 };
       this.view.chats = [];
     }
+    this.saved.mentionCaptureSince ??= this.now().toISOString();
     this.saved.account = account; this.saved.openId = id; this.saved.name = str(user.name ?? user.userName) || '已登录';
     this.view.account_name = this.saved.name;
     this.view.account_id = account;
@@ -309,7 +349,9 @@ export class FeishuConnector {
     if (!consent || this.view.state === 'unauthorized' || !this.saved.account || chatIds.some((id) => !this.view.chats.some((chat) => chat.id === id))) throw new Error('请选择已授权的飞书会话');
     await this.pause();
     await this.setProcessingConsent(false,true);
+    const previous = new Set(this.saved.selected), since = this.now().toISOString();
     this.saved.scopeConfigured = true; this.saved.selected = [...new Set(chatIds)]; this.saved.connected = true; this.saved.paused = false;
+    this.saved.captureFrom = Object.fromEntries(this.saved.selected.map((id) => [id, previous.has(id) ? this.saved.captureFrom?.[id] ?? this.saved.mentionCaptureSince ?? since : since]));
     this.view.chats = this.view.chats.map((chat) => ({ ...chat, selected: chatIds.includes(chat.id) }));
     this.view.state = 'ready'; await this.save();
   }
@@ -317,8 +359,12 @@ export class FeishuConnector {
     const prior=this.saved.processingConsent;
     const grant=this.options.processingGrant?.(consent,(prior?.revision??0)+1,(prior?.scope_revision??0)+Number(scopeChanged));
     if(!grant)return;
-    await this.options.onProcessingConsent?.(this.saved.sources,grant);
-    this.saved.processingConsent=grant;await this.save();this.publish();
+    const sources=consent?this.saved.sources.filter(id=>this.saved.selected.some(chat=>id===`feishu:${this.saved.account}:${this.saved.generation}:${chat}`)):this.saved.sources;
+    await this.options.onProcessingConsent?.(sources,grant);
+    this.saved.processingConsent=grant;
+    // Automatic capture needs live consent and starts at the grant, never at older history.
+    if(grant.extraction_provider)this.saved.consentSince=this.now().toISOString();else delete this.saved.consentSince;
+    await this.save();this.publish();
   }
   async sync(): Promise<void> {
     if (this.options.bootstrapOnly) throw new Error('Feishu collection unavailable during setup');
@@ -352,11 +398,21 @@ export class FeishuConnector {
             const text = messageText(row);
             if (text === null) { unsupported++; continue; }
             if (!text) throw new Error('Missing Feishu message body');
+            let mention = structuredMention(row, this.saved.openId!);
+            if (mention === 'unknown' && (text.includes('@') || (row.msg_type ?? row.message_type) === 'post')) {
+              try {
+                const raw = await this.json(['api', 'GET', `/open-apis/im/v1/messages/${encodeURIComponent(id)}`, '--as', 'user', '--format', 'json']);
+                const original = Array.isArray(raw.items) ? raw.items.map(object).find(item => item.message_id === id) : undefined;
+                if (original && (!original.chat_id || original.chat_id === chat)) mention = structuredMention(original, this.saved.openId!);
+              } catch { if (this.active.signal.aborted) return; /* Preserve unknown; rendered @names are not identity evidence. */ }
+            }
+            // A message you wrote yourself never addresses you.
+            if (senderId === this.saved.openId) mention = 'none';
             const rawTime = row.create_time_iso ?? row.create_time;
             const numeric = Number(rawTime);
             const time = Number.isFinite(numeric) ? numeric < 1e12 ? numeric * 1000 : numeric : Date.parse(str(rawTime));
             if (!Number.isFinite(time) || time <= 0) throw new Error('Invalid Feishu message time');
-            await this.options.ingest!({ ...(this.saved.processingConsent?{processing_consent:this.saved.processingConsent}:{}), id: hash(`${sourceId}:${id}:${hash(text)}`), source_id: sourceId, source_kind: 'im', locator: `feishu://message/${encodeURIComponent(id)}`, raw_text: text, observed_at: new Date(time).toISOString(), retention_until: new Date(time + 30 * 86400_000).toISOString(), sender_id: senderId === this.saved.openId ? '' : senderId, account_id: this.saved.account! });
+            await this.options.ingest!({ ...(this.saved.processingConsent?{processing_consent:this.saved.processingConsent}:{}), id: hash(`${sourceId}:${id}:${hash(text)}`), source_id: sourceId, source_kind: 'im', ...(typeof row.message_app_link==='string'&&row.message_app_link.length<=4096&&row.message_app_link.startsWith('https://')?{source_url:row.message_app_link}:{}), message_id: id, chat_id: chat, recipient_id: this.saved.openId!, sender_name: str(sender.name).slice(0, 120), mention, auto_capture: mention === 'direct' && time >= Math.max(Date.parse(this.saved.captureFrom?.[chat] ?? this.saved.mentionCaptureSince!), Date.parse(this.saved.consentSince ?? '')), locator: `feishu://message/${encodeURIComponent(id)}`, raw_text: text, observed_at: new Date(time).toISOString(), retention_until: new Date(time + 30 * 86400_000).toISOString(), sender_id: senderId, account_id: this.saved.account! });
             if (this.active.signal.aborted) return;
           }
           if (data.has_more !== true) {
@@ -381,7 +437,7 @@ export class FeishuConnector {
     await this.pending?.catch(() => { /* Cancellation is expected while draining. */ }); await this.save();
   }
   async disconnect(): Promise<void> {
-    await this.pause(); this.saved.connected = false; this.saved.bot = false; this.view.bot_enabled = false; this.view.state = 'disconnected';
+    await this.pause(); await this.setProcessingConsent(false); this.saved.connected = false; this.saved.bot = false; this.view.bot_enabled = false; this.view.state = 'disconnected';
     this.deviceCode = undefined; delete this.view.verification_url; await this.save();
     try { await this.stopOwnedBus(); } finally { await this.json(['auth', 'logout', '--json']); }
   }
@@ -456,6 +512,7 @@ export class FeishuConnector {
     return true;
   }
   async command(method: string, params: Record<string, unknown> = {}): Promise<FeishuSnapshot> {
+    if (!this.view.available && method !== 'feishu.status') throw new Error(this.view.error ?? '飞书 CLI 不可用');
     if (this.options.bootstrapOnly && !['feishu.status', 'feishu.app.start', 'feishu.app.status', 'feishu.app.cancel', 'feishu.app.bind', 'feishu.login', 'feishu.complete'].includes(method)) throw new Error('飞书同步需要运行中的模型服务');
     switch (method) {
       case 'feishu.app.bind':

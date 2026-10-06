@@ -4,14 +4,14 @@ import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {SubstrateMemoryResource} from '../src/memory-substrate/resource.js'
-import {WorkspaceGraphStoreClient} from '../src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../src/memory-ledger/store-client.js'
 import {ComposioConnector} from '../src/connectors/composio/index.js'
 import type {ModelGateway} from '../src/model/model-gateway.js'
 test('configured connector stores local evidence without processing consent and disconnect retains it',async()=>{
  const root=await mkdtemp(join(tmpdir(),'nova-google-sync-'));let modelCalls=0,pages=0
  const cursor={phase:'history' as const,start:Date.now()-86400000,end:Date.now(),calendar:0,baseline:'100',token:null,nextToken:null,nextBaseline:null,loaded:true,pending:[],seenTokens:[]}
  const gateway:ModelGateway={async *stream(){ /* unused */ },complete(){modelCalls++;return Promise.resolve({text:'{"entries":[]}'})}}
- const memory=new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),userId:'fixture',gateway,model:'fixture'})
+ const memory=new SubstrateMemoryResource({client:new MemoryLedgerClient(join(root,'memory.sqlite')),userId:'fixture',gateway,model:'fixture'})
  const client={createAuthConfig:()=>Promise.resolve('ac_fixture'),link:()=>Promise.resolve({accountId:'ca_fixture',url:'https://connect.composio.dev/link/fixture',expiresAt:new Date().toISOString()}),inspect:()=>Promise.resolve({identity:'fixture@example.test',requestedScopes:[]}),verify:()=>Promise.resolve({identity:'fixture@example.test',scope:{kind:'gmail' as const,labels:['INBOX'],pastDays:30}})}
  const connector=new ComposioConnector({memory:()=>memory,client,onChange:()=>{ /* observe via snapshot */ },provider:{page:()=>{pages++;if(pages===2||pages===3)return Promise.resolve({objects:[],continuation:cursor,checkpoint:{historyId:'100'},complete:false,snapshot:false});return Promise.resolve({objects:[{key:'fixture',kind:'mail',semanticHash:'hash',text:'A real task to remember',locator:'https://mail.google.com/',observedAt:new Date().toISOString(),retentionUntil:null,metadata:{},status:'current'}],continuation:null,checkpoint:{historyId:'100'},complete:true,snapshot:true})}},automatic:false})
  try{
@@ -41,7 +41,7 @@ test('pause can fence a pending sync rather than waiting behind its network resp
  const root=await mkdtemp(join(tmpdir(),'nova-google-fence-'));let entered!:()=>void,finish!:()=>void
  const started=new Promise<void>(r=>{entered=r}),gate=new Promise<void>(r=>{finish=r})
  const gateway:ModelGateway={async *stream(){ /* unused */ },complete:()=>Promise.resolve({text:'{"entries":[]}'})}
- const memory=new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),userId:'fixture',gateway,model:'fixture'})
+ const memory=new SubstrateMemoryResource({client:new MemoryLedgerClient(join(root,'memory.sqlite')),userId:'fixture',gateway,model:'fixture'})
  const client={createAuthConfig:()=>Promise.resolve('ac_fixture'),link:()=>Promise.resolve({accountId:'ca_fixture',url:'https://connect.composio.dev/link/fixture',expiresAt:new Date().toISOString()}),inspect:()=>Promise.resolve({identity:'fixture@example.test',requestedScopes:[]}),verify:()=>Promise.resolve({identity:'fixture@example.test',scope:{kind:'gmail' as const,labels:['INBOX'],pastDays:30}})}
  const connector=new ComposioConnector({memory:()=>memory,client,onChange:()=>{ /* snapshot only */ },provider:{page:async()=>{entered();await gate;return {objects:[],continuation:null,checkpoint:{historyId:'100'},complete:true,snapshot:true}}},automatic:false})
  try{
@@ -59,7 +59,7 @@ test('pause can fence a pending sync rather than waiting behind its network resp
 test('deletion interrupted after generation bump is resumed when connector opens',async()=>{
  const root=await mkdtemp(join(tmpdir(),'nova-google-delete-'))
  const gateway:ModelGateway={async *stream(){ /* no model use in deletion recovery */ },complete:()=>Promise.resolve({text:'{"entries":[]}'})}
- const memory=new SubstrateMemoryResource({client:new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),userId:'fixture',gateway,model:'fixture'})
+ const memory=new SubstrateMemoryResource({client:new MemoryLedgerClient(join(root,'memory.sqlite')),userId:'fixture',gateway,model:'fixture'})
  const connector=new ComposioConnector({memory:()=>memory,client:null,onChange(){ /* observe persisted state directly */ },automatic:false})
  try{
   await memory.open();const id=memory.prefix+'connector:interrupted'

@@ -12,12 +12,12 @@ import {
 } from '../src/target.mjs'
 
 test('public version and target matrix are stable', () => {
-  assert.equal(PRODUCT_VERSION, '0.2.2')
-  assert.equal(resolveTarget('darwin', 'arm64').artifact, 'nova-audio-agent-0.2.2-macos-arm64-app.zip')
+  assert.equal(PRODUCT_VERSION, '0.3.0-preview.1')
+  assert.equal(resolveTarget('darwin', 'arm64').artifact, 'nova-audio-agent-0.3.0-preview.1-macos-arm64-app.zip')
   assert.equal(resolveTarget('win32', 'x64').executable, 'Nova Audio Agent Desktop.exe')
   assert.throws(() => resolveTarget('darwin', 'x64'), /unsupported platform/u)
   assert.equal(resolveTarget('linux', 'x64').archive, 'file')
-  assert.equal(resolveTarget('linux', 'x64').artifact, 'nova-audio-agent-0.2.2-linux-x64.AppImage')
+  assert.equal(resolveTarget('linux', 'x64').artifact, 'nova-audio-agent-0.3.0-preview.1-linux-x64.AppImage')
   assert.throws(() => resolveTarget('linux', 'arm64'), /unsupported platform/u)
 })
 
@@ -25,13 +25,13 @@ test('release and settings paths use the documented local roots', () => {
   const target = resolveTarget('win32', 'x64')
   assert.equal(
     releaseRoot({home: '/tmp/home', target}),
-    join('/tmp/home', '.nova-audio-agent', 'cli', 'releases', '0.2.2', 'win32-x64'),
+    join('/tmp/home', '.nova-audio-agent', 'cli', 'releases', '0.3.0-preview.1', 'win32-x64'),
   )
   assert.equal(
     desktopSettingsPath({platform: 'linux', home: '/tmp/home', environment: {}}),
     join('/tmp/home', '.config', 'Nova Audio Agent Ambient Orb', 'ambient-orb-settings.json'),
   )
-  assert.equal(releaseBaseUrl(), 'https://github.com/deepnovacore/NovaAudioAgent/releases/download/v0.2.2')
+  assert.equal(releaseBaseUrl(), 'https://github.com/deepnovacore/NovaAudioAgent/releases/download/v0.3.0-preview.1')
 })
 
 test('published package and release metadata use strict public allowlists', async () => {

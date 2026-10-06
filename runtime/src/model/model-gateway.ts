@@ -68,6 +68,8 @@ export interface CompleteRequest {
   readonly jsonSchema?: Readonly<Record<string, JsonValue>> | null
   readonly images?: readonly GatewayImage[]
   readonly reasoning?: 'disabled'
+  /** A ceiling on the reply, sent as max_tokens; callers size it well above a normal answer so it only stops runaway output. */
+  readonly maxTokens?: number
   readonly signal?: AbortSignal
 }
 
@@ -172,6 +174,7 @@ export function completeRequestBody(
   if (request.jsonSchema !== undefined && request.jsonSchema !== null) {
     body.response_format = {type: 'json_object'}
   }
+  if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens
   return body
 }
 
@@ -210,13 +213,14 @@ const completionSchema = z.object({
 }).loose()
 
 export interface OpenAIGatewayOptions {
+  readonly allowAnonymous?: boolean
+  readonly redirect?: 'error' | 'follow'
   readonly baseUrl: string
   readonly apiKey: string
   readonly clock: Clock
   readonly metrics?: MetricsSink
   readonly fetch?: typeof globalThis.fetch
-  readonly thinkingControl?: 'deepseek' | 'chat-template'
-  readonly structuredOutput?: 'json-schema'
+  readonly thinkingControl?: 'deepseek' | 'openai'
   readonly requestTimeout?: number
   /** Maximum silence between SSE body chunks, in seconds. */
   readonly streamIdleTimeout?: number
@@ -224,27 +228,27 @@ export interface OpenAIGatewayOptions {
 
 /** OpenAI-compatible transport. Prompts and outputs never enter metrics or logs. */
 export class OpenAIModelGateway implements ModelGateway {
+  readonly #redirect: 'error' | 'follow'
   readonly #endpoint: string
   readonly #apiKey: string
   readonly #clock: Clock
   readonly #metrics: MetricsSink
   readonly #fetch: typeof globalThis.fetch
-  readonly #thinkingControl: 'deepseek' | 'chat-template' | undefined
-  readonly #structuredOutput: 'json-schema' | undefined
+  readonly #thinkingControl: 'deepseek' | 'openai' | undefined
   readonly #requestTimeout: number
   readonly #streamIdleTimeout: number
 
   constructor(options: OpenAIGatewayOptions) {
-    if (!options.baseUrl || !options.apiKey) {
+    if (!options.baseUrl || (!options.apiKey && !options.allowAnonymous)) {
       throw new TypeError('baseUrl and apiKey are required')
     }
     this.#endpoint = `${options.baseUrl.replace(/\/+$/u, '')}/chat/completions`
+    this.#redirect = options.redirect ?? 'follow'
     this.#apiKey = options.apiKey
     this.#clock = options.clock
     this.#metrics = options.metrics ?? new LoggingMetrics()
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#thinkingControl = options.thinkingControl
-    this.#structuredOutput = options.structuredOutput
     this.#requestTimeout = options.requestTimeout ?? 120
     this.#streamIdleTimeout = options.streamIdleTimeout ?? 600
     if (!Number.isFinite(this.#streamIdleTimeout) || this.#streamIdleTimeout <= 0) {
@@ -261,7 +265,7 @@ export class OpenAIModelGateway implements ModelGateway {
     let finishReason: string | null = null
     let errorType: string | null = null
     try {
-      const pending = await this.#post(streamRequestBody(request), request.signal)
+      const pending = await this.#post(this.#thinkingControl === 'openai' ? {...streamRequestBody(request),reasoning_effort:'none'} : streamRequestBody(request), request.signal)
       pending.clearRequestTimeout()
       const response = pending.response
       for await (const event of readServerSentEvents(response, {
@@ -311,10 +315,9 @@ export class OpenAIModelGateway implements ModelGateway {
     let finishReason: string | null = null
     let errorType: string | null = null
     try {
-      const body = {...completeRequestBody(request)}
-      if (this.#structuredOutput === 'json-schema' && request.jsonSchema) body.response_format = {type:'json_schema',json_schema:{name:'response',strict:true,schema:request.jsonSchema}}
+      const body = completeRequestBody(request)
       const pending = await this.#post(this.#thinkingControl === 'deepseek' && request.reasoning === 'disabled'
-        ? {...body, thinking: {type: 'disabled'}} : body, request.signal)
+        ? {...body, thinking: {type: 'disabled'}} : this.#thinkingControl === 'openai' ? openAIBody(body) : body, request.signal)
       let raw: unknown
       try {
         raw = await pending.response.json()
@@ -352,14 +355,14 @@ export class OpenAIModelGateway implements ModelGateway {
     try {
       const response = await this.#fetch(this.#endpoint, {
         method: 'POST',
-        redirect: 'error',
+        redirect: this.#redirect,
         headers: {
           // The credential rides in the header and never in a log line or metric.
-          authorization: `Bearer ${this.#apiKey}`,
+          ...(this.#apiKey ? {authorization: `Bearer ${this.#apiKey}`} : {}),
           'content-type': 'application/json',
           accept: body.stream === true ? 'text/event-stream' : 'application/json',
         },
-        body: JSON.stringify(this.#thinkingControl === 'chat-template' ? {...body,chat_template_kwargs:{enable_thinking:false}} : body),
+        body: JSON.stringify(body),
         signal: signal === undefined
           ? timeout.signal : AbortSignal.any([signal, timeout.signal]),
       })
@@ -487,4 +490,9 @@ function dataOf(block: string): string | null {
     .filter(line => line.startsWith('data:'))
     .map(line => line.slice('data:'.length).replace(/^ /u, ''))
   return payloads.length === 0 ? null : payloads.join('\n')
+}
+
+function openAIBody(body: Readonly<Record<string,JsonValue>>):Record<string,JsonValue> {
+ const {max_tokens,...rest}=body
+ return {...rest,reasoning_effort:'none',...(max_tokens === undefined ? {} : {max_completion_tokens:max_tokens})}
 }

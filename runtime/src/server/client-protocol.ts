@@ -1,3 +1,4 @@
+import {canonicalJson} from '../text/canonical-json.js'
 import {z} from 'zod'
 import {DesktopProtocolError, MAX_DESKTOP_JSON_BYTES, parseDesktopControl, type DesktopControl} from '../desktop.js'
 import {decodeAudioFrame} from '../desktop/desktop-wire.js'
@@ -47,13 +48,13 @@ export interface ClientCommandResult {
   readonly status: 'applied' | 'rejected' | 'stale'
 }
 
-export function clientReady(serverInstanceId: string, connectionId: string, media?: ClientMedia): string {
+export function clientReady(serverInstanceId: string, connectionId: string, media?: ClientMedia, personal = false): string {
   return JSON.stringify({
     type: 'client.ready', protocol_version: 1,
     server_instance_id: serverInstanceId, connection_id: connectionId, media,
     input_audio: {encoding: 'pcm_s16le', sample_rate: 16_000, channels: 1},
     output_audio: {encoding: 'pcm_s16le', sample_rate: 24_000, channels: 1},
-    capabilities: ['audio', 'captions', 'projects', 'executor', ...(media?.pipeline === 'cascaded' ? ['text_input', 'dictation'] : [])],
+    capabilities: ['audio', 'captions', 'projects', 'executor', ...(personal ? ['personal'] : []), ...(media?.pipeline === 'cascaded' ? ['text_input', 'dictation'] : [])],
   })
 }
 
@@ -82,7 +83,7 @@ export class ClientCommands {
       }
     }
     const control = parseDesktopControl(JSON.stringify(command.payload))
-    const payload = JSON.stringify(control)
+    const payload = canonicalJson(control)
     const previous = this.#results.get(command.request_id)
     if (previous !== undefined) return previous.payload === payload ? previous.result : result('rejected')
     if (this.full) return result('rejected')

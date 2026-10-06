@@ -140,3 +140,9 @@ test('history survives application restart, session starts empty, and corrupt hi
     assert.equal(failedWrite.snapshot().requests, 1)
   } finally { await rm(dir, {recursive: true, force: true}) }
 })
+test('global provider usage reaches desktop totals without invented prices',()=>{
+ const usage=createFrontendUsage()
+ for(const provider of ['openai','gemini'])assert.equal(usage.add(1,{...report,id:provider,provider,pricingRegion:'unknown'}),true)
+ assert.equal(usage.snapshot().requests,2)
+ assert.equal(usage.snapshot().unpricedReports,2)
+})

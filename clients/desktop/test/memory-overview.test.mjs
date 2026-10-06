@@ -21,10 +21,10 @@ test('missing or stale references discard synthesis after correction, deletion a
 })
 test('fallback displays actual content including records without topics, never inferred identity or counts as summary',()=>{
  const result=memoryOverview(entries)
- assert.equal(result.summary,entries.map(entry=>entry.content).join('\n\n'))
+ assert.equal(result.summary,'已记录的资料可在下方逐条查看。')
  assert.doesNotMatch(result.summary,/个主题|研究员|投资者/)
  assert.equal(memoryOverview([]).summary,'暂无记忆。')
- assert.equal(memoryOverview([{...entries[0],content:'a'.repeat(300)}]).summary.length,181)
+ assert.equal(memoryOverview([{...entries[0],content:'a'.repeat(300)}]).summary,'已记录的资料可在下方逐条查看。')
 })
 test('invalid overview structure falls back without crashing',()=>{
  for(const value of [{...overview,sections:[null]},{...overview,sections:[{...overview.sections[0],refs:[null]}]},{...overview,sections:[{...overview.sections[0],keywords:['a'.repeat(81)]}]}])assert.equal(memoryOverview(entries,value).generated,false)

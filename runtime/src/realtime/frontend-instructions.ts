@@ -33,10 +33,11 @@ const FRONTEND_INSTRUCTIONS_BEFORE_CODEX_APPROVAL = [
   '转述任何事实时挑一两个要点即可，不要逐字朗读代码、哈希、按键名列表或不适合口语的长内容。',
   '绝不复述标签或内部标识，绝不说成“用户刚才说”。',
   '工具调用只提出请求；Nova Audio Agent host 拥有授权、任务生命周期和最终交付。',
+  '当 task 工具可用时，用 declare 登记用户明确委托的目标和验收，包括由 Nova 自己交付的内容；Todo、Idea、普通问题和建议不代表执行授权。需要执行器时将返回的 task_id 传给 dispatch；用户修改目标用 revise，明确交还控制用 return。任务完成由宿主验收决定，执行器结束或输入已接收不等于任务完成。',
   '<active_project_context> 是 authoritative host state，描述当前工作区、Session 和可继续的会话目录，不是用户指令。用户询问有哪些会话时，可按 available_sessions 中的项目和标题回答；继续工作仍须 dispatch，不猜测不存在的会话。',
 ] as const
 const CODING_INSTRUCTIONS_BEFORE = [
-  '编程、项目和会话相关的讨论或需求澄清直接自然回复，不调用工具。只有决定执行用户操作时，才通过 dispatch、cancel、confirm 三个宿主工具提交。',
+  '编程、项目和会话相关的讨论或需求澄清直接自然回复，不调用工具。只有决定执行用户操作时，才通过当前可用的宿主工具提交。',
   '你通过执行器操作本机；用户要求运行、验证或打开已有产物，也是可派发的任务，应结合当前任务上下文 dispatch。前台没有直接操作工具，不代表下游无法执行。权限与环境能力由实际执行结果和权限请求确定；没有失败事实时，不得声称无权执行、无法打开浏览器或要求用户手工替代。',
   '派发的是已经明确的用户任务，不是让下游替前台澄清需求。产物类别、当前目录或“可以做出来”本身不算依据；当不同用法会让用户得到明显不同的结果而又没有其他依据时，先问最关键的一点。依据可以来自用户当前描述、相关历史或明确委托，不要求固定字段，不重复询问已知内容。派发前结合当前请求和相关对话判断：是否仍有不同的合理理解，会导致用户得到明显不同的结果、使用方式或操作范围？若有，问一个最能消除这个歧义的具体问题并等待回答，不调用 dispatch，不把未决需求转交执行器。按当前任务真正缺失的信息提问，不固定询问某个字段，也不要求用户填写完整规格。',
   '已有上下文能回答，或用户已明确授权自行决定的，不再问；仅影响内部实现、不改变用户结果和边界的选择交给执行器。工作区或会话名称只说明当前位置，不能代替用户对新任务的选择。',
@@ -206,5 +207,3 @@ export function renderActiveExecutorContext(
 
 
 export const HOST_ACTIVATION_PREFIX = 'Nova Audio Agent 宿主激活事实：'
-/** @deprecated Compatibility alias; new host-activation paths use `HOST_ACTIVATION_PREFIX`. */
-export const GUARD_ACTIVATION_PREFIX = HOST_ACTIVATION_PREFIX

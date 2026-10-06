@@ -123,8 +123,8 @@ export function planClientLaunch({
   dependenciesInstalled,
   homeDirectory,
 }) {
-  if (!Array.isArray(argv) || argv.length !== 0) {
-    throw new Error('this launcher does not accept arguments')
+  if (!Array.isArray(argv) || !(argv.length === 0 || argv.length === 1 && argv[0] === '--workbench')) {
+    throw new Error('this launcher does not accept arguments other than --workbench')
   }
   if (!SUPPORTED_PLATFORMS.has(platform)) {
     throw new Error('the Nova Audio Agent Desktop client requires macOS, Linux, or Windows')
@@ -138,30 +138,30 @@ export function planClientLaunch({
   const npm = args => ({command: nodeExecutable, args: [npmCli, ...args]})
   const configuredEnv = parseClientEnvironment({contents: envFileContents, shellEnv: env})
   const workspace = expandHomePath(
-    configuredEnv.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || rootDir,
+    configuredEnv.CODEX_WORKSPACE || rootDir,
     homeDirectory,
     pathApi,
   )
   const clientEnv = {
     ...configuredEnv,
-    NOVA_AUDIO_AGENT_BACKEND: 'node',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
-    ...(configuredEnv.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT === undefined
+    BACKEND: 'node',
+    CODEX_WORKSPACE: workspace,
+    ...(configuredEnv.CODEX_MANAGED_ROOT === undefined
       ? {}
-      : {NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: expandHomePath(
-          configuredEnv.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT,
+      : {CODEX_MANAGED_ROOT: expandHomePath(
+          configuredEnv.CODEX_MANAGED_ROOT,
           homeDirectory,
           pathApi,
         )}),
-    ...(configuredEnv.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT === undefined
+    ...(configuredEnv.CODEX_PROJECT_STATE_ROOT === undefined
       ? {}
-      : {NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: expandHomePath(
-          configuredEnv.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,
+      : {CODEX_PROJECT_STATE_ROOT: expandHomePath(
+          configuredEnv.CODEX_PROJECT_STATE_ROOT,
           homeDirectory,
           pathApi,
         )}),
-    ...(hasCodexBinary ? { NOVA_AUDIO_AGENT_CODEX_BIN: codexBinary } : {}),
-    ...(envFileExists ? { NOVA_AUDIO_AGENT_ENV_FILE: pathApi.join(rootDir, '.env') } : {}),
+    ...(hasCodexBinary ? { CODEX_BIN: codexBinary } : {}),
+    ...(envFileExists ? { ENV_FILE: pathApi.join(rootDir, '.env') } : {}),
   }
   const steps = []
   if (!dependenciesInstalled) {
@@ -182,7 +182,7 @@ export function planClientLaunch({
   }
   steps.push({...npm(['run', 'build']), cwd: rootDir, env})
   steps.push({
-    ...npm(['run', 'start:built', '--workspace', DESKTOP_WORKSPACE]),
+    ...npm(['run', 'start:built', '--workspace', DESKTOP_WORKSPACE, ...(argv.length ? ['--', ...argv] : [])]),
     cwd: rootDir,
     env: clientEnv,
   })
@@ -254,7 +254,7 @@ export async function main({
     nodeExecutable: process.execPath,
     npmCli: env.npm_execpath,
     codexBinary: resolveClientCodexBinary({
-      configured: configuredEnv.NOVA_AUDIO_AGENT_CODEX_BIN,
+      configured: configuredEnv.CODEX_BIN,
       platform,
       arch: process.arch,
       home: homedir(),

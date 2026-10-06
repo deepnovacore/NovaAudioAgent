@@ -21,7 +21,7 @@ import {
   type RecallView,
 } from '../src/realtime/recall.js'
 
-const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/recall/v1')
+const fixtureRoot = resolve(import.meta.dirname, '../../../tests/fixtures/realtime/recall/v1')
 
 interface ScenarioItem {
   readonly channel: string

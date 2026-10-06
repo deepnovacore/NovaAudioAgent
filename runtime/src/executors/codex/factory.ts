@@ -277,7 +277,7 @@ async function createProjectResource(
   }
   const warmHome = options.config.prewarm && options.config.localCodexHome
     ? hostPersistentHomeFromConfig(options.config.localCodexHome, [options.config.localCodexHome]) : null
-  let warmClaimed = false
+  let warmReady = false
   let store: ProjectStore | null = null
   let startupTransport: CodexAppServerTransport | null = null
   try {
@@ -317,15 +317,16 @@ async function createProjectResource(
       idFactory: options.idFactory,
     })
     const adapter = new ProjectCodexAdapter({
+      ...(options.managedMcp?{managedMcp:options.managedMcp}:{}),
       store,
       ...(options.config.localCodexHome === undefined ? {} : {localCodexHome: options.config.localCodexHome}),
       confirmation,
       ...(approvalController === null ? {} : {codexApproval: approvalController}),
       transportFactory: {
         create: binding => {
-          if (!warmClaimed && warmHome !== null && startupTransport?.bindProject
+          if (warmReady && warmHome !== null && startupTransport?.bindProject
             && hostCodexHomeValue(binding.codexHome).path === hostCodexHomeValue(warmHome).path) {
-            warmClaimed = true
+            warmReady = false
             startupTransport.bindProject({workspace: binding.workspace, resumeThreadId: binding.resumeThreadId,
               approvalController: approvalController?.forWork(binding.work) ?? null})
             try { options.onDiagnostic?.('project_prewarm_reused') } catch { /* advisory */ }
@@ -362,7 +363,8 @@ async function createProjectResource(
       approvalController,
       unsubscribeApproval,
       warmHome !== null,
-      () => { warmClaimed = true;try { options.onDiagnostic?.('project_prewarm_failed') } catch { /* advisory */ } },
+      () => { warmReady = false;try { options.onDiagnostic?.('project_prewarm_failed') } catch { /* advisory */ } },
+      ready => { warmReady = ready },
     )
   } catch (error) {
     approvalController?.invalidate('resource_creation_failed')
@@ -371,6 +373,7 @@ async function createProjectResource(
     await store?.close().catch(() => undefined)
     if (error instanceof CodexHostConfigurationError) throw error
     if (error instanceof ProjectStateError) {
+      if (['state_busy', 'state_lock_failed', 'state_permissions', 'workspace_not_found', 'workspace_invalid'].includes(error.code)) throw error
       throw new CodexHostConfigurationError('codex_project_state_invalid')
     }
     throw new CodexHostConfigurationError('codex_host_unavailable')
@@ -385,6 +388,7 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
   readonly #unsubscribeApproval: (() => void) | null
   #startOperation: Promise<void> | null = null
   #closeOperation: Promise<void> | null = null
+  #closing = false
 
   constructor(
     readonly adapter: ProjectCodexAdapter,
@@ -394,6 +398,7 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
     unsubscribeApproval: (() => void) | null,
     readonly prewarmConnection = false,
     readonly onPrewarmFailure: () => void = () => undefined,
+    readonly onPrewarmReady: (ready: boolean) => void = () => undefined,
   ) {
     this.#startupTransport = startupTransport
     this.#unsubscribeApproval = unsubscribeApproval
@@ -412,8 +417,15 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
   async #startFresh(): Promise<void> {
     if (this.prewarmConnection && this.#startupTransport.prewarmConnection) {
       // Certification remains mandatory; warming a certified connection is only an optimization.
-      await this.#startupTransport.preflight({expiresAtMs: Date.now() + 20_000})
-      try { await this.#startupTransport.prewarmConnection({expiresAtMs: Date.now() + 20_000}) }
+      try { await this.#startupTransport.preflight({expiresAtMs: Date.now() + 20_000}) }
+      catch (error) {
+        try { await this.#startupTransport.close('failure') } catch { /* Preserve the certification failure. */ }
+        throw error
+      }
+      try {
+        const report = await this.#startupTransport.prewarmConnection({expiresAtMs: Date.now() + 20_000})
+        if (!this.#closing && report !== null) this.onPrewarmReady(true)
+      }
       catch {
         this.onPrewarmFailure()
         await this.#startupTransport.close('failure')
@@ -447,6 +459,8 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
   }
 
   async #close(): Promise<void> {
+    this.#closing = true
+    this.onPrewarmReady(false)
     this.approvalController?.invalidate('shutdown')
     await this.#startupTransport.close('shutdown')
     await this.adapter.close()

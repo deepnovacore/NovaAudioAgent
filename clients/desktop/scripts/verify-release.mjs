@@ -10,6 +10,7 @@ import {WebSocket, WebSocketServer} from 'ws'
 import {generateSmokeCertificate} from './smoke-tls.mjs'
 import {expectedNativeResources} from './native-resource-contract.mjs'
 import {candidateScratchParent, prepareWindowsSmokeHomeOwnership} from './windows-smoke-home.mjs'
+import {normalizeSettings, saveSettings} from '../src/main/settings-store.mjs'
 
 const product = 'Nova Audio Agent Desktop'
 const native = /\.(node|dylib|dll|so(?:\.\d+)*)$/u
@@ -123,10 +124,15 @@ async function authenticate({endpoint, token}) {
   } finally { socket.terminate() }
 }
 
-async function smoke(executable, scratch) {
-  const home = resolve(scratch, 'home')
+export async function prepareSmokeHome(home) {
   await mkdir(home, {mode: 0o700})
   prepareWindowsSmokeHomeOwnership({home, environment: process.env})
+  await saveSettings(resolve(home, 'ambient-orb-settings.json'), normalizeSettings({pipelineMode: 'integrated', cascadedLlmProvider: 'qwen'}))
+}
+
+async function smoke(executable, scratch) {
+  const home = resolve(scratch, 'home')
+  await prepareSmokeHome(home)
   // Installed-backend acceptance uses only the loopback provider, never a host Codex or external tools.
   const capabilities = resolve(home, 'capabilities.json')
   await writeFile(capabilities, JSON.stringify({version: 1, modules: {
@@ -138,15 +144,15 @@ async function smoke(executable, scratch) {
     HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home,
     XDG_CONFIG_HOME: home, XDG_DATA_HOME: home, XDG_CACHE_HOME: home,
     NODE_EXTRA_CA_CERTS: mock.certificate,
-    NOVA_AUDIO_AGENT_RELEASE_SMOKE: 'installed-candidate-v1',
-    NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: capabilities,
-    NOVA_AUDIO_AGENT_CODEX_BIN: resolve(home, 'unavailable-codex'),
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: mock.endpoint,
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: 'release-smoke-model',
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: 'release-smoke-voice',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: home,
-    NOVA_AUDIO_AGENT_EXECUTOR: 'fast_sim', NOVA_AUDIO_AGENT_EXECUTORS: 'fast_sim',
-    DASHSCOPE_API_KEY: 'public-release-smoke-key', NOVA_AUDIO_AGENT_MODEL_API_KEY: 'public-release-smoke-key',
+    RELEASE_SMOKE: 'installed-candidate-v1',
+    CAPABILITIES_CONFIG: capabilities,
+    CODEX_BIN: resolve(home, 'unavailable-codex'),
+    QWEN_REALTIME_URL: mock.endpoint,
+    QWEN_REALTIME_MODEL: 'release-smoke-model',
+    QWEN_REALTIME_VOICE: 'release-smoke-voice',
+    CODEX_WORKSPACE: home,
+    EXECUTOR: 'fast_sim', EXECUTORS: 'fast_sim',
+    DASHSCOPE_API_KEY: 'public-release-smoke-key', MODEL_API_KEY: 'public-release-smoke-key',
     TAVILY_API_KEY: 'public-release-smoke-key',
   })
   const child = spawn(executable, [`--user-data-dir=${home}`, '--open-settings', ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : [])], {

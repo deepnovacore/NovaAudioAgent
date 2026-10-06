@@ -14,3 +14,5 @@ This yields stable ownership:
 
 A slow task and a new user turn can therefore coexist without inventing nested turns or a workflow
 interpreter.
+
+`surrogate.watch` is the legacy serialized slot for Proactive selection. Runtime event, origin, wake and telemetry identifiers retain their historical spelling; the current role is Proactive.

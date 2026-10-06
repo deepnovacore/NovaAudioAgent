@@ -33,6 +33,7 @@ export type DelegateState = z.infer<typeof delegateStateSchema>
 
 export const providerTurnPhaseSchema = z.enum([
   'active',
+  'yielded',
   'cancel_requested',
   'completed',
   'cancelled',
@@ -40,7 +41,6 @@ export const providerTurnPhaseSchema = z.enum([
 ])
 export type ProviderTurnPhase = z.infer<typeof providerTurnPhaseSchema>
 
-export type ContinuationRequestResult = 'requested' | 'retryable' | 'rejected'
 
 /** A speculative display-only caption: revisable, never persisted. */
 export interface CaptionFrame extends Partial<HostWorkSource> {
@@ -468,12 +468,6 @@ export class RealtimeSessionState {
    * A final ends the accumulation: the next delta starts a new one even under the same item id,
    * because what follows a final is a revision rather than a continuation.
    */
-  clearUserCaption(itemId:string):boolean {
-    if(this.#userCaptionItem!==itemId)return false
-    this.resetUserCaptionTarget()
-    return true
-  }
-
   resetUserCaptionTarget(): void {
     this.#userCaptionItem = null
     this.#userCaptionText = ''

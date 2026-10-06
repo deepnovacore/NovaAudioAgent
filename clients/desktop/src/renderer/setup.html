@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src data:; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>开始使用 Nova</title>
+    <link rel="stylesheet" href="./setup.css">
+  </head>
+  <body>
+    <header>
+      <span class="eyebrow">NOVA</span>
+      <h1>开始使用 Nova</h1>
+      <p class="lead">选择一种语音方式，填入它需要的密钥即可开始对话。</p>
+    </header>
+    <main>
+      <div class="paths" role="radiogroup" aria-label="语音方式">
+        <label class="path" id="path-integrated">
+          <input type="radio" name="pipeline" value="integrated" checked>
+          <span class="path-title">快速开始（推荐）</span>
+          <span class="path-body">通义千问实时语音，只需一个阿里云百炼 DashScope 密钥。</span>
+        </label>
+        <label class="path" id="path-cascaded">
+          <input type="radio" name="pipeline" value="cascaded">
+          <span class="path-title">高级</span>
+          <span class="path-body">火山引擎语音识别与合成，搭配你选择的大模型。</span>
+        </label>
+      </div>
+
+      <section id="integrated-fields" class="fields">
+        <div class="key-row" data-key="dashscopeApiKey">
+          <label for="dashscopeApiKey">DashScope API Key</label>
+          <div class="key-input">
+            <input id="dashscopeApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+            <button type="button" class="test">测试</button>
+          </div>
+          <p class="key-meta"><a class="key-link" href="https://bailian.console.aliyun.com/?apiKey=1&amp;tab=model" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a><span class="key-result" aria-live="polite"></span></p>
+        </div>
+      </section>
+
+      <section id="cascaded-fields" class="fields" hidden>
+        <div class="llm-choice">
+          <label for="llm-provider">大模型</label>
+          <select id="llm-provider">
+            <option value="deepseek">DeepSeek</option>
+            <option value="qwen">通义千问（DashScope）</option>
+            <option value="ark">豆包（火山方舟）</option>
+          </select>
+        </div>
+        <div class="key-row" data-key="deepseekApiKey" data-llm="deepseek">
+          <label for="deepseekApiKey">DeepSeek API Key</label>
+          <div class="key-input">
+            <input id="deepseekApiKey" type="password" autocomplete="off" spellcheck="false">
+            <button type="button" class="test">测试</button>
+          </div>
+          <p class="key-meta"><a class="key-link" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a><span class="key-result" aria-live="polite"></span></p>
+        </div>
+        <div class="key-row" data-key="dashscopeApiKey" data-llm="qwen">
+          <label for="cascadedDashscopeApiKey">DashScope API Key</label>
+          <div class="key-input">
+            <input id="cascadedDashscopeApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+            <button type="button" class="test">测试</button>
+          </div>
+          <p class="key-meta"><a class="key-link" href="https://bailian.console.aliyun.com/?apiKey=1&amp;tab=model" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a><span class="key-result" aria-live="polite"></span></p>
+        </div>
+        <div class="key-row" data-key="arkApiKey" data-llm="ark">
+          <label for="arkApiKey">火山方舟 API Key</label>
+          <div class="key-input">
+            <input id="arkApiKey" type="password" autocomplete="off" spellcheck="false">
+            <button type="button" class="test">测试</button>
+          </div>
+          <p class="key-meta"><a class="key-link" href="https://console.volcengine.com/ark/apiKey" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a><span class="key-result" aria-live="polite"></span></p>
+        </div>
+        <div class="key-row" data-key="doubaoBigmodelApiKey">
+          <label for="doubaoBigmodelApiKey">火山语音 API Key</label>
+          <div class="key-input">
+            <input id="doubaoBigmodelApiKey" type="password" autocomplete="off" spellcheck="false">
+          </div>
+          <p class="key-meta"><a class="key-link" href="https://console.volcengine.com/speech/new/setting/apikeys" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a><span class="key-result" aria-live="polite">首次连接时验证</span></p>
+        </div>
+      </section>
+
+      <p class="note">有 DashScope 密钥时，联网搜索、记忆与摄像头会自动启用；其余能力可以之后在「设置」里补充。</p>
+    </main>
+    <footer>
+      <span id="status" aria-live="polite"></span>
+      <button type="button" id="start" class="primary">开始</button>
+    </footer>
+    <script type="module" src="./setup.mjs"></script>
+  </body>
+</html>

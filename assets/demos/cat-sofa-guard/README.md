@@ -10,7 +10,7 @@ Point the desktop client at the fixture with a deterministic file source, then a
 to guard the condition:
 
 ```bash
-NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE=/absolute/path/to/assets/demos/cat-sofa-guard/cat-sofa-guard.mp4 \
+DESKTOP_VIDEO_FILE=/absolute/path/to/assets/demos/cat-sofa-guard/cat-sofa-guard.mp4 \
   npm run start:client
 ```
 

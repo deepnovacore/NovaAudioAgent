@@ -1,9 +1,16 @@
+import {taskGrantService} from '../../personal-agent/tasks.js'
+import type {TaskDispatchContext} from '../../core/task-tools.js'
+import {acquireTaskResources,taskResourcesBusy,quarantineTaskResources,taskResourcesUncertain} from '../task-resources.js'
+import {managedMcpResources,type ManagedCodexMcp} from './managed-mcp.js'
 import type {CodingTarget, CodingTargetPort, CodingTargetSelection} from '../../personal-agent/coding-targets.js'
 import {basename} from 'node:path'
+import {compareCodePoints} from '../../text/canonical-json.js'
+import {stripLikePython} from '../../text/python-text.js'
 import {realpath} from 'node:fs/promises'
-import {readLocalCodexSessions, localRolloutAvailable} from './local-sessions.js'
+import {readLocalCodexSessions, readLocalCodexProjects, type LocalCodexProject, localRolloutAvailable} from './local-sessions.js'
 import {hostPersistentHomeFromConfig, hostWorkspaceFromConfig} from '../../projects/host-paths.js'
 import {hostWorkspacePath} from '../../projects/host-paths.js'
+import {MAX_PROJECT_SESSION_TITLE, normalizeProjectSessionTitle} from '../../projects/project-state.js'
 import type {
   CodexAppServerTransport,
   RunInput,
@@ -67,8 +74,20 @@ import {
   type ValidatedCodexDisposition,
 } from './common.js'
 
-/** Coordinator input is bounded (spec 08): ≤10 roster rows, most recently used first. */
+/** Recent-project budget for display, local discovery and rich session history. */
 const MAX_ROSTER = 10
+
+/** Whether a stored title is what importing `catalogTitle` produces: normalized, or normalized plus a ` (n)` uniqueness suffix. */
+function sameSessionTitle(stored: string, catalogTitle: string): boolean {
+  try {
+    const expected = normalizeProjectSessionTitle([...catalogTitle].slice(0, MAX_PROJECT_SESSION_TITLE).join('')).display
+    if (stored === expected) return true
+    const suffixed = /^(.+) \((\d+)\)$/u.exec(stored)
+    if (suffixed === null) return false
+    const room = Math.max(1, MAX_PROJECT_SESSION_TITLE - [...` (${suffixed[2]})`].length)
+    return suffixed[1] === stripLikePython([...expected].slice(0, room).join(''))
+  } catch { return false }
+}
 
 export interface ProjectTransportBinding {
   readonly preserveHome?: boolean
@@ -105,6 +124,7 @@ export interface ProjectTransportFactory {
 export type {ProjectCommitResult, ProjectRuntimeDispatch}
 
 export interface ProjectCodexAdapterOptions {
+  readonly managedMcp?:ManagedCodexMcp
   readonly localCodexHome?: string
 
   readonly store: ProjectStore
@@ -128,6 +148,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   readonly manifest
   readonly #localCodexHome: string | undefined
   #localSessionIds = new Set<string>()
+  #localProjects: readonly LocalCodexProject[] | null = null
+  #sessionProjectPaths = new Map<string, string>()
   #catalogHealthy = false
   #catalogTimer: ReturnType<typeof setInterval> | null = null
   #catalogRefresh: Promise<void> | null = null
@@ -142,9 +164,32 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   readonly #status = new CodexLiveAdapter(NULL_TRANSPORT, undefined, {sharedState: this.#liveState})
   readonly #confirmedBindings = new WeakMap<object, ConfirmedDelegateBinding>()
   readonly #retainedTransportCleanups = new Set<CodexAppServerTransport>()
+  readonly #resourceKeys:readonly string[]|null
+  readonly #slotWaiters=new Set<()=>void>()
+  taskResource():string|null{return this.#resourceKeys?.length===1?this.#resourceKeys[0]!:null}
   readonly #slots = new Map<string, RunSlot>()
   readonly #taskWorkspaces = new Map<string, {readonly workspace_id: string; readonly session_id?: string}>()
   readonly taskPort = {
+    quarantineResources:()=>{quarantineTaskResources(this.#resourceKeys??[])},
+    inspectSession:async(sessionId:string):Promise<string|null>=>{
+      const snapshot=await this.#store.snapshot(),session=snapshot.sessions.find(item=>item.session_id===sessionId);
+      if(!session)return 'task_session_not_found';if(session.state!=='ready')return 'task_session_'+session.state;
+      try{await this.#store.revalidateWorkspace(session.workspace_id);if(!await this.#rolloutAvailable(session))return 'task_session_resume_unavailable'}catch{return 'task_session_resume_unavailable'}
+      if(this.#slots.has(session.workspace_id))return 'task_session_running';return null
+    },
+    resolveSession:async(sessionId:string)=>{
+      const snapshot=await this.#store.snapshot(),session=snapshot.sessions.find(item=>item.session_id===sessionId)
+      const workspace=snapshot.workspaces.find(item=>item.workspace_id===session?.workspace_id)
+      if(!session||!workspace)throw Error('session_not_found')
+      const activeSlot=this.#slots.get(workspace.workspace_id)
+      const activeBinding=activeSlot===undefined?undefined:this.#taskWorkspaces.get(activeSlot.work.work_id)
+      const liveStartingSession=session.state==='starting'&&activeSlot!==undefined&&activeSlot.live!==null
+        &&activeBinding?.workspace_id===workspace.workspace_id&&activeBinding.session_id===sessionId
+      if(session.state!=='ready'&&!liveStartingSession)throw Error('session_not_found')
+      await this.#store.revalidateWorkspace(workspace.workspace_id)
+      if(activeSlot&&this.#taskWorkspaces.get(activeSlot.work.work_id)?.session_id!==sessionId)throw Error('session_active')
+      return {project:workspace.display_name,session_id:sessionId,active:!!activeSlot,...(activeSlot?{work_id:activeSlot.work.work_id}:{})}
+    },
     cancelTask: (workId: string): 'cancelling' | 'not_running' => this.#cancelWork(workId) ? 'cancelling' : 'not_running',
     taskDirectory: async (workId: string): Promise<string | null> => {
       const workspaceId = this.#taskWorkspaces.get(workId)?.workspace_id
@@ -170,6 +215,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     this.manifest = options.codexApproval === undefined
       ? CODEX_PROJECT_MANIFEST
       : CODEX_PROJECT_APPROVAL_MANIFEST
+    this.#resourceKeys=managedMcpResources(options.managedMcp)
     this.#localCodexHome = options.localCodexHome
     this.#store = options.store
     this.#confirmation = options.confirmation
@@ -202,22 +248,60 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       const ids = new Set<string>()
       try {
         const home = await realpath(this.#localCodexHome!)
+        this.#localProjects = await readLocalCodexProjects(home)
+        const projectPaths = new Map<string, string>()
+        const registeredPaths = new Set((await this.#store.snapshot()).workspaces.map(workspace => workspace.canonical_path))
+        for (const project of this.#localProjects ?? []) {
+          if (registeredPaths.has(project.path)) continue
+          try { await this.#store.ensureImported(project.name, hostWorkspaceFromConfig(project.path, [project.path])) }
+          catch { /* One unavailable project must not hide the remaining roots. */ }
+        }
         const catalog = await readLocalCodexSessions(home)
-        // Keep the same ten-project intake budget. Older projects remain in Codex.
+        const projectFor = (item: typeof catalog[number]) => this.#localProjects?.find(project => project.path === item.cwd && project.threadIds.includes(item.threadId))
+          ?? this.#localProjects?.find(project => project.threadIds.includes(item.threadId))
+          ?? this.#localProjects?.find(project => project.path === item.cwd)
         const paths = new Set<string>()
-        for (const item of catalog) { if (paths.size < MAX_ROSTER) paths.add(item.cwd) }
+        for (const item of catalog) {
+          if (this.#localProjects !== null ? projectFor(item) !== undefined : paths.size < MAX_ROSTER) paths.add(item.cwd)
+        }
+        // Each import is a locked read-parse-validate-write transaction (~50 ms on a real store), so only
+        // entries the store does not already hold identically go through one.
+        let workspacesByPath = new Map<string, WorkspaceRecord>()
+        let sessionsByThread = new Map<string, ProjectSessionRecord>()
+        let stale = true
         for (const item of [...catalog].reverse()) {
           if (this.#closed) return
           if (!paths.has(item.cwd)) continue
+          // An import can evict other sessions at capacity, so re-read the store after one before trusting a skip.
+          if (stale) {
+            const held = await this.#store.snapshot()
+            workspacesByPath = new Map(held.workspaces.map(workspace => [workspace.canonical_path, workspace]))
+            sessionsByThread = new Map(held.sessions.flatMap(session => session.codex_thread_id === null ? [] : [[`${session.executor_home ?? ''}\0${session.codex_thread_id}`, session] as const]))
+            stale = false
+          }
+          const workspace = workspacesByPath.get(item.cwd)
+          const existing = workspace === undefined ? undefined : sessionsByThread.get(`${home}\0${item.threadId}`)
+          if (workspace !== undefined && existing?.workspace_id === workspace.workspace_id && existing.state === 'ready'
+            && (existing.origin === 'nova' || (existing.last_used_at >= item.updatedAt && workspace.last_used_at >= item.updatedAt
+              && sameSessionTitle(existing.display_title, item.title)))) {
+            ids.add(existing.session_id)
+            const project = projectFor(item)
+            if (project) projectPaths.set(existing.session_id, project.path)
+            continue
+          }
+          stale = true
           try {
             const workspace = await this.#store.ensureImported([...basename(item.cwd)].slice(0, 80).join('') || 'workspace', hostWorkspaceFromConfig(item.cwd, [item.cwd]))
             const session = await this.#store.importSession(workspace.workspace_id, {
               threadId: item.threadId, title: item.title, home: home, updatedAt: item.updatedAt,
             })
             ids.add(session.session_id)
+            const project = projectFor(item)
+            if (project) projectPaths.set(session.session_id, project.path)
           } catch { /* An unavailable directory or full store must not hide other sessions. */ }
         }
         this.#localSessionIds = ids
+        this.#sessionProjectPaths = projectPaths
         this.#catalogHealthy = true
       } catch { this.#catalogHealthy = false }
     })()
@@ -234,22 +318,35 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       catch (error) { if (error instanceof ProjectResolutionError) return null; throw error }
     },
     validate: selection => this.#validateCodingTarget(selection),
-    resolve: (decision, selection) => this.resolveIntakeTarget(decision, selection),
+    resolve: (decision, selection,taskContext) => this.resolveIntakeTarget(decision, selection,taskContext),
   }
 
-  async #listCodingTargets(): Promise<readonly CodingTarget[]> {
+  async #listCodingTargets(): ReturnType<CodingTargetPort['list']> {
     await this.#refreshLocalSessions()
     const snapshot = await this.#store.snapshot()
-    const targets: CodingTarget[] = []
-    for (const workspace of [...snapshot.workspaces].sort((a, b) => b.last_used_at - a.last_used_at).slice(0, MAX_ROSTER)) {
+    const targets: Awaited<ReturnType<CodingTargetPort['list']>>[number][] = []
+    const savedRoots = this.#localProjects === null ? null : new Map(this.#localProjects.map(project => [project.path, project]))
+    const workspaces = [...snapshot.workspaces].sort((a, b) => b.last_used_at - a.last_used_at)
+    for (const workspace of savedRoots === null ? workspaces.slice(0, MAX_ROSTER) : workspaces) {
+      if (savedRoots !== null && !savedRoots.has(workspace.canonical_path)
+        && !snapshot.sessions.some(session => session.workspace_id === workspace.workspace_id && this.#sessionProjectPaths.has(session.session_id))) continue
       try { await this.#store.revalidateWorkspace(workspace.workspace_id) } catch { continue }
-      const base = {workspace_id: workspace.workspace_id, project: workspace.display_name, executor: 'codex' as const}
-      targets.push({...base, session_id: null, title: workspace.display_name})
+      // Exclusive workspace concurrency: a running work blocks every session of its workspace.
+      const holder = this.#slots.get(workspace.workspace_id)?.work.title
+      const base = {workspace_id: workspace.workspace_id, project: workspace.display_name, executor: 'codex' as const, directory: workspace.canonical_path, ...(holder === undefined ? {} : {running: holder})}
+      const saved = savedRoots?.get(workspace.canonical_path)
+      if (savedRoots === null || saved) targets.push({...base, session_id: null, title: workspace.display_name,
+        ...(saved ? {group_project:saved.name} : {})})
       for (const session of snapshot.sessions.filter(item => item.workspace_id === workspace.workspace_id
         && item.state === 'ready' && item.codex_thread_id !== null
         && (!item.executor_home || item.origin === 'nova' || (this.#catalogHealthy && this.#localSessionIds.has(item.session_id))))
         .sort((a, b) => b.last_used_at - a.last_used_at).slice(0, 20)) {
-        if (await this.#rolloutAvailable(session)) targets.push({...base, session_id: session.session_id, title: session.display_title})
+        const projectPath = this.#sessionProjectPaths.get(session.session_id) ?? workspace.canonical_path
+        if (savedRoots !== null && !savedRoots.has(projectPath)) continue
+        const group = snapshot.workspaces.find(item => item.canonical_path === projectPath)
+        if (savedRoots !== null && !group) continue
+        if (await this.#rolloutAvailable(session)) targets.push({...base, session_id: session.session_id, title: session.display_title, last_active: session.last_used_at,
+          ...(group && savedRoots ? {group_workspace_id:group.workspace_id,group_project:savedRoots.get(projectPath)!.name,group_directory:group.canonical_path} : {})})
       }
     }
     return targets
@@ -290,7 +387,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
    * resolves to `select` and, like every other change of the active project, is committed only by
    * `commitConfirmed` after the user confirmed it.
    */
-  async resolveIntakeTarget(decision: CoordinatorDecision, selection?: CodingTargetSelection): Promise<IntakeTarget> {
+  async resolveIntakeTarget(decision: CoordinatorDecision, selection?: CodingTargetSelection,taskContext?:TaskDispatchContext): Promise<IntakeTarget> {
+    if(taskContext)taskGrantService(taskContext)
     if (decision.kind === 'create') {
       const name = await this.#store.validateManagedCreate(decision.project ?? '')
       return {
@@ -304,7 +402,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       || (decision.project !== null && workspace.display_name.toLowerCase() !== decision.project.toLowerCase()))) {
       throw new ProjectResolutionError('unknown_project', {reason: 'target_mismatch'})
     }
-    if (decision.kind === 'work') {
+    if (decision.kind === 'work'&&!taskContext) {
       const slot = this.#slots.get(workspace.workspace_id)
       if (slot !== undefined) {
         throw new ProjectResolutionError('busy_project', {
@@ -340,17 +438,20 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
 
   roster(): readonly RosterEntry[] {
     const snapshot = this.#snapshot
-    return this.#publicView.roster.slice(0, MAX_ROSTER).map(entry => {
-      const workspace = snapshot?.workspaces.find(record => record.display_name === entry.name)
-      const session = snapshot?.sessions.find(record => record.session_id === workspace?.active_session_id)
+    // Display limits must not hide valid project evidence in the bounded registry.
+    return [...(snapshot?.workspaces ?? [])].sort((left, right) =>
+      right.last_used_at - left.last_used_at || right.created_at - left.created_at
+      || compareCodePoints(right.workspace_id, left.workspace_id),
+    ).map((workspace, index) => {
+      const session = index < MAX_ROSTER ? snapshot?.sessions.find(record => record.session_id === workspace.active_session_id) : undefined
       return {
-        name: entry.name,
-        last_used_at: entry.last_used_at,
+        name: workspace.display_name,
+        last_used_at: workspace.last_used_at,
         last_session_title: session?.display_title ?? null,
-        ...(this.#localCodexHome ? {sessions: (snapshot?.sessions ?? [])
-          .filter(item => item.workspace_id === workspace?.workspace_id && item.state === 'ready' && (!item.executor_home || item.origin === 'nova' || this.#localSessionIds.has(item.session_id)))
+        ...(this.#localCodexHome && index < MAX_ROSTER ? {sessions: (snapshot?.sessions ?? [])
+          .filter(item => item.workspace_id === workspace.workspace_id && item.state === 'ready' && (!item.executor_home || item.origin === 'nova' || this.#localSessionIds.has(item.session_id)))
           .sort((a, b) => b.last_used_at - a.last_used_at).slice(0, 20).map(item => item.display_title)} : {}),
-        running: this.#runningIn(entry.name),
+        running: this.#runningIn(workspace.display_name),
       }
     })
   }
@@ -504,9 +605,13 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       return projectProblemHandoff(projectErrorCode(error), op)
     }
     if (op === 'steer') {
-      const live = this.#slots.get(workspace.workspace_id)?.live
-      if (live === undefined || live === null) return projectNoActiveTurn()
-      return await live.dispatch(op, {instruction: String(admitted.value.instruction)}, context)
+      const slot = this.#slots.get(workspace.workspace_id),live=slot?.live
+      if (!slot || !live) return projectNoActiveTurn()
+      const wanted=()=>this.#slots.get(workspace.workspace_id)===slot&&slot.live===live
+        &&(admitted.value.work_id===undefined||admitted.value.work_id===slot.work.work_id)
+        &&(admitted.value.session_id===undefined||admitted.value.session_id===this.#taskWorkspaces.get(slot.work.work_id)?.session_id)
+      if(!wanted())return failureHandoff('superseded',op)
+      return await live.dispatch(op, {instruction: String(admitted.value.instruction)}, {...context,beforeWrite:()=>{context.beforeWrite?.();if(!wanted())throw Error('superseded')}})
     }
     return await this.#dispatchRun(workspace, admitted.value as unknown as ProjectRunInput, context)
   }
@@ -542,15 +647,26 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
     run: (slot: RunSlot, runContext: ExecutorDispatchContext) => Promise<ExecutorHandoff>,
   ): Promise<ExecutorHandoff> {
     if (this.#closed) return failureHandoff('closed', 'run')
-    const existing = this.#slots.get(workspace.workspace_id)
-    if (existing !== undefined) {
-      return refusedRunHandoff('busy_project', {
-        project: workspace.display_name, work_id: existing.work.work_id, title: existing.work.title,
-      })
+    if(this.#resourceKeys===null)return failureHandoff('computer_resource_unavailable','run')
+    const busy=()=>this.#slots.has(workspace.workspace_id)?'busy_project':this.#slots.size>=MAX_CONCURRENT_WORK?'capacity':null
+    if(!context.resourceWaiting&&busy()){const existing=this.#slots.get(workspace.workspace_id);return existing?refusedRunHandoff('busy_project',{project:workspace.display_name,work_id:existing.work.work_id,title:existing.work.title}):refusedRunHandoff('capacity',{running:this.running().map(work=>({...work}))})}
+    let release:(()=>void)|undefined
+    if(this.#resourceKeys.length){
+      if(taskResourcesBusy(this.#resourceKeys))await context.resourceWaiting?.(taskResourcesUncertain(this.#resourceKeys)?'computer_resource_uncertain':'computer_resource_busy')
+      release=await acquireTaskResources(this.#resourceKeys,context.signal)
     }
-    if (this.#slots.size >= MAX_CONCURRENT_WORK) {
-      return refusedRunHandoff('capacity', {running: this.running().map(work => ({...work}))})
-    }
+    try{
+      while(busy()){
+        if(!context.resourceWaiting){release?.();return refusedRunHandoff(busy()!,{running:this.running().map(work=>({...work}))})}
+        await context.resourceWaiting(busy())
+        await new Promise<void>((resolve,reject)=>{
+          const changed=()=>{if(!busy()||this.#closed){cleanup();resolve()}},abort=()=>{cleanup();reject(context.signal.reason instanceof Error?context.signal.reason:new Error('aborted'))},cleanup=()=>{this.#slotWaiters.delete(changed);context.signal.removeEventListener('abort',abort)}
+          this.#slotWaiters.add(changed);context.signal.addEventListener('abort',abort,{once:true});if(context.signal.aborted)abort();else changed()
+        })
+        if(this.#closed)throw Error('closed')
+      }
+      context.signal.throwIfAborted();context.beforeWrite?.()
+    }catch(error){release?.();throw error}
     const controller = new AbortController()
     const onAbort = (): void => { controller.abort() }
     if (context.signal.aborted) controller.abort()
@@ -568,16 +684,20 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       if (oldest !== undefined) this.#taskWorkspaces.delete(oldest)
     }
     this.#taskWorkspaces.set(slot.work.work_id, {workspace_id: workspace.workspace_id})
-    const task = run(slot, {...context, signal: controller.signal})
+    const task = Promise.resolve().then(async()=>{await context.resourceWaiting?.(null);controller.signal.throwIfAborted();context.beforeWrite?.();return run(slot, {...context, signal: controller.signal})})
     slot.task = task
     try {
-      return await task
+      const result=await task
+      if(result.outcome==='unknown'||this.#retainedTransportCleanups.size){quarantineTaskResources(this.#resourceKeys);release=undefined}
+      return result
     } catch (error) {
       if (error instanceof ProjectStateError) return projectProblemHandoff(error.code)
+      quarantineTaskResources(this.#resourceKeys);release=undefined
       throw error
     } finally {
       context.signal.removeEventListener('abort', onAbort)
       if (this.#slots.get(workspace.workspace_id) === slot) this.#slots.delete(workspace.workspace_id)
+      release?.();for(const changed of this.#slotWaiters)changed()
     }
   }
 
@@ -748,6 +868,7 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
   }
 
   async #close(): Promise<void> {
+    for(const changed of this.#slotWaiters)changed()
     await this.#catalogRefresh
     const slots = [...this.#slots.values()]
     for (const slot of slots) slot.controller.abort()
@@ -990,7 +1111,10 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
       onValidatedOutcome: value => { disposition.value = value },
     })
     slot.live = active
+    let sessionBound=false
     try {
+      await context.bindSession?.(sessionId)
+      sessionBound=true
       result = await active.dispatch('run', {work_order: workOrder}, context)
       await titleUpdates
     } catch (error) {
@@ -1033,6 +1157,8 @@ export class ProjectCodexAdapter implements ProjectExecutorAdapter {
             {wait: true},
           ).catch(() => false)
         }
+      } else if(!sessionBound&&resumeRollback!==null){
+        await this.#store.rollbackSessionResume(resumeRollback,{wait:true}).catch(()=>false)
       } else if (
         bindingMismatch
         || disposition.value?.code === 'resume_unavailable'

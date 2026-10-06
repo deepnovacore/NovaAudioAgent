@@ -130,11 +130,11 @@ test('Windows MSVC bootstrap streams a batch program without cmd /c quote parsin
   const command = windowsDeveloperEnvironmentInput()
   assert.equal(command, [
     '@set "ERRORLEVEL="',
-    '@call "%NOVA_AUDIO_AGENT_VCVARS%" >nul',
-    '@set "NOVA_AUDIO_AGENT_VCVARS_STATUS=%ERRORLEVEL%"',
-    '@if not "%NOVA_AUDIO_AGENT_VCVARS_STATUS%"=="0" @exit /b %NOVA_AUDIO_AGENT_VCVARS_STATUS%',
-    '@set "NOVA_AUDIO_AGENT_VCVARS="',
-    '@set "NOVA_AUDIO_AGENT_VCVARS_STATUS="',
+    '@call "%VCVARS%" >nul',
+    '@set "VCVARS_STATUS=%ERRORLEVEL%"',
+    '@if not "%VCVARS_STATUS%"=="0" @exit /b %VCVARS_STATUS%',
+    '@set "VCVARS="',
+    '@set "VCVARS_STATUS="',
     '@set',
     '@exit /b 0',
     '',
@@ -166,8 +166,8 @@ test('Windows MSVC bootstrap preserves Unicode paths and the exact batch status'
   assert.equal(environment.INCLUDE, 'nova-include')
   assert.equal(environment.LIB, 'nova-lib')
   assert.match(environment.PATH, /^nova-path;/u)
-  assert.equal(environment.NOVA_AUDIO_AGENT_VCVARS, undefined)
-  assert.equal(environment.NOVA_AUDIO_AGENT_VCVARS_STATUS, undefined)
+  assert.equal(environment.VCVARS, undefined)
+  assert.equal(environment.VCVARS_STATUS, undefined)
 
   const failure = resolve(unicodeRoot, 'failure.cmd')
   await writeFile(failure, '@exit /b 37\r\n', 'ascii')

@@ -7,16 +7,15 @@ import {
   requireIntegratedRealtime,
   type Settings,
 } from './config.js'
-import {validateSelectedCascadedRealtimeConfig} from './cascaded-realtime-config.js'
+import {requireSelectedCascadedRealtimeConfig} from './cascaded-realtime-config.js'
 import {stripLikePython} from '../text/python-text.js'
 
 const diagnosticIdSchema = z.enum([
   'node.version',
   'configuration.parse',
   'provider.qwen',
-  'provider.stepfun',
+  'provider.stepfun', 'provider.openai', 'provider.gemini',
   'provider.volcengine',
-  'provider.local',
   'executors.contract',
   'search.credential',
   'camera.source',
@@ -30,8 +29,8 @@ const diagnosticCodeSchema = z.enum([
   'qwen_configuration_invalid',
   'stepfun_configuration_valid',
   'stepfun_configuration_invalid',
-  'local_configuration_valid',
-  'local_configuration_invalid',
+  'openai_configuration_valid', 'openai_configuration_invalid',
+  'gemini_configuration_valid', 'gemini_configuration_invalid',
   'volcengine_configuration_valid',
   'volcengine_configuration_invalid',
   'executor_configuration_valid',
@@ -84,7 +83,7 @@ export function buildDiagnosticReport(options: {
   let capabilities: CapabilityRegistry
   try {
     settings = loadSettings(options.environment)
-    capabilities = options.environment === process.env || options.environment.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG
+    capabilities = options.environment === process.env || options.environment.CAPABILITIES_CONFIG
       ? loadCapabilityRegistry({environment: options.environment})
       : parseCapabilityRegistry({version: 1}, options.environment)
     checks.push(check('configuration.parse', 'pass', 'configuration_valid'))
@@ -125,10 +124,10 @@ function providerCheck(settings: Settings): DiagnosticCheck {
     }
   }
   try {
-    validateSelectedCascadedRealtimeConfig(settings)
-    return settings.local_serving ? check('provider.local', 'pass', 'local_configuration_valid') : check('provider.volcengine', 'pass', 'volcengine_configuration_valid')
+    requireSelectedCascadedRealtimeConfig(settings)
+    return check('provider.volcengine', 'pass', 'volcengine_configuration_valid')
   } catch {
-    return settings.local_serving ? check('provider.local', 'fail', 'local_configuration_invalid') : check('provider.volcengine', 'fail', 'volcengine_configuration_invalid')
+    return check('provider.volcengine', 'fail', 'volcengine_configuration_invalid')
   }
 }
 
@@ -148,7 +147,7 @@ function searchCheck(capabilities: CapabilityRegistry): DiagnosticCheck {
 }
 
 function cameraCheck(environment: NodeJS.ProcessEnv): DiagnosticCheck {
-  const configured = stripLikePython(environment.NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE ?? '')
+  const configured = stripLikePython(environment.DESKTOP_VIDEO_FILE ?? '')
   if (configured === '') return check('camera.source', 'pass', 'camera_local_selected')
   return isAbsolute(configured)
     ? check('camera.source', 'pass', 'camera_file_selected')

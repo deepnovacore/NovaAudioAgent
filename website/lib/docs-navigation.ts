@@ -1,4 +1,4 @@
-export const userSlugs = ['', 'getting-started', 'features', 'support-matrix', 'knowledge-base', 'personal-memory', 'iphone', 'configuration', 'architecture'];
+export const userSlugs = ['', 'getting-started', 'features', 'workbench', 'tasks', 'sources-and-connectors', 'support-matrix', 'knowledge-base', 'personal-memory', 'iphone', 'configuration', 'architecture'];
 export function isDeveloperDoc(slug: string) { return !userSlugs.includes(slug); }
 export const developerGroups = [
   { en: 'Overview', zh: '概览', slugs: ['archs/00-overview', 'glossary', 'archs/09-roadmap'] },

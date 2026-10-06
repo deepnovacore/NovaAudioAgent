@@ -30,6 +30,7 @@ export interface McpServerConfig {
   readonly args?: readonly string[]
   readonly env?: Readonly<Record<string, string>>
   readonly tools: Readonly<Record<string, McpToolConfig>>
+  readonly computerUse?: {readonly resource:string|null}
   readonly exposeTo: {readonly frontbrain: boolean; readonly codex: boolean}
 }
 export interface SearchMcpConfig {
@@ -45,10 +46,13 @@ export interface CapabilityModules {
     readonly provider: 'tavily' | 'mcp'
     readonly mcp?: SearchMcpConfig
     readonly tavily: {readonly apiKeyEnv: string; readonly apiKey?: string}
+    /** Set when search could not use its selected service and was switched or turned off instead of failing startup. */
+    readonly fallback?: 'bailian_mcp'
+    readonly reason?: string
   }
-  readonly camera: {readonly enabled: boolean}
+  readonly camera: {readonly enabled: boolean; readonly reason?: string}
   readonly coding: {readonly enabled: boolean}
-  readonly knowledge: {readonly enabled: boolean; readonly exposeToCodex: boolean}
+  readonly knowledge: {readonly enabled: boolean; readonly exposeToCodex: boolean; readonly reason?: string}
 }
 export interface McpServerStatus {
   /** Codex uses native timeout/context bounds; maxCallsPerTurn/maxResultBytes apply only to FrontBrain. */
@@ -118,6 +122,15 @@ export function interpolateCapabilityValue(value: string, environment: Environme
   if (resolved.length > 8192) invalid('interpolated_value_too_large')
   return resolved
 }
+function missingEnvironment(values: readonly string[], environment: Environment): string | undefined {
+  for (const value of values) {
+    for (const [, name = ''] of value.matchAll(/\$\{([^}]+)\}/gu)) {
+      if (ENV_NAME.test(name) && !environment[name]?.trim()) return name
+    }
+  }
+  return undefined
+}
+
 function interpolateMap(value: Readonly<Record<string, string>>, environment: Environment): Record<string, string> {
   return Object.fromEntries(Object.entries(value).map(([key, val]) => [key, interpolateCapabilityValue(val, environment)]))
 }
@@ -142,42 +155,62 @@ export function parseCapabilityRegistry(input: unknown, environment: Environment
   const camera = moduleConfig(modules.camera, 'modules.camera', [])
   const coding = moduleConfig(modules.coding, 'modules.coding', [])
   const knowledge = moduleConfig(modules.knowledge, 'modules.knowledge', ['exposeToCodex'])
-  const enabled = bool(search.enabled, true, 'modules.search.enabled')
+  const requestedEnabled = bool(search.enabled, true, 'modules.search.enabled')
   const configuredProvider = omittedDefault(search.provider, 'tavily')
   if (configuredProvider !== 'tavily' && configuredProvider !== 'mcp') invalid('modules.search.provider')
-  const provider = environmentOverride(environment, 'NOVA_AUDIO_AGENT_SEARCH_PROVIDER') ?? configuredProvider
-  if (provider !== 'tavily' && provider !== 'mcp') invalid('NOVA_AUDIO_AGENT_SEARCH_PROVIDER')
+  const requestedProvider = environmentOverride(environment, 'SEARCH_PROVIDER') ?? configuredProvider
+  if (requestedProvider !== 'tavily' && requestedProvider !== 'mcp') invalid('SEARCH_PROVIDER')
   const overrides: string[] = []
-  if (environment.NOVA_AUDIO_AGENT_SEARCH_PROVIDER?.trim()) overrides.push('NOVA_AUDIO_AGENT_SEARCH_PROVIDER')
+  if (environment.SEARCH_PROVIDER?.trim()) overrides.push('SEARCH_PROVIDER')
   let cameraEnabled = bool(camera.enabled, true, 'modules.camera.enabled')
-  const cameraOverride = environment.NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED?.trim().toLowerCase()
+  const cameraOverride = environment.CAMERA_MODULE_ENABLED?.trim().toLowerCase()
   if (cameraOverride) {
-    if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(cameraOverride)) invalid('NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED')
+    if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(cameraOverride)) invalid('CAMERA_MODULE_ENABLED')
     cameraEnabled = ['true', '1', 'yes', 'on'].includes(cameraOverride)
-    overrides.push('NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED')
+    overrides.push('CAMERA_MODULE_ENABLED')
+  }
+  let codingEnabled = bool(coding.enabled, true, 'modules.coding.enabled')
+  const codingOverride = environment.CODING_MODULE_ENABLED?.trim().toLowerCase()
+  if (codingOverride) {
+    if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(codingOverride)) invalid('CODING_MODULE_ENABLED')
+    codingEnabled = ['true', '1', 'yes', 'on'].includes(codingOverride)
+    overrides.push('CODING_MODULE_ENABLED')
   }
   const tavily = object(omittedDefault(search.tavily, {}), 'modules.search.tavily', ['apiKeyEnv'])
   const apiKeyEnv = string(omittedDefault(tavily.apiKeyEnv, 'TAVILY_API_KEY'), 'modules.search.tavily.apiKeyEnv', 128)
   if (!ENV_NAME.test(apiKeyEnv)) invalid('modules.search.tavily.apiKeyEnv')
+  // Search is optional: a missing Tavily key reuses the DashScope key through the Bailian preset, or turns search off.
+  const tavilyUnavailable = requestedEnabled && requestedProvider === 'tavily' && !environment[apiKeyEnv]?.trim()
+  const fallback = tavilyUnavailable && search.mcp === undefined && !environmentOverride(environment, 'SEARCH_MCP_URL')
+    && Boolean(environment.DASHSCOPE_API_KEY?.trim()) ? 'bailian_mcp' as const : undefined
+  let enabled = requestedEnabled && (!tavilyUnavailable || fallback !== undefined)
+  const provider = fallback === undefined ? requestedProvider : 'mcp'
+  let reason = tavilyUnavailable ? `missing_environment:${apiKeyEnv}` : undefined
   let mcp: SearchMcpConfig | undefined
   if (search.mcp !== undefined || (enabled && provider === 'mcp')) {
     const config = object(omittedDefault(search.mcp, {}), 'modules.search.mcp', ['url', 'tool', 'headers', 'timeoutMs', 'maxResultBytes'])
-    const urlOverride = environmentOverride(environment, 'NOVA_AUDIO_AGENT_SEARCH_MCP_URL')
-    const toolOverride = environmentOverride(environment, 'NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL')
+    const urlOverride = environmentOverride(environment, 'SEARCH_MCP_URL')
+    const toolOverride = environmentOverride(environment, 'SEARCH_MCP_TOOL')
     const preset = !urlOverride && config.url === undefined
     const configuredUrl = string(omittedDefault(config.url, BAILIAN_SEARCH_MCP_URL), 'modules.search.mcp.url')
     const rawUrl = string(urlOverride ?? configuredUrl, 'modules.search.mcp.url')
     const configuredTool = string(omittedDefault(config.tool, preset ? BAILIAN_SEARCH_MCP_TOOL : 'web_search'), 'modules.search.mcp.tool', 256)
     const tool = string(toolOverride ?? configuredTool, 'modules.search.mcp.tool', 256)
     const rawHeaders = stringMap(omittedDefault(config.headers, preset ? {authorization: 'Bearer ${DASHSCOPE_API_KEY}'} : {}), 'modules.search.mcp.headers')
+    // A search endpoint whose key is not set turns search off, like a missing Tavily key.
+    const missing = enabled && provider === 'mcp' ? missingEnvironment([rawUrl, ...Object.values(rawHeaders)], environment) : undefined
+    if (missing !== undefined) {
+      enabled = false
+      reason = `missing_environment:${missing}`
+    }
     const headers = enabled && provider === 'mcp' ? interpolateMap(rawHeaders, environment) : rawHeaders
     const url = enabled && provider === 'mcp' ? interpolateCapabilityValue(rawUrl, environment) : rawUrl
     if (enabled && provider === 'mcp') validateMcpEndpoint(url, headers)
     mcp = {url, tool, headers,
       timeoutMs: integer(config.timeoutMs, 8000, 60000, 'modules.search.mcp.timeoutMs'),
       maxResultBytes: integer(config.maxResultBytes, 262144, 1048576, 'modules.search.mcp.maxResultBytes')}
-    if (urlOverride) overrides.push('NOVA_AUDIO_AGENT_SEARCH_MCP_URL')
-    if (toolOverride) overrides.push('NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL')
+    if (urlOverride) overrides.push('SEARCH_MCP_URL')
+    if (toolOverride) overrides.push('SEARCH_MCP_TOOL')
   }
   const servers = object(omittedDefault(document.mcpServers, {}), 'mcpServers')
   if (Object.keys(servers).length > 8) invalid('mcpServers:max_8')
@@ -196,14 +229,17 @@ export function parseCapabilityRegistry(input: unknown, environment: Environment
     }
   }
   return {version: 1, modules: {
-    search: {enabled, provider, tavily: {apiKeyEnv, ...(environment[apiKeyEnv] === undefined ? {} : {apiKey: environment[apiKeyEnv]})}, ...(mcp === undefined ? {} : {mcp})},
-    camera: {enabled: cameraEnabled}, coding: {enabled: bool(coding.enabled, true, 'modules.coding.enabled')},
+    search: {enabled, provider, tavily: {apiKeyEnv, ...(environment[apiKeyEnv] === undefined ? {} : {apiKey: environment[apiKeyEnv]})}, ...(mcp === undefined ? {} : {mcp}),
+      ...(fallback === undefined ? {} : {fallback}), ...(reason === undefined ? {} : {reason})},
+    camera: {enabled: cameraEnabled}, coding: {enabled: codingEnabled},
     knowledge: {enabled: bool(knowledge.enabled, false, 'modules.knowledge.enabled'), exposeToCodex: bool(knowledge.exposeToCodex, false, 'modules.knowledge.exposeToCodex')},
   }, mcpServers, serverStatuses, overrides,
   frontbrainToolBudget: integer(document.frontbrainToolBudget, DEFAULT_FRONTBRAIN_TOOL_BUDGET, 256, 'frontbrainToolBudget')}
 }
 function parseServer(value: unknown, environment: Environment): McpServerConfig {
-  const config = object(value, 'server', ['enabled', 'transport', 'url', 'headers', 'command', 'args', 'env', 'tools', 'exposeTo'])
+  const config = object(value, 'server', ['enabled', 'transport', 'url', 'headers', 'command', 'args', 'env', 'tools', 'exposeTo', 'computerUse'])
+  const physical=config.computerUse===undefined?undefined:object(config.computerUse,'server.computerUse',['resource'])
+  const computerUse=physical===undefined?{}:{computerUse:{resource:physical.resource===null?null:string(physical.resource,'server.computerUse.resource',512).trim()}}
   const enabled = bool(config.enabled, true, 'server.enabled')
   const transport = config.transport
   if (transport !== 'streamable-http' && transport !== 'stdio') invalid('server.transport')
@@ -226,7 +262,7 @@ function parseServer(value: unknown, environment: Environment): McpServerConfig 
     const headers = enabled ? interpolateMap(rawHeaders, environment) : rawHeaders
     const url = enabled ? interpolateCapabilityValue(rawUrl, environment) : rawUrl
     if (enabled) validateMcpEndpoint(url, headers)
-    return {enabled, transport, url, urlInterpolated: /\$\{[A-Za-z_][A-Za-z0-9_]*\}/u.test(rawUrl), headers, tools, exposeTo}
+    return {...computerUse, enabled, transport, url, urlInterpolated: /\$\{[A-Za-z_][A-Za-z0-9_]*\}/u.test(rawUrl), headers, tools, exposeTo}
   }
   if (config.url !== undefined || config.headers !== undefined) invalid('server.transport_fields')
   const command = string(config.command, 'server.command')
@@ -234,11 +270,11 @@ function parseServer(value: unknown, environment: Environment): McpServerConfig 
   if (!Array.isArray(args) || args.length > 64 || args.some(arg => typeof arg !== 'string' || arg.length > 8192 || arg.includes('\0'))) invalid('server.args')
   const env = stringMap(config.env, 'server.env')
   if (Object.keys(env).some(key => !ENV_NAME.test(key))) invalid('server.env')
-  return {enabled, transport, command, args: args as string[], env: enabled ? interpolateMap(env, environment) : env, tools, exposeTo}
+  return {...computerUse, enabled, transport, command, args: args as string[], env: enabled ? interpolateMap(env, environment) : env, tools, exposeTo}
 }
 export function loadCapabilityRegistry(options: {readonly environment?: Environment; readonly path?: string; readonly home?: string} = {}): CapabilityRegistry {
   const environment = options.environment ?? process.env
-  const explicitPath = (options.path === '' ? undefined : options.path) ?? environmentOverride(environment, 'NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG')
+  const explicitPath = (options.path === '' ? undefined : options.path) ?? environmentOverride(environment, 'CAPABILITIES_CONFIG')
   const path = explicitPath ?? DEFAULT_CAPABILITIES_PATH
   const explicit = explicitPath !== undefined
   const resolved = path.startsWith('~/') ? join(options.home ?? homedir(), path.slice(2)) : path
@@ -255,7 +291,9 @@ export function loadCapabilityRegistry(options: {readonly environment?: Environm
 }
 export function capabilityStatus(registry: CapabilityRegistry, toolCount: number | null = null) {
   return {modules: {
-    search: {enabled: registry.modules.search.enabled, provider: registry.modules.search.provider},
+    search: {enabled: registry.modules.search.enabled, provider: registry.modules.search.provider,
+      ...(registry.modules.search.fallback === undefined ? {} : {fallback: registry.modules.search.fallback}),
+      ...(registry.modules.search.reason === undefined ? {} : {reason: registry.modules.search.reason})},
     camera: registry.modules.camera, coding: registry.modules.coding, knowledge: registry.modules.knowledge,
   }, servers: registry.serverStatuses, overrides: registry.overrides, toolCount, toolBudget: registry.frontbrainToolBudget}
 }
@@ -263,12 +301,8 @@ export type CapabilityStatus = ReturnType<typeof capabilityStatus>
 export function inspectCapabilities(options: Parameters<typeof loadCapabilityRegistry>[0] = {}) {
   try {
     const registry = loadCapabilityRegistry(options)
-    const environment = options.environment ?? process.env
-    const missingTavily = registry.modules.search.enabled && registry.modules.search.provider === 'tavily'
-      && !environment[registry.modules.search.tavily.apiKeyEnv]?.trim()
-    return {ok: !missingTavily && registry.serverStatuses.every(server => server.status !== 'failed'),
-      ...capabilityStatus(registry),
-      ...(missingTavily ? {reason: `missing_environment:${registry.modules.search.tavily.apiKeyEnv}`} : {})}
+    // A switched or disabled search is a reported degradation, not a failed configuration.
+    return {ok: registry.serverStatuses.every(server => server.status !== 'failed'), ...capabilityStatus(registry)}
   } catch (error) {
     return {ok: false, reason: error instanceof CapabilityConfigurationError ? error.reason : 'invalid_configuration'}
   }

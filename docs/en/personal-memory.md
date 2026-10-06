@@ -16,7 +16,7 @@ Search matches original text. Long entries show an excerpt. Inspection currently
 
 ## Storage and privacy
 
-The unified ledger defaults to `~/.nova-audio-agent/workspace-graph.sqlite`; use `NOVA_AUDIO_AGENT_MEMORY_LEDGER_PATH` to select another location. With mem0 selected, files are stored under `~/.nova-audio-agent/memory.sqlite.mem0/`, with separate data for each user.
+The unified ledger defaults to `~/.nova-audio-agent/workspace-graph.sqlite`; use `MEMORY_LEDGER_PATH` to select another location. With mem0 selected, files are stored under `~/.nova-audio-agent/memory.sqlite.mem0/`, with separate data for each user.
 
 **Local storage is not offline processing.** Extraction and embeddings send relevant text to your configured model service.
 
@@ -28,11 +28,11 @@ For source use, edit `.env` and restart Nova. No changes are needed for the defa
 
 | Choice | Configuration |
 |---|---|
-| Unified local ledger (default) | `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=local`; omit provider or select `voicemem` |
-| Local mem0 | `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=local` and `NOVA_AUDIO_AGENT_MEMORY_PROVIDER=mem0` |
-| Disable memory | `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=disabled`; remove provider |
-| Remote service | `NOVA_AUDIO_AGENT_MEMORY_CONNECTION=remote`; configure the service URL and token below; remove provider |
+| Unified local ledger (default) | `MEMORY_CONNECTION=local`; omit provider or select `voicemem` |
+| Local mem0 | `MEMORY_CONNECTION=local` and `MEMORY_PROVIDER=mem0` |
+| Disable memory | `MEMORY_CONNECTION=disabled`; remove provider |
+| Remote service | `MEMORY_CONNECTION=remote`; configure the service URL and token below; remove provider |
 
-Remote connections require `NOVA_AUDIO_AGENT_MEMORY_URL` and `NOVA_AUDIO_AGENT_MEMORY_TOKEN`. The service must implement Nova's memory interface; an arbitrary mem0 endpoint is not compatible. Connection failure reports unavailable rather than switching to local storage.
+Remote connections require `MEMORY_URL` and `MEMORY_TOKEN`. The service must implement Nova's memory interface; an arbitrary mem0 endpoint is not compatible. Connection failure reports unavailable rather than switching to local storage.
 
 The unified ledger can import legacy VoiceMem records without changing the old database. Selecting mem0 does not migrate ledger records or enable ledger-backed source connectors. Disabling memory does not delete stored data. See [configuration](configuration.md) for common settings.

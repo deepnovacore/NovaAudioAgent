@@ -1,4 +1,7 @@
+import type {TaskToolHost} from '../core/task-tools.js'
 import {dispatchSources, projectRecoveryTurns, recentDispatchSources} from './history.js'
+import {taskToolArguments} from '../core/task-tools.js'
+import type {TaskDispatchContext} from '../core/task-tools.js'
 import type {IntakeOptions} from '../executors/coding/intake.js'
 import {
   parseAgentActionResult,
@@ -44,6 +47,7 @@ import type {RealtimeTelemetry} from './telemetry.js'
 import type {UserOriginBindingLedger} from './user-origin-binding.js'
 const UNKNOWN_CONFIRMATION_TOOL_RESULT = JSON.stringify({code: 'unknown_confirmation', state: 'refused'})
 interface ToolContinuationPorts {
+  readonly taskHost?: TaskToolHost
   readonly session: RealtimeSession
   readonly host: Pick<HostDelivery, 'bindContinuationAcknowledgement' | 'hasEligiblePreempt' | 'hasOriginDeliveryProof' | 'markOriginDelivered' | 'originCanReferenceProof' | 'originHasNonterminalReference' | 'releaseAcknowledgementReservation' | 'rendererPaused' | 'reserveSemanticAcknowledgement' | 'semanticAcknowledgement' | 'settleBackgroundAcknowledgement'>
   readonly runtime: ServiceRuntime
@@ -124,10 +128,6 @@ export class ToolContinuations {
     return matching
   }
   continuationOrder(): readonly string[] {return [...this.#continuationFifo]}
-  callsForTest(): ReadonlyMap<string, ToolCallState> {return this.#toolCalls}
-  overflowCallsForTest(): ReadonlyMap<string, ToolCallState> {return this.#overflowToolCalls}
-  batchesForTest(): ReadonlyMap<string, ContinuationBatch> {return this.#continuationBatches}
-  continuationOrderForTest(): readonly string[] {return this.#continuationFifo}
   responseCarriesPersonalRecall(responseId: string): boolean {
     for (const state of this.#toolCalls.values()) {
       if (
@@ -265,7 +265,7 @@ export class ToolContinuations {
           await this.session.injectToolOutput(state.acceptance.host_item)
           state.output = 'confirmed'
         }
-        if (state.acceptance.continuation === 'deferred') {
+        if (state.acceptance.continuation === 'deferred' && batch.origin_status !== 'yielded') {
           state.continuation = 'terminal'
           state.final_disposition = 'completed'
         } else intents.push(state.acceptance.response_intent)
@@ -740,6 +740,7 @@ export class ToolContinuations {
     // `cancel_requested` is still active: the cancel has been asked for, not observed, and treating
     // it as cancelled would abandon a batch whose response may yet complete normally.
     if (phase === 'active' || phase === 'cancel_requested') return 'active'
+    if (phase === 'yielded') return 'yielded'
     if (phase === 'failed') return 'failed'
     if (phase === 'cancelled' || this.session.providerTurnWasFenced(responseId)) return 'cancelled'
     return 'completed'
@@ -1184,6 +1185,34 @@ export class ToolContinuations {
     if (event.name === CONFIRM_TOOL) {
       return this.#refusalAcceptance(event, 'unknown_confirmation', UNKNOWN_CONFIRMATION_TOOL_RESULT)
     }
+    if(this.#ports.taskHost?.isCurrent?.()===false)return this.#refusalAcceptance(event,'superseded','{"code":"superseded"}')
+    if (event.name === 'task') {
+      const host=this.#ports.taskHost,user=this.#ports.intakeUser()
+      const authority=this.#ports.currentUserTurn(event,originRef)
+      if(!host)return this.#refusalAcceptance(event,'unsupported_tool','{"code":"unsupported_tool"}')
+      if(!authority||!user||event.session_epoch<=this.#ports.discardedInputEpoch()||user.epoch!==event.session_epoch||originRef!==user.origin_ref)return this.#refusalAcceptance(event,'missing_origin_ref','{"code":"missing_origin_ref"}')
+      const taskArguments={...event.arguments};delete taskArguments.origin_ref
+      const parsed=taskToolArguments.safeParse(taskArguments)
+      if(!parsed.success)return this.#refusalAcceptance(event,'invalid_params','{"code":"invalid_params"}')
+      const args=parsed.data,sources=dispatchSources(this.#ports.runtime.memory?.channels.get('conversation')?.items??[])
+      if(args.source_refs.some(ref=>!sources.some(source=>source.ref===ref)))return this.#refusalAcceptance(event,'invalid_source_refs','{"code":"invalid_source_refs"}')
+      if(!authority.stillWanted())return this.#refusalAcceptance(event,'superseded','{"code":"superseded"}')
+      try {
+        let task
+        if(args.operation==='declare'){const todo=args.link_source_todo?host.sourceTodo?.(user.origin_ref):undefined;if(args.link_source_todo&&!todo)throw Error('source_todo_unavailable');task=await host.tasks.delegate(event.call_id,{conversation_id:host.conversation_id,...(host.conversation_generation===undefined?{}:{conversation_generation:host.conversation_generation}),goal:args.goal,acceptance:args.acceptance,origin_ref:user.origin_ref,...(todo?{todo_ref:todo}:{})})}
+        else {
+          task=host.tasks.get(args.task_id)
+          if(task.conversation_id!==host.conversation_id)throw Error('task_not_owned')
+          const fence={task_id:task.id,control_revision:task.control_revision,goal_revision:task.goal_revision}
+          if(args.operation==='revise')task=await host.tasks.reviseGoal(event.call_id,fence,{kind:'nova'},args.goal,args.acceptance)
+          else if(args.operation==='return'){task=await host.tasks.returnFromUserOrigin(event.call_id,fence,{conversation_id:host.conversation_id,conversation_generation:host.conversation_generation??0,origin_ref:user.origin_ref},()=>authority.stillWanted()&&(host.isCurrent?.()??true));void host.wake?.(task.id)}
+          else if(args.operation==='continue'){task=await host.tasks.continue(event.call_id,fence,{kind:'nova'});void host.wake?.(task.id)}
+          else if(args.operation==='cancel'){if(!host.cancel)throw Error('task_execution_unavailable');await host.cancel(event.call_id,fence)}
+          else throw Error('task_execution_unavailable')
+        }
+        return {...this.#refusalAcceptance(event,'accepted',canonicalJson({code:'accepted',task_id:task.id})),accepted:true,inline_fulfilled:true}
+      }catch(error){const code=error instanceof Error?error.message:'task_failed';return this.#refusalAcceptance(event,code,canonicalJson({code}))}
+    }
     if (event.name !== DISPATCH_TOOL && event.name !== CANCEL_TOOL) return null
     const executor = this.#agentExecutorName(event.arguments.executor)
     const raw = event.arguments.instruction
@@ -1220,10 +1249,21 @@ export class ToolContinuations {
     const authority = this.#ports.currentUserTurn(event, originRef)
     if (authority === null) return this.#refusalAcceptance(event, 'superseded', '{"code":"superseded"}')
     const revision = authority.acceptedUserInputRevision
-    const fence = authority.stillWanted
+    let taskContext:TaskDispatchContext|undefined
+    if(event.name===DISPATCH_TOOL&&event.arguments.task_id!==undefined){
+      try{
+        const host=this.#ports.taskHost
+        if(!host||typeof event.arguments.task_id!=='string')throw Error('invalid_task')
+        const task=host.tasks.get(event.arguments.task_id)
+        if(task.conversation_id!==host.conversation_id)throw Error('task_not_owned')
+        taskContext=host.tasks.continuationContext({task_id:task.id,control_revision:task.control_revision,goal_revision:task.goal_revision});await host.tasks.setRoute(taskContext.fence,executor)
+      }catch(error){const code=error instanceof Error?error.message:'invalid_task';return this.#refusalAcceptance(event,code,canonicalJson({code}))}
+    }
+    const fence = ()=>authority.stillWanted()&&(taskContext?.stillWanted()??true)
     const rawResult = event.name === DISPATCH_TOOL
       ? await controller.dispatch({
-        instruction: instruction!, originalUserText: user.text, origin_ref: user.origin_ref,
+        ...(taskContext ? {taskContext} : {}),
+        instruction: instruction!, originalUserText: user.text, input_origin_ref:user.origin_ref, origin_ref: taskContext?.origin_ref ?? user.origin_ref,
         conversationContext, sourceQuotes,
         sessionEpoch: event.session_epoch, acceptedUserInputRevision: revision, stillWanted: fence,
       })
@@ -1417,7 +1457,7 @@ export class ToolContinuations {
       state.continuation = 'terminal'
       state.final_disposition = !state.acceptance.accepted
         ? 'refused'
-        : event.status === 'completed'
+        : event.status === 'completed' || event.status === 'yielded'
           ? 'completed'
           : 'abandoned'
     }
@@ -1427,7 +1467,7 @@ export class ToolContinuations {
   /** A collecting batch whose originating response has ended is ready to speak. */
   finishOrigin(responseId: string): void {
     const batch = this.#continuationBatches.get(callKey(this.session.sessionEpoch, responseId))
-    if (batch?.phase !== 'collecting') return
+    if (batch?.phase !== 'collecting' && batch?.phase !== 'ready') return
     batch.origin_status = this.#originStatus(responseId)
     batch.phase = 'ready'
   }

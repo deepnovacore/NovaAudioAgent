@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
+import {mkdtemp,realpath,rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {TaskService} from '../src/personal-agent/tasks.js'
 import {canonicalJson} from '../src/text/canonical-json.js'
 import type {JsonValue} from '../src/core/events.js'
 import {ItemDeliveryUncertainError} from '../src/realtime/protocol.js'
@@ -19,6 +23,23 @@ test('every service queue scenario matches the Python-exported golden', () => {
     }
   }
   assert.deepEqual(mismatched, [], 'queue ordering differs from the oracle')
+})
+
+test('tracked executor handoff settles activity without publishing an unverified task completion',async()=>{
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'tracked-handoff-')),tasks=new TaskService(join(dir,'tasks.json'))
+ const {service,actions}=realtimeServiceHarness('pipeline',{taskHost:{tasks,conversation_id:'chat:main'}})
+ try{
+  await tasks.open();await service.connect()
+  const task=await tasks.delegate('task',{conversation_id:'chat:main',goal:'Fix counter',acceptance:['Browser observations verified'],origin_ref:'conversation:1'})
+  const fence={task_id:task.id,control_revision:0,goal_revision:0};await tasks.bindWork(fence,'d-1','session')
+  const content={result:{final_message:{text:'任务已完成，我把 counter.mjs 修好了。'}}}
+  await tasks.recordWorkOutcome('d-1','ok',content);await tasks.wait(fence,'completion evidence gate')
+  service.projectRuntimeEvent({kind:'handoff',seq:1,ts:1,payload:{channel:'codex',delegate_id:'d-1',origin_ref:'conversation:1',outcome:'ok',trust:'trusted_system',content,refs:[]}})
+  await service.flushHostItems()
+  assert.equal(service.session.delegateState('d-1'),'completed','executor activity still settles')
+  assert.equal(tasks.get(task.id).phase,'waiting');assert.equal(tasks.get(task.id).waiting_reason,'completion evidence gate')
+  assert.equal(service.pendingHostItemCount,0);assert.equal(actions.some(action=>action==='inject:final:d-1'),false,'only the task verifier may publish completion')
+ }finally{await service.close();await tasks.close();await rm(dir,{recursive:true,force:true})}
 })
 
 test('the bounds the golden records are the bounds the module uses', () => {

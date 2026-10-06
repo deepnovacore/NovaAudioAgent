@@ -1,3 +1,4 @@
+import {onButton} from './button-action.mjs'
 import {t} from './locale.mjs'
 import {renderConnectors} from './connectors-view.mjs'
 import {renderDailyBrief} from './daily-brief-view.mjs'
@@ -5,12 +6,14 @@ import {renderDailyBrief} from './daily-brief-view.mjs'
 /** Sources, app connectors, briefing schedule and discovery cadence, reached through the settings window's narrow IPC bridge. */
 export function createConnectionsPanel({document, api}) {
  const root=document.querySelector('#connections-panel'),error=document.querySelector('#connections-error')
- let state=null,busy=false,selected='files'
+ let state=null,busy=false,selected='files',actionPending=false
+ let actionNeedsRender=false,pendingLabel=null
  const local={onError:caught=>{error.textContent=caught?.message||t('连接暂时不可用')}}
  const el=(tag,text,cls)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node}
- const button=(text,action,parent)=>{const node=el('button',text);node.type='button';node.disabled=busy;node.addEventListener('click',()=>{void Promise.resolve().then(action).catch(local.onError)});parent.append(node);return node}
+ const button=(text,action,parent)=>{const node=el('button',text);node.type='button';node.disabled=busy||actionPending;if(actionPending&&pendingLabel===text)node.setAttribute('aria-busy','true');onButton(node,async()=>{actionPending=true;pendingLabel=text;try{return await action()}finally{actionPending=false;pendingLabel=null;if(actionNeedsRender){actionNeedsRender=false;render()}}},local.onError);parent.append(node);return node}
  const chips=(parent,values)=>{const row=el('div',undefined,'personal-chips');for(const value of values.filter(Boolean))row.append(el('span',value));parent.append(row)}
  function render(){
+  if(actionPending)actionNeedsRender=true
   root.replaceChildren()
   let target=root
   const panels={}
@@ -24,11 +27,15 @@ export function createConnectionsPanel({document, api}) {
   const card=(title,description)=>{const node=el('article',undefined,'im-card');node.append(el('h3',title));if(description)node.append(el('p',description));target.append(node);return node}
   if(state===null){const loading=card(t('连接与权限'),t('正在读取连接状态…'));loading.setAttribute('aria-busy',String(busy));return}
   const s=state,caps=s.capabilities??{}
-  const sources=card(t('本机目录'),t('选择逐个授权目录，或授权本机全部可访问数据；由当前配置的模型处理，用于生成工作台内容。'))
-  const consent=el('label',undefined,'personal-consent');const check=el('input');check.type='checkbox';consent.append(check,document.createTextNode(t('允许将授权资料的片段发送给当前配置的模型，用于理解与检索。')));sources.append(consent)
-  const add=button(t('选择并授权目录'),async()=>{const path=await api.chooseDirectory();if(path)await command('sources.add',{path,consent:true})},sources);add.disabled=true;const whole=button(t('授权本机全部可访问数据'),()=>command('sources.authorize_computer',{consent:true}),sources);whole.disabled=true;check.addEventListener('change',()=>{add.disabled=whole.disabled=!check.checked});sources.append(el('p',t('全机模式分批持续处理。系统权限仍由 macOS / Windows 管理；不读取凭据、密钥、系统文件、依赖和构建缓存。暂停会停止后续读取。'),'hint'))
+  const sourceCard=card(t('本机目录'),t('已授权的来源列在下方；新增来源时单独确认读取和模型处理权限。'))
+  const sources=el('details',undefined,'source-add');sources.open=local.addSourceOpen??!(s.sources?.length);sources.addEventListener('toggle',()=>{local.addSourceOpen=sources.open});sources.append(el('summary',t('添加授权来源')));sourceCard.append(sources)
+  const consent=el('label',undefined,'personal-consent');const check=el('input');check.type='checkbox';check.checked=!!local.sourceConsent;consent.append(check,document.createTextNode(t('允许将授权资料的片段发送给当前配置的模型，用于理解与检索。')));sources.append(consent)
+  const computer=(s.sources??[]).find(source=>source.scope==='computer'&&source.state!=='disconnected')
+  const add=button(computer?t('选择优先整理的目录'):t('选择并授权目录'),async()=>{const path=await api.chooseDirectory();if(path)await command(computer?'sources.priority.add':'sources.add',computer?{path}:{path,consent:true})},sources);add.disabled=!check.checked;const whole=button(t('授权本机全部可访问数据'),()=>command('sources.authorize_computer',{consent:true}),sources);whole.disabled=!check.checked;check.addEventListener('change',()=>{local.sourceConsent=check.checked;add.disabled=whole.disabled=!check.checked});sources.append(el('p',t('全机模式分批持续处理。系统权限仍由 macOS / Windows 管理；不读取凭据、密钥、系统文件、依赖和构建缓存。暂停会停止后续读取。'),'hint'))
   if(!caps.sources)sources.append(el('p',t('授权时会同时启用本机资料服务。'),'hint'))
-  for(const source of s.sources??[]){const a=card(source.scope==='computer'?t('本机全部可访问数据'):source.path);if(source.scope==='computer')a.append(el('p',t('已索引 {0} 份文档 · {1}；不支持的类型与权限失败见同步详情。',source.indexed??0,source.scan_pending?t('后台处理进行中'):t('本轮遍历结束'))));chips(a,[{connected:t('已连接'),paused:t('已暂停'),disconnected:t('已断开'),error:t('异常')}[source.state]||source.state,t('扫描 {0}',source.scanned),t('本次读取正文 {0}',source.read),t('跳过 {0}',source.skipped)]);a.append(el('p',t('上次同步：{0}',source.last_sync??t('尚未同步'))))
+  const sourceList=el('ul',undefined,'source-list');sourceList.setAttribute('aria-label',t('已授权来源'));target.append(sourceList)
+  for(const source of s.sources??[]){const item=el('li');sourceList.append(item);target=item;const a=card(source.scope==='computer'?t('本机全部可访问数据'):source.path);if(source.scope==='computer'){a.append(el('p',t('已索引 {0} 份文档 · {1}；不支持的类型与权限失败见同步详情。',source.indexed??0,source.scan_pending?t('后台处理进行中'):t('本轮遍历结束'))));for(const path of source.priority_dirs??[]){const row=el('div',undefined,'source-priority-row');row.append(el('span',t('优先整理：{0}',path)));button(t('移除优先目录'),()=>command('sources.priority.remove',{path}),row);a.append(row)}}chips(a,[{connected:t('已连接'),paused:t('已暂停'),disconnected:t('已断开'),error:t('异常')}[source.state]||source.state,t('扫描 {0}',source.scanned),t('本次读取正文 {0}',source.read),t('跳过 {0}',source.skipped)]);a.append(el('p',t('上次同步：{0}',source.last_sync??t('尚未同步'))))
+   const grant=el('p',source.processing_consent_required===false?t('已授权当前模型处理'):t('需要确认当前模型处理权限'),'source-grant');grant.dataset.state=source.processing_consent_required===false?'granted':'required';a.append(grant)
    if(source.processing_consent_required)button(t('授权当前模型处理'),()=>command('sources.consent',{id:source.id,consent:true}),a);const details=el('details');details.append(el('summary',t('同步详情')));for(const line of [t('排除：{0}',(source.excludes??[]).join(', ')),t('跳过原因：{0}',JSON.stringify(source.reasons??{})),...(source.failures??[]).map(f=>`${f.path} · ${f.code}`)])details.append(el('p',line));a.append(details)
    if(source.state!=='disconnected')for(const [label,method]of [[source.state==='paused'?t('恢复同步'):t('暂停同步'),source.state==='paused'?'resume':'pause'],[t('立即同步'),'sync'],[t('断开（保留数据）'),'disconnect']])button(label,()=>command(`sources.${method}`,{id:source.id}),a)
    else a.append(el('p',t('已停止访问；重新授权连接暂不支持。')))
@@ -45,18 +52,19 @@ export function createConnectionsPanel({document, api}) {
  }
  async function command(method,params={}){
   if(busy)throw new Error(t('请等待当前操作完成'))
-  busy=true;error.textContent='';render()
+  busy=true;actionNeedsRender=actionPending;error.textContent='';for(const input of root.querySelectorAll('button,input,select'))input.disabled=true
   try{
    const result=await api.personalCommand(method,params)
    if(result?.error)throw new Error(result.error)
+   if(['sources.add','sources.authorize_computer'].includes(method)){local.sourceConsent=false;local.addSourceOpen=false}
    state=method==='state'?result:await api.personalCommand('state',{})
    if(state?.error)throw new Error(state.error)
    return result
-  }finally{busy=false;render()}
+  }finally{busy=false;if(!actionPending)render()}
  }
- async function load(){if(busy)return;try{await command('state')}catch(caught){root.replaceChildren(el('p',t('未能读取连接状态，请重试。')));local.onError(caught)}}
+ async function load(){if(busy||actionPending)return;try{await command('state')}catch(caught){root.replaceChildren(el('p',t('未能读取连接状态，请重试。')));local.onError(caught)}}
  let polling=false
- const canPoll=()=>!busy&&selected==='files'&&state?.sources?.some(s=>s.scan_pending)&&document.visibilityState==='visible'&&root.offsetParent!==null&&!root.contains(document.activeElement)
+ const canPoll=()=>!busy&&!actionPending&&selected==='files'&&state?.sources?.some(s=>s.scan_pending)&&document.visibilityState==='visible'&&root.offsetParent!==null&&!root.contains(document.activeElement)
  const timer=document.defaultView?.setInterval(()=>{if(polling||!canPoll())return;polling=true;void api.personalCommand('state',{}).then(next=>{if(canPoll()&&!next?.error){state=next;render()}}).catch(()=>{/* Keep the last status during a transient disconnect. */}).finally(()=>{polling=false})},5000)
  document.defaultView?.addEventListener('pagehide',()=>document.defaultView.clearInterval(timer),{once:true})
  render()

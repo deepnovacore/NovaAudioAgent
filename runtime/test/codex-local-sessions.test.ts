@@ -8,7 +8,8 @@ import {join} from 'node:path'
 import {DatabaseSync} from 'node:sqlite'
 import {ProjectCodexAdapter} from '../src/executors/codex/adapter-project.js'
 import {sharedHomeOverrides} from '../src/executors/codex/shared-home.js'
-import {readLocalCodexSessions} from '../src/executors/codex/local-sessions.js'
+import {prepareManagedCodexMcp} from '../src/executors/codex/managed-mcp.js'
+import {readLocalCodexSessions, readLocalCodexProjects} from '../src/executors/codex/local-sessions.js'
 
 test('local catalog reads named top-level sessions and excludes archived, agents and missing workspaces', async () => {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'nova-local-catalog-')))
@@ -70,25 +71,43 @@ test('a discovered title resolves to and resumes the original thread/home, not t
 
 test('shared config overrides disable inherited tools without replacing the home configuration', () => {
   const args = sharedHomeOverrides({config: {
-    features: {js_repl: true}, mcp_servers: {external: {enabled: true}, managed: {}},
+    features: {js_repl: true}, mcp_servers: {external: {enabled: true}},
     shell_environment_policy: {set: {EXTERNAL_VALUE: 'private'}},
-  }}, ['managed'])
+  }}, undefined)
   assert.ok(args.includes('features.js_repl=false'))
   assert.ok(args.includes('mcp_servers={ "external" = { "enabled" = false } }'))
   assert.ok(args.includes('shell_environment_policy.set.EXTERNAL_VALUE=""'))
   assert.equal(args.includes('mcp_servers={}'), false)
-  assert.equal(args.some(arg => arg.includes('managed')), false)
 })
 
 test('shared config disables quoted MCP names without admitting inherited tools or copying their secrets', () => {
   const args = sharedHomeOverrides({config: {mcp_servers: {
     'corp.tools': {enabled: false, command: 'private-command'},
-    'quoted"name': {enabled: true}, managed: {enabled: true},
-  }}}, ['managed'])
+    'quoted"name': {enabled: true},
+  }}}, undefined)
   assert.deepEqual(args.filter(value => value.startsWith('mcp_servers=')), [
     'mcp_servers={ "corp.tools" = { "enabled" = false }, "quoted\\"name" = { "enabled" = false } }',
   ])
-  assert.equal(args.some(value => value.includes('private-command') || value.includes('managed')), false)
+  assert.equal(args.some(value => value.includes('private-command')), false)
+})
+
+test('shared config keeps managed MCP entries in the final table while disabling external entries', () => {
+  const managed = prepareManagedCodexMcp({
+    modules: {coding: {enabled: true}},
+    mcpServers: {},
+    serverStatuses: [],
+  } as never, {managed: {
+    enabled: true, transport: 'stdio', command: '/usr/bin/false', args: ['managed'],
+    tools: {read: {enabled: true, timeoutMs: 8000, maxResultBytes: 32768, maxCallsPerTurn: 2}}, exposeTo: {frontbrain: false, codex: true},
+  }})
+  const args = sharedHomeOverrides({config: {mcp_servers: {
+    external: {enabled: true, command: 'private-command'}, managed: {enabled: true},
+  }}}, managed)
+
+  assert.deepEqual(args.filter(value => value.startsWith('mcp_servers=')), [
+    'mcp_servers={ "external" = { "enabled" = false }, "managed" = { "enabled" = true, "enabled_tools" = ["read"], "disabled_tools" = [], "startup_timeout_sec" = 15, "tool_timeout_sec" = 8, "default_tools_approval_mode" = "auto", "command" = "/usr/bin/false", "args" = ["managed"] } }',
+  ])
+  assert.equal(args.some(value => value.includes('private-command')), false)
 })
 
 
@@ -228,4 +247,144 @@ test('an indexed thread with a missing rollout is not imported or selected for l
     await rm(value.root, {recursive: true, force: true})
     await rm(home, {recursive: true, force: true})
   }
+})
+
+test('listing coding targets does not re-import a catalog the store already holds', async () => {
+  const configuredHome = await mkdtemp(join(tmpdir(), 'nova-target-list-'))
+  const home = await realpath(configuredHome)
+  const calls: string[] = []
+  const value = await fixture({localCodexHome: configuredHome, decorateStore: store => new Proxy(store, {
+    get(target, property) {
+      const member: unknown = Reflect.get(target, property, target)
+      if (typeof member !== 'function') return member
+      return (...args: unknown[]) => { calls.push(String(property)); return (member as (...values: unknown[]) => unknown).apply(target, args) }
+    },
+  })})
+  try {
+    const db = new DatabaseSync(join(home, 'state_5.sqlite'))
+    db.exec('CREATE TABLE threads (id TEXT, name TEXT, title TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at INTEGER)')
+    const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)')
+    for (let index = 0; index < 5; index++) insert.run(`thread-${index}`, `会话 ${index}`, 'x', home, 'vscode', 0, 100 + index)
+    db.close()
+    await value.adapter.initialize()
+    const first = await value.adapter.targetPort.list()
+    assert.equal(first.filter(item => item.session_id !== null).length, 5)
+    calls.length = 0
+    const again = await value.adapter.targetPort.list()
+    assert.deepEqual(again.map(item => [item.workspace_id, item.session_id]), first.map(item => [item.workspace_id, item.session_id]))
+    assert.deepEqual(calls.filter(name => name === 'ensureImported' || name === 'importSession'), [], 'an unchanged catalog costs no store transaction')
+
+    const later = new DatabaseSync(join(home, 'state_5.sqlite'))
+    later.prepare('UPDATE threads SET updated_at = 500 WHERE id = ?').run('thread-2')
+    later.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)').run('thread-new', '新会话', 'x', home, 'vscode', 0, 400)
+    later.close()
+    calls.length = 0
+    const changed = await value.adapter.targetPort.list()
+    assert.ok(changed.some(item => item.title === '新会话'), 'a new codex session appears on the next open')
+    assert.equal(changed.find(item => item.session_id !== null)?.title, '会话 2', 'a touched session moves to the front')
+    assert.equal(calls.filter(name => name === 'importSession').length, 2, 'only the two changed sessions are imported')
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+    await rm(home, {recursive: true, force: true})
+  }
+})
+
+test('a session evicted by an earlier import in the same refresh is imported again, not skipped', async () => {
+  const configuredHome = await mkdtemp(join(tmpdir(), 'nova-target-evict-'))
+  const home = await realpath(configuredHome)
+  const value = await fixture({localCodexHome: configuredHome})
+  try {
+    const db = new DatabaseSync(join(home, 'state_5.sqlite'))
+    db.exec('CREATE TABLE threads (id TEXT, name TEXT, title TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at INTEGER)')
+    const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)')
+    for (let index = 0; index < 200; index++) insert.run(`thread-${index}`, `会话 ${index}`, 'x', home, 'vscode', 0, 100 + index)
+    db.close()
+    await value.adapter.initialize()
+    await value.adapter.targetPort.list()
+
+    // The workspace is full; an older session appears and the newest one leaves the catalog.
+    const later = new DatabaseSync(join(home, 'state_5.sqlite'))
+    later.prepare('DELETE FROM threads WHERE id = ?').run('thread-199')
+    later.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)').run('thread-old', '旧会话', 'x', home, 'vscode', 0, 50)
+    later.close()
+    await value.adapter.targetPort.list()
+    const titles = new Set((await value.store.snapshot()).sessions.map(session => session.display_title))
+    const missing = Array.from({length: 199}, (_, index) => `会话 ${index}`).filter(title => !titles.has(title))
+    assert.deepEqual(missing, [], 'current catalog sessions must survive an older import')
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+    await rm(home, {recursive: true, force: true})
+  }
+})
+
+test('renaming a duplicate-titled catalog session refreshes it even when its timestamp did not change', async () => {
+  const configuredHome = await mkdtemp(join(tmpdir(), 'nova-target-rename-'))
+  const home = await realpath(configuredHome)
+  const value = await fixture({localCodexHome: configuredHome})
+  try {
+    const db = new DatabaseSync(join(home, 'state_5.sqlite'))
+    db.exec('CREATE TABLE threads (id TEXT, name TEXT, title TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at INTEGER)')
+    const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)')
+    insert.run('thread-a', 'Fix', 'x', home, 'vscode', 0, 100)
+    insert.run('thread-b', 'Fix', 'x', home, 'vscode', 0, 101)
+    db.close()
+    await value.adapter.initialize()
+    const first = await value.adapter.targetPort.list()
+    assert.deepEqual(first.filter(item => item.session_id !== null).map(item => item.title).sort(), ['Fix', 'Fix (2)'])
+
+    const later = new DatabaseSync(join(home, 'state_5.sqlite'))
+    later.prepare('UPDATE threads SET name = ? WHERE id = ?').run('Fix authentication', 'thread-a')
+    later.prepare('UPDATE threads SET name = ? WHERE id = ?').run('Fix rollout', 'thread-b')
+    later.close()
+    const renamed = await value.adapter.targetPort.list()
+    assert.deepEqual(renamed.filter(item => item.session_id !== null).map(item => item.title).sort(), ['Fix authentication', 'Fix rollout'])
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+    await rm(home, {recursive: true, force: true})
+  }
+})
+
+
+test('picker follows saved local projects and groups worktree sessions without changing their execution directory',async()=>{
+ const home=await realpath(await mkdtemp(join(tmpdir(),'nova-project-picker-'))),value=await fixture({localCodexHome:home})
+ try{
+  const root=join(home,'project'),tree=join(home,'worktree'),scratch=join(home,'scratch'),empty=join(home,'empty')
+  for(const path of [root,tree,scratch,empty])await mkdir(path)
+  await writeFile(join(home,'.codex-global-state.json'),JSON.stringify({'local-projects':{p:{name:'Project',rootPaths:[root]},e:{name:'Empty',rootPaths:[empty]}},'thread-project-assignments':{branch:{projectKind:'local',projectId:'p'}}}))
+  const db=new DatabaseSync(join(home,'state_5.sqlite'));db.exec('CREATE TABLE threads (id TEXT,title TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at INTEGER)')
+  const insert=db.prepare('INSERT INTO threads VALUES (?,?,?,\'cli\',0,?)')
+  insert.run('main','Main',root,1);insert.run('branch','Branch',tree,2);insert.run('scratch','Scratch',scratch,3);db.close()
+  // Existing imported worktrees must not reappear as top-level projects after upgrading.
+  await value.store.ensureImported('Old worktree',hostWorkspaceForTest(tree))
+  // Upgrade a full legacy catalog without deleting old sessions or directories.
+  for(let i=0;i<98;i++){const path=join(home,`legacy-${i}`);await mkdir(path);await value.store.ensureImported(`Legacy ${i}`,hostWorkspaceForTest(path))}
+  await value.adapter.initialize()
+  const targets=await value.adapter.targetPort.list(),roots=targets.filter(t=>t.session_id===null)
+  assert.deepEqual(roots.map(t=>t.directory).sort(),[root,empty].sort())
+  assert.equal(targets.some(t=>t.title==='Scratch'),false)
+  const branch=targets.find(t=>t.title==='Branch')!
+  assert.ok(branch);assert.equal(branch.directory,tree)
+  const main=roots.find(t=>t.directory===root)!
+  assert.equal((branch as typeof branch & {group_workspace_id:string}).group_workspace_id,main.workspace_id)
+  const target=await value.adapter.targetPort.validate(branch)
+  const request={work_order:'Continue branch',project:target.project,session:'latest',session_id:target.session_id!}
+  assert.equal((await value.adapter.dispatch('run',request,context('run',request,value.clock))).outcome,'ok')
+  assert.equal(hostWorkspacePath(value.factory.bindings[0]!.workspace),tree)
+  assert.equal(value.factory.bindings[0]!.resumeThreadId,'branch')
+ }finally{await value.adapter.close();await rm(value.root,{recursive:true,force:true});await rm(home,{recursive:true,force:true})}
+})
+
+
+test('desktop project discovery distinguishes missing, corrupt, empty and legacy registries',async()=>{
+ const home=await realpath(await mkdtemp(join(tmpdir(),'nova-project-registry-'))),file=join(home,'.codex-global-state.json')
+ try{
+  assert.equal(await readLocalCodexProjects(home),null)
+  await writeFile(file,'{broken');assert.deepEqual(await readLocalCodexProjects(home),[])
+  await writeFile(file,JSON.stringify({'local-projects':{},'electron-saved-workspace-roots':[home]}));assert.deepEqual(await readLocalCodexProjects(home),[])
+  await writeFile(file,JSON.stringify({'electron-saved-workspace-roots':[home,'relative',join(home,'missing')]}))
+  assert.deepEqual((await readLocalCodexProjects(home))?.map(project=>project.path),[home])
+ }finally{await rm(home,{recursive:true,force:true})}
 })

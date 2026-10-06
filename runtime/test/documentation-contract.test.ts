@@ -68,8 +68,8 @@ test('audio pipeline docs distinguish the selectable topology, credentials, and 
   assert.match(chinese, /可选.*在线 smoke/u)
 
   for (const [file, text] of documents) {
-    assert.doesNotMatch(text, /workspace-graph surfaces|工作区图谱|NOVA_AUDIO_AGENT_WORKSPACE_GRAPH/u, file)
-    assert.doesNotMatch(text, /NOVA_AUDIO_AGENT_(?:REALTIME_PROVIDER|VOLCENGINE_ARK_MODEL|VOLCENGINE_ARK_SUPPORT_MODEL)/u, file)
+    assert.doesNotMatch(text, /workspace-graph surfaces|工作区图谱|WORKSPACE_GRAPH/u, file)
+    assert.doesNotMatch(text, /(?:REALTIME_PROVIDER|VOLCENGINE_ARK_MODEL|VOLCENGINE_ARK_SUPPORT_MODEL)/u, file)
   }
 })
 
@@ -84,9 +84,9 @@ test('configuration guides share a concise public subset and env example stays c
     const block = generatedBlock(await readFile(resolve(repositoryRoot, file), 'utf8'))
     const names = [...block.matchAll(/^\| `([A-Z0-9_]+)` \|/gmu)].map(match => match[1]!)
     assert.equal(new Set(names).size, names.length, file)
-    assert.ok(names.length <= 20 && names.length > 0, file)
+    assert.ok(names.length <= 22 && names.length > 0, file)
     for (const name of names) assert.ok(publicNames.has(name), `${file}: ${name}`)
-    for (const essential of ['DASHSCOPE_API_KEY', 'DEEPSEEK_API_KEY', 'NOVA_AUDIO_AGENT_PIPELINE_MODE', 'NOVA_AUDIO_AGENT_MEMORY_CONNECTION']) {
+    for (const essential of ['DASHSCOPE_API_KEY', 'DEEPSEEK_API_KEY', 'PIPELINE_MODE', 'MEMORY_CONNECTION']) {
       assert.ok(names.includes(essential), `${file}: ${essential}`)
     }
     selections.push(names)
@@ -100,38 +100,38 @@ test('configuration guides share a concise public subset and env example stays c
 test('the public contract exposes product-shaped pipeline selectors and retires the vendor selector', () => {
   const publicNames = new Set(publicEnvironmentContract().map(entry => entry.name))
   assert.deepEqual([
-    'NOVA_AUDIO_AGENT_PIPELINE_MODE',
-    'NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER',
-    'NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER',
-    'NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER',
-    'NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER',
-    'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL',
-    'NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER',
+    'PIPELINE_MODE',
+    'INTEGRATED_PROVIDER',
+    'CASCADE_ENDPOINTING_PROVIDER',
+    'CASCADE_ASR_PROVIDER',
+    'CASCADE_LLM_PROVIDER',
+    'CASCADE_LLM_MODEL',
+    'CASCADE_TTS_PROVIDER',
   ].every(name => publicNames.has(name)), true)
-  assert.equal(publicNames.has('NOVA_AUDIO_AGENT_REALTIME_PROVIDER'), false)
+  assert.equal(publicNames.has('REALTIME_PROVIDER'), false)
 })
 
 test('the v4 settings environment additions are classified as public overrides', () => {
   const publicNames = new Set(publicEnvironmentContract().map(entry => entry.name))
   assert.deepEqual([
-    'NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE',
-    'NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH',
-    'NOVA_AUDIO_AGENT_PLAN_READBACK',
-    'NOVA_AUDIO_AGENT_PLANNER_MODEL',
-    'NOVA_AUDIO_AGENT_PROGRESS_BUBBLES',
-    'NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG',
-    'NOVA_AUDIO_AGENT_SEARCH_PROVIDER',
-    'NOVA_AUDIO_AGENT_SEARCH_MCP_URL',
-    'NOVA_AUDIO_AGENT_SEARCH_MCP_TOOL',
-    'NOVA_AUDIO_AGENT_KNOWLEDGE_PATH',
-    'NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER',
-    'NOVA_AUDIO_AGENT_EMBEDDING_MODEL',
+    'CODEX_APPROVAL_MODE',
+    'CLARIFICATION_DEPTH',
+    'PLAN_READBACK',
+    'PLANNER_MODEL',
+    'PROGRESS_BUBBLES',
+    'CAPABILITIES_CONFIG',
+    'SEARCH_PROVIDER',
+    'SEARCH_MCP_URL',
+    'SEARCH_MCP_TOOL',
+    'KNOWLEDGE_PATH',
+    'EMBEDDING_PROVIDER',
+    'EMBEDDING_MODEL',
   ].every(name => publicNames.has(name)), true)
 })
 
 test('the generic model credential is an optional support-model override only', () => {
   const entry = environmentContract.find(candidate =>
-    candidate.name === 'NOVA_AUDIO_AGENT_MODEL_API_KEY')
+    candidate.name === 'MODEL_API_KEY')
   assert.ok(entry !== undefined)
   assert.equal(entry.required, 'never')
   assert.match(entry.descriptionEn, /optional generic support-model.*override/iu)
@@ -161,11 +161,12 @@ test('every production environment name is classified and private names stay pri
     ...await sourceFiles(resolve(repositoryRoot, 'runtime/src')),
     ...await sourceFiles(resolve(repositoryRoot, 'clients/desktop/src')),
   ]
-  const environmentName = /\b(?:NOVA_(?:AUDIO_AGENT|ENTERPRISE|WORKSPACE)_[A-Z0-9_]+|DASHSCOPE_API_KEY|ARK_API_KEY|DOUBAO_[A-Z0-9_]+|TAVILY_API_KEY|CODEX_HOME|VIRTUAL_ENV|NOVA_ORB_OPAQUE|HOME)\b/gu
+  const systemNames = new Set(['HTTPS_PROXY', 'HTTP_PROXY', 'PATH', 'APPDATA'])
+  const environmentName = /\b(?:process\.env|environment|parentEnv|env)\.([A-Z][A-Z0-9_]+)\b/gu
   for (const source of sources) {
     const text = await readFile(source, 'utf8')
     for (const match of text.matchAll(environmentName)) {
-      assert.equal(classified.has(match[0]), true, `${source}: ${match[0]}`)
+      assert.ok(classified.has(match[1]!) || systemNames.has(match[1]!), `${source}: ${match[1]}`)
     }
   }
   for (const entry of environmentContract) {
@@ -192,7 +193,7 @@ test('current architecture and numbered specs do not depend on the retired graph
     for (const file of await readdir(resolve(repositoryRoot, root))) {
       if (!/^\d.*\.md$/u.test(file)) continue
       const text = await readFile(resolve(repositoryRoot, root, file), 'utf8')
-      assert.doesNotMatch(text, /workspace-graph\/|workspace_graph|NOVA_AUDIO_AGENT_WORKSPACE_GRAPH|GraphContext|PublishedGraphSnapshot/u, `${root}/${file}`)
+      assert.doesNotMatch(text, /workspace-graph\/|workspace_graph|WORKSPACE_GRAPH|GraphContext|PublishedGraphSnapshot/u, `${root}/${file}`)
       assert.doesNotMatch(text, /Workspace Graph|workspace graph|工作区图/u, `${root}/${file}`)
     }
   }

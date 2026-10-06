@@ -8,7 +8,7 @@ import {main} from '../src/cli.js'
 import {DEMO_NAMES, runDemo, runDemos} from '../eval/demos.js'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const fixtureRoot = resolve(repositoryRoot, 'fixtures/product/v1')
+const fixtureRoot = resolve(repositoryRoot, 'tests/fixtures/product/v1')
 
 test('product demo names and all order are stable', async () => {
   assert.deepEqual(DEMO_NAMES, ['async', 'dual-axis', 'timeout', 'proactive', 'all'])
@@ -59,7 +59,7 @@ test('product demos fail when the runtime evidence for their invariant is mutate
   await cp(fixtureRoot, root, {recursive: true, force: true})
   const speechOnlyScenario = 'advance-clock-host-before-model'
   await cp(
-    resolve(repositoryRoot, `fixtures/runtime/v1/${speechOnlyScenario}`),
+    resolve(repositoryRoot, `tests/fixtures/runtime/v1/${speechOnlyScenario}`),
     resolve(root, `demos/scenarios/${speechOnlyScenario}`),
     {recursive: true},
   )

@@ -1,0 +1,7 @@
+faster-whisper==1.2.1
+ctranslate2==4.7.2
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+
+nvidia-cublas-cu12==12.8.4.1
+nvidia-cudnn-cu12==9.10.2.21

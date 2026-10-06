@@ -4,7 +4,7 @@ import {mkdtemp,realpath,rm} from 'node:fs/promises'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {DatabaseSync} from 'node:sqlite'
-import {WorkspaceGraphStore} from '../src/workspace-graph/store.js'
+import {MemoryLedgerStore} from '../src/memory-ledger/store.js'
 import {EntryRevisionSchema,contentHash} from '../src/memory-substrate/store.js'
 import {canonicalJson} from '../src/text/canonical-json.js'
 import {normalizeWorkspaceContent,rebuildWorkspaceProjections,projectWorkspaceRevision,consumeWorkspaceProjectionChange} from '../src/memory-substrate/workspace-projections.js'
@@ -26,7 +26,7 @@ test('workspace hand edits preserve identity, validate complete schemas, and adv
 test('workspace projections rebuild typed cards and relation evidence and apply a single correction without deleting siblings',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'nova-workspace-projections-'))
  let db!:DatabaseSync
- const graph=new WorkspaceGraphStore(join(root,'graph.sqlite'),path=>{db=new DatabaseSync(path);return db})
+ const graph=new MemoryLedgerStore(join(root,'graph.sqlite'),path=>{db=new DatabaseSync(path);return db})
  try{
   graph.open();const a=row('LogicalWorkspace',logical),b=row('WorkspaceInstance',instance),c=row('RelationCard',relation)
   rebuildWorkspaceProjections(db,[a,b,c])

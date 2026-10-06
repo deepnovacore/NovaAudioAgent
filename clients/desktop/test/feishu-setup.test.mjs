@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import {join, resolve} from 'node:path'
 import {createFeishuSetupOwner} from '../src/main/feishu-setup.mjs'
 test('setup-only owner shares paths, excludes collectors, reuses owner and drains before handoff', async () => {
   const calls = []; let options
@@ -9,11 +10,11 @@ test('setup-only owner shares paths, excludes collectors, reuses owner and drain
     async command(method) {calls.push(method); return {configured: false}}
     async close() {calls.push('close')}
   }
-  const setup = createFeishuSetupOwner({Connector, environment: {NOVA_AUDIO_AGENT_BLACKBOARD_PATH: '/tmp/isolated.sqlite'}})
+  const setup = createFeishuSetupOwner({Connector, environment: {BLACKBOARD_PATH: '/tmp/isolated.sqlite'}})
   await setup.request('feishu.status', {})
   await setup.request('feishu.app.status', {})
   assert.equal(options.bootstrapOnly, true)
-  assert.equal(options.credentialRoot, '/tmp/isolated.sqlite.personal.json.feishu/credentials')
+  assert.equal(options.credentialRoot, join(resolve('/tmp/isolated.sqlite') + '.personal.json.feishu', 'credentials'))
   assert.equal(options.ingest, undefined)
   await assert.rejects(setup.request('feishu.sync', {}))
   await setup.release()

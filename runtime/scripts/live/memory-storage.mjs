@@ -49,8 +49,8 @@ async function assertGitErased(path,text,oldCommit){
  assert.equal(git(path,'fsck','--no-reflogs','--unreachable').trim(),'')
 }
 async function storage(modules){
- const {WorkspaceGraphStoreClient,SubstrateMemoryResource,LifeService}=modules,path=report.artifacts.ledger,prefix='personal:synthetic-storage:'
- client=new WorkspaceGraphStoreClient(path);await client.open();await client.memory('enable_files',{})
+ const {MemoryLedgerClient,SubstrateMemoryResource,LifeService}=modules,path=report.artifacts.ledger,prefix='personal:synthetic-storage:'
+ client=new MemoryLedgerClient(path);await client.open();await client.memory('enable_files',{})
  const initial=await seed(prefix,'preference','SYNTHETIC initial concise preference')
  const document=join(path+'.memory','entries',sha(initial.entry.entry_id)+'.md')
  const source=await readFile(document,'utf8'),beforeBody=source.slice(0,source.lastIndexOf('SYNTHETIC initial concise preference'))
@@ -61,13 +61,13 @@ async function storage(modules){
  const history=await client.memory('history',{entry_id:edited.entry_id});assert.equal(history[0].content.text,initial.entry.content.text)
  assert.equal((await readFile(document,'utf8')).includes('SYNTHETIC ORIGINAL'),false)
  await pass('actual Markdown body edit became a second merge revision while preserving history')
- await client.close();client=new WorkspaceGraphStoreClient(path);await client.open()
+ await client.close();client=new MemoryLedgerClient(path);await client.open()
  assert.deepEqual(await client.memory('history',{entry_id:edited.entry_id}),history)
  await pass('worker restart retained the corrected stable ID and complete revision history')
  await client.close();client=undefined
  const db=new DatabaseSync(path);try{db.exec('DELETE FROM memory_revisions; DELETE FROM memory_vectors')}finally{db.close()}
  await checkpoint('reopening-after-synthetic-revision-index-removal')
- client=new WorkspaceGraphStoreClient(path);await client.open()
+ client=new MemoryLedgerClient(path);await client.open()
  assert.deepEqual(await client.memory('history',{entry_id:edited.entry_id}),history)
  await pass('Markdown rebuilt a deleted SQLite revision index without inventing history')
  const time=now(),evidenceId=prefix+'e:publication'
@@ -77,12 +77,12 @@ async function storage(modules){
  await assert.rejects(client.memory('merge',{entry_id:edited.entry_id,expected_revision:2,kind:'fact',origin:'stated',written_by:'user_correction',evidence_refs:[evidenceId],content:{text:'SYNTHETIC durable recovered correction'},recorded_at:time}))
  await client.close();client=undefined
  const pending=new DatabaseSync(path,{readOnly:true});try{assert.equal(pending.prepare('SELECT COUNT(*) count FROM memory_file_outbox').get().count,1)}finally{pending.close()}
- await unlink(lock);client=new WorkspaceGraphStoreClient(path);await client.open()
+ await unlink(lock);client=new MemoryLedgerClient(path);await client.open()
  rows=await client.memory('list',{});edited=rows.find(row=>row.entry_id===initial.entry.entry_id)
  assert.equal(edited.revision,3);assert.equal(edited.content.text,'SYNTHETIC durable recovered correction')
  const recovered=new DatabaseSync(path,{readOnly:true});try{assert.equal(recovered.prepare('SELECT COUNT(*) count FROM memory_file_outbox').get().count,0)}finally{recovered.close()}
  await pass('failed Git publication left a durable outbox and restart completed exactly one revision')
- await client.close();client=new WorkspaceGraphStoreClient(path)
+ await client.close();client=new MemoryLedgerClient(path)
  memory=new SubstrateMemoryResource({client,userId:'synthetic-storage-life',gateway:forbiddenGateway,model:'disabled',personalMemoryEnabled:false,consolidation:{enabled:false}});await memory.open()
  const legacyPath=join(directory,'legacy-life.json'),legacy=JSON.stringify(legacyState('SYNTHETIC read-only migrated profile'),null,2)+'\n'
  await writeFile(legacyPath,legacy,{mode:0o600});const before=await stat(legacyPath)
@@ -92,12 +92,12 @@ async function storage(modules){
  await pass('real LifeService imported synthetic legacy JSON without rewriting or changing its mode')
 }
 async function purge(modules){
- const {WorkspaceGraphStoreClient,SubstrateMemoryResource,PersonalAgentHost,SuggestionPool,UnifiedRetrieval,KnowledgeStoreClient,KnowledgeService}=modules
+ const {MemoryLedgerClient,SubstrateMemoryResource,PersonalAgentHost,SuggestionPool,UnifiedRetrieval,KnowledgeStoreClient,KnowledgeService}=modules
  const path=report.artifacts.ledger,hostPath=join(directory,'host.json'),indexPath=join(directory,'knowledge.sqlite'),legacyPath=hostPath+'.life.json'
  report.artifacts.knowledge_index=indexPath;report.artifacts.legacy_life=legacyPath
  const target='SYNTHETIC ERASE INDEXED MEMORY',retained='SYNTHETIC KEEP OTHER MEMORY',legacyText='SYNTHETIC ERASE LEGACY PROFILE'
  await writeFile(legacyPath,JSON.stringify(legacyState(legacyText)),{mode:0o600})
- client=new WorkspaceGraphStoreClient(path)
+ client=new MemoryLedgerClient(path)
  memory=new SubstrateMemoryResource({client,userId:'synthetic-purge',gateway:forbiddenGateway,model:'disabled',personalMemoryEnabled:false,consolidation:{enabled:false}});await memory.open()
  const chosen=await seed(memory.prefix,'selected',target),keep=await seed(memory.prefix,'retained',retained)
  await client.memory('record_extraction',{evidence_id:chosen.evidence,attempt_id:'knowledge-index',extracted:{}})
@@ -124,7 +124,7 @@ async function purge(modules){
  const incomplete=await host.command(command);assert.equal(incomplete.ok,true,JSON.stringify(incomplete));assert.equal(incomplete.data.status,'incomplete');assert.equal((await memory.pendingPurges()).length,1)
  await pass('missing registered migration backup kept the host result explicitly incomplete')
  await host.close();host=undefined;await memory.close();memory=undefined;client=undefined
- await rename(hidden,legacyPath);client=new WorkspaceGraphStoreClient(path)
+ await rename(hidden,legacyPath);client=new MemoryLedgerClient(path)
  memory=new SubstrateMemoryResource({client,userId:'synthetic-purge',gateway:forbiddenGateway,model:'disabled',personalMemoryEnabled:false,consolidation:{enabled:false}});await memory.open()
  host=new PersonalAgentHost({path:hostPath,userScope:'synthetic-purge',memory:()=>memory,pool:new SuggestionPool(),evidence:()=>null});host.setRetrieval(new UnifiedRetrieval({memory:()=>memory,rawPurgeEvidence:ids=>knowledge.purgeEvidence(ids)}));await host.open()
  const retried=await host.command({...command,request_id:'synthetic-backup-restored'});assert.equal(retried.ok,true,JSON.stringify(retried));assert.equal(retried.data.status,'complete');assert.equal(retried.data.operation_id,incomplete.data.operation_id)
@@ -137,7 +137,7 @@ async function purge(modules){
 try{
  await checkpoint('loading-compiled-runtime')
  const [store,resource,lifeModule,hostModule,suggestions,retrieval,index,knowledgeModule]=await Promise.all([
-  import('../../dist/src/workspace-graph/store-client.js'),import('../../dist/src/memory-substrate/resource.js'),import('../../dist/src/personal-agent/life.js'),import('../../dist/src/personal-agent/host.js'),import('../../dist/src/core/suggestions.js'),import('../../dist/src/memory/retrieval.js'),import('../../dist/src/knowledge/store-client.js'),import('../../dist/src/knowledge/service.js'),
+  import('../../dist/src/memory-ledger/store-client.js'),import('../../dist/src/memory-substrate/resource.js'),import('../../dist/src/personal-agent/life.js'),import('../../dist/src/personal-agent/host.js'),import('../../dist/src/core/suggestions.js'),import('../../dist/src/memory/retrieval.js'),import('../../dist/src/knowledge/store-client.js'),import('../../dist/src/knowledge/service.js'),
  ])
  const modules={...store,...resource,...lifeModule,...hostModule,...suggestions,...retrieval,...index,...knowledgeModule}
  await (selected==='storage'?storage(modules):purge(modules))

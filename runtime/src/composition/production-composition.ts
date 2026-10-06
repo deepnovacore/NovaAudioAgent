@@ -1,3 +1,7 @@
+import {ClientServer} from '../server/client-server.js'
+import {ClientPairing} from '../server/client-pairing.js'
+import {loadServerConfig} from '../server/server-config.js'
+import {acceptanceCapabilityRegistry} from '../desktop/workbench-acceptance.js'
 import type {ProjectExecutorAdapter} from '../executors/coding-executor.js'
 import {MacMailClient} from '../connectors/macos/mail.js'
 import {MacCalendarClient} from '../connectors/macos/calendar.js'
@@ -18,8 +22,8 @@ import {prepareKnowledge} from '../knowledge/assembly.js'
 import {randomUUID} from 'node:crypto'
 import {loadCapabilityRegistry} from '../config/capability-registry.js'
 import {prepareExternalMcp} from '../executors/mcp.js'
-import {loadSettings, requireIntegratedRealtime} from '../config/config.js'
-import {requireSelectedCascadedLlmConfig, validateSelectedCascadedRealtimeConfig} from '../config/cascaded-realtime-config.js'
+import {loadSettings, requireBlockingCredentials, requireIntegratedRealtime, withoutUncredentialedModules} from '../config/config.js'
+import {requireSelectedCascadedLlmConfig, requireSelectedCascadedRealtimeConfig} from '../config/cascaded-realtime-config.js'
 import {remoteClientMedia} from '../server/server-config.js'
 import type {ClientMedia} from '../server/client-protocol.js'
 import {buildDesktopRealtimeComposition, type DesktopConstructionOwnership} from '../desktop/desktop-session.js'
@@ -48,9 +52,11 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   const media = remote ? remoteClientMedia(loadedSettings) : undefined
   if (!remote) requireSelectedCascadedLlmConfig(loadedSettings)
   else if (loadedSettings.pipeline_mode === 'integrated') requireIntegratedRealtime(loadedSettings)
-  else validateSelectedCascadedRealtimeConfig(loadedSettings)
-  const externalMcp = await prepareExternalMcp(loadCapabilityRegistry({environment: remote
-      ? {...environment, NOVA_AUDIO_AGENT_CAMERA_MODULE_ENABLED: 'false'} : environment}), stop.signal)
+  else requireSelectedCascadedRealtimeConfig(loadedSettings)
+  if (remote) requireBlockingCredentials(loadedSettings)
+  const configuredCapabilities=loadCapabilityRegistry({environment:remote?{...environment,CAMERA_MODULE_ENABLED:'false'}:environment})
+  const acceptanceCapabilities=acceptanceCapabilityRegistry(configuredCapabilities)
+  const externalMcp = await prepareExternalMcp(withoutUncredentialedModules(acceptanceCapabilities, loadedSettings), stop.signal)
   const releaseExternal = ownership.own(() => externalMcp.close())
   const capabilities = externalMcp.capabilities
   // This entry owns the concrete Codex package; core gates injected adapters by their declared role.
@@ -68,11 +74,13 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   ownership.own(() => telemetry.close())
   telemetry.record('pipeline.configuration', {
     pipeline: settings.pipeline_mode,
-    provider: settings.local_serving ? 'openai-compatible' : settings.pipeline_mode === 'cascaded' ? settings.cascade_llm_provider : settings.integrated_provider,
+    provider: settings.pipeline_mode === 'cascaded' ? settings.cascade_llm_provider : settings.integrated_provider,
     model: settings.pipeline_mode === 'cascaded'
       ? requireSelectedCascadedLlmConfig(settings).config.model
-      : settings.integrated_provider === 'stepfun' ? settings.stepfun_realtime_model : settings.qwen_realtime_model,
-    asr: settings.local_serving ? 'whisper-stream' : settings.cascade_asr_provider, tts: settings.local_serving ? 'breeze-http' : settings.cascade_tts_provider,
+      : settings.integrated_provider === 'stepfun' ? settings.stepfun_realtime_model
+      : settings.integrated_provider === 'openai' ? settings.openai_realtime_model
+      : settings.integrated_provider === 'gemini' ? settings.gemini_realtime_model : settings.qwen_realtime_model,
+    asr: settings.cascade_asr_provider, tts: settings.cascade_tts_provider,
     vision: settings.conversation_vision_enabled,
   })
   let publishExecutorApproval: (view: ExecutorApprovalView) => void = () => undefined
@@ -80,7 +88,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     ? null
     : await (async () => {
       const {createCodexAssemblyResource, createProductionCodexHost, resolveCodexHostConfig, prepareManagedCodexMcp} = await import('../executors/codex/host.js')
-      const sourceResourcesPath = environment.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH
+      const sourceResourcesPath = environment.CODEX_RESOURCES_PATH
       const codexHost = createProductionCodexHost(settings, {
         ...(sourceResourcesPath === undefined ? {} : {resourcesPath: sourceResourcesPath}),
         onDiagnostic: code => onDiagnostic(`[runtime-diagnostic] ${code}`),
@@ -157,21 +165,29 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   })
   if (knowledge !== undefined) {
     const host = composition.realtime.personalAgent
+    let sourceRevision=0
     host.setSources(new LocalDirectorySources({
       path: host.path + '.sources.json', knowledge: knowledge.service,
+      priorityWorkspace: async () => codexResource?.mode==='project'
+        ? (await (codexResource.adapter as ProjectExecutorAdapter).activeCommittedWorkspace())?.canonical_path??null
+        : null,
       processingGrant:(...args)=>composition.realtime.personalMemory?.processingGrant?.(...args),
       onProcessingConsent:async(ids,grant)=>{for(const id of ids)await composition.realtime.personalMemory?.setProcessingConsent?.(id,grant)},
-      onChange: () => host.sourceChanged(),
+      onChange: changed => changed ? host.sourceChanged({phase:'ready',revision:++sourceRevision}) : host.sourceProgressChanged(),
+      onHideEvidenceMany: refs => host.invalidateEvidenceMany(refs),
+      onInvalidateMany: async refs => {
+        await host.invalidateEvidenceMany(refs)
+        const memory = composition.realtime.personalMemory
+        if (memory?.forgetSources) await memory.forgetSources(refs)
+        else for (const ref of refs) await memory?.forgetSource?.(ref)
+        await host.revalidate()
+        await host.refreshMemory()
+      },
       onInvalidate: async ref => {
         await host.invalidateEvidence(ref)
         await composition.realtime.personalMemory?.forgetSource?.(ref)
         await host.revalidate()
         await host.refreshMemory()
-      },
-      onObserve: async observation => {
-        const memory = composition.realtime.personalMemory
-        if (!memory?.observeSource) return // Knowledge-only mode indexes A without enabling personal extraction.
-        await memory.observeSource(observation)
       },
     }))
   }
@@ -191,18 +207,18 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     if(mode!=='background'&&seen?.proposal_id&&!seen.conversation_id&&projectAdapter?.confirmationController.view.pending_confirmation_id===seen.proposal_id)projectAdapter.confirmationController.setBackground(false)
     if(!seen){const paused=mode==='background';if(paused||presentationPaused)await composition.realtime.service.playbackDisconnected({resumeDelivery:!paused});presentationPaused=paused}
   }))
-  host.setConversationRuntime(conversationRuntimeFactory({settings,capabilities,externalMcp,telemetry,mediaStore:composition.realtime.core.mediaStore,
+  host.setConversationRuntime(conversationRuntimeFactory({settings:composition.realtime.core.settings,capabilities,externalMcp,telemetry,mediaStore:composition.realtime.core.mediaStore,
     ...(onUsage===undefined?{}:{onUsage}),
     ...(composition.realtime.core.frameSource?{frameSource:composition.realtime.core.frameSource}:{}),
     blackboard:blackboardOptionsFromSettings(settings),clock,gateway:composition.realtime.core.gateway,
     ...(knowledge?{knowledge}:{}),...(codexResource?{codexResource}:{}),onDiagnostic,
     host,memory:()=>composition.realtime.personalMemory,nextPlaybackGeneration,
     onExecutorProgress:(progress,result)=>composition.desktop.bridge.onExecutorProgress(progress,result),
-    onAudioFrame:frame=>composition.desktop.bridge.onAudioFrame(frame),onAudioClear:(id,epoch)=>composition.desktop.bridge.onAudioClear(id,epoch),onAudioAlert:(id,epoch)=>composition.desktop.bridge.onAudioAlert(id,epoch),onAudioTerminal:(id,epoch)=>composition.desktop.bridge.onAudioTerminal(id,epoch),
-  }),frame=>composition.desktop.bridge.onPersonalFrame(frame))
-  host.setConnectors(new ComposioConnector({...(process.platform==='darwin'&&environment.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH?{local:new MacCalendarClient(environment.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH),mail:new MacMailClient(environment.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH)}:{}),memory:()=>{const memory=composition.realtime.personalMemory;return memory instanceof SubstrateMemoryResource?memory:undefined},client:environment.COMPOSIO_API_KEY?new ComposioClient(environment.COMPOSIO_API_KEY):null,onChange:()=>{void host.connectionChanged()}}))
+    onAudioFrame:frame=>composition.audioBridge()?.onAudioFrame(frame),onAudioClear:(id,epoch)=>composition.audioBridge()?.onAudioClear(id,epoch),onAudioAlert:(id,epoch)=>composition.audioBridge()?.onAudioAlert(id,epoch),onAudioTerminal:(id,epoch)=>composition.audioBridge()?.onAudioTerminal(id,epoch),
+  }),frame=>composition.publishPersonal(frame))
+  host.setConnectors(new ComposioConnector({...(process.platform==='darwin'&&environment.CODEX_RESOURCES_PATH?{local:new MacCalendarClient(environment.CODEX_RESOURCES_PATH),mail:new MacMailClient(environment.CODEX_RESOURCES_PATH)}:{}),memory:()=>{const memory=composition.realtime.personalMemory;return memory instanceof SubstrateMemoryResource?memory:undefined},client:environment.COMPOSIO_API_KEY?new ComposioClient(environment.COMPOSIO_API_KEY):null,onChange:()=>{void host.connectionChanged()}}))
   const feishu = new FeishuConnector({
-    executable: environment.NOVA_AUDIO_AGENT_FEISHU_CLI_PATH ?? 'lark-cli',
+    executable: environment.FEISHU_CLI_PATH ?? 'lark-cli',
     credentialRoot: join(host.path + '.feishu', 'credentials'),
     statePath: join(host.path + '.feishu', 'state.json'),
     onChange:()=>host.connectionChanged(),
@@ -211,7 +227,7 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     ingest: async message => {
       const memory = composition.realtime.personalMemory
       if (!(memory instanceof SubstrateMemoryResource)) throw Error('请先启用本地记忆')
-      await memory.ingestEvidence({sourceId:message.source_id,locator:message.locator,text:message.raw_text,observedAt:message.observed_at,kind:'im',...(message.processing_consent?{processingConsent:message.processing_consent}:{}),retentionUntil:message.retention_until,senderId:message.sender_id,accountId:message.account_id})
+      await memory.ingestEvidence({sourceId:message.source_id,locator:message.locator,text:message.raw_text,observedAt:message.observed_at,kind:'im',...(message.sender_id?{im:{sender_id:message.sender_id,account_id:message.account_id,provider:'feishu',message_id:message.message_id,chat_id:message.chat_id,recipient_id:message.recipient_id,sender_name:message.sender_name,source_url:message.source_url,mention:message.mention,auto_capture:message.auto_capture}}:{}),...(message.processing_consent?{processingConsent:message.processing_consent}:{}),retentionUntil:message.retention_until,senderId:message.sender_id,accountId:message.account_id})
       await host.sourceChanged()
     },
     deleteSource: async ref => {
@@ -248,8 +264,36 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
   ownership.own(() => {clearInterval(deliveryTimer);unsubscribeFeishu()})
   ownership.own(() => composition.desktop.server.close())
   publishExecutorApproval = view => { if(view.work&&host.workConversation(view.work.work_id))return;composition.desktop.bridge.onExecutorApproval(view) }
+  let phone: ReturnType<typeof composition.createPhone> | undefined
+  let phoneQueue: Promise<unknown> = Promise.resolve()
+  const closePhone = async () => { const endpoint=phone;phone=undefined;await endpoint?.server.close() }
+  ownership.own(closePhone)
+  stop.signal.addEventListener('abort',()=>{void phoneQueue.then(closePhone).catch(()=>{ /* shutdown close is best effort */ })},{once:true})
+  const phoneControl = (method:string, params:unknown):Promise<unknown> => {
+    const operation=phoneQueue.then(async()=>{
+      if(process.platform!=='darwin'||remote)throw Error('unsupported')
+      if(method==='phone.start'){
+        const input=z.object({port:z.number().int().min(1).max(65535),tokenFile:z.string().min(1)}).strict().parse(params)
+        if(stop.signal.aborted)throw Error('stopped')
+        if(!phone){
+          const config=loadServerConfig({SERVER_PORT:String(input.port),SERVER_TOKEN_FILE:input.tokenFile})
+          const media=remoteClientMedia(settings)
+          const endpoint=composition.createPhone({token:config.token,createServer:serverOptions=>new ClientServer({...serverOptions,sharedWorkbench:true,prepareLegacyVoice:()=>composition.prepareLegacyPhoneVoice(),media,pairing:new ClientPairing(config.token,input.tokenFile+'.devices.json'),port:config.port})})
+          try{await endpoint.server.start();phone=endpoint}catch(error){await endpoint.server.close();throw error}
+        }
+      }else{
+        z.object({}).strict().parse(params)
+        if(method==='phone.stop')await closePhone()
+        else if(method!=='phone.status')throw Error('unavailable')
+      }
+      return {running:phone!==undefined}
+    })
+    phoneQueue=operation.catch(()=>{ /* the caller observes the failure through the returned operation */ })
+    return operation
+  }
   return {
     ...composition,
-    closeAuxiliary: () => telemetry.close(),
+    phoneControl,
+    closeAuxiliary: async () => {await phoneQueue;await closePhone();telemetry.close()},
   }
 }

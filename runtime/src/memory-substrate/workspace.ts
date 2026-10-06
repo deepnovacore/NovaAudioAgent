@@ -1,10 +1,10 @@
 import {canonicalJson} from '../text/canonical-json.js'
-import type {GraphDatabase} from '../workspace-graph/store.js'
-import type {LogicalWorkspace,WorkspaceInstance,RelationCard} from '../workspace-graph/models.js'
+import type {LedgerDatabase} from '../memory-ledger/store.js'
+import type {LogicalWorkspace,WorkspaceInstance,RelationCard} from '../memory-ledger/models.js'
 import {contentHash,memoryOperation,EntryRevisionSchema} from './store.js'
 
 /** Existing graph tables are materialized views; retain their typed content in the shared log. */
-export function recordWorkspaceRevision<T extends LogicalWorkspace|WorkspaceInstance|RelationCard>(db:GraphDatabase,kind:'LogicalWorkspace'|'WorkspaceInstance'|'RelationCard',card:T):T {
+export function recordWorkspaceRevision<T extends LogicalWorkspace|WorkspaceInstance|RelationCard>(db:LedgerDatabase,kind:'LogicalWorkspace'|'WorkspaceInstance'|'RelationCard',card:T):T {
  const key='logical_workspace_id' in card && 'aliases' in card?card.logical_workspace_id:'instance_id' in card?card.instance_id:canonicalJson([card.source_logical_id,card.target_logical_id,card.relation_type])
  const entryId='workspace:'+kind+':'+contentHash(key)
  const time='updated_at' in card?card.updated_at:card.last_seen_at

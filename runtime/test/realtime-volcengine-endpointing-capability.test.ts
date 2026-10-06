@@ -25,11 +25,9 @@ import {
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const FIXTURE_DIRECTORY = join(
   REPOSITORY_ROOT,
-  'fixtures',
-  'realtime',
-  'volcengine',
-  'v1',
+  'assets',
   'endpointing',
+  'volcengine-v1',
 )
 const SUPPORTED_RUNTIME = Object.freeze({platform: 'darwin', arch: 'arm64'})
 

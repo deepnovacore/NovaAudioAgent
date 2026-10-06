@@ -37,14 +37,14 @@ test('second-instance launch wakes sleeping or blocked audio before settings dis
         assert.equal(s.runtime.state, state)
         const epoch = s.runtime.epoch, shown = s.shown(), muted = s.runtime.muted
         const opened = []
-        const requested = new Function('wakeWord', 'argv', 'shouldOpenSettings', 'activeLaunchId', 'openSettingsWindow', `
+        const requested = new Function('wakeWord', 'argv', 'shouldOpenSettings', 'activeLaunchId', 'openSettingsWindow', 'requestPresentation', 'mainWindow', `
           let openSettingsRequested = false
           ;(() => {${body}})()
           return openSettingsRequested
         `)(s.runtime, argv, shouldOpenSettings, activeLaunchId, id => {
           assert.equal(s.runtime.state, 'active')
           opened.push(id)
-        })
+        }, () => {}, {show() {}, focus() {}})
         assert.equal(s.runtime.state, 'active')
         assert.equal(s.runtime.epoch, epoch + 1)
         assert.equal(s.shown(), shown + 1)
@@ -458,4 +458,22 @@ test('late sleeping audio after stop cannot reach a terminated wake worker', () 
   assert.equal(s.runtime.accept({epoch, pcm: new Uint8Array(640)}), false)
   assert.equal(s.runtime.status, 'off')
   assert.equal(s.runtime.pending, false)
+})
+
+test('a workbench reached from a sleeping orb wakes the detector without re-showing, while the orb stays asleep', async () => {
+  const source = readFileSync(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf("ipcMain.handle('nova:personal:presentation',")
+  const body = source.slice(start, source.indexOf('\n  })', start) + 5)
+  for (const [mode, expected] of [['orb', 'sleeping'], ['workbench', 'active']]) {
+    const s = setup()
+    s.report()
+    assert.equal(s.runtime.sleep('bubble'), true)
+    const shown = s.shown(), sender = {}
+    let handler
+    new Function('ipcMain', 'mainWindow', 'setPersonalCollapsed', 'wakeWord', `let presentationMode='orb';const settingsReady=false,settingsWriter=null,currentSettings={},acceptance=null,acceptanceWakeSettings=()=>({});${body}`)(
+      {handle: (_name, callback) => { handler = callback }}, {webContents: sender, isVisible: () => true, show() {}, focus() {}}, () => {}, s.runtime)
+    await handler({sender}, mode, false)
+    assert.equal(s.runtime.state, expected, mode)
+    assert.equal(s.shown(), shown, 'an unactivated presentation change must not raise the window')
+  }
 })

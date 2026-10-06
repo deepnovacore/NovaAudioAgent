@@ -21,7 +21,7 @@ test('a genuinely stale persisted coding target clears with a notice while ordin
   try {
     await host.open()
     await value.adapter.initialize()
-    const target = (await value.adapter.targetPort.list()).find(item => item.session_id !== null)!
+    const target = await value.adapter.targetPort.validate((await value.adapter.targetPort.list()).find(item => item.session_id !== null)!)
     await host.rememberCodingTarget('chat:main', 0, target, () => true)
     await value.store.markSessionUnavailable(target.session_id!, {wait: true})
     const notices: Record<string, unknown>[] = []

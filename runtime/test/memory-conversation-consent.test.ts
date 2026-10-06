@@ -3,14 +3,14 @@ import assert from 'node:assert/strict'
 import {mkdtemp,rm,readdir,readFile,writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {WorkspaceGraphStoreClient} from '../src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../src/memory-substrate/resource.js'
 import type {ModelGateway} from '../src/model/model-gateway.js'
 const gateway:ModelGateway={async *stream(){ /* complete only */ },complete(){return Promise.resolve({text:JSON.stringify({entries:[{key:'spicy',text:'我不吃辣',topic:'饮食',kind:'preference',due:null,direction:null,status:null,valid_until:null}]})})}}
 const now=()=>new Date().toISOString()
 
 test('actual conversation recipients require separate grants and fresh preparation observes revocation',async()=>{
- const root=await mkdtemp(join(tmpdir(),'nova-conversation-consent-')),client=new WorkspaceGraphStoreClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'scope',gateway,model:'extractor',inputConsent:true,conversationProviders:['consumer-a','consumer-b']})
+ const root=await mkdtemp(join(tmpdir(),'nova-conversation-consent-')),client=new MemoryLedgerClient(join(root,'memory.sqlite')),resource=new SubstrateMemoryResource({client,userId:'scope',gateway,model:'extractor',inputConsent:true,conversationProviders:['consumer-a','consumer-b']})
  try{
   await resource.open();await resource.remember({sourceId:'one',sessionId:'fixture',sequence:1,text:'我不吃辣',occurredAt:now(),confirmed:true});await resource.flush()
   assert.deepEqual(resource.processingGrant(true).conversation_providers,['consumer-a','consumer-b'])
@@ -26,7 +26,7 @@ test('actual conversation recipients require separate grants and fresh preparati
 })
 
 for(const revokeBeforeEdit of [false,true])test(`send-time preparation reconciles hand edits without leaking old or ungranted content (revoked=${revokeBeforeEdit})`,async()=>{
- const root=await mkdtemp(join(tmpdir(),'nova-conversation-hand-edit-')),path=join(root,'memory.sqlite'),client=new WorkspaceGraphStoreClient(path),resource=new SubstrateMemoryResource({client,userId:'edit',gateway,model:'extractor',inputConsent:true,conversationProviders:['consumer-a']})
+ const root=await mkdtemp(join(tmpdir(),'nova-conversation-hand-edit-')),path=join(root,'memory.sqlite'),client=new MemoryLedgerClient(path),resource=new SubstrateMemoryResource({client,userId:'edit',gateway,model:'extractor',inputConsent:true,conversationProviders:['consumer-a']})
  try{
   await resource.open();await resource.remember({sourceId:'one',sessionId:'fixture',sequence:1,text:'我不吃辣',occurredAt:now(),confirmed:true});await resource.flush()
   assert.ok((await resource.prepareResponseAdaptation('consumer-a')).memoryContext?.voice.includes('我不吃辣'))

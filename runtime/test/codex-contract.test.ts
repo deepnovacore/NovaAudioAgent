@@ -97,7 +97,7 @@ test('the generic runtime package root does not load concrete Codex ownership', 
   const exports = runtimeIndex as Readonly<Record<string, unknown>>
   for (const forbidden of [
     'CODEX_LIVE_MANIFEST', 'CODEX_PROJECT_MANIFEST', 'JsonRpcConnection',
-    'CodexJsonlParser', 'AppServerTurnProjection', 'ProjectCodexAdapter',
+    'AppServerTurnProjection', 'ProjectCodexAdapter',
     'CodexLiveAdapter', 'CodexProcess', 'CodexTransport', 'spawnCodex',
   ]) {
     assert.equal(Object.hasOwn(exports, forbidden), false)
@@ -116,7 +116,7 @@ test('project manifests carry approvals as a flag and pin run/steer/cancel param
     title: {type: 'string', minLength: 1, maxLength: 120, description: '宿主为新会话派生的标题'},
   })
   assert.deepEqual(record(run?.params).required, ['work_order'])
-  assert.deepEqual(Object.keys(record(record(steer?.params).properties)), ['instruction', 'project'])
+  assert.deepEqual(Object.keys(record(record(steer?.params).properties)), ['instruction', 'project', 'session_id', 'work_id'])
   assert.deepEqual(record(cancel?.params), {
     type: 'object',
     properties: {work_id: {type: 'string', minLength: 1, maxLength: 128}},
@@ -181,7 +181,10 @@ test('project request validator normalizes run/steer/cancel, defaults, and fails
   assert.deepEqual(validateCodexRequest('project', 'steer', {instruction: 'x', project: 'alpha'}), {
     ok: true, value: {instruction: 'x', project: 'alpha'},
   })
-  assert.equal(validateCodexRequest('project', 'steer', {instruction: 'x', work_id: 'w'}).ok, false)
+  assert.deepEqual(validateCodexRequest('project','steer',{instruction:' x ',project:'alpha',session_id:' session ',work_id:' work '}),{ok:true,value:{instruction:'x',project:'alpha',session_id:'session',work_id:'work'}})
+  assert.deepEqual(validateCodexRequest('project','steer',{instruction:'x',work_id:'w'}),{ok:true,value:{instruction:'x',project:null,work_id:'w'}})
+  for(const invalid of [{session_id:'s',work_id:'w'},{instruction:'x',session_id:''},{instruction:'x',work_id:1},{instruction:'x',session_id:null},{instruction:'x',work_id:'w'.repeat(513)},{instruction:'x',session_id:'s'.repeat(81)},{instruction:'x',session_id:'s',work_id:'w',extra:true}])assert.equal(validateCodexRequest('project','steer',invalid).ok,false)
+
   assert.deepEqual(validateCodexRequest('project', 'cancel', {work_id: ' delegate-1 '}), {
     ok: true, value: {work_id: 'delegate-1'},
   })

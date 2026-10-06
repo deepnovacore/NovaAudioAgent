@@ -52,6 +52,24 @@ test('expired entries and replay fences never enter current projections',()=>{
  assert.throws(()=>memoryOperation(db,'append_evidence',raw),/INVALID_OPERATION/)
  db.close()
 })
+test('file-derived inferences stay in history but leave personal and chat projections',()=>{
+ const db=new DatabaseSync(':memory:');initializeMemory(db)
+ const now=new Date().toISOString(),prefix='personal:me:'
+ try{
+  for(const [name,source_kind] of [['file','file'],['turn','conversation']] as const){
+   const source_id=prefix+name,evidence_id=prefix+'e:'+name
+   memoryOperation(db,'append_evidence',{id:evidence_id,source_id,source_kind,locator:name,observed_at:now,recorded_at:now,raw_text:'Project planning',hash:contentHash(name),trust:source_kind==='file'?'untrusted_external':'trusted_user'})
+   memoryOperation(db,'source_grant',{source_id,expected_revision:0,grant:{revision:1,scope_revision:0,extraction_provider:'provider',embedding_provider:'embed',conversation_providers:['chat']}})
+   memoryOperation(db,'merge',{entry_id:prefix+name,kind:'fact',origin:source_kind==='file'?'inferred':'stated',written_by:'merge',evidence_refs:[evidence_id],content:{text:'Project planning'},recorded_at:now})
+  }
+  assert.equal((memoryOperation(db,'list',{}) as EntryRevision[]).length,2)
+  assert.deepEqual((memoryOperation(db,'list',{exclude_file_inferences:true}) as EntryRevision[]).map(row=>row.entry_id),[prefix+'turn'])
+  assert.deepEqual((memoryOperation(db,'conversation_snapshot',{entry_prefix:prefix,consumer:'chat'}) as EntryRevision[]).map(row=>row.entry_id),[prefix+'turn'])
+  const search=memoryOperation(db,'search',{entry_prefix:prefix,provider:'lexical',query:'Project planning',vector:null,scope:'any',limit:8,exclude_file_inferences:true}) as {hits:{entry:EntryRevision}[]}
+  assert.deepEqual(search.hits.map(hit=>hit.entry.entry_id),[prefix+'turn'])
+  assert.deepEqual((memoryOperation(db,'pending_vectors',{entry_prefix:prefix,provider:'embed',limit:1,exclude_file_inferences:true}) as EntryRevision[]).map(row=>row.entry_id),[prefix+'turn'])
+ }finally{db.close()}
+})
 
 test('legacy import is atomic and idempotent and leaves its recovery database unchanged',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'nova-memory-migrate-'));const path=join(directory,'legacy.sqlite');const old=new DatabaseSync(path)

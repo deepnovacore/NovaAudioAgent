@@ -11,6 +11,7 @@
  */
 
 import { z } from 'zod'
+import {TASK_TOOL_SPEC} from './task-tools.js'
 import type {AgentDescriptor} from '../executors/agent-controller.js'
 import type { JsonValue } from './events.js'
 import type {ExecutorManifest, ExecutorRole, OpSpec} from './ports.js'
@@ -56,7 +57,7 @@ export class ToolSchemaError extends Error {
 
 export function compileToolSchema(
   manifests: readonly ExecutorManifest[],
-  options: {readonly includeMemoryRecall?: boolean; readonly agentDescriptors?: readonly AgentDescriptor[]} = {},
+  options: {readonly includeTasks?: boolean; readonly includeMemoryRecall?: boolean; readonly agentDescriptors?: readonly AgentDescriptor[]} = {},
 ): CompiledTools {
   const schemas: Readonly<Record<string, JsonValue>>[] = []
   const bindings = new Map<string, ToolBinding>()
@@ -136,8 +137,8 @@ export function compileToolSchema(
       bindings.set(compiled.wireName, compiled.binding)
     }
   }
-  if (agents.length > 0) {
-    for (const spec of [dispatchToolSpec(agents), cancelToolSpec(agents), CONFIRM_TOOL_SPEC]) {
+  {
+    for (const spec of [...(agents.length > 0 ? [dispatchToolSpec(agents), cancelToolSpec(agents), CONFIRM_TOOL_SPEC] : []), ...(options.includeTasks ? [TASK_TOOL_SPEC] : [])]) {
       if (bindings.has(spec.name)) throw new ToolSchemaError(`工具 wire name 重复：${spec.name}`)
       schemas.push(compileHostTool(spec))
       bindings.set(spec.name, toolBindingSchema.parse({kind: 'host', logical_name: `host.${spec.name}`}))

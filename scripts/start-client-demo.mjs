@@ -19,7 +19,7 @@ export function demoClientEnvironment({
 }) {
   return {
     ...environment,
-    NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE: pathApi.resolve(rootDir, ...DEMO_VIDEO_PARTS),
+    DESKTOP_VIDEO_FILE: pathApi.resolve(rootDir, ...DEMO_VIDEO_PARTS),
   }
 }
 

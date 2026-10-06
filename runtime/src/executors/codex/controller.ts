@@ -1,3 +1,4 @@
+import {taskGrantService} from '../../personal-agent/tasks.js'
 import type {CodingAgentControllerFactory} from '../coding-executor.js'
 import type {
   AgentActionResult,
@@ -57,19 +58,21 @@ export class CodexAgentController implements AgentController {
   async settleIntakeForTest(): Promise<void> { await this.#intake?.settled() }
 
   async dispatch(request: AgentDispatchRequest): Promise<AgentActionResult> {
-    if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
+    if(request.continuationGrant){try{const tasks=taskGrantService(request.continuationGrant);tasks.validateContinuation(request.continuationGrant);if(request.taskContext!==request.continuationGrant||request.origin_ref!==request.continuationGrant.origin_ref)throw Error('invalid_continuation')}catch{return {code:'superseded',accepted:false,detail:{}}}}
+    if (!request.stillWanted() || ('taskContext' in request && request.taskContext?.stillWanted() === false)) return {code: 'superseded', accepted: false, detail: {}}
     const intake = this.#intake
     if (intake === undefined) {
       const dispatchPort = this.#dispatchPort
       if (dispatchPort === undefined) return {code: 'unsupported_tool', accepted: false, detail: {}}
       // The controller owns the last fence before the runtime effect. The port repeats it at the
       // host/runtime boundary so neither a synchronous nor an asynchronous caller can bypass it.
-      if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
+      if (!request.stillWanted() || ('taskContext' in request && request.taskContext?.stillWanted() === false)) return {code: 'superseded', accepted: false, detail: {}}
       const admission = await dispatchPort.dispatch({
+        ...(request.taskContext?{taskContext:request.taskContext}:{}),
         channel: this.#channel, op: 'run', request: {work_order: request.instruction},
         origin_ref: request.origin_ref, stillWanted: request.stillWanted,
       })
-      if (!request.stillWanted()) return {code: 'superseded', accepted: false, detail: {}}
+      if (!request.stillWanted() || ('taskContext' in request && request.taskContext?.stillWanted() === false)) return {code: 'superseded', accepted: false, detail: {}}
       if (!admission.accepted || admission.delegate_id === null) {
         return {code: 'runtime_rejected', accepted: false, detail: {}}
       }
@@ -85,6 +88,8 @@ export class CodexAgentController implements AgentController {
       request.originalUserText,
       request.origin_ref,
       String(request.sessionEpoch),
+      request.taskContext,
+      request.input_origin_ref,
     )
     const state = intake.view?.state
     if (state === undefined) return {code: 'runtime_rejected', accepted: false, detail: {}}

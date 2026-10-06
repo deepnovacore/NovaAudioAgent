@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import {PersonalAgentHost} from '../../../runtime/dist/src/personal-agent/host.js'
 import {SuggestionPool} from '../../../runtime/dist/src/core/suggestions.js'
 import {SubstrateMemoryResource} from '../../../runtime/dist/src/memory-substrate/resource.js'
-import {WorkspaceGraphStoreClient} from '../../../runtime/dist/src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../../../runtime/dist/src/memory-ledger/store-client.js'
 
 async function main(){
 const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-memory-live-'))
@@ -22,7 +22,7 @@ const check=async description=>{report.checks.push(description);await persist()}
 await persist()
 let host,memory,client,window,unsubscribe=()=>{},modelCalls=0
 const gateway={complete:()=>{modelCalls++;throw Error('live module forbids model calls')},stream:()=>{modelCalls++;throw Error('live module forbids model calls')}}
-async function open(){client=new WorkspaceGraphStoreClient(ledger);memory=new SubstrateMemoryResource({client,userId:'synthetic-memory-live',gateway,model:'disabled-live-model',inputConsent:false,consolidation:{enabled:false}});await memory.open();host=new PersonalAgentHost({path:personal,userScope:'synthetic-memory-live',memory:()=>memory,pool:new SuggestionPool(),evidence:()=>null});await host.open();unsubscribe=host.subscribe(()=>window?.webContents.send('memory-live-state',host.snapshot()))}
+async function open(){client=new MemoryLedgerClient(ledger);memory=new SubstrateMemoryResource({client,userId:'synthetic-memory-live',gateway,model:'disabled-live-model',inputConsent:false,consolidation:{enabled:false}});await memory.open();host=new PersonalAgentHost({path:personal,userScope:'synthetic-memory-live',memory:()=>memory,pool:new SuggestionPool(),evidence:()=>null});await host.open();unsubscribe=host.subscribe(()=>window?.webContents.send('memory-live-state',host.snapshot()))}
 async function close(){unsubscribe();await host?.close();await memory?.close()}
 const screenshot=async name=>{const path=join(dirname(reportPath),`${basename(reportPath)}.${name}.png`);await writeFile(path,(await window.webContents.capturePage()).toPNG(),{mode:0o600});await chmod(path,0o600);report.screenshots.push(path);await persist()}
 try{

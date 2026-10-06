@@ -36,7 +36,7 @@ try {
   for (const name of ['MANIFEST.json', 'speech-16k-s16le.pcm', 'silence-16k-s16le.pcm']) {
     assert.ok((await stat(join(packageRoot, 'resources/endpointing/volcengine-v1', name))).size > 0)
   }
-  process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH = nativeOptions.resourcesPath
+  process.env.CODEX_RESOURCES_PATH = nativeOptions.resourcesPath
   const capability = await import(pathToFileURL(join(packageRoot, 'runtime/dist/src/realtime/volcengine/endpointing-capability.js')))
   // The probe unrefs its deadline; keep this standalone harness alive until it finishes.
   const keepalive = setInterval(() => {}, 1000)
@@ -69,10 +69,10 @@ try {
   const tokenFile = join(root, 'token')
   const envFile = join(root, 'server.env')
   const settings = {
-    NOVA_AUDIO_AGENT_SERVER_PORT: String(port), NOVA_AUDIO_AGENT_SERVER_TOKEN_FILE: tokenFile,
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: `wss://127.0.0.1:${provider.address().port}/`,
-    NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG: capabilities,
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: root, NOVA_AUDIO_AGENT_EXECUTORS: 'fast_sim', NOVA_AUDIO_AGENT_EXECUTOR: 'fast_sim',
+    SERVER_PORT: String(port), SERVER_TOKEN_FILE: tokenFile,
+    QWEN_REALTIME_URL: `wss://127.0.0.1:${provider.address().port}/`,
+    CAPABILITIES_CONFIG: capabilities,
+    CODEX_WORKSPACE: root, EXECUTORS: 'fast_sim', EXECUTOR: 'fast_sim',
     DASHSCOPE_API_KEY: 'smoke-key', TAVILY_API_KEY: 'smoke-key',
   }
   await writeFile(envFile, Object.entries(settings).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n'), {mode: 0o600})

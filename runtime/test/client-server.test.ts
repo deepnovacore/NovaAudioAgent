@@ -1,3 +1,7 @@
+import {mkdtemp,rm,realpath} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {ClientPairing} from '../src/server/client-pairing.js'
 import assert from 'node:assert/strict'
 import {once} from 'node:events'
 import {test} from 'node:test'
@@ -5,6 +9,7 @@ import {WebSocket} from 'ws'
 
 import {ClientServer} from '../src/server/client-server.js'
 import type {ClientMedia} from '../src/server/client-protocol.js'
+import {encodeAudioFrame} from '../src/desktop/desktop-wire.js'
 const token = '0123456789abcdef0123456789abcdef'
 
 async function peer(port: number, path = '/client/v1'): Promise<{socket: WebSocket; next: () => Promise<Record<string, unknown>>}> {
@@ -198,4 +203,167 @@ test('authenticated language is validated and omitted language does not inherit 
   invalid.socket.send(JSON.stringify({type: 'hello', token, protocol_version: 1, language: 'fr'}))
   await closed
   assert.deepEqual(languages, ['en', undefined])
+})
+test('authenticated paired identity survives reconnect and remains distinct from shared master', {timeout:5000},async t=>{
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-task-client-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+ const pairing=new ClientPairing(token,join(dir,'devices.json'))
+ const device=pairing.redeem(pairing.create('wss://example.com/client/v1').code,'Device')
+ const identities:unknown[]=[]
+ const server=new ClientServer({token,port:0,pairing,onControl:(_control,context)=>{identities.push(context)}})
+ t.after(()=>server.close());const {port}=await server.start()
+ const connections:unknown[]=[]
+ for(const credential of [device.token,device.token,token]){
+  const client=await peer(port);hello(client.socket,credential);const ready=await client.next();connections.push(ready.connection_id)
+  client.socket.send(JSON.stringify({type:'client.command',request_id:'same',connection_id:ready.connection_id,payload:{type:'personal.command',request_id:'same',method:'tasks.list',params:{}}}))
+  assert.equal((await client.next()).status,'applied');await server.disconnectClient()
+ }
+ assert.notEqual(connections[0],connections[1])
+ assert.deepEqual(identities,[{client_id:'remote:'+device.device_id,can_takeover:true},{client_id:'remote:'+device.device_id,can_takeover:true},{client_id:'remote:master',can_takeover:false}])
+ assert.throws(()=>pairing.clientIdentity('f'.repeat(32)),/authentication failed/)
+})
+
+test('personal clients receive a compact coalesced snapshot with a 1 MiB budget', {timeout: 5000}, async t => {
+  const server = new ClientServer({token, port: 0})
+  t.after(() => server.close())
+  const client = await peer((await server.start()).port)
+  t.after(() => client.socket.terminate())
+  client.socket.send(JSON.stringify({type:'hello',token,protocol_version:1,capabilities:['personal']}))
+  assert.ok((await client.next()).capabilities instanceof Array)
+  const snapshot = {type:'personal.state',revision:1,life:{profile:{about:'x'.repeat(300_000)}},sources:['private'],feishu:{secret:true},connectors:{secret:true},news:{enabled:true,items:[{id:'n',title:'Article',summary:'Summary',url:'https://example.com',private_field:'secret'}],sources:[{token:'secret'}]},capabilities:{sources:true,memory:{list:true}},workbench_context:{status:'ready',candidate_count:3,recap:{text:'Busy',projects:[{name:'Nova',line:'Workbench',path:'/private'}]},cards:[{id:'c',candidate_id:'c',tab:'todos',title:'Try it',body:'Body',why:'Why',next:'Next',refs:[{entry_id:'source:1',version:'v',label:'private excerpt'}]}]},profile_preparation:{status:'ready',draft:{about:{text:'About',refs:[{entry_id:'p'}]},work:[{title:'W',text:'T',refs:[{entry_id:'p'}]}]},sources:[{id:'p',label:'private label'}]}}
+  await server.sendText(JSON.stringify(snapshot))
+  await server.sendText(JSON.stringify({...snapshot,revision:2}))
+  const state = await client.next()
+  assert.equal(state.revision,2)
+  assert.equal(state.sources,undefined)
+  assert.equal(state.feishu,undefined)
+  assert.equal(state.connectors,undefined)
+  assert.deepEqual(state.news,{enabled:true,refreshing:false,items:[{id:'n',title:'Article',summary:'Summary',url:'https://example.com'}],saved:[]})
+  assert.deepEqual(state.capabilities,{memory:{list:true}})
+  assert.deepEqual(state.workbench_context,{status:'ready',recap:{text:'Busy',projects:[{name:'Nova',line:'Workbench'}]},cards:[{id:'c',tab:'todos',title:'Try it',body:'Body',why:'Why',next:'Next',source_count:1}]})
+  assert.deepEqual(state.profile_preparation,{status:'ready',draft:{about:'About',work:[{title:'W',text:'T'}]}})
+  assert.doesNotMatch(JSON.stringify(state),/private/)
+  await server.sendText(JSON.stringify({...snapshot,revision:3,life:{profile:{about:'x'.repeat(1_048_576)}}}))
+  assert.deepEqual(await client.next(),{type:'personal.state',revision:3,reload_required:true})
+})
+
+test('personal result state is projected and oversized results preserve their outcome', {timeout:5000}, async t => {
+  const server = new ClientServer({token,port:0})
+  t.after(()=>server.close())
+  const client=await peer((await server.start()).port)
+  t.after(()=>client.socket.terminate())
+  client.socket.send(JSON.stringify({type:'hello',token,protocol_version:1,capabilities:['personal']}))
+  assert.ok(((await client.next()).capabilities as string[]).includes('personal'))
+  await server.sendText(JSON.stringify({type:'personal.result',request_id:'r',ok:true,data:{type:'personal.state',revision:4,life:{},sources:['secret']}}))
+  assert.deepEqual((await client.next()).data,{type:'personal.state',revision:4,life:{}})
+  await server.sendText(JSON.stringify({type:'personal.result',request_id:'r2',ok:true,data:'x'.repeat(1_048_576)}))
+  assert.deepEqual(await client.next(),{type:'personal.result',request_id:'r2',ok:true,reload_required:true})
+})
+
+test('legacy clients retain ready capabilities and 16 KiB text limit', {timeout:5000}, async t=>{
+  const server=new ClientServer({token,port:0});t.after(()=>server.close())
+  const client=await peer((await server.start()).port);t.after(()=>client.socket.terminate())
+  hello(client.socket)
+  assert.equal(((await client.next()).capabilities as string[]).includes('personal'),false)
+  await assert.rejects(server.sendText(JSON.stringify({type:'personal.state',revision:1,life:{text:'x'.repeat(17000)}})),/too large/)
+})
+
+test('personal paired devices cannot take over or manage connectors', {timeout:5000}, async t=>{
+  const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-personal-client-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+  const pairing=new ClientPairing(token,join(dir,'devices.json'))
+  const device=pairing.redeem(pairing.create('wss://example.com/client/v1').code,'Mobile')
+  const contexts:unknown[]=[]
+  const server=new ClientServer({token,port:0,pairing,onControl:(_control,context)=>{contexts.push(context)}})
+  t.after(()=>server.close())
+  const client=await peer((await server.start()).port);t.after(()=>client.socket.terminate())
+  client.socket.send(JSON.stringify({type:'hello',token:device.token,protocol_version:1,capabilities:['personal']}))
+  const ready=await client.next()
+  for(const method of ['state','connector.status','feishu.status','sources.add']) {
+    client.socket.send(JSON.stringify({type:'client.command',request_id:method,connection_id:ready.connection_id,payload:{type:'personal.command',request_id:method,method,params:{}}}))
+    assert.equal((await client.next()).status,method==='state'?'applied':'rejected')
+  }
+  assert.deepEqual(contexts,[{client_id:'remote:master',can_takeover:false}])
+  await server.sendText(JSON.stringify({type:'personal.state',revision:99,life:{}}))
+  await server.disconnectClient()
+})
+
+for (const personal of [false,true]) test(`shared workbench enforces mobile privileges regardless of hello personal=${personal}`, {timeout:5000}, async t=>{
+  const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-shared-client-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+  const pairing=new ClientPairing(token,join(dir,'devices.json'))
+  const device=pairing.redeem(pairing.create('wss://example.com/client/v1').code,'Mobile')
+  const contexts:unknown[]=[]
+  const controls:unknown[]=[]
+  let pcmBytes=0
+  const server=new ClientServer({token,port:0,pairing,sharedWorkbench:true,prepareLegacyVoice:()=>Promise.resolve('legacy-chat'),
+    onAudio:pcm=>{pcmBytes+=pcm.length},onControl:(control,context)=>{controls.push(control);if(control.type==='personal.command')contexts.push(context)}})
+  t.after(()=>server.close())
+  const client=await peer((await server.start()).port);t.after(()=>client.socket.terminate())
+  client.socket.send(JSON.stringify({type:'hello',token:device.token,protocol_version:1,...(personal?{capabilities:['personal']}:{})}))
+  const ready=await client.next()
+  for(const method of ['tasks.list','presentation.set','connector.status','feishu.status','sources.add']) {
+    client.socket.send(JSON.stringify({type:'client.command',request_id:method,connection_id:ready.connection_id,payload:{type:'personal.command',request_id:method,method,params:method==='presentation.set'?{mode:'workbench'}:{}}}))
+    assert.equal((await client.next()).status,['tasks.list','presentation.set'].includes(method)?'applied':'rejected')
+  }
+  assert.deepEqual(contexts,[{client_id:'remote:master',can_takeover:false},{client_id:'remote:master',can_takeover:false}])
+  if(!personal){
+    assert.deepEqual(controls[0],{type:'input.audio',conversation_id:'legacy-chat'})
+    client.socket.send(Buffer.from([0,0]))
+    client.socket.send(JSON.stringify({type:'client.command',request_id:'text',connection_id:ready.connection_id,payload:{type:'input.text',text:'hello'}}))
+    assert.equal((await client.next()).status,'applied')
+    assert.equal(pcmBytes,2)
+    assert.deepEqual(controls.at(-1),{type:'input.text',text:'hello',conversation_id:'legacy-chat'})
+    await server.sendText(JSON.stringify({type:'personal.state',revision:1,sources:['private'],life:{text:'x'.repeat(1_100_000)}}))
+    await server.sendText(JSON.stringify({type:'personal.result',request_id:'secret',ok:true,data:{sources:['private']}}))
+    await server.sendText(JSON.stringify({type:'caption',conversation_id:'other-chat',text:'private'}))
+    await server.sendText(JSON.stringify({type:'caption',conversation_id:'legacy-chat',text:'safe'}))
+    assert.equal((await client.next()).text,'safe')
+    assert.equal(client.socket.readyState,WebSocket.OPEN)
+  }
+})
+
+test('a fresh result snapshot cancels an older coalesced snapshot', {timeout:5000},async t=>{
+  const server=new ClientServer({token,port:0});t.after(()=>server.close())
+  const client=await peer((await server.start()).port);t.after(()=>client.socket.terminate())
+  client.socket.send(JSON.stringify({type:'hello',token,protocol_version:1,capabilities:['personal']}));await client.next()
+  await server.sendText(JSON.stringify({type:'personal.state',revision:1,life:{}}))
+  await server.sendText(JSON.stringify({type:'personal.result',request_id:'fresh',ok:true,data:{type:'personal.state',revision:2,life:{}}}))
+  assert.equal(((await client.next()).data as {revision:number}).revision,2)
+  await new Promise(resolve=>setTimeout(resolve,300))
+  await server.sendText(JSON.stringify({type:'caption',text:'barrier'}))
+  assert.equal((await client.next()).type,'caption')
+})
+
+test('legacy shared endpoint fails explicitly when voice cannot be acquired', {timeout:5000},async t=>{
+  const server=new ClientServer({token,port:0,sharedWorkbench:true,prepareLegacyVoice:()=>Promise.reject(Error('voice_not_owned'))});t.after(()=>server.close())
+  const client=await peer((await server.start()).port)
+  const closed=once(client.socket,'close')
+  hello(client.socket)
+  assert.equal((await closed)[0],4009)
+})
+
+
+test('personal snapshot budget never relaxes audio backpressure', {timeout:5000},async t=>{
+  const server=new ClientServer({token,port:0});t.after(()=>server.close())
+  const client=await peer((await server.start()).port);t.after(()=>client.socket.terminate())
+  client.socket.send(JSON.stringify({type:'hello',token,protocol_version:1,capabilities:['personal']}));await client.next()
+  t.mock.getter(WebSocket.prototype,'bufferedAmount',()=>300_000)
+  await server.sendText(JSON.stringify({type:'personal.result',request_id:'read',ok:true,data:'x'.repeat(300_000)}))
+  assert.equal((await client.next()).type,'personal.result')
+  const closed=once(client.socket,'close')
+  await assert.rejects(server.sendBinary(encodeAudioFrame({utterance_id:'u',generation_epoch:1,sequence:0,pcm:new Uint8Array([0,0])})),/queue full/)
+  assert.equal((await closed)[0],4008)
+})
+
+test('personal protocol faults preserve credentials while revocation stays 4003', {timeout:5000}, async t => {
+  const server=new ClientServer({token,port:0})
+  t.after(()=>server.close())
+  const {port}=await server.start(), client=await peer(port)
+  client.socket.send(JSON.stringify({type:'hello',token,protocol_version:1,capabilities:['personal']}))
+  await client.next()
+  const closed=once(client.socket,'close')
+  client.socket.send(Buffer.alloc(0))
+  assert.equal((await closed)[0],1002)
+  const wrong=await peer(port)
+  const rejected=once(wrong.socket,'close')
+  wrong.socket.send(JSON.stringify({type:'hello',token:'f'.repeat(32),protocol_version:1,capabilities:['personal']}))
+  assert.equal((await rejected)[0],4003)
 })

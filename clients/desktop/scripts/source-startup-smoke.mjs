@@ -1,3 +1,4 @@
+import {environmentContract} from '../../../runtime/dist/src/config/environment-contract.js'
 import {spawn} from 'node:child_process'
 import {mkdir, mkdtemp, rm} from 'node:fs/promises'
 import {resolve} from 'node:path'
@@ -7,6 +8,7 @@ import {prepareWindowsSmokeHomeOwnership} from './windows-smoke-home.mjs'
 export const SOURCE_STARTUP_SMOKE_ARGUMENT = '--nova-source-startup-smoke-v1'
 const READY_LINE = '[desktop-smoke] source_window_ready\n'
 const MAX_OUTPUT = 16 * 1024
+const productEnvironmentNames = new Set([...environmentContract.map(entry => entry.name), 'ENV_FILE'])
 
 export function assertSourceStartupSmokeResult(result, stdout, stderr) {
   const ready = stdout.includes(READY_LINE)
@@ -26,7 +28,7 @@ export function sourceStartupSmokeEnvironment(parentEnvironment, {home}) {
   for (const [key, value] of Object.entries(parentEnvironment)) {
     const normalizedKey = key.toUpperCase()
     if (
-      normalizedKey.startsWith('NOVA_') ||
+      normalizedKey.startsWith('NOVA_') || productEnvironmentNames.has(normalizedKey) ||
       normalizedKey === 'ELECTRON_RUN_AS_NODE' ||
       normalizedKey === 'HOME' ||
       normalizedKey === 'USERPROFILE'

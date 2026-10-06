@@ -17,10 +17,7 @@ export type EndpointingFactory = (input: {
 }) => Promise<EndpointingPort>
 
 export interface AsrTranscript {
-  /** A revisable full hypothesis, rather than an append-only text delta. */
   readonly replace?: boolean
-  readonly audioMs?: number
-  readonly inferenceMs?: number
   readonly text: string
   readonly final: boolean
 }

@@ -41,6 +41,50 @@ function ledger() {
   return {value, rows, deleted, consent};
 }
 
+test('ledger-backed sync replaces at maxSources one and retains prior evidence after failed refresh', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'knowledge-ledger-capacity-'))
+  const file = join(directory, 'manual.md')
+  await writeFile(file, 'Original verified content')
+  const authority = ledger()
+  let failEmbedding = false, failStore = false
+  const store = new KnowledgeStoreClient({path: join(directory, 'db', 'knowledge.sqlite'), maxSources: 1}), replace = store.replaceSource.bind(store)
+  store.replaceSource = async input => {if (failStore) throw Error('store credential=private-value'); await replace(input)}
+  const service = new KnowledgeService({store, embedding: {id: 'fixture', dims: 2, embed: texts => failEmbedding
+    ? Promise.reject(Error('secret provider detail'))
+    : Promise.resolve(texts.map(() => new Float32Array([1, 0])))}})
+  const grant = {revision: 1, scope_revision: 0, extraction_provider: 'fixture', embedding_provider: 'fixture'}
+  try {
+    await service.open(); await service.bindEvidenceLedger(authority.value)
+    const first = await service.syncFile(file, directory, new AbortController().signal, undefined, grant)
+    const original = (await store.listChunks(first.id))[0]!.evidence_id!
+    const extra=join(directory,'extra.md')
+    await writeFile(extra,'A separate verified note')
+    await assert.rejects(service.syncFile(extra,directory,new AbortController().signal,undefined,grant),/^Error: index_capacity$/u)
+    assert.deepEqual((await service.listSources()).map(item=>item.id),[first.id])
+    await writeFile(file, 'Replacement verified content')
+    failStore = true
+    await assert.rejects(service.syncFile(file, directory, new AbortController().signal, first.id, grant), /store_failed/u)
+    assert.deepEqual((await service.listSources()).map(item => item.id), [first.id])
+    assert.ok(authority.rows.has(original))
+    failStore = false; failEmbedding = true
+    const second = await service.syncFile(file, directory, new AbortController().signal, first.id, grant)
+    await service.vectorsSettled(); failEmbedding = false
+    assert.deepEqual(await store.unembeddedSources('fixture', 2), [second.id], 'an embedding outage commits lexically and leaves vectors pending')
+    assert.notEqual(second.id, first.id)
+    assert.deepEqual((await service.listSources()).map(item => item.id), [second.id])
+    assert.equal(authority.rows.has(original), false)
+    const currentEvidence = (await store.listChunks(second.id))[0]!.evidence_id!
+    assert.match(authority.rows.get(currentEvidence)!.text, /Replacement/u)
+    await writeFile(file, 'Third verified content')
+    const remove = authority.value.remove.bind(authority.value)
+    authority.value.remove = sourceId => sourceId === `knowledge:${second.id}`
+      ? Promise.reject(Error('ledger credential=private-value')) : remove(sourceId)
+    await assert.rejects(service.syncFile(file, directory, new AbortController().signal, second.id, grant), /^Error: store_failed$/u)
+    assert.equal((await service.listSources()).length, 1)
+    authority.value.remove = remove
+  } finally {await service.close(); await rm(directory, {recursive: true, force: true})}
+})
+
 test('existing document vectors migrate offline to canonical evidence and cannot revive deleted A originals', async () => {
   const directory = await mkdtemp(join(await realpath(tmpdir()), 'knowledge-ledger-migrate-'));
   const file = join(directory, 'manual.md'), path = join(directory, 'db', 'knowledge.sqlite');

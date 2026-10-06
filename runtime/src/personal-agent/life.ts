@@ -1,3 +1,5 @@
+import {sourceTagSchema} from '../memory/provenance.js'
+import type {TaskRecord} from './tasks.js'
 import {z} from 'zod'
 import {createHash} from 'node:crypto'
 import {constants} from 'node:fs'
@@ -7,11 +9,11 @@ import type {EvaluatedCandidate} from '../understanding/candidates.js'
 import {BoundedJsonStore} from '../storage/bounded-json.js'
 export const newsArticleSchema=z.object({article_id:z.string().min(1).max(512),source_id:z.string().min(1).max(256),url:z.string().url().max(4096).refine(value=>['https:','http:'].includes(new URL(value).protocol),'news_web_url_required'),content_hash:z.string().min(1).max(256),title:z.string().max(300),summary:z.string().max(1500),published_at:z.string().nullable()}).strict()
 const newsSourceSchema=newsArticleSchema.extend({action:z.literal('user_conversion'),converted_at:z.string().datetime()})
-const fields={news_source:newsSourceSchema.optional(),id:z.string(),version:z.number().int().nonnegative(),title:z.string().trim().min(1).max(200),note:z.string().max(4000),created_at:z.string(),updated_at:z.string()}
+const fields={sources:z.array(sourceTagSchema).max(256).optional(),provenance_refs:z.array(z.string().max(600)).max(256).optional(),auto_recorded:z.boolean().optional(),source_changed:z.boolean().optional(),news_source:newsSourceSchema.optional(),id:z.string(),version:z.number().int().nonnegative(),title:z.string().trim().min(1).max(200),note:z.string().max(4000),created_at:z.string(),updated_at:z.string()}
 const todoSchema=z.object({...fields,status:z.enum(['open','doing','waiting','done','cancelled']),due:z.string().date().nullable(),goal_id:z.string().nullable(),idea_id:z.string().nullable()})
 const ideaSchema=z.object({...fields,status:z.enum(['active','archived']),goal_id:z.string().nullable()})
 const goalSchema=z.object({...fields,status:z.enum(['active','paused','completed','archived']),success_criteria:z.string().max(2000),idea_id:z.string().nullable()})
-export const lifeStateSchema=z.object({todos:z.array(todoSchema).max(1000),ideas:z.array(ideaSchema).max(1000),goals:z.array(goalSchema).max(200),profile:z.object({about:z.string().max(4000),version:z.number().int().nonnegative()}),receipts:z.record(z.string(),z.object({hash:z.string(),result:z.object({id:z.string(),version:z.number()})}))})
+export const lifeStateSchema=z.object({todos:z.array(todoSchema).max(1000),ideas:z.array(ideaSchema).max(1000),goals:z.array(goalSchema).max(200),profile:z.object({about:z.string().max(5000),version:z.number().int().nonnegative()}),receipts:z.record(z.string(),z.object({hash:z.string(),result:z.object({id:z.string(),version:z.number()})}))})
 export type LifeState=z.infer<typeof lifeStateSchema>
 export interface LifeProvenance {type:'accepted_candidate'|'explicit_candidate';row:EvaluatedCandidate;resolution?:LifeResolution}
 export interface LifeSnapshot {state:LifeState;revision:number}
@@ -29,7 +31,7 @@ export const lifeInputSchema=z.discriminatedUnion('op',[
  z.object({op:z.literal('update'),kind,id:z.string(),expected_version:z.number().int().nonnegative(),title:z.string().trim().min(1).max(200).optional(),note:z.string().max(4000).optional(),status:z.string().optional(),goal_id:z.string().nullable().optional(),due:z.string().date().nullable().optional(),success_criteria:z.string().max(2000).optional()}).strict(),
  z.object({op:z.literal('convert'),id:z.string(),target:z.enum(['todo','goal']),expected_version:z.number().int().nonnegative()}).strict(),
  z.object({op:z.literal('undo_create'),id:z.string(),expected_version:z.literal(1)}).strict(),
- z.object({op:z.literal('profile'),about:z.string().max(4000),expected_version:z.number().int().nonnegative()}).strict(),
+ z.object({op:z.literal('profile'),about:z.string().max(5000),expected_version:z.number().int().nonnegative()}).strict(),
 ])
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 /** Shared domain transition; persistence and evidence admission belong to the backend. */
@@ -69,7 +71,7 @@ export function applyLifeMutation(state:LifeState,raw:unknown,requestId:string,n
    const existing=p.target==='todo'?next.todos.find(t=>t.idea_id===p.id||(idea.news_source&&t.news_source?.article_id===idea.news_source.article_id)):next.goals.find(g=>g.idea_id===p.id||(idea.news_source&&g.news_source?.article_id===idea.news_source.article_id))
    if(existing)result=existing
    else{if(idea.version!==p.expected_version)throw Error('version_conflict');if(idea.status==='archived')throw Error('idea_archived')
-    const b={...base(idea.title,idea.note),...(idea.news_source?{news_source:idea.news_source}:{})}
+    const b={...base(idea.title,idea.note),...(idea.provenance_refs?{provenance_refs:idea.provenance_refs}:{}),...(idea.sources?{sources:idea.sources}:{}),...(idea.news_source?{news_source:idea.news_source}:{})}
     if(p.target==='todo')next.todos.push({...b,status:'open',due:null,goal_id:idea.goal_id,idea_id:idea.id})
     else next.goals.push({...b,status:'active',success_criteria:'',idea_id:idea.id})
     result=b
@@ -98,19 +100,32 @@ export class LifeService{
   const current=await this.#backend.peek?.()
   if(current){this.#state=lifeStateSchema.parse(current.state);this.#revision=current.revision;return}
   // Migration input is read-only: do not create, chmod or rewrite the old file.
-  let legacy=emptyLifeState()
-  try{const file=await open(this.path,constants.O_RDONLY|constants.O_NOFOLLOW);try{if((await file.stat()).size>8*1024*1024)throw Error('store_capacity');const text=await file.readFile('utf8');if(text)legacy=lifeStateSchema.parse(JSON.parse(text))}finally{await file.close()}}
+  let legacy=emptyLifeState(),legacyRead=false
+  try{const file=await open(this.path,constants.O_RDONLY|constants.O_NOFOLLOW);try{if((await file.stat()).size>8*1024*1024)throw Error('store_capacity');const text=await file.readFile('utf8');legacyRead=true;if(text)legacy=lifeStateSchema.parse(JSON.parse(text))}finally{await file.close()}}
   catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
-  const loaded=await this.#backend.load(legacy,{legacyPath:this.path});this.#state=lifeStateSchema.parse(loaded.state);this.#revision=loaded.revision
+  const loaded=await this.#backend.load(legacy,legacyRead?{legacyPath:this.path}:undefined);this.#state=lifeStateSchema.parse(loaded.state);this.#revision=loaded.revision
  }
  async close(){await this.#tail}
  async refresh():Promise<void>{const run=this.#tail.then(async()=>{
   if(!this.#backend?.peek)return
   const fresh=await this.#backend.peek();if(!fresh)throw Error('life_backend_unavailable')
-  if(fresh.revision===this.#revision)return
+  if(fresh.revision===this.#revision&&JSON.stringify(fresh.state)===JSON.stringify(this.#state))return
   this.#state=lifeStateSchema.parse(fresh.state);this.#revision=fresh.revision;this.changed()
  });this.#tail=run.catch(()=>{/* preserve the mutation queue after a failed refresh */});return run}
  snapshot(){const state=structuredClone(this.#state);return {todos:state.todos.map(r=>({...r,kind:'todo' as const})),ideas:state.ideas.map(r=>({...r,kind:'idea' as const})),profile:state.profile,goals:state.goals.map(g=>{const todos=state.todos.filter(t=>t.goal_id===g.id&&t.status!=='cancelled');return {...g,kind:'goal' as const,progress:{done:todos.filter(t=>t.status==='done').length,total:todos.length}}})}}
+ async completeTaskTodo(task:TaskRecord):Promise<'synced'|'conflict'>{
+  if(!task.todo_ref)return 'synced'
+  // The Todo was delegated at revision zero; a changed scope needs explicit reconciliation.
+  if(task.goal_revision!==0)return 'conflict'
+  const receipt='task-complete:'+task.id+':'+task.goal_revision
+  await this.refresh()
+  // Receipt is checked before the captured-version/state guard, including a lost acknowledgement.
+  if(this.#state.receipts[receipt])return 'synced'
+  const todo=this.#state.todos.find(item=>item.id===task.todo_ref!.id)
+  if(todo?.version!==task.todo_ref.version||todo.status==='cancelled'||todo.status==='done')return 'conflict'
+  try{await this.mutate({op:'update',kind:'todo',id:task.todo_ref.id,expected_version:task.todo_ref.version,status:'done'},receipt);return 'synced'}
+  catch(error){if(error instanceof Error&&['version_conflict','item_not_found'].includes(error.message))return 'conflict';throw error}
+ }
  mutate(raw:unknown,requestId:string,guard?:()=>void,provenance?:LifeProvenance):Promise<{id:string;version:number}>{const p=lifeInputSchema.parse(raw);const run=this.#tail.then(async()=>{
   guard?.()
   if(this.#backend){

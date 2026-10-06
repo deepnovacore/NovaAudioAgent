@@ -1,3 +1,10 @@
+import {GatewayProactivity} from '../model/proactivity.js'
+import {GatewayTaskVerifier} from '../model/task-verifier.js'
+import {GatewayPersonalWriter} from '../model/personal-writer.js'
+import {createUnderstandingPipeline} from '../understanding/pipeline.js'
+import {createJevJudge} from '../understanding/jev.js'
+import {createJevNewsRanker} from '../news/jev-ranking.js'
+import type {HostOptions} from '../personal-agent/host.js'
 import {CodingProgressNarrationState} from '../realtime/coding-progress-narration.js'
 import type {BlackboardSessionOptions} from '../memory/blackboard-session.js'
 import {capabilityStatus, type CapabilityRegistry, type CapabilityStatus} from '../config/capability-registry.js'
@@ -23,9 +30,9 @@ import {
 import { RealClock, type Clock } from '../core/clock.js'
 import { capabilitiesFromSettings, resolveModelApiKey, resolveProactivity, resolveWatchModelConnection, type Settings } from '../config/config.js'
 import { MonotonicIdFactory, type IdFactory } from '../core/ids.js'
-import { GatewayCompressor, GatewaySurrogate } from '../model/model-adapters.js'
+import { GatewayCompressor } from '../model/model-adapters.js'
 import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from '../model/model-gateway.js'
-import { classifySurrogateVerdict, runSurrogateCall } from '../core/calls.js'
+import { classifyProactiveSelection, runProactiveSelection } from '../core/calls.js'
 import {
   VisionAgentController,
   VisionAgentControllerCore,
@@ -64,6 +71,7 @@ export class AssemblyError extends Error {
 }
 
 export interface AssemblyOptions {
+  readonly taskHost?: boolean
   /** Borrow deployment resources; this scoped core closes only its own state. */
   readonly sharedResources?: boolean
   readonly blackboard?: BlackboardSessionOptions
@@ -92,7 +100,16 @@ export interface AssemblyOptions {
 }
 
 export interface Assembly {
-  readonly personalAgentConfig?: {path:string;userScope:string;surrogate:GatewaySurrogate;newsLanguage:string}
+  readonly settings: Settings
+  readonly personalAgentConfig?: {
+    path: string
+    userScope: string
+    newsLanguage: string
+    models: Required<Pick<HostOptions,
+      'generateProfile' | 'generateDigests' | 'generateContext' | 'rankNews' | 'understand'
+      | 'prepareBrief' | 'prepareProposal' | 'summarizeMemory' | 'discover'>>
+    taskVerifier: Pick<GatewayTaskVerifier, 'evaluateTask'>
+  }
 
   readonly capabilities: CapabilityRegistry
   readonly capabilityStatus: CapabilityStatus
@@ -147,7 +164,7 @@ function requireApiKey(settings: Settings): string {
   const key = stripLikePython(resolveModelApiKey(settings) ?? '')
   if (key === '') {
     // Never echo configuration values; the name is enough to act on.
-    throw new AssemblyError('缺少 DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY')
+    throw new AssemblyError('缺少 DASHSCOPE_API_KEY 或 MODEL_API_KEY')
   }
   return key
 }
@@ -183,7 +200,7 @@ function isAdmissionGatedFrameSource(source: FrameSource): source is AdmissionGa
 /**
  * Build the runtime the desktop entry serves.
  *
- * The support model ports are wired as `ModelPort`s over one gateway; the surrogate and
+ * The support model ports are wired as `ModelPort`s over one gateway; Proactive selection and
  * compressor are single completions, matching the oracle.
  */
 export function buildAssembly(options: AssemblyOptions): Assembly {
@@ -286,14 +303,16 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
       || !descriptor.ownedChannels.some(channel => (options.executors ?? []).some(adapter => adapter.manifest.name === channel && adapter.manifest.roles.includes('coding')))),
     ...(cameraModuleEnabled ? [VISION_AGENT_DESCRIPTOR] : []),
   ]
-  const tools = compileToolSchema(manifests.filter(manifest => manifest.name !== 'mcp__nova_knowledge'), {includeMemoryRecall: true, agentDescriptors})
+  const tools = compileToolSchema(manifests.filter(manifest => manifest.name !== 'mcp__nova_knowledge'), {includeMemoryRecall: true, agentDescriptors, includeTasks: options.taskHost === true})
 
-  const surrogate = new GatewaySurrogate({
+  const proactive = new GatewayProactivity({
     gateway,
-    model: settings.surrogate_model,
+    model: settings.support_model,
     proactivityPreset: settings.proactivity_preset,
-    jevApiKey: settings.openrouter_api_key ?? undefined,
   })
+  const writer = new GatewayPersonalWriter({gateway,model:settings.support_model})
+  const taskVerifier = new GatewayTaskVerifier({gateway,model:settings.support_model})
+  const jev = {apiKey:settings.openrouter_api_key ?? ''}
   const compressor = new GatewayCompressor({gateway, model: settings.compressor_model})
 
   const proactivity = resolveProactivity(settings)
@@ -302,10 +321,10 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
       complete: async (call: ModelCall, signal: AbortSignal) => {
         const view = call.context_view
         if (view === undefined) throw new AssemblyError('surrogate slot requires a ContextView')
-        const record = await runSurrogateCall(surrogate, {view, reason: call.reason, signal})
+        const record = await runProactiveSelection(proactive, {view, reason: call.reason, signal})
         try {
           options.telemetry?.record('surrogate.verdict', {
-            disposition: classifySurrogateVerdict(record),
+            disposition: classifyProactiveSelection(record),
             offered_count: record.offered.length,
             preset: settings.proactivity_preset,
             progress_class: record.output.progress_class,
@@ -371,7 +390,18 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     return pending
   }
   return {
-    ...(options.blackboard===undefined?{}:{personalAgentConfig: {path: options.blackboard.path + '.personal.json', userScope: settings.blackboard_owner_id, newsLanguage: settings.news_language, surrogate}}),
+    settings,
+    ...(options.blackboard===undefined?{}:{personalAgentConfig: {path: options.blackboard.path + '.personal.json', userScope: settings.blackboard_owner_id, newsLanguage: settings.news_language, taskVerifier, models: {
+      generateProfile: writer.generateProfile,
+      generateDigests: writer.generateDigests,
+      generateContext: writer.generateContext,
+      rankNews: createJevNewsRanker(jev),
+      understand: createUnderstandingPipeline({gateway,model:settings.support_model,judge:createJevJudge(jev)}),
+      prepareBrief: writer.prepareBrief.bind(writer),
+      prepareProposal: writer.prepareProposal.bind(writer),
+      summarizeMemory: writer.summarizeMemory.bind(writer),
+      discover: proactive.discover.bind(proactive),
+    }}}),
     capabilities,
     capabilityStatus: capabilityStatus(capabilities, tools.schemas.length),
     runtime,

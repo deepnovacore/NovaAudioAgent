@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto'
 import {loadSettings,resolveModelApiKey} from '../../dist/src/config/config.js'
 import {OpenAIModelGateway} from '../../dist/src/model/model-gateway.js'
 import {RealClock} from '../../dist/src/core/clock.js'
-import {WorkspaceGraphStoreClient} from '../../dist/src/workspace-graph/store-client.js'
+import {MemoryLedgerClient} from '../../dist/src/memory-ledger/store-client.js'
 import {SubstrateMemoryResource} from '../../dist/src/memory-substrate/resource.js'
 import {UnifiedRetrieval} from '../../dist/src/memory/retrieval.js'
 
@@ -20,7 +20,7 @@ const report={version:1,module:'memory-'+values.module,layer:'model-runtime',syn
 const persist=async()=>{await mkdir(dirname(output),{recursive:true,mode:0o700});await writeFile(output,JSON.stringify(report,null,2)+'\n',{mode:0o600})}
 const pass=async name=>{report.checks.push(name);console.log('PASS',name);await persist()}
 let client,memory,settings,fingerprint,gateway
-const open=async daily=>{client=new WorkspaceGraphStoreClient(path);memory=new SubstrateMemoryResource({client,userId:'synthetic-architecture',gateway,model:settings.fast_model,extractionFingerprint:fingerprint,inputConsent:true,conversationProviders:[fingerprint],consolidation:{enabled:daily}});await memory.open();await memory.flush()}
+const open=async daily=>{client=new MemoryLedgerClient(path);memory=new SubstrateMemoryResource({client,userId:'synthetic-architecture',gateway,model:settings.fast_model,extractionFingerprint:fingerprint,inputConsent:true,conversationProviders:[fingerprint],consolidation:{enabled:daily}});await memory.open();await memory.flush()}
 const restart=async daily=>{await memory.close();await open(daily)}
 const snapshot=async label=>{const entries=(await memory.list()).entries;report.snapshots.push({label,entries,rows:await client.memory('list',{include_history:true}),reading:(await memory.prepareResponseAdaptation(fingerprint)).memoryContext});await persist();return entries}
 const remember=async(id,text)=>{report.turns.push({id,text});await memory.remember({sourceId:id,sessionId:'synthetic',sequence:report.turns.length,text,occurredAt:new Date().toISOString(),confirmed:true});await memory.flush()}

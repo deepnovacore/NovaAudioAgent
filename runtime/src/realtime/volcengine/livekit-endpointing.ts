@@ -15,11 +15,11 @@ const FRAME_SAMPLES = 512
 const PREDICTION_TIMEOUT_SECONDS = 1.25
 const CLEANUP_TIMEOUT_MS = 1_000
 const TIMING_LIMITS = Object.freeze([
-  ['vadPreRollMs', 0, 2_000, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS'],
-  ['vadMinSpeechMs', 1, 10_000, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS'],
-  ['vadSilenceEndMs', 1, 10_000, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS'],
-  ['vadSpeechPadMs', 0, 2_000, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS'],
-  ['vadMaxUtteranceMs', 1, 60_000, 'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS'],
+  ['vadPreRollMs', 0, 2_000, 'VOLCENGINE_VAD_PRE_ROLL_MS'],
+  ['vadMinSpeechMs', 1, 10_000, 'VOLCENGINE_VAD_MIN_SPEECH_MS'],
+  ['vadSilenceEndMs', 1, 10_000, 'VOLCENGINE_VAD_SILENCE_END_MS'],
+  ['vadSpeechPadMs', 0, 2_000, 'VOLCENGINE_VAD_SPEECH_PAD_MS'],
+  ['vadMaxUtteranceMs', 1, 60_000, 'VOLCENGINE_VAD_MAX_UTTERANCE_MS'],
 ] as const)
 
 export type LiveKitVolcEndpointingConfig = Pick<VolcengineRealtimeConfig,
@@ -600,7 +600,7 @@ function validateConfig(config: LiveKitVolcEndpointingConfig): void {
   if(config.maxSilenceMs!==undefined&&(!Number.isSafeInteger(config.maxSilenceMs)||config.maxSilenceMs<300||config.maxSilenceMs>2500))throw new ConfigurationError('invalid endpointing maxSilenceMs')
   if (!Number.isFinite(config.vadThreshold) || config.vadThreshold <= 0 || config.vadThreshold > 1) {
     throw new ConfigurationError(
-      'invalid configuration: NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD',
+      'invalid configuration: VOLCENGINE_VAD_THRESHOLD',
     )
   }
   for (const [field, minimum, maximum, variable] of TIMING_LIMITS) {
@@ -611,7 +611,7 @@ function validateConfig(config: LiveKitVolcEndpointingConfig): void {
   }
   if (config.vadMaxUtteranceMs < config.vadMinSpeechMs) {
     throw new ConfigurationError(
-      'invalid configuration: NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS',
+      'invalid configuration: VOLCENGINE_VAD_MAX_UTTERANCE_MS',
     )
   }
 }

@@ -22,15 +22,15 @@ The L0 blackboard persists through a dedicated SQLite Worker
 (`runtime/src/memory/blackboard-session.ts`, `blackboard-store.ts`, `blackboard-worker.ts`) so a
 conversation survives a restart. Retention is bounded by three independent limits — a 7-day entry
 lifetime, 1000 items and 8MB — and the oldest entries are dropped first. The database path is
-`NOVA_AUDIO_AGENT_BLACKBOARD_PATH` (default `~/.nova-audio-agent/blackboard.sqlite`), scoped by
-`NOVA_AUDIO_AGENT_BLACKBOARD_OWNER_ID`. This store recovers session history; it is not a queryable
+`BLACKBOARD_PATH` (default `~/.nova-audio-agent/blackboard.sqlite`), scoped by
+`BLACKBOARD_OWNER_ID`. This store recovers session history; it is not a queryable
 long-term memory, and unrestricted long-term memory search remains deferred
 ([design constraints](07-decision-record.md)).
 
 ## Personal memory engines
 
 Three engines sit behind one port (`runtime/src/memory/personal-memory.ts`), selected by
-`NOVA_AUDIO_AGENT_MEMORY_CONNECTION` and `NOVA_AUDIO_AGENT_MEMORY_PROVIDER`; `factory.ts` returns
+`MEMORY_CONNECTION` and `MEMORY_PROVIDER`; `factory.ts` returns
 `undefined` when memory is disabled, so no store is allocated.
 
 **mem0 (explicit alternative)** admits sources to its own ledger before any model sees them. Each source moves

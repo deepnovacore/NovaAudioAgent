@@ -122,7 +122,7 @@ test('production preflight uses the fixed native probe and never passes credenti
       environment: {
         PATH: '/usr/bin:/bin',
         HOME: home,
-        NOVA_AUDIO_AGENT_CODEX_API_KEY: 'must-not-cross-preflight',
+        CODEX_API_KEY: 'must-not-cross-preflight',
       },
       hasApiKey: false,
       commandRunner,
@@ -154,7 +154,7 @@ test('production preflight uses the fixed native probe and never passes credenti
     for (const call of calls) {
       assert.equal(call.binary, await realpath(binary))
       assert.equal(call.cwd, await realpath(workspace))
-      assert.equal('NOVA_AUDIO_AGENT_CODEX_API_KEY' in call.environment, false)
+      assert.equal('CODEX_API_KEY' in call.environment, false)
       assert.equal('CODEX_API_KEY' in call.environment, false)
       assert.equal(call.shell, false)
     }
@@ -511,9 +511,9 @@ test('production host expands a leading tilde in the configured workspace', asyn
     await chmod(binary, 0o700)
 
     const host = createProductionCodexHost(loadSettings({
-      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: '~/workspace',
-      NOVA_AUDIO_AGENT_CODEX_BIN: binary,
+      EXECUTOR: 'codex',
+      CODEX_WORKSPACE: '~/workspace',
+      CODEX_BIN: binary,
     }), {
       resourcesPath: root,
       homeDirectory: home,
@@ -558,10 +558,10 @@ test('production host catalog admits only absolute host config and a packaged fi
       }],
     }))
     const settings = loadSettings({
-      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-      NOVA_AUDIO_AGENT_EXECUTORS: 'codex',
-      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: await realpath(workspace),
-      NOVA_AUDIO_AGENT_CODEX_BIN: await realpath(binary),
+      EXECUTOR: 'codex',
+      EXECUTORS: 'codex',
+      CODEX_WORKSPACE: await realpath(workspace),
+      CODEX_BIN: await realpath(binary),
     })
     const host = createProductionCodexHost(settings, {
       resourcesPath: await realpath(resources),
@@ -598,9 +598,9 @@ test('production host catalog admits only absolute host config and a packaged fi
     assert.equal(configuredAlias.transportFactory.available, false)
 
     const defaultBinary = createProductionCodexHost(loadSettings({
-      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-      NOVA_AUDIO_AGENT_EXECUTORS: 'codex',
-      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: await realpath(workspace),
+      EXECUTOR: 'codex',
+      EXECUTORS: 'codex',
+      CODEX_WORKSPACE: await realpath(workspace),
     }), {
       resourcesPath: await realpath(resources),
       platform: 'darwin', arch: 'arm64', homeDirectory: await realpath(home),

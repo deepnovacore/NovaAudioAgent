@@ -5,10 +5,6 @@ import {Worker, type WorkerOptions} from 'node:worker_threads'
 
 import {PersonalMemoryError, type PersonalMemoryRecallScope, type PersonalMemoryRecallResult, type PersonalMemoryRecallHit, type PersonalMemoryAdmissionReceipt, type PersonalMemoryRememberTurn, type PersonalMemoryResource, type PersonalMemoryResponseAdaptation} from '../memory/personal-memory.js'
 
-export function validExtraction(value:unknown):value is PersonalMemoryEmbeddingConfig {
-  return z.object({baseUrl:z.url(),apiKey:z.string().min(1).max(4096),model:z.string().min(1).max(256)}).strict().safeParse(value).success
-}
-
 export interface PersonalMemoryEmbeddingConfig {
   readonly baseUrl: string
   readonly apiKey: string
@@ -24,7 +20,6 @@ export interface PersonalMemoryStoreClientOptions {
   readonly embedding: PersonalMemoryEmbeddingConfig
   /** Enables local extraction in the Worker. Omit for read-only personal recall. */
   readonly extractionModel?: string
-  readonly extraction?: PersonalMemoryEmbeddingConfig
   /** Only workers implementing durable source tombstones may enable this capability. */
   readonly supportsForget?: boolean
   /** Test seam. Production uses a Node Worker. */
@@ -166,12 +161,10 @@ export class PersonalMemoryStoreClient implements PersonalMemoryResource {
 
   constructor(options: PersonalMemoryStoreClientOptions) {
     validateOptions(options)
-    if(options.extraction !== undefined && !validExtraction(options.extraction)) throw new Error('invalid extraction connection')
     this.#workerOptions = {workerData: {
       path: options.path,
       userId: options.userId,
       embedding: {...options.embedding},
-      ...(options.extraction ? {extraction:{...options.extraction}} : {}),
       ...(options.extractionModel === undefined ? {} : {extractionModel: options.extractionModel}),
     }}
     this.#workerFactory = options.workerFactory ?? ((url, configured) => new Worker(url, configured))

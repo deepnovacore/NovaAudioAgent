@@ -1,65 +1,30 @@
 import { createServer } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
+import { CONTROL_CHARACTERS, RUNTIME_DEFAULTS as SETTINGS_DEFAULTS } from './settings-defaults.mjs'
 
 const MAX_READINESS_BYTES = 4096
 const TOKEN_PATTERN = /^[a-f0-9]{32}$/
 const READY_ENDPOINT_PATTERN = /^127\.0\.0\.1:([0-9]{1,5})$/
 const NEWLINE = 0x0a
 
-// Mirrors settings-store.mjs's DEFAULT_SETTINGS for the runtime-facing fields
-// this module injects. Duplicated rather than imported: backend.mjs stays importable
-// without the settings-store module (and its node:fs/node:crypto surface) ever
-// loading, and a missing/corrupt settings file must never produce the literal
-// string "undefined" in a child's environment.
-const SETTINGS_DEFAULTS = Object.freeze({
-  proactivity: 'balanced',
-  codexHeartbeatSeconds: 30,
-  pipelineMode: 'cascaded',
-  integratedProvider: 'qwen',
-  integratedModel: 'qwen-audio-3.0-realtime-plus',
-  integratedVoice: 'longanqian',
-  cascadedEndpointingProvider: 'auto',
-  cascadedAsrProvider: 'volcengine',
-  cascadedLlmProvider: 'qwen',
-  cascadedLlmModels: Object.freeze({
-    qwen: 'qwen-plus',
-    ark: 'doubao-seed-2-0-pro-260215',
-    deepseek: 'deepseek-flash',
-  }),
-  cascadedTtsProvider: 'volcengine',
-  cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
-  codexApprovalMode: 'ask',
-  clarificationDepth: 'balanced',
-  planReadback: 'summary',
-  generatePlan: true,
-  plannerModel: '',
-  progressBubbles: 'milestones',
-  embeddingProvider: 'dashscope',
-  embeddingModel: 'text-embedding-v4',
-  capabilitiesConfigPath: '',
-  knowledgePath: '',
-})
-
-// Duplicated from settings-store.mjs for the same reason SETTINGS_DEFAULTS is:
-// this module stays importable on its own. Node refuses a C0 control character
-// in a child's environment value and throws out of `spawn`, so a stored secret
-// that somehow carries one must be dropped here rather than take the launch —
-// and with it the app — down before the panel can clear it.
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
-
 // decryptedSecrets key -> env var name. Only a non-empty decrypted string maps
 // to an override; an absent/empty key is omitted entirely so the user's own
 // `.env` (or parent environment) keeps winning. Names match the Settings
 // aliases accepted by the Node runtime configuration contract exactly.
 export const SECRET_ENV_MAP = Object.freeze({
+  selfHostedAsrApiKey: 'SELF_HOSTED_ASR_API_KEY',
+  selfHostedLlmApiKey: 'SELF_HOSTED_LLM_API_KEY',
+  selfHostedTtsApiKey: 'SELF_HOSTED_TTS_API_KEY',
   composioApiKey: 'COMPOSIO_API_KEY',
   dashscopeApiKey: 'DASHSCOPE_API_KEY',
   stepfunApiKey: 'STEPFUN_API_KEY',
+  openaiApiKey: 'OPENAI_API_KEY',
+  geminiApiKey: 'GEMINI_API_KEY',
   tavilyApiKey: 'TAVILY_API_KEY',
   openrouterApiKey: 'OPENROUTER_API_KEY',
-  modelApiKey: 'NOVA_AUDIO_AGENT_MODEL_API_KEY',
-  codexApiKey: 'NOVA_AUDIO_AGENT_CODEX_API_KEY',
+  modelApiKey: 'MODEL_API_KEY',
+  codexApiKey: 'CODEX_API_KEY',
   arkApiKey: 'ARK_API_KEY',
   deepseekApiKey: 'DEEPSEEK_API_KEY',
   doubaoBigmodelApiKey: 'DOUBAO_BIGMODEL_API_KEY',
@@ -70,8 +35,12 @@ export const SECRET_ENV_MAP = Object.freeze({
 export function resolveSecretConfiguration(saved = {}, environment = {}, developmentEnv = {}) {
   const secrets = {}, secretsPresent = {}, secretSources = {}
   for (const [key, name] of Object.entries(SECRET_ENV_MAP)) {
-    if (key === 'composioApiKey' && saved[key] === '') { secrets[key]=''; secretsPresent[key]=false; secretSources[key]='cleared'; continue }
-    const candidates = key === 'composioApiKey' ? [['settings',saved[key]],['dotenv',developmentEnv[name]],['environment',environment[name]]] : [['dotenv', developmentEnv[name]], ['settings', saved[key]], ['environment', environment[name]]]
+    if ((key === 'composioApiKey' || key.startsWith('selfHosted')) && saved[key] === '') { secrets[key]=''; secretsPresent[key]=false; secretSources[key]='cleared'; continue }
+    const fromFile = key.startsWith('selfHosted') ? developmentEnv[`NOVA_${name}`] ?? developmentEnv[name] : developmentEnv[name]
+    const fromEnvironment = key.startsWith('selfHosted') ? environment[`NOVA_${name}`] ?? environment[name] : environment[name]
+    const candidates = key === 'composioApiKey' || key.startsWith('selfHosted')
+      ? [['settings', saved[key]], ['dotenv', fromFile], ['environment', fromEnvironment]]
+      : [['dotenv', fromFile], ['settings', saved[key]], ['environment', fromEnvironment]]
     const selected = candidates.find(([, value]) => typeof value === 'string' && value.trim() && !CONTROL_CHARACTERS.test(value))
     secretsPresent[key] = Boolean(selected)
     if (selected) {
@@ -115,13 +84,13 @@ export const BACKEND_FORCE_EXIT_CONFIRM_MS = 2000
 
 export function selectedBackend(env = process.env, { isPackaged = false } = {}) {
   void isPackaged
-  const value = env?.NOVA_AUDIO_AGENT_BACKEND ?? 'node'
+  const value = env?.BACKEND ?? 'node'
   if (value === 'python') {
     const error = new Error('source_rollback_unavailable')
     error.code = 'source_rollback_unavailable'
     throw error
   }
-  if (value !== 'node') throw new Error('NOVA_AUDIO_AGENT_BACKEND must be node')
+  if (value !== 'node') throw new Error('BACKEND must be node')
   return value
 }
 
@@ -132,7 +101,7 @@ export function nodeRuntimeEntry({ isPackaged, appPath, packageRoot, environment
   if (typeof packageRoot !== 'string' || !isAbsolute(packageRoot)) {
     throw new Error('absolute desktop package root is required')
   }
-  const override = environment.NOVA_AUDIO_AGENT_DEV_BACKEND_ENTRY
+  const override = environment.DEV_BACKEND_ENTRY
   if (!isPackaged && override) {
     if (typeof override !== 'string' || !isAbsolute(override)) throw new Error('absolute development runtime entry is required')
     return override
@@ -165,7 +134,6 @@ export function searchProxyUrlFromRules(rules) {
 }
 
 export function backendLaunchSpec({
-  backend = 'node',
   nodeEntry,
   nodeResourcesPath,
   workspace,
@@ -179,7 +147,6 @@ export function backendLaunchSpec({
   newsLanguage = 'en',
   capabilitiesDocument,
 }) {
-  if (backend !== 'node') throw new Error('backend kind is invalid')
   if (typeof nodeEntry !== 'string' || !isAbsolute(nodeEntry)) {
     throw new Error('absolute Node runtime entry is required')
   }
@@ -206,49 +173,49 @@ export function backendLaunchSpec({
     ?? SETTINGS_DEFAULTS.codexHeartbeatSeconds
   const pipelineMode = settings?.pipelineMode ?? SETTINGS_DEFAULTS.pipelineMode
   const v4 = {
-    NOVA_AUDIO_AGENT_CODEX_APPROVAL_MODE: settings?.codexApprovalMode
+    CODEX_APPROVAL_MODE: settings?.codexApprovalMode
       ?? SETTINGS_DEFAULTS.codexApprovalMode,
-    NOVA_AUDIO_AGENT_CLARIFICATION_DEPTH: settings?.clarificationDepth
+    CLARIFICATION_DEPTH: settings?.clarificationDepth
       ?? SETTINGS_DEFAULTS.clarificationDepth,
-    NOVA_AUDIO_AGENT_GENERATE_PLAN: String(settings?.generatePlan ?? SETTINGS_DEFAULTS.generatePlan),
-    NOVA_AUDIO_AGENT_PLAN_READBACK: settings?.planReadback ?? SETTINGS_DEFAULTS.planReadback,
-    NOVA_AUDIO_AGENT_PROGRESS_BUBBLES: settings?.progressBubbles
+    GENERATE_PLAN: String(settings?.generatePlan ?? SETTINGS_DEFAULTS.generatePlan),
+    PLAN_READBACK: settings?.planReadback ?? SETTINGS_DEFAULTS.planReadback,
+    PROGRESS_BUBBLES: settings?.progressBubbles
       ?? SETTINGS_DEFAULTS.progressBubbles,
-    NOVA_AUDIO_AGENT_EMBEDDING_PROVIDER: settings?.embeddingProvider
+    EMBEDDING_PROVIDER: settings?.embeddingProvider
       ?? SETTINGS_DEFAULTS.embeddingProvider,
   }
   const env = {
     ...parentEnv,
-    NOVA_AUDIO_AGENT_DESKTOP_TOKEN: token,
-    NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT: readyEndpoint,
-    NOVA_AUDIO_AGENT_BACKEND: backend,
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: effectiveWorkspace,
-    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-    NOVA_AUDIO_AGENT_PROACTIVITY_PRESET: proactivity,
-    NOVA_AUDIO_AGENT_CODING_PROGRESS_NARRATION: settings?.codingProgressNarration ?? 'smart',
-    NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
-    NOVA_AUDIO_AGENT_LANGUAGE: settings?.language ?? 'zh-CN',
-    NOVA_AUDIO_AGENT_NEWS_LANGUAGE: newsLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-    NOVA_AUDIO_AGENT_PIPELINE_MODE: pipelineMode,
-    NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH: nodeResourcesPath,
+    DESKTOP_TOKEN: token,
+    DESKTOP_READY_ENDPOINT: readyEndpoint,
+    BACKEND: 'node',
+    CODEX_WORKSPACE: effectiveWorkspace,
+    EXECUTOR: 'codex',
+    PROACTIVITY_PRESET: proactivity,
+    CODING_PROGRESS_NARRATION: settings?.codingProgressNarration ?? 'smart',
+    CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
+    PROMPT_LANGUAGE: settings?.language ?? 'zh-CN',
+    NEWS_LANGUAGE: newsLanguage === 'zh-CN' ? 'zh-CN' : 'en',
+    PIPELINE_MODE: pipelineMode,
+    CODEX_RESOURCES_PATH: nodeResourcesPath,
     ...v4,
-    NOVA_AUDIO_AGENT_MEMORY_PRERECALL_ENABLED: String(settings?.memoryPrerecallEnabled ?? false),
-    NOVA_AUDIO_AGENT_CONVERSATION_VISION_ENABLED: String(settings?.conversationVisionEnabled ?? false),
-    NOVA_AUDIO_AGENT_MONITOR_CAMERA_DEVICE_ID: settings?.monitorCameraDeviceId ?? '',
+    MEMORY_PRERECALL_ENABLED: String(settings?.memoryPrerecallEnabled ?? false),
+    CONVERSATION_VISION_ENABLED: String(settings?.conversationVisionEnabled ?? false),
+    MONITOR_CAMERA_DEVICE_ID: settings?.monitorCameraDeviceId ?? '',
   }
   for (const [name, value] of [
-    ['NOVA_AUDIO_AGENT_WATCH_MODEL', settings?.watchModel ?? ''],
-    ['NOVA_AUDIO_AGENT_PLANNER_MODEL', settings?.plannerModel ?? SETTINGS_DEFAULTS.plannerModel],
-    ['NOVA_AUDIO_AGENT_EMBEDDING_MODEL', settings?.embeddingModel
+    ['WATCH_MODEL', settings?.watchModel ?? ''],
+    ['PLANNER_MODEL', settings?.plannerModel ?? SETTINGS_DEFAULTS.plannerModel],
+    ['EMBEDDING_MODEL', settings?.embeddingModel
       ?? SETTINGS_DEFAULTS.embeddingModel],
-    ['NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG', settings?.capabilitiesConfigPath
+    ['CAPABILITIES_CONFIG', settings?.capabilitiesConfigPath
       ?? SETTINGS_DEFAULTS.capabilitiesConfigPath],
-    ['NOVA_AUDIO_AGENT_KNOWLEDGE_PATH', settings?.knowledgePath ?? SETTINGS_DEFAULTS.knowledgePath],
+    ['KNOWLEDGE_PATH', settings?.knowledgePath ?? SETTINGS_DEFAULTS.knowledgePath],
   ]) {
     if (typeof value === 'string' && value) env[name] = value
   }
-  if (env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG && !env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG.startsWith('~/')) {
-    env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG = resolve(env.NOVA_AUDIO_AGENT_CAPABILITIES_CONFIG)
+  if (env.CAPABILITIES_CONFIG && !env.CAPABILITIES_CONFIG.startsWith('~/')) {
+    env.CAPABILITIES_CONFIG = resolve(env.CAPABILITIES_CONFIG)
   }
   const inheritedProxy = parentEnv.HTTPS_PROXY
     ?? parentEnv.https_proxy
@@ -258,28 +225,28 @@ export function backendLaunchSpec({
     env.HTTPS_PROXY = searchProxyUrl
   }
   if (resolvedConfig && typeof resolvedConfig === 'object') {
-    delete env.NOVA_AUDIO_AGENT_CODEX_BIN
-    delete env.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS
-    delete env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT
-    delete env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT
-    delete env.NOVA_AUDIO_AGENT_MODEL_BASE_URL
+    delete env.CODEX_BIN
+    delete env.CODEX_PREFIX_ARGS
+    delete env.CODEX_MANAGED_ROOT
+    delete env.CODEX_PROJECT_STATE_ROOT
+    delete env.MODEL_BASE_URL
     if (typeof resolvedConfig.codexBinaryPath === 'string' && resolvedConfig.codexBinaryPath) {
-      env.NOVA_AUDIO_AGENT_CODEX_BIN = resolvedConfig.codexBinaryPath
+      env.CODEX_BIN = resolvedConfig.codexBinaryPath
     }
     if (Array.isArray(resolvedConfig.codexBinaryPrefixArgs)
       && resolvedConfig.codexBinaryPrefixArgs.length > 0) {
-      env.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS = JSON.stringify(
+      env.CODEX_PREFIX_ARGS = JSON.stringify(
         resolvedConfig.codexBinaryPrefixArgs,
       )
     }
     if (typeof resolvedConfig.managedRoot === 'string' && resolvedConfig.managedRoot) {
-      env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT = resolvedConfig.managedRoot
+      env.CODEX_MANAGED_ROOT = resolvedConfig.managedRoot
     }
     if (typeof resolvedConfig.stateRoot === 'string' && resolvedConfig.stateRoot) {
-      env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT = resolvedConfig.stateRoot
+      env.CODEX_PROJECT_STATE_ROOT = resolvedConfig.stateRoot
     }
     if (typeof resolvedConfig.modelBaseUrl === 'string' && resolvedConfig.modelBaseUrl) {
-      env.NOVA_AUDIO_AGENT_MODEL_BASE_URL = resolvedConfig.modelBaseUrl
+      env.MODEL_BASE_URL = resolvedConfig.modelBaseUrl
     }
   }
   if (pipelineMode === 'cascaded') {
@@ -290,35 +257,46 @@ export function backendLaunchSpec({
       ?? SETTINGS_DEFAULTS.cascadedLlmModels[llmProvider]
       ?? SETTINGS_DEFAULTS.cascadedLlmModels.qwen
     Object.assign(env, {
-      NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_ENABLED: String(settings?.voiceprintEnabled === true && Boolean(settings?.voiceprintUploadUrl)),
-      NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_HEALTH_URL: settings?.voiceprintUploadUrl ? `${settings.voiceprintUploadUrl}/healthz` : '',
-      NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_ID: settings?.voiceprintId ?? '',
-      NOVA_AUDIO_AGENT_DOUBAO_ASR_VOICEPRINT_NAME: settings?.voiceprintName ?? '',
-      NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER: settings?.cascadedEndpointingProvider
+      DOUBAO_ASR_VOICEPRINT_ENABLED: String(settings?.voiceprintEnabled === true && Boolean(settings?.voiceprintUploadUrl)),
+      DOUBAO_ASR_VOICEPRINT_HEALTH_URL: settings?.voiceprintUploadUrl ? `${settings.voiceprintUploadUrl}/healthz` : '',
+      DOUBAO_ASR_VOICEPRINT_ID: settings?.voiceprintId ?? '',
+      DOUBAO_ASR_VOICEPRINT_NAME: settings?.voiceprintName ?? '',
+      CASCADE_ENDPOINTING_PROVIDER: settings?.cascadedEndpointingProvider
         ?? SETTINGS_DEFAULTS.cascadedEndpointingProvider,
-      NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER: settings?.cascadedAsrProvider
+      SELF_HOSTED_ASR_URL: settings?.selfHostedAsrUrl ?? '',
+      SELF_HOSTED_LLM_BASE_URL: settings?.selfHostedLlmBaseUrl ?? '',
+      SELF_HOSTED_TTS_URL: settings?.selfHostedTtsUrl ?? '',
+      GEMINI_ASR_MODEL: settings?.geminiAsrModel ?? SETTINGS_DEFAULTS.geminiAsrModel,
+      GEMINI_TTS_MODEL: settings?.geminiTtsModel ?? SETTINGS_DEFAULTS.geminiTtsModel,
+      GEMINI_TTS_VOICE: settings?.geminiTtsVoice ?? SETTINGS_DEFAULTS.geminiTtsVoice,
+      CASCADE_ASR_PROVIDER: settings?.cascadedAsrProvider
         ?? SETTINGS_DEFAULTS.cascadedAsrProvider,
-      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: llmProvider,
-      NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: activeModel,
-      NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER: settings?.cascadedTtsProvider
+      CASCADE_LLM_PROVIDER: llmProvider,
+      CASCADE_LLM_MODEL: activeModel,
+      CASCADE_TTS_PROVIDER: settings?.cascadedTtsProvider
         ?? SETTINGS_DEFAULTS.cascadedTtsProvider,
-      NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE: settings?.cascadedTtsVoice
+      DOUBAO_TTS_VOICE: settings?.cascadedTtsVoice
         ?? SETTINGS_DEFAULTS.cascadedTtsVoice,
     })
   } else {
-    const stepfun = settings?.integratedProvider === 'stepfun'
+    const provider = settings?.integratedProvider ?? SETTINGS_DEFAULTS.integratedProvider
+    const prefix = provider.toUpperCase()
+    const providerDefaults = {openai: ['gpt-realtime-2.1-mini','marin'], gemini: ['gemini-3.8-live','Kore']}[provider]
     Object.assign(env, {
-      NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER: settings?.integratedProvider
+      INTEGRATED_PROVIDER: settings?.integratedProvider
         ?? SETTINGS_DEFAULTS.integratedProvider,
-      [stepfun ? 'NOVA_AUDIO_AGENT_STEPFUN_REALTIME_MODEL' : 'NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL']:
-        settings?.integratedModel ?? SETTINGS_DEFAULTS.integratedModel,
-      [stepfun ? 'NOVA_AUDIO_AGENT_STEPFUN_REALTIME_VOICE' : 'NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE']:
-        settings?.integratedVoice ?? SETTINGS_DEFAULTS.integratedVoice,
+      [`${prefix}_REALTIME_MODEL`]:
+        settings?.integratedModel ?? providerDefaults?.[0] ?? SETTINGS_DEFAULTS.integratedModel,
+      [`${prefix}_REALTIME_VOICE`]:
+        settings?.integratedVoice ?? providerDefaults?.[1] ?? SETTINGS_DEFAULTS.integratedVoice,
     })
+  }
+  for (const name of ['SELF_HOSTED_ASR_URL', 'SELF_HOSTED_LLM_BASE_URL', 'SELF_HOSTED_TTS_URL']) {
+    if (Object.hasOwn(env, name)) env[`NOVA_${name}`] = env[name]
   }
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
   // backend dials back instead, so a stale parent value must never imply one.
-  delete env.NOVA_AUDIO_AGENT_DESKTOP_READY_FD
+  delete env.DESKTOP_READY_FD
   // Overrides only: an absent, empty, or whitespace-only decrypted value
   // leaves the key out of `env` entirely, so whatever the launcher's own
   // `.env`/parent env supplied keeps winning. Never a replacement with an
@@ -385,7 +363,7 @@ export function parseReadiness(raw, token) {
  */
 export function createReadinessListener({
   token,
-  timeoutMs = 15_000,
+  timeoutMs = 60_000,
   socketAuthTimeoutMs = READINESS_SOCKET_AUTH_TIMEOUT_MS,
   onTimeout = () => {},
 } = {}) {
@@ -647,24 +625,26 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
     if (pipelineMode === 'cascaded') {
       const llmProvider = settings?.cascadedLlmProvider
         ?? SETTINGS_DEFAULTS.cascadedLlmProvider
-      activeSecretKeys.add(llmProvider === 'deepseek' ? 'deepseekApiKey' : llmProvider === 'ark' ? 'arkApiKey' : 'dashscopeApiKey')
-      activeSecretKeys.add('doubaoBigmodelApiKey')
+      activeSecretKeys.add(llmProvider === 'self-hosted' ? 'selfHostedLlmApiKey' : llmProvider === 'qwen' ? 'dashscopeApiKey' : `${llmProvider}ApiKey`)
+      activeSecretKeys.add(settings?.cascadedTtsProvider === 'self-hosted' ? 'selfHostedTtsApiKey' : (settings?.cascadedTtsProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoBigmodelApiKey')
       // Optional override only. When absent, the runtime falls back to the
       // big-model key; Main does not synthesize a duplicate secret value.
-      activeSecretKeys.add('doubaoAsrApiKey')
+      activeSecretKeys.add(settings?.cascadedAsrProvider === 'self-hosted' ? 'selfHostedAsrApiKey' : (settings?.cascadedAsrProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoAsrApiKey')
+      if ((settings?.cascadedAsrProvider ?? 'volcengine') === 'volcengine') activeSecretKeys.add('doubaoBigmodelApiKey')
     } else {
-      activeSecretKeys.add(settings?.integratedProvider === 'stepfun' ? 'stepfunApiKey' : 'dashscopeApiKey')
+      const integrated = settings?.integratedProvider ?? 'qwen'
+      activeSecretKeys.add(integrated === 'qwen' ? 'dashscopeApiKey' : `${integrated}ApiKey`)
       if (settings?.integratedProvider === 'stepfun') activeSecretKeys.add('dashscopeApiKey')
     }
     const search = document?.modules?.search
-    const provider = parentEnv.NOVA_AUDIO_AGENT_SEARCH_PROVIDER?.trim() || search?.provider || 'tavily'
+    const provider = parentEnv.SEARCH_PROVIDER?.trim() || search?.provider || 'tavily'
     const consumers = Object.values(document?.mcpServers ?? {}).filter(server => server?.enabled !== false)
     if (search?.enabled !== false && provider === 'mcp') {
-      const preset = !parentEnv.NOVA_AUDIO_AGENT_SEARCH_MCP_URL?.trim() && search?.mcp?.url === undefined
+      const preset = !parentEnv.SEARCH_MCP_URL?.trim() && search?.mcp?.url === undefined
       consumers.push({...search?.mcp, headers: search?.mcp?.headers ?? (preset ? {authorization: '${DASHSCOPE_API_KEY}'} : {})})
     }
     const references = JSON.stringify(consumers)
-    if ((parentEnv.NOVA_AUDIO_AGENT_MEMORY_CONNECTION?.trim() || 'local') === 'local'
+    if ((parentEnv.MEMORY_CONNECTION?.trim() || 'local') === 'local'
       || (document?.modules?.knowledge?.enabled === true
       && (settings?.embeddingProvider ?? 'dashscope') === 'dashscope')) activeSecretKeys.add('dashscopeApiKey')
     for (const [key, name] of Object.entries(SECRET_ENV_MAP)) {
@@ -673,14 +653,17 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
     for (const [secretKey, envName] of Object.entries(SECRET_ENV_MAP)) {
       if (!activeSecretKeys.has(secretKey)) continue
       const value = decryptedSecrets[secretKey]
-      if (secretKey === 'composioApiKey' && value === '') { env[envName]=''; continue }
+      if ((secretKey === 'composioApiKey' || secretKey.startsWith('selfHosted')) && value === '') { env[envName]=''; if (secretKey.startsWith('selfHosted')) env[`NOVA_${envName}`] = ''; continue }
       if (typeof value !== 'string') continue
       if (CONTROL_CHARACTERS.test(value)) continue
       const trimmed = value.trim()
       // A control character in the value would make Node reject the whole
       // spawn, so the key is dropped exactly like an empty one: the launch
       // proceeds, and whatever the parent environment holds keeps winning.
-      if (trimmed) env[envName] = trimmed
+      if (trimmed) {
+        env[envName] = trimmed
+        if (secretKey.startsWith('selfHosted')) env[`NOVA_${envName}`] = trimmed
+      }
     }
   }
   return env

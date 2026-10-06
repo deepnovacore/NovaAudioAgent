@@ -24,6 +24,7 @@ export interface ManagedCodexMcp {
 }
 const values = new WeakMap<ManagedCodexMcp, {
   environment: Readonly<Record<string, string>>
+  resources:readonly string[]|null
   capabilities: CapabilityRegistry
 }>()
 
@@ -105,7 +106,8 @@ export function prepareManagedCodexMcp(
     updateStatus(capabilities, name, {status: 'configured'})
   }
   const managed = Object.freeze({[managedBrand]: true as const, servers: Object.freeze(servers)})
-  values.set(managed, {environment: Object.freeze(environment), capabilities})
+  const devices=Object.keys(servers).flatMap(name=>all[name]?.computerUse?[all[name].computerUse.resource]:[])
+  values.set(managed, {environment: Object.freeze(environment), resources:devices.includes(null)?null:Object.freeze([...new Set(devices as string[])]), capabilities})
   return managed
 }
 
@@ -177,3 +179,6 @@ function updateStatus(capabilities: CapabilityRegistry, name: string, codex: Non
   if (index < 0) statuses.push(next)
   else statuses[index] = next
 }
+
+/** Conservative ownership: every configured device is held for the entire Codex run. */
+export function managedMcpResources(managed:ManagedCodexMcp|undefined):readonly string[]|null{if(!managed)return [];const value=values.get(managed);if(!value)throw Error('invalid managed MCP authority');return value.resources}
