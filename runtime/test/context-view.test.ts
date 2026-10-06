@@ -7,6 +7,7 @@ import {
   handoffPolicySchema,
 } from '../src/core/memory.js'
 import { delegateSchema, executorManifestSchema } from '../src/core/ports.js'
+import {renderContextView} from '../src/model/prompting.js'
 import { SuggestionPool } from '../src/core/suggestions.js'
 const slowPolicy = handoffPolicySchema.parse({
   channel: 'slow_sim',
@@ -52,8 +53,8 @@ test('context compilation is deterministic, bounded, and leaves memory untouched
   assert.deepEqual(first, second)
   assert.deepEqual(memory.channels.get(CONVERSATION_CHANNEL)?.items, before)
   const conversation = first.channels.find(channel => channel.name === CONVERSATION_CHANNEL)!
-  assert.equal(conversation.recent.length, 5)
-  assert.equal(conversation.omitted, 2)
+  assert.equal(conversation.recent.length, 7)
+  assert.equal(conversation.omitted, 0)
 })
 
 test('affordance sources are probe, suggestion, then update', () => {
@@ -173,4 +174,42 @@ test('in-flight descriptions use language-neutral canonical JSON', () => {
     view.in_flight[0]?.what,
     expected,
   )
+})
+
+
+test('uncompressed records remain visible during compression cooldown, with bounded overflow', () => {
+  const memory = new Memory({policies: []})
+  for (let i = 0; i < 40; i++) memory.append(CONVERSATION_CHANNEL, {ts:i,trust:'trusted_user',priority:100,content:{text:`record-${i}`}})
+  const channel = memory.channels.get(CONVERSATION_CHANNEL)!
+  channel.replaceSummary('first forty',40,channel.retentionRevision)
+  for (let i = 40; i < 80; i++) memory.append(CONVERSATION_CHANNEL, {ts:i,trust:'trusted_user',priority:100,content:{text:`record-${i}`}})
+  let view = compileContextView(memory,'idle',80).channels[0]!
+  assert.deepEqual(view.recent.map(item=>item.seq),Array.from({length:40},(_,i)=>i+41))
+  assert.equal(view.uncompressed_omitted,undefined)
+  for (let i = 80; i < 90; i++) memory.append(CONVERSATION_CHANNEL, {ts:i,trust:'trusted_user',priority:100,content:{text:`record-${i}`}})
+  view = compileContextView(memory,'idle',90).channels[0]!
+  assert.equal(view.recent.length,40)
+  assert.equal(view.uncompressed_omitted,10)
+  assert.deepEqual(view.recent.map(item=>item.seq),Array.from({length:40},(_,i)=>i+51))
+  assert.match(renderContextView(compileContextView(memory,'idle',90)),/还有 10 条未压缩记录未展示.*序号 40/u)
+  channel.replaceSummary('all ninety',90,channel.retentionRevision)
+  assert.equal(compileContextView(memory,'idle',90).channels[0]!.recent.length,5)
+})
+
+
+test('expanded pending rows have a character budget and do not revive old probes', () => {
+  const memory = new Memory({policies:[slowPolicy]})
+  memory.append('slow_sim',{ts:0,trust:'untrusted_external',priority:50,content:{text:'x'.repeat(17000)},outcome:'unknown'})
+  for(let i=0;i<5;i++) memory.append('slow_sim',{ts:i+1,trust:'trusted_system',priority:50,content:{text:'small'},outcome:'ok'})
+  const manifest = executorManifestSchema.parse({name:'slow_sim',display_name:'Slow',policy:slowPolicy,ops:[{name:'check',description:'check',params:{},readonly:true,verifies:[]}]})
+  let view=compileContextView(memory,'idle',6,{manifests:[manifest]})
+  assert.equal(view.channels.find(c=>c.name==='slow_sim')!.recent.length,5)
+  assert.match(renderContextView(view),/还有 1 条未压缩记录未展示；尚无摘要/u)
+  assert.equal(view.affordances.filter(a=>a.source==='probe').length,0)
+  // A small old unknown is visible as evidence, but must not create a newly revived probe.
+  const other = new Memory({policies:[slowPolicy]})
+  for(let i=0;i<6;i++) other.append('slow_sim',{ts:i,trust:'trusted_system',priority:50,content:{text:'small'},outcome:i===0?'unknown':'ok'})
+  view=compileContextView(other,'idle',6,{manifests:[manifest]})
+  assert.equal(view.channels.find(c=>c.name==='slow_sim')!.recent.length,6)
+  assert.equal(view.affordances.filter(a=>a.source==='probe').length,0)
 })

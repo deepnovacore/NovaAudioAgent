@@ -1,0 +1,251 @@
+{
+  "scope": "Synthetic conversation through real runtime watermark, qwen-flash compressor and downstream model. No ACP/GUI acceptance.",
+  "source": "7b1bd05a3516a310b051b368bf42b6c8419a3767",
+  "scriptHash": "bfd9f858dfde97021f581b258875dc29bcb76d70f39246351783a7401efbda40",
+  "modelCalls": [
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-4ffd12aa-9cc4-97f8-9eb1-59da02ff9d8f",
+      "latency": 1.094416209,
+      "input_tokens": 3943,
+      "output_tokens": 23,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "recent",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-0d25fb6f-feca-9c6a-9095-0dcfb10c5207",
+      "latency": 0.639240791,
+      "input_tokens": 522,
+      "output_tokens": 39,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressed",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-b46029ea-2779-92c0-b7bb-e2ca2a51e0a6",
+      "latency": 0.7006033330000001,
+      "input_tokens": 907,
+      "output_tokens": 65,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "full",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-e042917b-130e-990e-bbfc-7df6db02d6a0",
+      "latency": 0.8357612919999999,
+      "input_tokens": 3094,
+      "output_tokens": 65,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "cooldown-verification",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-51c1c3d6-68fa-927a-bd42-13c7b9d243c4",
+      "latency": 0.4375962920000003,
+      "input_tokens": 2838,
+      "output_tokens": 7,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-54f7b758-017a-9d42-bd70-372be5cec85e",
+      "latency": 1.7257663749999992,
+      "input_tokens": 7138,
+      "output_tokens": 75,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressed-second",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-a53d7504-be9c-9c14-b05b-686acbdbbbb2",
+      "latency": 0.9436921670000018,
+      "input_tokens": 1901,
+      "output_tokens": 65,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "unsupported-count",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-4da78079-b95b-9aa2-a3ca-ff986fd5505a",
+      "latency": 0.6016248749999988,
+      "input_tokens": 1881,
+      "output_tokens": 7,
+      "finish_reason": "stop",
+      "error_type": null
+    }
+  ],
+  "jobs": [
+    {
+      "start": 0.162666417,
+      "items": 40,
+      "end": 1.258673875
+    },
+    {
+      "start": 61.262324667,
+      "items": 80,
+      "end": 62.991896999999994
+    }
+  ],
+  "rounds": [
+    {
+      "variant": "recent",
+      "rawAnswer": "{\n  \"owner\": null,\n  \"port\": null,\n  \"deadline\": null,\n  \"status\": null,\n  \"blocker\": null,\n  \"rollback\": null\n}",
+      "answer": {
+        "owner": null,
+        "port": null,
+        "deadline": null,
+        "status": null,
+        "blocker": null,
+        "rollback": null
+      },
+      "score": 0,
+      "promptBytes": 1380
+    },
+    {
+      "variant": "compressed",
+      "rawAnswer": "{\n  \"owner\": \"Mira\",\n  \"port\": 7319,\n  \"deadline\": \"2026-11-18\",\n  \"status\": \"blocked\",\n  \"blocker\": \"checksum audit pending\",\n  \"rollback\": \"lantern-r17.zip\"\n}",
+      "answer": {
+        "owner": "Mira",
+        "port": 7319,
+        "deadline": "2026-11-18",
+        "status": "blocked",
+        "blocker": "checksum audit pending",
+        "rollback": "lantern-r17.zip"
+      },
+      "score": 6,
+      "promptBytes": 2565
+    },
+    {
+      "variant": "full",
+      "rawAnswer": "{\n  \"owner\": \"Mira\",\n  \"port\": 7319,\n  \"deadline\": \"2026-11-18\",\n  \"status\": \"blocked\",\n  \"blocker\": \"checksum audit pending\",\n  \"rollback\": \"lantern-r17.zip\"\n}",
+      "answer": {
+        "owner": "Mira",
+        "port": 7319,
+        "deadline": "2026-11-18",
+        "status": "blocked",
+        "blocker": "checksum audit pending",
+        "rollback": "lantern-r17.zip"
+      },
+      "score": 6,
+      "promptBytes": 9524
+    }
+  ],
+  "distHashes": {
+    "core/runtime": "6cc26f851be068da36cf31dd3b3d83307a026426623303ae988968ba3bff0f7d",
+    "core/context-view": "e2a2cee1822881a242fa2cf67a5cd4357dd683957bae06d8ba899b03415c5f1e",
+    "model/model-adapters": "c4aba7ea1cac654c0903efb0fdb379d654142a9c450148dd183f49fd64f9c47b",
+    "model/prompting": "6d8fc83a8318e881ec7436cee6811c35fd838659d33012f935bf5058f16c1acc"
+  },
+  "summary": "以下是选取的原始记录（非完整历史；未选取不代表不存在，禁止据此推算总数）：\n[{\"content\": {\"text\": \"Project LANTERN correction: owner is now Mira, replacing Theo.\"}, \"outcome\": null, \"ref\": \"conversation:2\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.160902584}, {\"content\": {\"text\": \"Project LANTERN correction: final port is 7319, replacing 7001.\"}, \"outcome\": null, \"ref\": \"conversation:3\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161013209}, {\"content\": {\"text\": \"Project LANTERN correction: deadline moved to 2026-11-18, replacing 2026-11-10.\"}, \"outcome\": null, \"ref\": \"conversation:4\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161063542}, {\"content\": {\"text\": \"Project LANTERN: release status is blocked; unresolved blocker is checksum audit pending. Do not call the release complete.\"}, \"outcome\": null, \"ref\": \"conversation:5\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161111709}, {\"content\": {\"text\": \"Project LANTERN: rollback artifact is lantern-r17.zip. The checksum audit is not yet resolved.\"}, \"outcome\": null, \"ref\": \"conversation:6\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.16116375}]",
+  "firstVerifiedRefs": [
+    "conversation:2",
+    "conversation:3",
+    "conversation:4",
+    "conversation:5",
+    "conversation:6"
+  ],
+  "cooldownGap": {
+    "uncompressed": 40,
+    "recentSequences": [
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80
+    ],
+    "summaryThrough": 40,
+    "check40Visible": true
+  },
+  "cooldownAnswer": {
+    "rows": 920
+  },
+  "cooldownSeconds": 60.003650792,
+  "secondSummary": "以下是选取的原始记录（非完整历史；未选取不代表不存在，禁止据此推算总数）：\n[{\"content\": {\"text\": \"Project LANTERN correction: owner is now Mira, replacing Theo.\"}, \"outcome\": null, \"ref\": \"conversation:2\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.160902584}, {\"content\": {\"text\": \"Project LANTERN correction: final port is 7319, replacing 7001.\"}, \"outcome\": null, \"ref\": \"conversation:3\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161013209}, {\"content\": {\"text\": \"Project LANTERN correction: deadline moved to 2026-11-18, replacing 2026-11-10.\"}, \"outcome\": null, \"ref\": \"conversation:4\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161063542}, {\"content\": {\"text\": \"Project LANTERN: release status is blocked; unresolved blocker is checksum audit pending. Do not call the release complete.\"}, \"outcome\": null, \"ref\": \"conversation:5\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161111709}, {\"content\": {\"text\": \"Project LANTERN: rollback artifact is lantern-r17.zip. The checksum audit is not yet resolved.\"}, \"outcome\": null, \"ref\": \"conversation:6\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.16116375}, {\"content\": {\"text\": \"Independent fixture ITEM-6: verified 102 records on shard S6, with 0 retries; output item-6.csv. This result concerns only ITEM-6, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:7\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.16120474999999998}, {\"content\": {\"text\": \"Independent fixture ITEM-7: verified 119 records on shard S7, with 1 retries; output item-7.csv. This result concerns only ITEM-7, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:8\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161258917}, {\"content\": {\"text\": \"Independent fixture ITEM-8: verified 136 records on shard S8, with 2 retries; output item-8.csv. This result concerns only ITEM-8, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:9\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161293292}, {\"content\": {\"text\": \"Independent fixture ITEM-9: verified 153 records on shard S9, with 0 retries; output item-9.csv. This result concerns only ITEM-9, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:10\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161343334}, {\"content\": {\"text\": \"Independent fixture ITEM-10: verified 170 records on shard S10, with 1 retries; output item-10.csv. This result concerns only ITEM-10, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:11\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.16143100000000002}, {\"content\": {\"text\": \"Independent fixture ITEM-11: verified 187 records on shard S11, with 2 retries; output item-11.csv. This result concerns only ITEM-11, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:12\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161473167}, {\"content\": {\"text\": \"Independent fixture ITEM-12: verified 204 records on shard S12, with 0 retries; output item-12.csv. This result concerns only ITEM-12, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:13\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.16149466699999998}, {\"content\": {\"text\": \"Independent fixture ITEM-13: verified 221 records on shard S13, with 1 retries; output item-13.csv. This result concerns only ITEM-13, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:14\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161512459}, {\"content\": {\"text\": \"Independent fixture ITEM-14: verified 238 records on shard S14, with 2 retries; output item-14.csv. This result concerns only ITEM-14, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:15\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161529042}, {\"content\": {\"text\": \"Independent fixture ITEM-15: verified 255 records on shard S15, with 0 retries; output item-15.csv. This result concerns only ITEM-15, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:16\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161544709}, {\"content\": {\"text\": \"Independent fixture ITEM-16: verified 272 records on shard S16, with 1 retries; output item-16.csv. This result concerns only ITEM-16, and gives no release authorization for other projects.\"}, \"outcome\": null, \"ref\": \"conversation:17\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.161568792}]",
+  "secondVerifiedRefs": [
+    "conversation:2",
+    "conversation:3",
+    "conversation:4",
+    "conversation:5",
+    "conversation:6",
+    "conversation:7",
+    "conversation:8",
+    "conversation:9",
+    "conversation:10",
+    "conversation:11",
+    "conversation:12",
+    "conversation:13",
+    "conversation:14",
+    "conversation:15",
+    "conversation:16",
+    "conversation:17"
+  ],
+  "secondRawAnswer": "{\n  \"owner\": \"Mira\",\n  \"port\": 7319,\n  \"deadline\": \"2026-11-18\",\n  \"status\": \"blocked\",\n  \"blocker\": \"checksum audit pending\",\n  \"rollback\": \"lantern-r17.zip\"\n}",
+  "secondAnswer": {
+    "owner": "Mira",
+    "port": 7319,
+    "deadline": "2026-11-18",
+    "status": "blocked",
+    "blocker": "checksum audit pending",
+    "rollback": "lantern-r17.zip"
+  },
+  "inputSavingsPerRead": 2187,
+  "firstCompressionInputTokens": 3943,
+  "inputOnlyBreakEvenReads": 2,
+  "unsupportedCount": {
+    "total_fixture_count": null
+  },
+  "ok": true
+}

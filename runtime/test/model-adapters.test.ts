@@ -177,20 +177,16 @@ test('the Proactive selector receives the selected proactivity policy at its mod
   }
 })
 
-test('the compressor trims its answer and sends the schema-free request', async () => {
-  const gateway = new ScriptedGateway([], '  摘要文本  ')
-  const compressor = new GatewayCompressor({gateway, model: 'qwen-flash'})
-  assert.equal(await compressor.compress([]), '摘要文本')
-  assert.equal(gateway.completions[0]?.jsonSchema, undefined)
-  assert.equal(gateway.completions[0]?.prompt, '[]')
-})
-
-test('the compressor strips exactly the whitespace Python strips', async () => {
-  const compressor = new GatewayCompressor({
-    gateway: new ScriptedGateway([], '\u001c\u0085\ufeffsummary\ufeff\u0085\u001c'),
-    model: 'qwen-flash',
-  })
-  assert.equal(await compressor.compress([]), '\ufeffsummary\ufeff')
+test('compressor selects verified source records without accepting generated facts', async () => {
+  const items = [{channel:'conversation',seq:1,ts:1,trust:'trusted_user',priority:100,content:{text:'34 fixtures passed; audit pending'},refs:[],outcome:null}] as MemoryItem[]
+  const gateway = new ScriptedGateway([], JSON.stringify({refs:['conversation:1']}))
+  const summary = await new GatewayCompressor({gateway,model:'qwen-flash'}).compress(items)
+  assert.match(summary,/34 fixtures passed; audit pending/)
+  assert.match(summary,/conversation:1/)
+  assert.ok(gateway.completions[0]?.jsonSchema)
+  for (const output of ['39 fixtures passed', '{"refs":["conversation:99"]}', '{"refs":["conversation:1"],"summary":"39 fixtures passed"}', '{"refs":[]}', '{"refs":["conversation:1","conversation:1"]}']) {
+    await assert.rejects(new GatewayCompressor({gateway:new ScriptedGateway([],output),model:'qwen-flash'}).compress(items))
+  }
 })
 
 test('discovery uses bounded Proactive gateway without speech or execution', async () => {
@@ -487,4 +483,24 @@ test('verifier retries once with validation_feedback when the reply is unparsabl
   await assert.rejects(new GatewayTaskVerifier({gateway:transport,model:'test'}).evaluateTask(current,tasks.evidence(task.id),new AbortController().signal),error=>error instanceof TaskCheckError&&error.stage==='model_call'&&error.code==='timeout_error')
   assert.equal(transport.completions.length,1)
  }finally{await tasks.close();await rm(dir,{recursive:true,force:true})}
+})
+
+
+test('compressor rejects oversized excerpts without truncating source facts', async () => {
+  const items = [{channel:'conversation',seq:1,ts:1,trust:'untrusted_external',priority:100,content:{text:'x'.repeat(16001)},refs:[],outcome:null}] as MemoryItem[]
+  await assert.rejects(new GatewayCompressor({gateway:new ScriptedGateway([],JSON.stringify({refs:['conversation:1']})),model:'qwen-flash'}).compress(items),/exceeds budget/)
+  const gateway = new ScriptedGateway([], 'must not be used')
+  assert.equal(await new GatewayCompressor({gateway,model:'qwen-flash'}).compress([]),'')
+  assert.equal(gateway.completions.length,0)
+})
+
+
+test('compressor fits whole selected records and preserves trust, time, refs and source order', async () => {
+  const items = [
+    {channel:'codex',seq:1,ts:1,trust:'untrusted_external',priority:50,content:{text:'x'.repeat(17000)},refs:[],outcome:'ok'},
+    {channel:'codex',seq:2,ts:2,trust:'untrusted_external',priority:50,content:{text:'34 passed; 2 failed; audit is NOT complete'},refs:['conversation:1'],outcome:'unknown'},
+    {channel:'conversation',seq:1,ts:3,trust:'trusted_user',priority:100,content:{text:'Do not release'},refs:[],outcome:null},
+  ] as MemoryItem[]
+  const summary=await new GatewayCompressor({gateway:new ScriptedGateway([],JSON.stringify({refs:['conversation:1','codex:1','codex:2']})),model:'qwen-flash'}).compress(items)
+  assert.equal(summary.slice(summary.indexOf('\n')+1),compressorPrompt(items.slice(1)))
 })

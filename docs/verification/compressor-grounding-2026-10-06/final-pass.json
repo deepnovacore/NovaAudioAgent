@@ -1,0 +1,251 @@
+{
+  "scope": "Synthetic conversation through real runtime watermark, qwen-flash compressor and downstream model. No ACP/GUI acceptance.",
+  "source": "7b1bd05a3516a310b051b368bf42b6c8419a3767",
+  "scriptHash": "bfd9f858dfde97021f581b258875dc29bcb76d70f39246351783a7401efbda40",
+  "modelCalls": [
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-7902da13-9c55-985f-b2d8-7009a0786a92",
+      "latency": 1.063808666,
+      "input_tokens": 3943,
+      "output_tokens": 23,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "recent",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-51c0d65f-de81-9f6f-83ed-8fd6048ef406",
+      "latency": 1.337793833,
+      "input_tokens": 521,
+      "output_tokens": 39,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressed",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-4a418b65-c3e7-91b5-bd6f-2b719d35998e",
+      "latency": 0.8851242499999996,
+      "input_tokens": 907,
+      "output_tokens": 65,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "full",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-56e7d6f5-b2ab-94ac-8f0b-f6c764f2353b",
+      "latency": 0.9860619170000002,
+      "input_tokens": 3094,
+      "output_tokens": 65,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "cooldown-verification",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-5ff2374a-3295-9ac4-aa33-66bb0d23253b",
+      "latency": 0.48152766699999905,
+      "input_tokens": 2858,
+      "output_tokens": 7,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-83f9ca72-6912-9c9a-9239-c91165cff0b2",
+      "latency": 1.9750557079999993,
+      "input_tokens": 7156,
+      "output_tokens": 78,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressed-second",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-47881efb-fb6e-998e-96ed-aeee4148e2cc",
+      "latency": 0.8151464999999973,
+      "input_tokens": 1693,
+      "output_tokens": 65,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "unsupported-count",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-a4dcaa9e-768b-9fab-80d1-bb4596ac66b1",
+      "latency": 0.3231898749999971,
+      "input_tokens": 1681,
+      "output_tokens": 7,
+      "finish_reason": "stop",
+      "error_type": null
+    }
+  ],
+  "jobs": [
+    {
+      "start": 0.179825333,
+      "items": 40,
+      "end": 1.247055833
+    },
+    {
+      "start": 61.251106833,
+      "items": 80,
+      "end": 63.233839792
+    }
+  ],
+  "rounds": [
+    {
+      "variant": "recent",
+      "rawAnswer": "{\n  \"owner\": null,\n  \"port\": null,\n  \"deadline\": null,\n  \"status\": null,\n  \"blocker\": null,\n  \"rollback\": null\n}",
+      "answer": {
+        "owner": null,
+        "port": null,
+        "deadline": null,
+        "status": null,
+        "blocker": null,
+        "rollback": null
+      },
+      "score": 0,
+      "promptBytes": 1379
+    },
+    {
+      "variant": "compressed",
+      "rawAnswer": "{\n  \"owner\": \"Mira\",\n  \"port\": 7319,\n  \"deadline\": \"2026-11-18\",\n  \"status\": \"blocked\",\n  \"blocker\": \"checksum audit pending\",\n  \"rollback\": \"lantern-r17.zip\"\n}",
+      "answer": {
+        "owner": "Mira",
+        "port": 7319,
+        "deadline": "2026-11-18",
+        "status": "blocked",
+        "blocker": "checksum audit pending",
+        "rollback": "lantern-r17.zip"
+      },
+      "score": 6,
+      "promptBytes": 2565
+    },
+    {
+      "variant": "full",
+      "rawAnswer": "{\n  \"owner\": \"Mira\",\n  \"port\": 7319,\n  \"deadline\": \"2026-11-18\",\n  \"status\": \"blocked\",\n  \"blocker\": \"checksum audit pending\",\n  \"rollback\": \"lantern-r17.zip\"\n}",
+      "answer": {
+        "owner": "Mira",
+        "port": 7319,
+        "deadline": "2026-11-18",
+        "status": "blocked",
+        "blocker": "checksum audit pending",
+        "rollback": "lantern-r17.zip"
+      },
+      "score": 6,
+      "promptBytes": 9524
+    }
+  ],
+  "distHashes": {
+    "core/runtime": "6cc26f851be068da36cf31dd3b3d83307a026426623303ae988968ba3bff0f7d",
+    "core/context-view": "8a4ef600128d1e9a0935a4da36ac1854637ea8797a4c21f5d9831b8d03a80744",
+    "model/model-adapters": "42f5dad186340bb54244e2a58db02c4eed352aef5dc6353b9b24696a781b34d0",
+    "model/prompting": "baa6afcee762e495130b7d6ea3d9ba682bf589b349cea2af8254ecc5267decc4"
+  },
+  "summary": "以下是选取的原始记录（非完整历史；未选取不代表不存在，禁止据此推算总数）：\n[{\"content\": {\"text\": \"Project LANTERN correction: owner is now Mira, replacing Theo.\"}, \"outcome\": null, \"ref\": \"conversation:2\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175685583}, {\"content\": {\"text\": \"Project LANTERN correction: final port is 7319, replacing 7001.\"}, \"outcome\": null, \"ref\": \"conversation:3\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175838875}, {\"content\": {\"text\": \"Project LANTERN correction: deadline moved to 2026-11-18, replacing 2026-11-10.\"}, \"outcome\": null, \"ref\": \"conversation:4\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175896375}, {\"content\": {\"text\": \"Project LANTERN: release status is blocked; unresolved blocker is checksum audit pending. Do not call the release complete.\"}, \"outcome\": null, \"ref\": \"conversation:5\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175939833}, {\"content\": {\"text\": \"Project LANTERN: rollback artifact is lantern-r17.zip. The checksum audit is not yet resolved.\"}, \"outcome\": null, \"ref\": \"conversation:6\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175994708}]",
+  "firstVerifiedRefs": [
+    "conversation:2",
+    "conversation:3",
+    "conversation:4",
+    "conversation:5",
+    "conversation:6"
+  ],
+  "cooldownGap": {
+    "uncompressed": 40,
+    "recentSequences": [
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80
+    ],
+    "summaryThrough": 40,
+    "check40Visible": true
+  },
+  "cooldownAnswer": {
+    "rows": 920
+  },
+  "cooldownSeconds": 60.004051000000004,
+  "secondSummary": "以下是选取的原始记录（非完整历史；未选取不代表不存在，禁止据此推算总数）：\n[{\"content\": {\"text\": \"Project LANTERN correction: owner is now Mira, replacing Theo.\"}, \"outcome\": null, \"ref\": \"conversation:2\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175685583}, {\"content\": {\"text\": \"Project LANTERN correction: final port is 7319, replacing 7001.\"}, \"outcome\": null, \"ref\": \"conversation:3\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175838875}, {\"content\": {\"text\": \"Project LANTERN correction: deadline moved to 2026-11-18, replacing 2026-11-10.\"}, \"outcome\": null, \"ref\": \"conversation:4\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175896375}, {\"content\": {\"text\": \"Project LANTERN: release status is blocked; unresolved blocker is checksum audit pending. Do not call the release complete.\"}, \"outcome\": null, \"ref\": \"conversation:5\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175939833}, {\"content\": {\"text\": \"Project LANTERN: rollback artifact is lantern-r17.zip. The checksum audit is not yet resolved.\"}, \"outcome\": null, \"ref\": \"conversation:6\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 0.175994708}, {\"content\": {\"text\": \"New verification CHECK-40: dataset batch-40.csv has 920 rows and validation passed; reviewed by reviewer-0.\"}, \"outcome\": null, \"ref\": \"conversation:41\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.5097752920000005}, {\"content\": {\"text\": \"New verification CHECK-41: dataset batch-41.csv has 943 rows and validation passed; reviewed by reviewer-1.\"}, \"outcome\": null, \"ref\": \"conversation:42\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.510256042}, {\"content\": {\"text\": \"New verification CHECK-42: dataset batch-42.csv has 966 rows and validation passed; reviewed by reviewer-2.\"}, \"outcome\": null, \"ref\": \"conversation:43\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.5103}, {\"content\": {\"text\": \"New verification CHECK-43: dataset batch-43.csv has 989 rows and validation passed; reviewed by reviewer-3.\"}, \"outcome\": null, \"ref\": \"conversation:44\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.510324292}, {\"content\": {\"text\": \"New verification CHECK-44: dataset batch-44.csv has 1012 rows and validation passed; reviewed by reviewer-0.\"}, \"outcome\": null, \"ref\": \"conversation:45\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.510345417000001}, {\"content\": {\"text\": \"New verification CHECK-45: dataset batch-45.csv has 1035 rows and validation passed; reviewed by reviewer-1.\"}, \"outcome\": null, \"ref\": \"conversation:46\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.510363916999999}, {\"content\": {\"text\": \"New verification CHECK-46: dataset batch-46.csv has 1058 rows and validation passed; reviewed by reviewer-2.\"}, \"outcome\": null, \"ref\": \"conversation:47\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.510383}, {\"content\": {\"text\": \"New verification CHECK-47: dataset batch-47.csv has 1081 rows and validation passed; reviewed by reviewer-3.\"}, \"outcome\": null, \"ref\": \"conversation:48\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.510401708000001}, {\"content\": {\"text\": \"New verification CHECK-48: dataset batch-48.csv has 1104 rows and validation passed; reviewed by reviewer-0.\"}, \"outcome\": null, \"ref\": \"conversation:49\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.510419541999999}, {\"content\": {\"text\": \"New verification CHECK-49: dataset batch-49.csv has 1127 rows and validation passed; reviewed by reviewer-1.\"}, \"outcome\": null, \"ref\": \"conversation:50\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.5104391249999995}, {\"content\": {\"text\": \"New verification CHECK-50: dataset batch-50.csv has 1150 rows and validation passed; reviewed by reviewer-2.\"}, \"outcome\": null, \"ref\": \"conversation:51\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 4.510457792}]",
+  "secondVerifiedRefs": [
+    "conversation:2",
+    "conversation:3",
+    "conversation:4",
+    "conversation:5",
+    "conversation:6",
+    "conversation:41",
+    "conversation:42",
+    "conversation:43",
+    "conversation:44",
+    "conversation:45",
+    "conversation:46",
+    "conversation:47",
+    "conversation:48",
+    "conversation:49",
+    "conversation:50",
+    "conversation:51"
+  ],
+  "secondRawAnswer": "{\n  \"owner\": \"Mira\",\n  \"port\": 7319,\n  \"deadline\": \"2026-11-18\",\n  \"status\": \"blocked\",\n  \"blocker\": \"checksum audit pending\",\n  \"rollback\": \"lantern-r17.zip\"\n}",
+  "secondAnswer": {
+    "owner": "Mira",
+    "port": 7319,
+    "deadline": "2026-11-18",
+    "status": "blocked",
+    "blocker": "checksum audit pending",
+    "rollback": "lantern-r17.zip"
+  },
+  "inputSavingsPerRead": 2187,
+  "firstCompressionInputTokens": 3943,
+  "inputOnlyBreakEvenReads": 2,
+  "unsupportedCount": {
+    "total_fixture_count": null
+  },
+  "ok": true
+}

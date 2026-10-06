@@ -93,6 +93,7 @@ export function proactivitySystemPrompt(preset: ProactivityPreset): string {
   return composed.replace(SURROGATE_ORACLE_OUTPUT, SURROGATE_NODE_OUTPUT) + '\nproposal 仅用于专门的需求发现快照；当前工作进展观察请省略或置 null。proposal 不授权执行，也不因 speak=true 自动朗读。'
 }
 
+/** Python oracle compatibility; serving uses the validated extractive selector in model-adapters. */
 export const COMPRESSOR_SYSTEM = [
   '你只生成摘要，不对用户说话、不调用工具、不改变事实。',
   '保留行动、结果、时间、来源 ref 和尚未解决的不确定性；只输出摘要正文。',
@@ -207,6 +208,7 @@ export function renderContextSnapshot(view: ContextView, includeTrigger = false)
     if (channel.historical_through_seq !== undefined) {
       lines.push(`序号 ≤ ${pythonNumber(channel.historical_through_seq)} 为重启前的历史记录，仅供回忆；当时的运行状态和授权均需重新核实，不得作为新动作的 origin_ref。历史 t 属于旧进程时钟。`)
     }
+    if (channel.uncompressed_omitted) lines.push(`注意：还有 ${channel.uncompressed_omitted} 条未压缩记录未展示；${channel.summary_through_seq === undefined ? '尚无摘要' : `摘要仅处理至序号 ${channel.summary_through_seq}`}。上下文不完整，不得据此断言没有更新、推算总数或确认执行。`)
     if (channel.summary) lines.push(`（更早的内容摘要）${channel.summary}`)
     for (const item of channel.recent) {
       const outcome = item.outcome === null ? '' : ` [${item.outcome}]`

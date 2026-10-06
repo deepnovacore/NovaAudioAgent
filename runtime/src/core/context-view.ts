@@ -11,6 +11,8 @@ import type { Delegate, ExecutorManifest } from './ports.js'
 import { isSuggestionAvailable, type Suggestion } from './suggestions.js'
 
 export const RECENT_LIMIT = 5
+export const UNCOMPRESSED_LIMIT = 40
+export const PENDING_CHARACTER_LIMIT = 16000
 export const FRESH_WINDOW = 30
 
 export interface InFlightView {
@@ -34,7 +36,10 @@ export interface ChannelView {
   readonly name: string
   readonly summary: string | null
   readonly recent: readonly MemoryItem[]
+  /** All retained rows outside recent, including uncompressed_omitted. */
   readonly omitted: number
+  readonly summary_through_seq?: number
+  readonly uncompressed_omitted?: number
   readonly historical_through_seq?: number
 }
 
@@ -60,13 +65,32 @@ export function compileContextView(
     readonly freshWindow?: number
   } = {},
 ): ContextView {
-  const channels = [...memory.channels.values()].map(channel => ({
-    name: channel.name,
-    summary: channel.summary,
-    recent: channel.items.slice(-RECENT_LIMIT),
-    omitted: Math.max(channel.items.length - RECENT_LIMIT, 0),
-    ...(channel.restoredThroughSequence === 0 ? {} : {historical_through_seq: channel.restoredThroughSequence}),
-  }))
+  const channels = [...memory.channels.values()].map(channel => {
+    // Keep new evidence visible while compression is running or cooling down.
+    // ponytail: cap pending rows at 40; explicit overflow avoids an unbounded prompt.
+    const limit = Math.max(RECENT_LIMIT, Math.min(channel.uncompressed, UNCOMPRESSED_LIMIT))
+    let start = Math.max(0, channel.items.length - RECENT_LIMIT)
+    let extraCharacters = 0
+    const earliest = Math.max(0, channel.items.length - limit)
+    while (start > earliest) {
+      const size = canonicalJson(channel.items[start - 1]!).length
+      if (extraCharacters + size > PENDING_CHARACTER_LIMIT) break
+      extraCharacters += size
+      start--
+    }
+    const recent = channel.items.slice(start)
+    const uncompressedOmitted = channel.items.filter(item => item.seq > channel.summaryThroughSequence
+      && item.seq < (recent[0]?.seq ?? Infinity)).length
+    return {
+      name: channel.name,
+      summary: channel.summary,
+      recent,
+      omitted: Math.max(channel.items.length - recent.length, 0),
+      ...(channel.summary === null ? {} : {summary_through_seq: channel.summaryThroughSequence}),
+      ...(uncompressedOmitted === 0 ? {} : {uncompressed_omitted: uncompressedOmitted}),
+      ...(channel.restoredThroughSequence === 0 ? {} : {historical_through_seq: channel.restoredThroughSequence}),
+    }
+  })
   const inFlight = [...(options.inFlight ?? [])]
     .sort(compareDelegates)
     .map(delegate => compileInFlight(delegate, memory))
@@ -99,7 +123,7 @@ function compileProbes(
   for (const channel of channels) {
     const manifest = manifestsByName.get(channel.name)
     if (manifest === undefined || manifest.probe_policy === 'none') continue
-    for (const item of channel.recent) {
+    for (const item of channel.recent.slice(-RECENT_LIMIT)) {
       if (item.seq <= (channel.historical_through_seq ?? 0)) continue
       if (item.outcome !== 'unknown') continue
       for (const operation of manifest.ops) {

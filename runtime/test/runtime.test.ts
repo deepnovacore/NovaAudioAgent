@@ -2030,3 +2030,24 @@ test('direct progress wakes only for phase or summary changes', () => {
   assert.equal(send('next', 3)?.kind, 'progress')
   assert.equal(runtime.memory.channels.get('slow_sim')!.items.length, 2)
 })
+
+
+test('rejected compressor selection retains prior summary and pending rows without an automatic retry', () => {
+  const {runtime,calls}=runtimeWithCalls({manifest:testManifest({wake:'none',compressWatermark:1}),slots:['compress']})
+  appendUserOrigin(runtime)
+  const channel=runtime.memory.channels.get('route_sim')!
+  runtime.memory.append('route_sim',{ts:0,trust:'trusted_system',priority:50,content:{text:'original evidence'},refs:[]})
+  channel.replaceSummary('prior verified excerpt',1,channel.retentionRevision)
+  runtime.post({kind:'handoff',payload:{channel:'route_sim',delegate_id:'external-1',origin_ref:'conversation:1',outcome:'ok',trust:'trusted_system',content:{text:'new evidence'},refs:[]}},0)
+  runtime.apply(runtime.queue.popReady(0)!)
+  runtime.apply(runtime.queue.popReady(0)!)
+  runtime.completeModelCall(calls[0]!.job_id,{port_failure:true},0)
+  runtime.apply(runtime.queue.popReady(0)!)
+  assert.equal(channel.summary,'prior verified excerpt')
+  assert.equal(channel.summaryThroughSequence,1)
+  assert.equal(channel.uncompressed,1)
+  assert.equal(channel.items.length,2)
+  assert.deepEqual(runtime.diagnostics,[{code:'invalid_compressor_output'}])
+  assert.equal(calls.length,1)
+  runtime.assertQuiescent()
+})

@@ -9,7 +9,7 @@ import {execFileSync} from 'node:child_process'
 if (process.env.NOVA_LIVE_COMPRESSOR_VALUE !== '1' || !process.env.DASHSCOPE_API_KEY) throw Error('Requires explicit live opt-in and DASHSCOPE_API_KEY')
 const dist = resolve(process.env.NOVA_ACP_AFTER_DIST ?? 'runtime/dist')
 const load = name => import(pathToFileURL(resolve(dist, 'src', name + '.js')).href)
-const [{CausalRuntime}, {RealClock}, {MonotonicIdFactory}, {OpenAIModelGateway}, {GatewayCompressor}, {compileContextView}, {renderContextView}] = await Promise.all(['core/causal-runtime','core/clock','core/ids','model/model-gateway','model/model-adapters','core/context-view','model/prompting'].map(load))
+const [{CausalRuntime}, {RealClock}, {MonotonicIdFactory}, {OpenAIModelGateway}, {GatewayCompressor, compressorPrompt}, {compileContextView}, {renderContextView}] = await Promise.all(['core/causal-runtime','core/clock','core/ids','model/model-gateway','model/model-adapters','core/context-view','model/prompting'].map(load))
 const report = {scope: 'Synthetic conversation through real runtime watermark, qwen-flash compressor and downstream model. No ACP/GUI acceptance.', source: execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(), scriptHash: createHash('sha256').update(await readFile(import.meta.filename)).digest('hex'), modelCalls: [], jobs: [], rounds: []}
 report.distHashes = Object.fromEntries(await Promise.all(['core/runtime','core/context-view','model/model-adapters','model/prompting'].map(async name => [name,createHash('sha256').update(await readFile(resolve(dist,'src',name+'.js'))).digest('hex')])))
 let purpose = 'compressor'
@@ -43,6 +43,14 @@ try {
   assert.equal(report.jobs.length,1); assert.equal(channel.uncompressed,0); console.log('first summary applied')
   assert.equal(channel.items.length,40); assert.equal(runtime.memory.channels.size,1)
   report.summary = channel.summary
+  const verifyExcerpt = summary => {
+    const selected = JSON.parse(summary.slice(summary.indexOf('\n') + 1))
+    const originals = JSON.parse(compressorPrompt(channel.items))
+    assert.ok(selected.length > 0 && selected.length <= 16)
+    for (const record of selected) assert.deepEqual(record, originals.find(item => item.ref === record.ref))
+    return selected.map(record => record.ref)
+  }
+  report.firstVerifiedRefs = verifyExcerpt(channel.summary)
   const view = compileContextView(runtime.memory,runtime.core.floor.state,clock.now(),{freshWindow:0})
   const variants = {
     recent: {...view,channels:view.channels.map(c=>({...c,summary:null}))},
@@ -65,13 +73,20 @@ try {
   assert.equal(report.jobs.length,1,'cooldown prevents immediate repeat')
   const coolingView=compileContextView(runtime.memory,runtime.core.floor.state,clock.now())
   report.cooldownGap={uncompressed:channel.uncompressed, recentSequences:coolingView.channels[0].recent.map(item=>item.seq), summaryThrough:channel.summaryThroughSequence, check40Visible:renderContextView(coolingView).includes('CHECK-40')}
-  assert.equal(report.cooldownGap.check40Visible,false)
+  assert.equal(report.cooldownGap.check40Visible,true)
+  assert.deepEqual(report.cooldownGap.recentSequences,Array.from({length:40},(_,i)=>i+41))
+  purpose='cooldown-verification'
+  const coolingAnswer=await gateway.complete({model:'qwen-flash',system:'Extract facts from supplied records only. Return exactly JSON {"rows":number|null}.',prompt:renderContextView(coolingView)+'\nQuestion: Find the new verification CHECK-40 (dataset batch-40.csv) in the records above. How many rows does it have? Return {"rows":number}, or {"rows":null} only if the record is absent.',maxTokens:128,signal:stop.signal})
+  report.cooldownAnswer=JSON.parse(coolingAnswer.text)
+  assert.equal(report.cooldownAnswer.rows,920)
+  purpose='compressor'
   await waitFor(()=>channel.summaryThroughSequence===80)
   assert.equal(report.jobs.length,2); assert.deepEqual(report.jobs.map(job=>job.items),[40,80])
   report.cooldownSeconds=report.jobs[1].start-report.jobs[0].end
   assert.ok(report.cooldownSeconds>=59.9)
   assert.equal(channel.uncompressed,0)
   report.secondSummary=channel.summary
+  report.secondVerifiedRefs=verifyExcerpt(channel.summary)
   purpose='compressed-second'
   const response=await gateway.complete({model:'qwen-flash',system:'Answer exclusively from supplied records. Preserve unresolved uncertainty. Return JSON only.',prompt:renderContextView(compileContextView(runtime.memory,runtime.core.floor.state,clock.now(),{freshWindow:0}))+'\n'+questions,maxTokens:256,signal:stop.signal})
   report.secondRawAnswer=response.text; report.secondAnswer=normalize(JSON.parse(response.text.replace(/^```(?:json)?\s*|\s*```$/g,''))); assert.deepEqual(report.secondAnswer,expected)
@@ -81,6 +96,9 @@ try {
   report.inputSavingsPerRead=saved
   report.firstCompressionInputTokens=metric('compressor').input_tokens
   report.inputOnlyBreakEvenReads=Math.ceil(report.firstCompressionInputTokens/saved)
+  purpose='unsupported-count'
+  const countAnswer=await gateway.complete({model:'qwen-flash',system:'Use supplied records only. Return JSON {"total_fixture_count":number|null}. What is the exact total number of independent ITEM fixtures across the entire history? Selected excerpts are incomplete: if no explicit total exists, return null; never extrapolate from selected references or ranges.',prompt:renderContextView(compileContextView(runtime.memory,runtime.core.floor.state,clock.now())),maxTokens:128,signal:stop.signal})
+  report.unsupportedCount=JSON.parse(countAnswer.text); assert.equal(report.unsupportedCount.total_fixture_count,null)
   report.ok=report.modelCalls.every(c=>c.error_type===null)
 } catch(error){report.ok=false;report.error=String(error)} finally {
   clearTimeout(timeout);stop.abort();await serving

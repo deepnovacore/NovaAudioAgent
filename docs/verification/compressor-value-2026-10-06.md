@@ -1,5 +1,7 @@
 # Compressor positive live acceptance — 2026-10-06
 
+Follow-up: the two discovered defects are addressed in [Compressor grounding and pending-context repair](compressor-grounding-2026-10-06.md). Results below describe the pre-repair implementation.
+
 This supplements the ACP heartbeat storm acceptance. It tests the real CausalRuntime conversation input path, production watermark 40, GatewayCompressor and qwen-flash downstream calls. Inputs are synthetic; this is not another ACP backend/GUI run. No production implementation changes were made.
 
 ## What was exercised
