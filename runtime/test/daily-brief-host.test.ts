@@ -133,3 +133,21 @@ test('revoking raw-source processing while a brief model runs prevents publicati
  const host=new PersonalAgentHost({path,userScope:'local',pool:new SuggestionPool(),memory:()=>memory,evidence:()=>null,now:()=>new Date('2026-09-14T00:30:00Z'),prepareBrief:()=>{started();return new Promise(resolve=>{release=resolve})}})
  try{await host.open();const tick=host.scheduledTick();await pending;allowed=false;release({prepared:{trust:'untrusted_external',text:'Review',evidence_refs:[evidence.evidence_id]},memory_refs:[],action_label:'查看'});await tick;assert.equal(host.snapshot().feed.length,0);assert.equal(Object.values((await store.read()).brief_runs)[0]?.status,'failed')}finally{await host.close();await rm(dir,{recursive:true,force:true})}
 })
+
+test('an invalidated delivery never reaches the next model request',async()=>{
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-brief-invalidated-')),path=join(dir,'state.json'),store=new PersonalStore(path)
+ const state=initialState();state.settings={discovery_enabled:false,discovery_interval_minutes:30,timezone:'Asia/Shanghai',briefing_outlook_enabled:true};await store.write(state)
+ const now=new Date('2026-09-14T00:30:00Z')
+ const make=()=>new PersonalAgentHost({path,userScope:'local',pool:new SuggestionPool(),memory:()=>undefined,evidence:ref=>({subject_key:'project:1',source:{type:'file',ref}}),evidenceRefs:()=>['file:1'],now:()=>now,prepareBrief:()=>Promise.resolve(material)})
+ let host=make()
+ try{
+  await host.open();await host.scheduledTick();await host.close()
+  const published=await store.read();published.feed[0]!.delivery.notified_at=now.toISOString();await store.write(published)
+  host=make();await host.open()
+  assert.equal((await host.dailyBriefSnapshot()).recent_delivery.length,1)
+  await host.invalidateEvidence('file:1')
+  assert.equal(host.snapshot().feed[0]?.lifecycle,'invalidated')
+  assert.deepEqual((await host.dailyBriefSnapshot()).recent_delivery,[])
+  assert.deepEqual((await host.discoverySnapshot()).recent_delivery,[])
+ }finally{await host.close();await rm(dir,{recursive:true,force:true})}
+})
