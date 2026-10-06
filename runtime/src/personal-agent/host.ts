@@ -503,6 +503,8 @@ export class PersonalAgentHost {
                 const seen=(await Promise.all(snapshot.memory.map(item=>memory?.get?.(item.id)??Promise.resolve(null)))).filter((entry):entry is MemoryEntry=>!!entry);
                 if(seen.length!==snapshot.memory.length||(await this.authorizedGenerationEntries(seen)).length!==seen.length)throw Error('brief_authorization_changed');
                 if(memory?.canProcessEvidence&&!(await Promise.all((snapshot.daily?.evidence??[]).map(item=>memory.canProcessEvidence!(item.evidence_id,'extraction')))).every(Boolean))throw Error('brief_authorization_changed');
+                // Earlier deliveries are model input too: one revoked while the model ran may have leaked into the text.
+                if(snapshot.recent_delivery.some(item=>this.#state.feed.find(feed=>feed.id===item.id)?.lifecycle==='invalidated'))throw Error('brief_authorization_changed');
             }
             return value;
         }catch(error){if(strict)throw error;return null}finally{signal.removeEventListener('abort',cancel)}
@@ -624,7 +626,7 @@ export class PersonalAgentHost {
         const refs=[...new Set([...evidence.map(row=>row.evidence_id),...(this.options.evidenceRefs?.()??[])])];
         const valid=await Promise.all(refs.map(ref=>this.#evidence(ref))),validRefs=refs.filter((_,index)=>valid[index]!==null);
         const evidence_refs=validRefs.slice(0,128),selected=evidence.filter(row=>evidence_refs.includes(row.evidence_id));
-        return {user_scope:this.options.userScope,local_date,weekday:now.toLocaleDateString('en-US',{weekday:'long',timeZone:timezone}),timezone,memory:unique.slice(0,128),evidence_refs,recent_delivery:this.#state.feed.filter(f=>Object.values(f.delivery).some(Boolean)).slice(-8),daily:{coverage:{memory_scanned:entries.length,memory_included:Math.min(unique.length,128),memory_excluded:entries.length-unique.length,memory_truncated:Math.max(0,unique.length-128),evidence_included:selected.length,evidence_excluded:refs.length-validRefs.length,evidence_truncated:Math.max(0,validRefs.length-128),evidence_text_truncated:selected.filter(row=>row.text.length>2000).length},evidence:selected.map(row=>({...row,text:row.text.slice(0,2000)}))}};
+        return {user_scope:this.options.userScope,local_date,weekday:now.toLocaleDateString('en-US',{weekday:'long',timeZone:timezone}),timezone,memory:unique.slice(0,128),evidence_refs,recent_delivery:this.#state.feed.filter(f=>f.lifecycle!=='invalidated'&&Object.values(f.delivery).some(Boolean)).slice(-8),daily:{coverage:{memory_scanned:entries.length,memory_included:Math.min(unique.length,128),memory_excluded:entries.length-unique.length,memory_truncated:Math.max(0,unique.length-128),evidence_included:selected.length,evidence_excluded:refs.length-validRefs.length,evidence_truncated:Math.max(0,validRefs.length-128),evidence_text_truncated:selected.filter(row=>row.text.length>2000).length},evidence:selected.map(row=>({...row,text:row.text.slice(0,2000)}))}};
 
     }
     async discoverySnapshot(): Promise<DiscoverySnapshot> {
@@ -641,7 +643,7 @@ export class PersonalAgentHost {
         }
         const dueDate=(entry:MemoryEntry):string=>entry.life?.due??(entry.commitment?.due?new Date(entry.commitment.due).toLocaleDateString('en-CA',{timeZone:timezone}):'9999-12-31')
         relevant=relevant.filter((e,i,all)=>all.findIndex(a=>a.id===e.id)===i).sort((a,b)=>dueDate(a).localeCompare(dueDate(b)))
-        return {...(context?{context}:{}),...(retrieval?{retrieval}:{}),user_scope:this.options.userScope,local_date:now.toLocaleDateString('en-CA',{timeZone:timezone}),weekday:now.toLocaleDateString('en-US',{weekday:'long',timeZone:timezone}),timezone,memory:relevant.filter(memoryEligibleForDiscovery).slice(0,16),evidence_refs:[...new Set(interleave([(this.#sources?.evidenceSnapshot?.()??[]).map(item=>item.ref),this.options.evidenceRefs?.()??[],(retrieval?.snippets??[]).map(item=>item.evidence_id)],48))].slice(0,16),recent_delivery:this.#state.feed.filter(f=>Object.values(f.delivery).some(Boolean)).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)).slice(0,8)}
+        return {...(context?{context}:{}),...(retrieval?{retrieval}:{}),user_scope:this.options.userScope,local_date:now.toLocaleDateString('en-CA',{timeZone:timezone}),weekday:now.toLocaleDateString('en-US',{weekday:'long',timeZone:timezone}),timezone,memory:relevant.filter(memoryEligibleForDiscovery).slice(0,16),evidence_refs:[...new Set(interleave([(this.#sources?.evidenceSnapshot?.()??[]).map(item=>item.ref),this.options.evidenceRefs?.()??[],(retrieval?.snippets??[]).map(item=>item.evidence_id)],48))].slice(0,16),recent_delivery:this.#state.feed.filter(f=>f.lifecycle!=='invalidated'&&Object.values(f.delivery).some(Boolean)).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)).slice(0,8)}
     }
     discover(): Promise<void> { if (this.#discovery)
         return this.#discovery; if (acceptanceEnabled() || !this.#opened || !this.#state.settings.discovery_enabled || !this.options.discover)
