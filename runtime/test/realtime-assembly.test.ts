@@ -4656,8 +4656,17 @@ function installRecordingFetch(records: GatewayRequest[]): () => void {
       readonly messages?: readonly {readonly content?: unknown}[]
     }
     const serialized = JSON.stringify(body.messages ?? [])
+    const prompt = body.messages?.at(-1)?.content
+    let compressorRefs: string[] = []
+    try {
+      const records = typeof prompt === 'string' ? JSON.parse(prompt) as unknown : null
+      if (Array.isArray(records)) compressorRefs = records.flatMap((item: unknown) => (
+        item !== null && typeof item === 'object' && 'ref' in item && typeof item.ref === 'string' ? [item.ref] : []
+      ))
+    } catch { /* Other model prompts are ordinary prose. */ }
     const role = serialized.includes('image_url') ? 'watch'
-      : body.response_format !== undefined ? 'surrogate'
+      : compressorRefs.length > 0 ? 'compressor'
+        : body.response_format !== undefined ? 'surrogate'
         : body.model === 'gateway-probe' ? 'gateway' : 'compressor'
     records.push({
       endpoint: typeof input === 'string' ? input
@@ -4667,7 +4676,8 @@ function installRecordingFetch(records: GatewayRequest[]): () => void {
     })
     const content = role === 'watch'
       ? JSON.stringify({hit: false, observation: ''})
-      : JSON.stringify({speak: false, suggestion_id: null, progress_class: null, reason: 'quiet'})
+      : role === 'compressor' ? JSON.stringify({refs: compressorRefs.slice(0, 16)})
+        : JSON.stringify({speak: false, suggestion_id: null, progress_class: null, reason: 'quiet'})
     return Promise.resolve(new Response(JSON.stringify({
       id: 'gateway-response',
       choices: [{finish_reason: 'stop', message: {content}}],

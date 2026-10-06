@@ -40,3 +40,12 @@ NOVA_LIVE_COMPRESSOR_VALUE=1 NOVA_ACP_AFTER_DIST="$PWD/runtime/dist" \
 ```
 
 DASHSCOPE_API_KEY is required. Two compression jobs, six downstream requests, 180-second deadline. Only synthetic records are submitted.
+
+
+## Integration on current v0.4.0dev
+
+Before integration, the target branch (c21a1a43) had a common ancestor at 931a059c and lacked the earlier full compression repair, despite its previous local integration. Merging the current target into the feature branch restores that complete repair while preserving current public changes, including native ACP truncated-output safety checks. Unrelated Flutter/protocol conflicts retain the target branch versions; both ACP regression sets are retained. No private pilot refs are involved.
+
+Integrated production source: 163af7fd. All 202 core/model/memory/ACP tests passed; the provider-choice integration mock was updated for the new JSON compressor protocol and rechecked separately. Build and changed-file lint passed. The integrated positive live passes all eight calls, including exact source matching, cooldown rows 41–80, six project facts and unsupported-count=null. Compressed input is 931 versus full-history 3,092 (69.9% reduction on this synthetic workload).
+
+The integrated real OpenCode ACP live also passes: 5 progress callbacks, zero compression jobs, verified artifact, same-session resume and cancellation/process teardown. Backend HTTP statuses are 200 and the foreground model call has no error. Evidence: integrated-value.json and integrated-acp.json. The final changes after 163af7fd affect only the test mock and verification records, not production behavior.
