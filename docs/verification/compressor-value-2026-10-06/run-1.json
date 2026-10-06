@@ -1,0 +1,141 @@
+{
+  "scope": "Synthetic conversation through real runtime watermark, qwen-flash compressor and downstream model. No ACP/GUI acceptance.",
+  "source": "20c96434e3dfc5996c51939d5c2b58cbbec719c8",
+  "scriptHash": "22cbe81afb0f5740362cc75f9fcd43098f45e9e0332dabf35ca9355b6e837dbd",
+  "modelCalls": [
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-44261e71-e78e-9de5-a5f4-3f56fa02ddf1",
+      "latency": 1.9192073340000002,
+      "input_tokens": 3879,
+      "output_tokens": 164,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "recent",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-68d322ea-3e3a-9624-95da-54e89003f994",
+      "latency": 0.590308958,
+      "input_tokens": 527,
+      "output_tokens": 39,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressed",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-982d6d5b-9e1c-9389-8c6a-70bf7f945296",
+      "latency": 1.1102545830000001,
+      "input_tokens": 697,
+      "output_tokens": 66,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "full",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-9310fa6e-241c-9072-aa40-94e6c7cf1d60",
+      "latency": 0.8121758750000008,
+      "input_tokens": 3081,
+      "output_tokens": 65,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressor",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-ccadde98-b82e-965a-9ee6-4d0aa31e0db4",
+      "latency": 2.6208779589999978,
+      "input_tokens": 7519,
+      "output_tokens": 203,
+      "finish_reason": "stop",
+      "error_type": null
+    },
+    {
+      "purpose": "compressed-second",
+      "model": "qwen-flash",
+      "image_count": 0,
+      "request_id": "chatcmpl-fbe0de23-34cc-9fb5-a9c8-f2e175f9d386",
+      "latency": 0.712249082999989,
+      "input_tokens": 687,
+      "output_tokens": 66,
+      "finish_reason": "stop",
+      "error_type": null
+    }
+  ],
+  "jobs": [
+    {
+      "start": 0.26554649999999996,
+      "items": 40,
+      "end": 2.1857546670000003
+    },
+    {
+      "start": 62.189821792000004,
+      "items": 80,
+      "end": 64.813766875
+    }
+  ],
+  "rounds": [
+    {
+      "variant": "recent",
+      "answer": {
+        "owner": null,
+        "port": null,
+        "deadline": null,
+        "status": null,
+        "blocker": null,
+        "rollback": null
+      },
+      "score": 0,
+      "promptBytes": 1385
+    },
+    {
+      "variant": "compressed",
+      "answer": {
+        "owner": "Mira",
+        "port": 7319,
+        "deadline": "2026-11-18",
+        "status": "blocked",
+        "blocker": "checksum audit pending",
+        "rollback": "lantern-r17.zip"
+      },
+      "score": 6,
+      "promptBytes": 2092
+    },
+    {
+      "variant": "full",
+      "answer": {
+        "owner": "Mira",
+        "port": 7319,
+        "deadline": "2026-11-18",
+        "status": "blocked",
+        "blocker": "checksum audit pending",
+        "rollback": "lantern-r17.zip"
+      },
+      "score": 6,
+      "promptBytes": 9511
+    }
+  ],
+  "summary": "Project LANTERN is currently blocked from release due to an unresolved checksum audit. The project's ownership has been updated from Theo to Mira, the port has been changed from 7001 to 7319, and the deadline has been extended from 2026-11-10 to 2026-11-18. The rollback artifact for the project is identified as `lantern-r17.zip`. Despite successful verification of 39 independent fixtures (ITEM-6 through ITEM-39) across shards S6 to S39, each with specified record counts and retry metrics, these results do not grant release authorization for Project LANTERN. The checksum audit remains pending, and no further updates or resolution have been provided regarding this blocker.",
+  "cooldownSeconds": 60.004067125000006,
+  "secondSummary": "Project LANTERN is currently blocked due to an unresolved checksum audit. The project's ownership has been updated from Theo to Mira, the port has been changed from 7001 to 7319, and the deadline has been extended from 2026-11-10 to 2026-11-18. The rollback artifact is confirmed as `lantern-r17.zip`. \n\nMultiple independent verifications (ITEM-6 through ITEM-39) have successfully validated records across shards S6 to S39, with varying retry counts, but these results do not authorize release for LANTERN. Additionally, 15 new verification checks (CHECK-40 to CHECK-79) have passed validation for datasets batch-40.csv through batch-79.csv, each reviewed by designated reviewers, yet LANTERN remains blocked pending resolution of the checksum audit. No further updates or actions are indicated beyond the ongoing blockage.",
+  "secondAnswer": {
+    "owner": "Mira",
+    "port": 7319,
+    "deadline": "2026-11-18",
+    "status": "blocked",
+    "blocker": "checksum audit pending",
+    "rollback": "lantern-r17.zip"
+  },
+  "inputSavingsPerRead": 2384,
+  "firstCompressionInputTokens": 3879,
+  "inputOnlyBreakEvenReads": 2,
+  "ok": true
+}
