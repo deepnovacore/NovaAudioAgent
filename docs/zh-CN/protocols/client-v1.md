@@ -162,8 +162,9 @@ Swift 客户端把字幕累积为内存中的会话列表，按 `message_id`／�
 
 移动快照只保留 `type`、`revision`、`reload_required`、`life`、`tasks`、
 `conversations`、`feed`、`memory`、`pending_approvals`、`pending_confirmations`
-、只读 `news` 投影和任务/记忆能力。sources、feishu、connectors、profile preparation 等
-桌面专用投影不下发；命令结果中嵌套的状态也使用同一投影。
+、只读 `news` 投影、下文所述的精简 `workbench_context` 与 `profile_preparation`
+投影，以及任务/记忆能力。sources、feishu、connectors 等桌面专用投影不下发；命令结果中
+嵌套的状态也使用同一投影。
 
 状态变化在固定的 250 ms 窗口内合并，只发送最新快照。断开连接会清除待发送状态。
 超限状态降级为 `{"type":"personal.state","revision":9,"reload_required":true}`。

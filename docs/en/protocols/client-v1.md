@@ -177,9 +177,11 @@ budget is 1 MiB, measured as UTF-8 bytes. Other JSON output keeps its old budget
 
 Mobile snapshots allow only `type`, `revision`, `reload_required`, `life`,
 `tasks`, `conversations`, `feed`, `memory`, `pending_approvals`,
-`pending_confirmations`, a read-only `news` projection, and task/memory capabilities. Desktop sources, Feishu,
-connectors, profile preparation and other desktop-only projections are
-omitted, including snapshots nested in a command result.
+`pending_confirmations`, a read-only `news` projection, the reduced
+`workbench_context` and `profile_preparation` projections described below, and
+task/memory capabilities. Desktop sources, Feishu, connectors and other
+desktop-only projections are omitted, including snapshots nested in a command
+result.
 
 State changes coalesce in a fixed 250 ms window; the newest snapshot wins.
 Disconnect clears the queued snapshot. An oversized snapshot becomes
