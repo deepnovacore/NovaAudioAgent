@@ -18,7 +18,7 @@ interface SpeechOptions {
 const failure=(code:string)=>new Error(`Gemini speech ${code}`)
 const resultSchema=z.object({candidates:z.array(z.object({finishReason:z.literal('STOP'),content:z.object({parts:z.array(z.object({
   text:z.string().optional(),thought:z.boolean().optional(),inlineData:z.object({mimeType:z.string(),data:z.string()}).optional(),
-}))})})).length(1),usageMetadata:z.object({promptTokenCount:z.number().int().nonnegative().optional(),candidatesTokenCount:z.number().int().nonnegative().optional()}).optional()})
+})).default([])})})).length(1),usageMetadata:z.object({promptTokenCount:z.number().int().nonnegative().optional(),candidatesTokenCount:z.number().int().nonnegative().optional()}).optional()})
 
 async function generate(options:SpeechOptions,body:unknown,signal:AbortSignal) {
   const requestSignal=AbortSignal.any([signal,AbortSignal.timeout(60_000)])

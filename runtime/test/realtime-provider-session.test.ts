@@ -169,6 +169,19 @@ test('provider session requires increasing epochs and resets through one reconne
   assert.equal(session.state, 'closed')
 })
 
+test('a failed playback report is best effort and leaves a healthy provider session open', async () => {
+  class ReportingProvider extends FakeProvider {
+    reportPlayback(): Promise<void> { return Promise.reject(new Error('socket closed')) }
+  }
+  const provider = new ReportingProvider()
+  const session = new RealtimeProviderSession(provider)
+  await session.connect([])
+  await session.reportPlayback({session_epoch: 1, response_id: 'r', played_ms: 10, disposition: 'spoken'})
+  assert.equal(session.state, 'connected')
+  assert.equal(provider.closeCount, 0)
+  await session.close()
+})
+
 test('provider session applies adaptation without blocking PCM ingress', async () => {
   const provider = new FakeProvider()
   let context: {readonly revision: number; readonly content: string | null} | undefined = {

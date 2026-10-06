@@ -18,6 +18,11 @@ test('Gemini ASR sends buffered audio only at finish and returns a final transcr
  const read=collect(session.events());await session.finish()
  assert.deepEqual(await read,[{text:'你好',final:true}]);await session.close()
 })
+test('Gemini ASR treats a candidate without parts as silence instead of a provider error',async()=>{
+ const session=await createGeminiAsrFactory({...config,fetchImpl:async()=>new Response(JSON.stringify({candidates:[{finishReason:'STOP',content:{role:'model'}}]}))}).openClient().open()
+ await session.append(Uint8Array.of(1,0));const read=collect(session.events());await session.finish()
+ assert.deepEqual(await read,[{text:'',final:true}]);await session.close()
+})
 test('Gemini TTS sends only host text segments and decodes PCM without speaking control prompts',async()=>{
  const session=await createGeminiTtsFactory({...config,fetchImpl:async(_url,init)=>{
   assert.equal(typeof init?.body,'string');const body=JSON.parse(init!.body as string) as {contents:{parts:{text?:string;inlineData:{data:string}}[]}[];generationConfig:{speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:string}}}}};assert.equal(body.contents[0]!.parts[0]!.text,'Hello world.')

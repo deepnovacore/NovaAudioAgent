@@ -385,7 +385,7 @@ export class RealtimeProviderSession {
       await this.#provider.reportPlayback(input, owner.controller.signal)
       this.#assertCurrentConnection(owner)
     } catch {
-      if (this.#isCurrentConnection(owner)) await this.close()
+      // Playback truncation is best effort: a failed report must not end a healthy session.
     }
   }
 
