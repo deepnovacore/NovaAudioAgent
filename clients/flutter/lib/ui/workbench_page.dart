@@ -835,7 +835,7 @@ class _WorkbenchPageState extends State<WorkbenchPage> {
                 style: const TextStyle(fontSize: 16, height: 1.6),
               ),
               if (Uri.tryParse(article['url'] as String? ?? '') case final url?
-                  when url.hasScheme) ...[
+                  when url.scheme == 'http' || url.scheme == 'https') ...[
                 const SizedBox(height: 24),
                 FilledButton.icon(
                   style: FilledButton.styleFrom(

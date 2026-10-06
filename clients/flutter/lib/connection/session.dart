@@ -309,22 +309,21 @@ final class Session extends ChangeNotifier {
   String? command(Map<String, dynamic> payload) {
     if (!connected || connection == null) return null;
     final id = requestId();
-    unawaited(
-      sendRaw(
-        jsonEncode({
-          'type': 'client.command',
+    final frame = jsonEncode({
+      'type': 'client.command',
+      'request_id': id,
+      'connection_id': connection,
+      'payload': {
+        ...payload,
+        if (ready!.personal && payload['type'] == 'input.text') ...{
           'request_id': id,
-          'connection_id': connection,
-          'payload': {
-            ...payload,
-            if (ready!.personal && payload['type'] == 'input.text') ...{
-              'request_id': id,
-              if (inputInstance != null) 'input_instance_id': inputInstance,
-            },
-          },
-        }),
-      ),
-    );
+          if (inputInstance != null) 'input_instance_id': inputInstance,
+        },
+      },
+    });
+    // The host closes the connection on a command over 16 KiB; refuse locally.
+    if (utf8.encode(frame).length > 16384) return null;
+    unawaited(sendRaw(frame));
     return id;
   }
 
