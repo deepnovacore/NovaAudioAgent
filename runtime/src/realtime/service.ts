@@ -1221,6 +1221,16 @@ export class RealtimeService {
       await this.#approvalHost.maybeRequestFreshExecutorApprovalResponse()
     }
 
+    if (event.kind === 'response_yielded' && accepted) {
+      this.#audioStarted.delete(event.response_id)
+      const generation = this.session.currentGeneration
+      if (generation?.response_id === event.response_id && generation.session_epoch === event.session_epoch) {
+        this.#onProviderTerminal(generation)
+      }
+      this.#continuations.finishContinuation({response_id:event.response_id,status:'yielded'})
+      this.#continuations.finishOrigin(event.response_id)
+    }
+
     if (event.kind === 'response_terminal' && accepted) {
       this.#approvalHost.noteTerminal(event)
       this.#host.recordPreemptiveAlertCancelTerminal(event)

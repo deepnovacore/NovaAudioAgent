@@ -53,6 +53,8 @@ const SECRET_KEY_NAMES = [
   'codexApiKey',
   'arkApiKey',
   'deepseekApiKey',
+  'openaiApiKey',
+  'geminiApiKey',
   'doubaoBigmodelApiKey',
   'doubaoAsrApiKey',
 ]

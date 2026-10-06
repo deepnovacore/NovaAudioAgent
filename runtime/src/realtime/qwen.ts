@@ -14,7 +14,7 @@ import {dispatchSourceContext} from './history.js'
  * One intentional departure from Python is documented at `#readLoop`.
  */
 
-import {frontendInstructions, type FrontendModuleSelection} from './frontend-instructions.js'
+import {frontendInstructions} from './frontend-instructions.js'
 import {qwenWireProfile, type IntegratedWireProfile} from './integrated-wire-profile.js'
 export {frontendInstructions, FRONTEND_INSTRUCTIONS, CODEX_APPROVAL_FRONTEND_INSTRUCTIONS} from './frontend-instructions.js'
 export type {FrontendModuleSelection} from './frontend-instructions.js'
@@ -63,11 +63,6 @@ export const MAX_QWEN_EVENT_QUEUE = 4_096
 
 export {HOST_ACTIVATION_PREFIX} from './frontend-instructions.js'
 
-const NO_ACTIVE_RESPONSE_MESSAGES: ReadonlySet<string> = new Set([
-  'conversation has no active response',
-  'no active response found to cancel',
-])
-
 const PROVIDER_ERROR_PARAMS: ReadonlySet<string> = new Set([
   'conversation.item.create',
   'conversation.item.delete',
@@ -98,50 +93,11 @@ export class QwenRealtimeError extends Error {
   }
 }
 
-/** Raised by a transport when the peer closed; mapped to a recoverable disconnect. */
-export class QwenSocketClosedError extends Error {
-  constructor(message = 'qwen realtime socket closed') {
-    super(message)
-    this.name = 'QwenSocketClosedError'
-  }
-}
-
-export interface QwenSocket {
-  send(payload: string): Promise<void>
-  /** Resolves the next text frame, or throws QwenSocketClosedError at EOF. */
-  receive(): Promise<string>
-  close(): Promise<void>
-}
-
-export interface QwenConnectorOptions {
-  readonly endpoint: string
-  readonly headers: Readonly<Record<string, string>>
-  readonly openTimeout: number
-  readonly signal: AbortSignal
-}
-
-export type QwenConnector = (options: QwenConnectorOptions) => Promise<QwenSocket>
-
-export interface QwenAdapterOptions {
-  readonly history?:readonly CommittedConversationPair[]
-  readonly language?: PromptLanguage
-
-
-  readonly url: string
-  readonly apiKey: string
-  readonly model: string
-  readonly voice: string
-  readonly connector: QwenConnector
-  readonly onUsage?: UsageReporter
-  readonly idFactory?: () => string
-  readonly connectTimeout?: number
-  readonly itemConfirmationTimeout?: number
-  readonly closeTimeout?: number
-  readonly now?: () => number
-  readonly executorApproval?: boolean
-  readonly modules?: FrontendModuleSelection
-  readonly wireProfile?: IntegratedWireProfile
-}
+import {RealtimeSocketClosedError as QwenSocketClosedError} from './transport.js'
+import type {RealtimeSocket as QwenSocket, RealtimeConnector as QwenConnector, RealtimeAdapterOptions as QwenAdapterOptions} from './transport.js'
+// Compatibility exports for existing Qwen consumers. Native providers depend on transport.ts directly.
+export {RealtimeSocketClosedError as QwenSocketClosedError} from './transport.js'
+export type {RealtimeSocket as QwenSocket, RealtimeConnector as QwenConnector, RealtimeConnectorOptions as QwenConnectorOptions, RealtimeAdapterOptions as QwenAdapterOptions} from './transport.js'
 
 interface PendingItem {
   readonly hostItemId: string
@@ -252,6 +208,8 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
 
   readonly userResponseMode = 'automatic' as const
 
+  readonly #audioItems = new Map<string, {itemId:string; contentIndex:number; durationMs:number}>()
+
   readonly workspaceHeaderContextCapability = 'replace_provider_item' as const
   readonly turnRecallContextCapability = 'unavailable' as const
 
@@ -262,6 +220,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     if (this.#socket !== undefined) {
       throw new QwenRealtimeError('realtime session is already connected')
     }
+    this.#audioItems.clear()
     this.#wireProfile.reset()
     const separator = this.#url.includes('?') ? '&' : '?'
     const endpoint = `${this.#url}${separator}model=${this.#model}`
@@ -738,6 +697,17 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     await this.#sendJson({type: 'response.create', response: {modalities: ['audio', 'text']}})
   }
 
+  async reportPlayback(input: {response_id:string; played_ms:number | null; disposition:string}, signal:AbortSignal):Promise<void> {
+    if (this.#wireProfile.provider !== 'openai' || input.disposition === 'spoken') return
+    signal.throwIfAborted()
+    const item = this.#audioItems.get(input.response_id)
+    if (!item) return
+    const played = input.played_ms ?? 0
+    if (!Number.isFinite(played) || played < 0) throw new QwenRealtimeError('invalid playback position')
+    await this.#sendJson({type:'conversation.item.truncate',item_id:item.itemId,content_index:item.contentIndex,audio_end_ms:Math.floor(Math.min(played,item.durationMs))})
+    this.#audioItems.delete(input.response_id)
+  }
+
   async cancelResponse(responseId: string, signal: AbortSignal): Promise<void> {
     void signal
     if (typeof responseId !== 'string' || responseId === '') {
@@ -970,7 +940,6 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     event: Readonly<Record<string, JsonValue>>,
     epoch: number,
   ): RealtimeProviderEvent | undefined {
-    event = this.#wireProfile.inbound({...event})
     const type = event.type
     switch (type) {
       case 'input_audio_buffer.speech_started': {
@@ -1017,13 +986,25 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
         }
         return {session_epoch: epoch, kind: 'response_started', response_id: id}
       }
-      case 'response.audio.delta':
+      case 'response.audio.delta': {
+        const pcm = requireAlignedPcm(decodeStrictBase64(eventText(event, 'delta')))
+        if (this.#wireProfile.provider === 'openai') {
+          const id = responseId(event)
+          const previous = this.#audioItems.get(id)
+          const itemId = eventId(event, 'item_id')
+          const contentIndex = event.content_index
+          if (!Number.isSafeInteger(contentIndex) || typeof contentIndex !== 'number' || contentIndex < 0) throw new QwenRealtimeError('invalid audio content index')
+          if (previous && (previous.itemId !== itemId || previous.contentIndex !== contentIndex)) throw new QwenRealtimeError('multiple audio items per response unsupported')
+          this.#audioItems.set(id, {itemId,contentIndex,durationMs:(previous?.durationMs ?? 0) + pcm.length / 48})
+          if (this.#audioItems.size > 256) this.#audioItems.delete(this.#audioItems.keys().next().value!)
+        }
         return {
           session_epoch: epoch,
           kind: 'response_audio_delta',
           response_id: responseId(event),
-          pcm: requireAlignedPcm(decodeStrictBase64(eventText(event, 'delta'))),
+          pcm,
         }
+      }
       case 'response.audio_transcript.delta':
       case 'response.text.delta':
         return {
@@ -1117,13 +1098,10 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   ): RealtimeProviderEvent | undefined {
     const error = event.error
     const raw = isJsonObject(error) ? error : {}
-    const rawMessage = raw.message
     const rawCode = raw.code ?? null
-    const message = typeof rawMessage === 'string'
-      ? pythonStrip(rawMessage).toLowerCase().replace(/\.+$/u, '')
-      : ''
+    const category = this.#wireProfile.classifyError(raw)
 
-    if (rawCode === 'invalid_value' && NO_ACTIVE_RESPONSE_MESSAGES.has(message)) {
+    if (category === 'no_active_response') {
       const pending = this.#pendingCancel
       const echoed = raw.event_id
       if (
@@ -1141,7 +1119,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       }
       return undefined
     }
-    if (typeof rawMessage === 'string' && /\bno active response\b/iu.test(rawMessage)) {
+    if (category === 'ignore') {
       return undefined
     }
 
@@ -1260,7 +1238,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     if (!result.success || typeof result.data.type !== 'string') {
       throw new QwenRealtimeError('qwen realtime returned malformed event')
     }
-    return result.data
+    return this.#wireProfile.inbound({...result.data})
   }
 
   /** Serialize writes; concurrent sends would interleave frames on one socket. */
@@ -1402,21 +1380,6 @@ function pythonStr(value: JsonValue | undefined): string {
   if (value === true) return 'True'
   if (value === false) return 'False'
   return typeof value === 'string' ? value : JSON.stringify(value)
-}
-
-const PYTHON_WHITESPACE = '\\u0009-\\u000d\\u001c-\\u0020\\u0085\\u00a0\\u1680'
-  + '\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000'
-const PYTHON_STRIP = new RegExp(`^[${PYTHON_WHITESPACE}]+|[${PYTHON_WHITESPACE}]+$`, 'gu')
-
-/**
- * Python `str.strip()`, whose whitespace set is not JavaScript's `String#trim`.
- *
- * The provider-error sentinels compared against this are ASCII, so `toLowerCase`
- * stands in for Python `casefold` at the call site; a non-ASCII sentinel would
- * need a real casefold and is a documented Unicode hazard, not a silent one.
- */
-function pythonStrip(value: string): string {
-  return value.replace(PYTHON_STRIP, '')
 }
 
 /** Python `base64.b64decode(..., validate=True)` accepts exactly this shape. */

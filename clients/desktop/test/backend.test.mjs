@@ -1410,3 +1410,8 @@ test('RSS language uses the system signal independently of saved UI language',()
   assert.equal(spec.env.PROMPT_LANGUAGE,language)
  }
 })
+
+test('Gemini speech settings reach the runtime without borrowing the Volcengine voice',()=>{
+ const env=nodeLaunchSpec({workspace:'/workspace',token:TOKEN,readyEndpoint:'127.0.0.1:49152',parentEnv:{},settings:{pipelineMode:'cascaded',cascadedAsrProvider:'gemini',cascadedTtsProvider:'gemini',geminiAsrModel:'asr-custom',geminiTtsModel:'tts-custom',geminiTtsVoice:'Puck'},decryptedSecrets:{geminiApiKey:'synthetic-gemini'}}).env
+ assert.equal(env.GEMINI_API_KEY,'synthetic-gemini');assert.equal(env.GEMINI_ASR_MODEL,'asr-custom');assert.equal(env.GEMINI_TTS_MODEL,'tts-custom');assert.equal(env.GEMINI_TTS_VOICE,'Puck')
+})

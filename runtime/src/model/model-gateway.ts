@@ -218,7 +218,7 @@ export interface OpenAIGatewayOptions {
   readonly clock: Clock
   readonly metrics?: MetricsSink
   readonly fetch?: typeof globalThis.fetch
-  readonly thinkingControl?: 'deepseek'
+  readonly thinkingControl?: 'deepseek' | 'openai'
   readonly requestTimeout?: number
   /** Maximum silence between SSE body chunks, in seconds. */
   readonly streamIdleTimeout?: number
@@ -231,7 +231,7 @@ export class OpenAIModelGateway implements ModelGateway {
   readonly #clock: Clock
   readonly #metrics: MetricsSink
   readonly #fetch: typeof globalThis.fetch
-  readonly #thinkingControl: 'deepseek' | undefined
+  readonly #thinkingControl: 'deepseek' | 'openai' | undefined
   readonly #requestTimeout: number
   readonly #streamIdleTimeout: number
 
@@ -261,7 +261,7 @@ export class OpenAIModelGateway implements ModelGateway {
     let finishReason: string | null = null
     let errorType: string | null = null
     try {
-      const pending = await this.#post(streamRequestBody(request), request.signal)
+      const pending = await this.#post(this.#thinkingControl === 'openai' ? {...streamRequestBody(request),reasoning_effort:'none'} : streamRequestBody(request), request.signal)
       pending.clearRequestTimeout()
       const response = pending.response
       for await (const event of readServerSentEvents(response, {
@@ -313,7 +313,7 @@ export class OpenAIModelGateway implements ModelGateway {
     try {
       const body = completeRequestBody(request)
       const pending = await this.#post(this.#thinkingControl === 'deepseek' && request.reasoning === 'disabled'
-        ? {...body, thinking: {type: 'disabled'}} : body, request.signal)
+        ? {...body, thinking: {type: 'disabled'}} : this.#thinkingControl === 'openai' ? openAIBody(body) : body, request.signal)
       let raw: unknown
       try {
         raw = await pending.response.json()
@@ -485,4 +485,9 @@ function dataOf(block: string): string | null {
     .filter(line => line.startsWith('data:'))
     .map(line => line.slice('data:'.length).replace(/^ /u, ''))
   return payloads.length === 0 ? null : payloads.join('\n')
+}
+
+function openAIBody(body: Readonly<Record<string,JsonValue>>):Record<string,JsonValue> {
+ const {max_tokens,...rest}=body
+ return {...rest,reasoning_effort:'none',...(max_tokens === undefined ? {} : {max_completion_tokens:max_tokens})}
 }

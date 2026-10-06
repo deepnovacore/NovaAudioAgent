@@ -6,11 +6,11 @@ import {supportsVision} from '../model/vision-capability.js'
 export const proactivityPresetSchema = z.enum(['conservative', 'balanced', 'eager'])
 const pipelineModeSchema = z.enum(['integrated', 'cascaded'])
 const promptLanguageSchema = z.enum(['zh-CN', 'en'])
-const integratedProviderNameSchema = z.enum(['qwen', 'stepfun'])
+const integratedProviderNameSchema = z.enum(['qwen', 'stepfun', 'openai', 'gemini'])
 const cascadedEndpointingProviderNameSchema = z.enum(['auto'])
-const cascadedAsrProviderNameSchema = z.enum(['volcengine'])
-const cascadedLlmProviderNameSchema = z.enum(['qwen', 'ark', 'deepseek'])
-const cascadedTtsProviderNameSchema = z.enum(['volcengine'])
+const cascadedAsrProviderNameSchema = z.enum(['volcengine', 'gemini'])
+const cascadedLlmProviderNameSchema = z.enum(['qwen', 'ark', 'deepseek', 'openai', 'gemini'])
+const cascadedTtsProviderNameSchema = z.enum(['volcengine', 'gemini'])
 const qwenGuardHistoryRecoverySchema = z.enum(['none', 'packed'])
 const qwenGuardHistoryPairsSchema = z.union([z.literal(1), z.literal(2), z.literal(4)])
 /** Validity of a name is decided by assembly (`resolveExecutors`), which knows the registered adapters. */
@@ -26,6 +26,8 @@ const volcFloatSchema = z.custom<number>(value => typeof value === 'number')
 export const DASHSCOPE_COMPATIBLE_BASE_URL =
   'https://dashscope.aliyuncs.com/compatible-mode/v1'
 export const STEPFUN_COMPATIBLE_BASE_URL = 'https://api.stepfun.com/v1'
+export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
+export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai'
 const STEPFUN_SUPPORT_MODEL = 'step-3.7-flash'
 
 export const settingsSchema = z.object({
@@ -55,6 +57,17 @@ export const settingsSchema = z.object({
   stepfun_realtime_url: z.string().default('wss://api.stepfun.com/v1/realtime'),
   stepfun_realtime_model: z.string().default('stepaudio-3-realtime-preview'),
   stepfun_realtime_voice: z.string().default(''),
+  openai_api_key: z.string().nullable().default(null),
+  gemini_api_key: z.string().nullable().default(null),
+  gemini_asr_model: z.string().default('gemini-3.5-flash'),
+  gemini_tts_model: z.string().default('gemini-3.8-flash-tts'),
+  gemini_tts_voice: z.string().default('Kore'),
+  openai_realtime_url: z.string().default('wss://api.openai.com/v1/realtime'),
+  openai_realtime_model: z.string().default('gpt-realtime-2.1-mini'),
+  openai_realtime_voice: z.string().default('marin'),
+  gemini_realtime_url: z.string().default('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'),
+  gemini_realtime_model: z.string().default('gemini-3.8-live'),
+  gemini_realtime_voice: z.string().default('Kore'),
   stepfun_api_key: z.string().nullable().default(null),
   dashscope_api_key: z.string().nullable().default(null),
   ark_api_key: z.string().nullable().default(null),
@@ -169,10 +182,10 @@ export interface VolcengineRealtimeConfig {
 
 export interface CascadedSelection {
   readonly endpointingProvider: 'auto'
-  readonly asrProvider: 'volcengine'
-  readonly llmProvider: 'qwen' | 'ark' | 'deepseek'
+  readonly asrProvider: CascadedAsrProviderName
+  readonly llmProvider: CascadedLlmProviderName
   readonly llmModel: string
-  readonly ttsProvider: 'volcengine'
+  readonly ttsProvider: CascadedTtsProviderName
 }
 
 export interface CascadedCredentials {
@@ -266,8 +279,19 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, textC
   const stepfunSupport = !textConversations && integratedProvider === 'stepfun'
     && (optionalSecret(environment.MODEL_API_KEY) ?? '').trim() === ''
   const supportDefault = (value: string | undefined): string | undefined =>
-    value ?? (stepfunSupport ? STEPFUN_SUPPORT_MODEL : undefined)
+    value ?? (stepfunSupport ? STEPFUN_SUPPORT_MODEL : !textConversations && !(environment.MODEL_API_KEY ?? '').trim() && integratedProvider === 'openai' ? 'gpt-6-luna' : !textConversations && !(environment.MODEL_API_KEY ?? '').trim() && integratedProvider === 'gemini' ? 'gemini-3.5-flash-lite' : undefined)
   const candidate = {
+    openai_api_key: optionalSecret(environment.OPENAI_API_KEY),
+    gemini_api_key: optionalSecret(environment.GEMINI_API_KEY),
+    gemini_asr_model: optionalString(environment.GEMINI_ASR_MODEL),
+    gemini_tts_model: optionalString(environment.GEMINI_TTS_MODEL),
+    gemini_tts_voice: optionalString(environment.GEMINI_TTS_VOICE),
+    openai_realtime_url: optionalString(environment.OPENAI_REALTIME_URL),
+    openai_realtime_model: optionalString(environment.OPENAI_REALTIME_MODEL),
+    openai_realtime_voice: optionalString(environment.OPENAI_REALTIME_VOICE),
+    gemini_realtime_url: optionalString(environment.GEMINI_REALTIME_URL),
+    gemini_realtime_model: optionalString(environment.GEMINI_REALTIME_MODEL),
+    gemini_realtime_voice: optionalString(environment.GEMINI_REALTIME_VOICE),
     model_base_url: optionalString(environment.MODEL_BASE_URL),
     model_api_key: optionalSecret(environment.MODEL_API_KEY),
     openrouter_api_key: optionalSecret(environment.OPENROUTER_API_KEY),
@@ -493,6 +517,13 @@ export function requireQwenRealtime(settings: Settings): QwenRealtimeConfig {
 }
 
 export function requireIntegratedRealtime(settings: Settings): QwenRealtimeConfig {
+  const provider = settings.integrated_provider
+  if (provider === 'openai' || provider === 'gemini') return Object.freeze({
+    url: secureEndpoint(settings[`${provider}_realtime_url`], 'wss', `${provider.toUpperCase()}_REALTIME_URL`),
+    model: requiredSetting(settings[`${provider}_realtime_model`], `${provider.toUpperCase()}_REALTIME_MODEL`),
+    voice: requiredSetting(settings[`${provider}_realtime_voice`], `${provider.toUpperCase()}_REALTIME_VOICE`),
+    apiKey: requiredCredential(settings[`${provider}_api_key`], `${provider.toUpperCase()}_API_KEY`),
+  })
   if (settings.integrated_provider === 'stepfun') {
     const url = secureEndpoint(settings.stepfun_realtime_url, 'wss', 'STEPFUN_REALTIME_URL')
     const model = stripLikePython(settings.stepfun_realtime_model)
@@ -584,16 +615,17 @@ export function withoutUncredentialedModules(registry: CapabilityRegistry, setti
 export function describeMissingBlockingCredentials(settings: Settings, textConversations = false): {readonly pipeline: PipelineMode; readonly missing: readonly string[]} {
   const present = (value: string | null) => stripLikePython(value ?? '') !== ''
   if (!textConversations && settings.pipeline_mode === 'integrated') {
+    if (settings.integrated_provider === 'openai' || settings.integrated_provider === 'gemini') return {pipeline: 'integrated', missing: present(settings[`${settings.integrated_provider}_api_key`]) ? [] : [`${settings.integrated_provider.toUpperCase()}_API_KEY`]}
     if (settings.integrated_provider === 'stepfun') return {pipeline: 'integrated', missing: present(settings.stepfun_api_key) ? [] : ['STEPFUN_API_KEY']}
     const compatibleGenericKey = settings.model_base_url === DASHSCOPE_COMPATIBLE_BASE_URL ? settings.model_api_key : null
     return {pipeline: 'integrated', missing: present(settings.dashscope_api_key) || present(compatibleGenericKey) ? [] : ['DASHSCOPE_API_KEY']}
   }
-  const llmField = settings.cascade_llm_provider === 'qwen'
-    ? 'dashscope_api_key' : settings.cascade_llm_provider === 'deepseek' ? 'deepseek_api_key' : 'ark_api_key'
-  return {pipeline: 'cascaded', missing: [
+  const llmField = cascadedCredentialField(settings.cascade_llm_provider)
+  return {pipeline: 'cascaded', missing: [...new Set([
     ...(present(settings[llmField]) ? [] : [configurationFieldName(llmField)]),
-    ...(textConversations || present(settings.doubao_bigmodel_api_key) ? [] : ['DOUBAO_BIGMODEL_API_KEY']),
-  ]}
+    ...(textConversations ? [] : settings.cascade_asr_provider === 'gemini' ? (present(settings.gemini_api_key) ? [] : ['GEMINI_API_KEY']) : (present(settings.doubao_asr_api_key) || present(settings.doubao_bigmodel_api_key) || settings.cascade_tts_provider === 'volcengine' ? [] : ['DOUBAO_ASR_API_KEY'])),
+    ...(textConversations ? [] : settings.cascade_tts_provider === 'gemini' ? (present(settings.gemini_api_key) ? [] : ['GEMINI_API_KEY']) : (present(settings.doubao_bigmodel_api_key) ? [] : ['DOUBAO_BIGMODEL_API_KEY'])),
+  ])]}
 }
 
 /** Host preflight over a launch environment; other configuration errors stay the runtime's to report. */
@@ -638,7 +670,7 @@ export function resolveCascadedSelection(settings: Settings): CascadedSelection 
   const llmModel = settings.cascade_llm_model === null
     ? (settings.cascade_llm_provider === 'qwen'
       ? 'qwen-plus'
-      : settings.cascade_llm_provider === 'deepseek' ? 'deepseek-flash' : 'doubao-seed-2-0-pro-260215')
+      : settings.cascade_llm_provider === 'openai' ? 'gpt-6-luna' : settings.cascade_llm_provider === 'gemini' ? 'gemini-3.5-flash-lite' : settings.cascade_llm_provider === 'deepseek' ? 'deepseek-flash' : 'doubao-seed-2-0-pro-260215')
     : requiredSetting(settings.cascade_llm_model, 'CASCADE_LLM_MODEL')
   return Object.freeze({
     endpointingProvider: settings.cascade_endpointing_provider,
@@ -653,13 +685,10 @@ export function requireCascadedCredentials(
   settings: Settings,
   selection: CascadedSelection,
 ): CascadedCredentials {
-  const llmApiKey = selection.llmProvider === 'qwen'
-    ? requiredCredential(settings.dashscope_api_key, 'DASHSCOPE_API_KEY')
-    : selection.llmProvider === 'deepseek'
-      ? requiredCredential(settings.deepseek_api_key, 'DEEPSEEK_API_KEY')
-      : requiredCredential(settings.ark_api_key, 'ARK_API_KEY')
-  const ttsApiKey = requiredCredential(settings.doubao_bigmodel_api_key, 'DOUBAO_BIGMODEL_API_KEY')
-  const asrApiKey = stripLikePython(settings.doubao_asr_api_key ?? '') || ttsApiKey
+  const field = cascadedCredentialField(selection.llmProvider)
+  const llmApiKey = requiredCredential(settings[field], field.toUpperCase())
+  const ttsApiKey = selection.ttsProvider === 'gemini' ? requiredCredential(settings.gemini_api_key, 'GEMINI_API_KEY') : requiredCredential(settings.doubao_bigmodel_api_key, 'DOUBAO_BIGMODEL_API_KEY')
+  const asrApiKey = selection.asrProvider === 'gemini' ? requiredCredential(settings.gemini_api_key, 'GEMINI_API_KEY') : requiredCredential(stripLikePython(settings.doubao_asr_api_key ?? '') || settings.doubao_bigmodel_api_key, 'DOUBAO_ASR_API_KEY')
   return Object.freeze({llmApiKey, asrApiKey, ttsApiKey})
 }
 
@@ -996,4 +1025,8 @@ export function capabilitiesFromSettings(settings: Settings): CapabilityRegistry
     ...(settings.search_provider !== 'tavily' || settings.tavily_api_key === null ? {} : {TAVILY_API_KEY: settings.tavily_api_key}),
     ...(settings.search_mcp_tool === 'web_search' ? {} : {SEARCH_MCP_TOOL: settings.search_mcp_tool}),
   }), settings)
+}
+
+export function cascadedCredentialField(provider: CascadedLlmProviderName): 'dashscope_api_key' | 'ark_api_key' | 'deepseek_api_key' | 'openai_api_key' | 'gemini_api_key' {
+  return provider === 'qwen' ? 'dashscope_api_key' : `${provider}_api_key`
 }

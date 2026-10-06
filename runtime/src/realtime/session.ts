@@ -28,6 +28,7 @@ import type {
 import { packRecoveryTurns, type RecoveryTurn } from './history.js'
 import {
   ItemDeliveryUncertainError,
+  ProviderResponseRejectedError,
   MAX_REALTIME_TEXT,
   hostFact,
   type HostContextItem,
@@ -60,6 +61,7 @@ export interface HostResponseDelivery {
 
 /** Just enough of the provider port for the session; the adapter implements more. */
 export interface SessionProvider {
+  reportPlayback?(input: PlaybackCompletion):Promise<void>
   readonly userResponseMode?: 'automatic' | 'requested'
   connect(options: {readonly tools: readonly Record<string, unknown>[]}): Promise<{
     readonly epoch: number
@@ -117,6 +119,7 @@ export class RealtimeSession {
   #providerReplacementRevision = 0
   #replacementEpoch: number | null | undefined
   #providerResponseId: string | null = null
+  #yielded: {responseId:string; callIds:readonly string[]} | null = null
   #hostPreemptResponseId: string | null = null
   #hostPreemptPending = false
   #providerTranscript = ''
@@ -220,7 +223,8 @@ export class RealtimeSession {
   /** No provider inference is outstanding, whatever the renderer is still playing. */
   get providerIdle(): boolean {
     return (
-      this.#state.pendingResponseCount === 0
+      this.#yielded === null
+      && this.#state.pendingResponseCount === 0
       && !this.#awaitingUserResponse
       && this.#pendingUserResponse === null
       && this.#userResponseRequest === null
@@ -587,6 +591,7 @@ export class RealtimeSession {
 
   /** The fields that belong to one provider session and none other. */
   #resetForNewProviderSession(): void {
+    this.#yielded = null
     this.#confirmedRecoveryVersion = -1
     this.#recoveryResponses.clear()
     this.#responseQuestions.clear()
@@ -758,6 +763,7 @@ export class RealtimeSession {
       this.#provider.ensureResponse === undefined
       || this.#userResponseRequest !== null
       || this.#providerResponseId !== null
+      || this.#yielded !== null
       || this.#state.pendingResponseCount > 0
       || this.#floor.state === 'user_speaking'
       || this.#playback.current !== null
@@ -880,6 +886,7 @@ export class RealtimeSession {
       await this.#provider.createResponse(intent)
     } catch (cause) {
       this.#state.discardPendingResponse(pending)
+      if(cause instanceof ProviderResponseRejectedError)throw cause
       throw new ResponseRequestUncertainError(`response request failed: ${String(cause)}`)
     }
     for (const eventId of eventIds) this.#state.markEventResponded(eventId)
@@ -916,6 +923,13 @@ export class RealtimeSession {
         return this.#acceptAudioDelta(event.response_id, event.pcm)
       case 'response_transcript_final':
         return this.#acceptTranscriptFinal(event.response_id, event.text)
+      case 'response_yielded': {
+        const turn=this.#state.providerTurn(event.response_id)
+        if(this.#providerResponseId!==event.response_id || turn?.phase!=='active' || turn.locally_fenced)return false
+        const accepted=this.#acceptTerminal(event.response_id, 'yielded', event.session_epoch)
+        if(accepted)this.#yielded={responseId:event.response_id,callIds:event.call_ids}
+        return accepted
+      }
       case 'response_terminal':
         return this.#acceptTerminal(event.response_id, event.status, event.session_epoch, event.origin)
       case 'user_speech_started':
@@ -931,7 +945,7 @@ export class RealtimeSession {
           && !this.#responseItems.has(this.#turnKey(this.#providerResponseId))) {
           this.#responseQuestions.set(this.#turnKey(this.#providerResponseId), this.#latestQuestion)
         }
-        return this.#acceptTranscriptTerminal(event.item_id, event.kind)
+        return this.#acceptTranscriptTerminal(event.item_id, event.kind, event.response_expected !== false)
       case 'user_transcript_failed':
         return this.#acceptTranscriptTerminal(event.item_id, event.kind)
       case 'provider_error':
@@ -1167,7 +1181,7 @@ export class RealtimeSession {
 
   #acceptTerminal(
     responseId: string,
-    status: 'completed' | 'cancelled' | 'failed',
+    status: 'completed' | 'cancelled' | 'failed' | 'yielded',
     eventEpoch: number,
     origin?: Extract<RealtimeProviderEvent, {kind: 'response_terminal'}>['origin'],
   ): boolean {
@@ -1192,13 +1206,14 @@ export class RealtimeSession {
     // Audio may have created a fenced turn before its start event. Its exact request still
     // needs settlement, even if the provider proceeds directly to a terminal.
     if (this.#matchesUserResponseRequest(origin)) this.#releaseUserResponseRequest()
-    if (turn.phase === 'completed' || turn.phase === 'cancelled' || turn.phase === 'failed') {
+    if ((turn.phase === 'yielded' && status === 'yielded') || turn.phase === 'completed' || turn.phase === 'cancelled' || turn.phase === 'failed') {
       // Applied once. A retransmission must not deliver the utterance twice, and a contradictory
       // status arriving later must not reopen a decided turn.
       return false
     }
     // An unrelated/quarantined terminal cannot disarm the outstanding request's pre-start fence.
     if (this.#userResponseRequest === null) this.#awaitingUserResponse = false
+    if(this.#yielded?.responseId===responseId && status!=='yielded')this.#yielded=null
     turn.phase = status
     if (this.#providerResponseId === responseId) {
       this.#providerResponseId = null
@@ -1206,7 +1221,7 @@ export class RealtimeSession {
     }
     if (this.#state.premapResponseId === responseId) this.#state.clearPremapAudio()
 
-    if (status === 'completed') {
+    if (status === 'completed' || status === 'yielded') {
       if (this.#playback.current?.response_id !== responseId) {
         this.#recoveryResponses.delete(this.#turnKey(responseId))
         this.#responseQuestions.delete(this.#turnKey(responseId))
@@ -1281,6 +1296,7 @@ export class RealtimeSession {
   async #acceptTranscriptTerminal(
     itemId: string,
     kind: 'user_transcript_final' | 'user_transcript_failed',
+    responseExpected = true,
   ): Promise<boolean> {
     if (!this.#state.acceptUserTranscriptTerminal(itemId)) return false
     this.#state.acceptUserTurn(itemId)
@@ -1294,7 +1310,7 @@ export class RealtimeSession {
     }
     // A final transcript is a question the provider owes an answer to, so the session is no longer
     // idle even though no response has started.
-    this.#awaitingUserResponse = true
+    if (responseExpected) this.#awaitingUserResponse = true
     return true
   }
 
@@ -1609,6 +1625,11 @@ export class RealtimeSession {
     return started
   }
 
+  #reportDelivery(completion: PlaybackCompletion):void {
+    void this.#provider.reportPlayback?.(completion).catch(() => undefined)
+    this.#onDelivery(completion)
+  }
+
   playbackDone(
     utteranceId: string,
     generationEpoch: number,
@@ -1627,7 +1648,7 @@ export class RealtimeSession {
     if (completion.disposition !== 'spoken') {
       this.#releaseInterruptedSuggestionAuthority(completion.response_id, completion.session_epoch)
       this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-      this.#onDelivery(completion)
+      this.#reportDelivery(completion)
       this.#floor = this.#floor.onSpeakEnd(utteranceId)
       this.#state.advanceSnapshot()
       return completion
@@ -1649,7 +1670,7 @@ export class RealtimeSession {
     if (answered && this.#latestQuestion?.id === answered.id) this.#latestQuestion = null
     this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
     this.#onSpoken(completion.text)
-    this.#onDelivery(completion)
+    this.#reportDelivery(completion)
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     this.#state.advanceSnapshot()
     return completion
@@ -1672,7 +1693,7 @@ export class RealtimeSession {
     if (completion === null) return null
     this.#releaseInterruptedSuggestionAuthority(completion.response_id, completion.session_epoch)
     this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-    this.#onDelivery(completion)
+    this.#reportDelivery(completion)
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     return completion
   }
@@ -1710,7 +1731,7 @@ export class RealtimeSession {
     const completion = this.#playback.recordCleared(utteranceId, generationEpoch, playedMs)
     if (completion !== null) {
       this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
-      this.#onDelivery(completion)
+      this.#reportDelivery(completion)
     }
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     if (
@@ -1854,6 +1875,12 @@ export class RealtimeSession {
     options: {readonly originSpoken?: boolean} = {},
   ): Promise<'requested' | 'retryable' | 'rejected'> {
     if (intents.length === 0) throw new TypeError('tool continuation requires at least one intent')
+    const yielded=this.#yielded
+    if(yielded){
+      const ids=intents.map(intent=>intent.item.call_id)
+      if(ids.some(id=>id===null||!yielded.callIds.includes(id)))return 'rejected'
+      if(yielded.callIds.some(id=>!ids.includes(id)))return 'retryable'
+    }
     if (
       this.#state.pendingResponseCount > 0
       || this.#providerResponseId !== null
@@ -1879,7 +1906,14 @@ export class RealtimeSession {
       }
     }
     const providerIntent = this.#mergeContinuationIntents(intents, options.originSpoken ?? false)
-    await this.#createResponse(providerIntent, intents)
+    try{await this.#createResponse(providerIntent, intents)}catch(error){
+      if(error instanceof ProviderResponseRejectedError){
+        if(yielded&&this.#yielded===yielded)await this.#provider.cancelResponse(yielded.responseId)
+        return 'rejected'
+      }
+      throw error
+    }
+    if(this.#yielded===yielded)this.#yielded=null
     return 'requested'
   }
 

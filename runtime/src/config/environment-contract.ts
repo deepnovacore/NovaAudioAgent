@@ -1,5 +1,5 @@
 export type EnvironmentOwner =
-  | 'core' | 'qwen' | 'stepfun' | 'ark' | 'deepseek' | 'volcengine' | 'codex' | 'search' | 'camera'
+  | 'openai' | 'gemini' | 'core' | 'qwen' | 'stepfun' | 'ark' | 'deepseek' | 'volcengine' | 'codex' | 'search' | 'camera'
   | 'telemetry' | 'host_private'
 
 export interface EnvironmentVariableContract {
@@ -91,6 +91,17 @@ const rows: readonly Row[] = [
   ['QWEN_REALTIME_URL', 'qwen', false, true, 'never', 'DashScope realtime endpoint', 'Qwen secure realtime endpoint.', 'Qwen 安全实时地址。'],
   ['QWEN_REALTIME_MODEL', 'qwen', false, true, 'never', 'qwen-audio-3.0-realtime-plus', 'Qwen realtime model.', 'Qwen 实时模型。'],
   ['QWEN_REALTIME_VOICE', 'qwen', false, true, 'never', 'longanqian', 'Qwen realtime voice.', 'Qwen 实时音色。'],
+  ['OPENAI_API_KEY', 'openai', true, true, 'when_selected', null, 'OpenAI API credential.', 'OpenAI API 凭据。'],
+  ['OPENAI_REALTIME_URL', 'openai', false, true, 'never', 'wss://api.openai.com/v1/realtime', 'OpenAI secure realtime endpoint.', 'OpenAI 安全实时地址。'],
+  ['OPENAI_REALTIME_MODEL', 'openai', false, true, 'never', 'gpt-realtime-2.1-mini', 'OpenAI realtime model.', 'OpenAI 实时模型。'],
+  ['OPENAI_REALTIME_VOICE', 'openai', false, true, 'never', 'marin', 'OpenAI realtime voice.', 'OpenAI 实时音色。'],
+  ['GEMINI_API_KEY', 'gemini', true, true, 'when_selected', null, 'Gemini API credential.', 'Gemini API 凭据。'],
+  ['GEMINI_ASR_MODEL', 'gemini', false, true, 'never', 'gemini-3.5-flash', 'Gemini transcription model.', 'Gemini 转录模型。'],
+  ['GEMINI_TTS_MODEL', 'gemini', false, true, 'never', 'gemini-3.8-flash-tts', 'Gemini speech generation model.', 'Gemini 语音生成模型。'],
+  ['GEMINI_TTS_VOICE', 'gemini', false, true, 'never', 'Kore', 'Gemini speech generation voice.', 'Gemini 语音生成音色。'],
+  ['GEMINI_REALTIME_URL', 'gemini', false, true, 'never', 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent', 'Gemini secure realtime endpoint.', 'Gemini 安全实时地址。'],
+  ['GEMINI_REALTIME_MODEL', 'gemini', false, true, 'never', 'gemini-3.8-live', 'Gemini realtime model.', 'Gemini 实时模型。'],
+  ['GEMINI_REALTIME_VOICE', 'gemini', false, true, 'never', 'Kore', 'Gemini realtime voice.', 'Gemini 实时音色。'],
   ['STEPFUN_API_KEY', 'stepfun', true, true, 'when_selected', null, 'StepFun realtime credential.', 'StepFun 实时凭据。'],
   ['STEPFUN_REALTIME_URL', 'stepfun', false, true, 'never', 'wss://api.stepfun.com/v1/realtime', 'StepFun secure realtime endpoint.', 'StepFun 安全实时地址。'],
   ['STEPFUN_REALTIME_MODEL', 'stepfun', false, true, 'never', 'stepaudio-3-realtime-preview', 'StepFun realtime model.', 'StepFun 实时模型。'],

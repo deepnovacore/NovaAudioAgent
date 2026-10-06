@@ -33,6 +33,7 @@ export type DelegateState = z.infer<typeof delegateStateSchema>
 
 export const providerTurnPhaseSchema = z.enum([
   'active',
+  'yielded',
   'cancel_requested',
   'completed',
   'cancelled',

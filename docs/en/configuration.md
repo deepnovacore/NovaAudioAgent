@@ -37,6 +37,8 @@ Set only what you need to change. Keep credentials out of Git.
 | `DASHSCOPE_API_KEY` | None | Qwen realtime credential. |
 | `QWEN_REALTIME_MODEL` | qwen-audio-3.0-realtime-plus | Qwen realtime model. |
 | `QWEN_REALTIME_VOICE` | longanqian | Qwen realtime voice. |
+| `OPENAI_API_KEY` | None | OpenAI API credential. |
+| `GEMINI_API_KEY` | None | Gemini API credential. |
 | `STEPFUN_API_KEY` | None | StepFun realtime credential. |
 | `DEEPSEEK_API_KEY` | None | Official DeepSeek cascaded LLM credential. |
 | `ARK_API_KEY` | None | Ark cascaded LLM credential. |
@@ -70,3 +72,5 @@ A normal assessment now makes two sequential calls under the existing shared ass
 A target-validation retry currently reruns both stages; at most four model calls share the same two-attempt, 30-second assessment budget.
 
 [Back to getting started](getting-started.md)
+
+See [OpenAI and Gemini providers](../en/global-providers.md) for model presets, credential routing and protocol limitations.

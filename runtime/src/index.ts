@@ -30,6 +30,7 @@ export * from './realtime/cascaded/ports.js'
 export * from './realtime/cascaded/adapter.js'
 export * from './realtime/cascaded/provider.js'
 export * from './realtime/cascaded/qwen-llm.js'
+export {createChatCompletionsLlmFactory, ChatCompletionsLlmFailure} from './realtime/cascaded/chat-completions-llm.js'
 export * from './realtime/cascaded/ark-llm.js'
 export * from './realtime/evidence.js'
 export * from './realtime/history.js'
@@ -53,3 +54,5 @@ export * from './core/trace.js'
 export * from './config/capability-registry.js'
 
 export * from './executors/coding/target-resolution.js'
+
+export {createGeminiAsrFactory, createGeminiTtsFactory} from './realtime/cascaded/gemini-speech.js'

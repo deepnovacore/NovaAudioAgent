@@ -1,7 +1,7 @@
 /** Pure normalization and validation for one selected cascaded provider graph. */
 
 import {
-  ConfigurationError,
+  ConfigurationError, OPENAI_BASE_URL, GEMINI_BASE_URL, cascadedCredentialField,
   DASHSCOPE_COMPATIBLE_BASE_URL,
   requireCascadedCredentials,
   resolveCascadedSelection,
@@ -21,7 +21,16 @@ export interface AutoEndpointingConfig {
   readonly vadMaxUtteranceMs: number
 }
 
+export interface GeminiSpeechConfig {
+  readonly provider: 'gemini'
+  readonly endpoint: string
+  readonly apiKey: string
+  readonly model: string
+  readonly voice: string
+}
+
 export interface VolcengineAsrConfig {
+  readonly provider?: 'volcengine'
   readonly endpoint: string
   readonly resourceId: string
   readonly apiKey: string
@@ -31,7 +40,7 @@ export interface VolcengineAsrConfig {
 }
 
 export interface QwenCascadedLlmConfig {
-  readonly provider?: 'qwen' | 'deepseek'
+  readonly provider?: 'qwen' | 'deepseek' | 'openai' | 'gemini'
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
@@ -44,6 +53,7 @@ export interface ArkCascadedLlmConfig {
 }
 
 export interface VolcengineTtsConfig {
+  readonly provider?: 'volcengine'
   readonly endpoint: string
   readonly resourceId: string
   readonly voice: string
@@ -52,15 +62,15 @@ export interface VolcengineTtsConfig {
 }
 
 export type SelectedCascadedLlmConfig =
-  | {readonly provider: 'qwen' | 'deepseek'; readonly config: QwenCascadedLlmConfig}
+  | {readonly provider: 'qwen' | 'deepseek' | 'openai' | 'gemini'; readonly config: QwenCascadedLlmConfig}
   | {readonly provider: 'ark'; readonly config: ArkCascadedLlmConfig}
 
 export interface SelectedCascadedRealtimeConfig {
   readonly selection: CascadedSelection
   readonly endpointing: AutoEndpointingConfig
-  readonly asr: VolcengineAsrConfig
+  readonly asr: VolcengineAsrConfig | GeminiSpeechConfig
   readonly llm: SelectedCascadedLlmConfig
-  readonly tts: VolcengineTtsConfig
+  readonly tts: VolcengineTtsConfig | GeminiSpeechConfig
 }
 
 export function requireSelectedCascadedRealtimeConfig(
@@ -78,14 +88,15 @@ export function requireSelectedCascadedRealtimeConfig(
 /** Text sessions require only their selected LLM, independent of speech configuration. */
 export function requireSelectedCascadedLlmConfig(settings:Settings):SelectedCascadedLlmConfig {
   const selection=resolveCascadedSelection(settings)
-  const apiKey=stripLikePython((selection.llmProvider==='qwen'?settings.dashscope_api_key:selection.llmProvider==='deepseek'?settings.deepseek_api_key:settings.ark_api_key)??'')
-  if(!apiKey)throw new ConfigurationError(`缺少 ${selection.llmProvider==='qwen'?'DASHSCOPE_API_KEY':selection.llmProvider==='deepseek'?'DEEPSEEK_API_KEY':'ARK_API_KEY'}`)
+  const field = cascadedCredentialField(selection.llmProvider)
+  const apiKey=stripLikePython(settings[field]??'')
+  if(!apiKey)throw new ConfigurationError(`缺少 ${field.toUpperCase()}`)
   return selection.llmProvider !== 'ark'
     ? Object.freeze({
       provider: selection.llmProvider,
       config: Object.freeze({
-        baseUrl: selection.llmProvider === 'deepseek' ? 'https://api.deepseek.com' : DASHSCOPE_COMPATIBLE_BASE_URL,
-        ...(selection.llmProvider === 'deepseek' ? {provider: 'deepseek' as const} : {}),
+        baseUrl: selection.llmProvider === 'openai' ? OPENAI_BASE_URL : selection.llmProvider === 'gemini' ? GEMINI_BASE_URL : selection.llmProvider === 'deepseek' ? 'https://api.deepseek.com' : DASHSCOPE_COMPATIBLE_BASE_URL,
+        ...(selection.llmProvider !== 'qwen' ? {provider: selection.llmProvider} : {}),
         apiKey: apiKey,
         model: selection.llmModel,
       }),
@@ -127,13 +138,15 @@ function resolveEndpointingConfig(settings: Settings): AutoEndpointingConfig {
   })
 }
 
-export function requireSelectedCascadedAsrConfig(settings:Settings):VolcengineAsrConfig {
+export function requireSelectedCascadedAsrConfig(settings:Settings):VolcengineAsrConfig | GeminiSpeechConfig {
+  if(settings.cascade_asr_provider === 'gemini')return resolveGeminiSpeechConfig(settings, 'asr', stripLikePython(settings.gemini_api_key??''))
   const key=stripLikePython(settings.doubao_asr_api_key??'')||stripLikePython(settings.doubao_bigmodel_api_key??'')
   if(!key)throw new ConfigurationError('缺少 DOUBAO_ASR_API_KEY')
   return resolveAsrConfig(settings,key)
 }
 
-function resolveAsrConfig(settings: Settings, apiKey: string): VolcengineAsrConfig {
+function resolveAsrConfig(settings: Settings, apiKey: string): VolcengineAsrConfig | GeminiSpeechConfig {
+  if(settings.cascade_asr_provider === 'gemini')return resolveGeminiSpeechConfig(settings, 'asr', apiKey)
   if (settings.doubao_asr_chunk_ms <= 0) {
     throw new ConfigurationError('DOUBAO_ASR_CHUNK_MS 必须为正整数')
   }
@@ -161,7 +174,8 @@ function resolveAsrConfig(settings: Settings, apiKey: string): VolcengineAsrConf
   })
 }
 
-function resolveTtsConfig(settings: Settings, apiKey: string): VolcengineTtsConfig {
+function resolveTtsConfig(settings: Settings, apiKey: string): VolcengineTtsConfig | GeminiSpeechConfig {
+  if(settings.cascade_tts_provider === 'gemini')return resolveGeminiSpeechConfig(settings, 'tts', apiKey)
   if (settings.doubao_tts_output_sample_rate !== 24_000) {
     throw new ConfigurationError('DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000')
   }
@@ -201,4 +215,11 @@ function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): s
     && parsed.hash === ''
   if (!valid) throw new ConfigurationError(`${name} 必须是安全的 ${scheme}:// 地址`)
   return normalized
+}
+
+function resolveGeminiSpeechConfig(settings: Settings, service: 'asr' | 'tts', apiKey: string): GeminiSpeechConfig {
+  if(!apiKey)throw new ConfigurationError('缺少 GEMINI_API_KEY')
+  return {provider:'gemini', endpoint:'https://generativelanguage.googleapis.com/v1beta', apiKey,
+    model:requiredSetting(settings[service === 'asr' ? 'gemini_asr_model' : 'gemini_tts_model'], `GEMINI_${service.toUpperCase()}_MODEL`),
+    voice:service === 'tts' ? requiredSetting(settings.gemini_tts_voice, 'GEMINI_TTS_VOICE') : settings.gemini_tts_voice}
 }

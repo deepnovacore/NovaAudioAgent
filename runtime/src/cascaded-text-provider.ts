@@ -22,6 +22,6 @@ export function buildCascadedTextProvider(options:{
   const input={config:selected.config,clock:options.clock,ids:{next:options.idFactory},instructions:frontendInstructions({
     search:capabilities.modules.search.enabled,camera:options.captureFrame!==undefined,coding:capabilities.modules.coding.enabled,knowledge:capabilities.modules.knowledge.enabled,
   },options.executorApproval===true),...(options.onUsage===undefined?{}:{onUsage:usageReporterForEndpoint(options.onUsage,selected.config.baseUrl)!})}
-  const factory=registry.llm[selected.provider === 'deepseek' ? 'qwen' : selected.provider](input)
+  const factory=registry.llm[selected.provider === 'ark' ? 'ark' : 'qwen'](input)
   return new CascadedRealtimeAdapter({language:options.settings.language,textOnly:true,llm:factory.open(),llmFactory:factory,idFactory:options.idFactory,...(options.prerecall===undefined?{}:{prerecall:options.prerecall}),...(options.captureFrame===undefined?{}:{captureFrame:options.captureFrame}),...(options.telemetry===undefined?{}:{telemetry:options.telemetry}),...(options.history===undefined?{}:{history:options.history})})
 }
