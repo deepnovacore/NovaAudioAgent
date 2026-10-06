@@ -101,6 +101,18 @@ test('bubble filtering never hides retained results, which replay on reconnect a
   }
 })
 
+test('non-owner connection cannot fence playback or acknowledge another endpoint audio', async () => {
+  let owns = false
+  const {bridge,calls} = harness({ownsAudio:()=>owns})
+  bridge.markAuthenticated(); bridge.release(); bridge.markAuthenticated()
+  await bridge.receiveControl({type:'speech.onset',speech_id:'other'})
+  await bridge.receiveControl({type:'playback.started',utterance_id:'other',generation_epoch:1})
+  assert.deepEqual(calls, [])
+  owns = true
+  bridge.release()
+  assert.deepEqual(calls, ['playback-disconnected:paused'])
+})
+
 const TOKEN = '0'.repeat(32)
 
 interface Harness {

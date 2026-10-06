@@ -498,7 +498,7 @@ test('readSecret is wired at the spawn site, decrypting only what backendLaunchS
   // The decrypted secrets reach backendLaunchSpec, not any wider scope.
   const specCall = source.slice(source.indexOf('const spec = backendLaunchSpec({'))
   const specBody = specCall.slice(0, specCall.indexOf('\n    })'))
-  assert.match(specBody, /settings: currentSettings/)
+  assert.match(specBody, /settings: acceptanceBackendSettings\(currentSettings,\s*acceptance\)/)
   assert.match(specBody, /decryptedSecrets,?/)
 
   // The decrypted value never survives past the call that builds `spec`: no

@@ -165,3 +165,67 @@ partial caption as a new reply. This is client presentation, not a remote histor
 pagination API or a guarantee of persistence across app restart. Desktop memory
 history pagination uses its separate local host interface. Approval decisions
 continue through the existing connection-bound command contract.
+
+
+## Mobile personal workbench (opt-in)
+
+A v1 hello may include `capabilities: ["personal"]`. The host returns `personal`
+in `client.ready.capabilities` only for that connection. Legacy hellos retain
+their previous capabilities and 16 KiB JSON output budget. Commands and hellos
+remain bounded to 16 KiB; the negotiated **personal.state/personal.result output**
+budget is 1 MiB, measured as UTF-8 bytes. Other JSON output keeps its old budget.
+
+Mobile snapshots allow only `type`, `revision`, `reload_required`, `life`,
+`tasks`, `conversations`, `feed`, `memory`, `pending_approvals`,
+`pending_confirmations`, a read-only `news` projection, the reduced
+`workbench_context` and `profile_preparation` projections described below, and
+task/memory capabilities. Desktop sources, Feishu, connectors and other
+desktop-only projections are omitted, including snapshots nested in a command
+result.
+
+State changes coalesce in a fixed 250 ms window; the newest snapshot wins.
+Disconnect clears the queued snapshot. An oversized snapshot becomes
+`{"type":"personal.state","revision":9,"reload_required":true}`. An oversized
+result preserves its request ID and `ok`/error outcome, omits data and sets
+`reload_required:true`; it is never treated as permission to replay a write.
+Clients fetch `state` once, retain their last full offline snapshot, and stop
+retrying automatically if the fetched state is still oversized. A marker does
+not advance the accepted full-state revision. Server restart permits a fresh
+revision sequence; within one server instance only newer snapshots apply.
+
+Mobile personal commands use the existing `client.command` envelope. The
+transport supplies `client_id:"remote:master", can_takeover:false` even for a
+per-device pairing credential. Tokens remain device-specific for revocation.
+An allowlist admits workbench life/feed/memory/conversation/task operations;
+source, connector and Feishu management are not admitted. Existing approval
+and optimistic version checks remain authoritative. Text, dictation and voice
+controls name `conversation_id`; text additionally carries the bridge's
+`input_instance_id` and an idempotent request ID. A transport receipt alone does
+not prove successful text submission: wait for `input.text_result`.
+
+The built-in Mac phone endpoint runs in the desktop runtime and shares its
+PersonalAgentHost. Each connection has independent queues and dictation state.
+A single audio owner receives output audio and may submit PCM/playback ACKs;
+non-owner disconnects must not reset another endpoint's playback. Tailscale
+Serve remains the network boundary, and a second phone receives close 4009.
+Explicit external phone server settings select a separate host and do not
+promise synchronization with the local workbench. Windows pairing is M6.
+
+The first audio fixture in `tests/fixtures/client-protocol/v1/vectors.json` has
+an additive `personal_protocol` metadata object. Legacy audio-vector readers
+ignore this field; mobile tests use it for negotiation and reload examples.
+
+On the built-in shared Mac endpoint, the mobile command allowlist and remote identity
+apply even when hello omits `personal`. Legacy clients receive no personal frames;
+their text and PCM target the host-selected conversation, and voice ownership
+conflicts refuse the connection with 4009. Leaving the desktop orb releases its
+implicit audio ownership after draining input and playback.
+
+For negotiated personal clients, authenticated protocol faults close with 1002;
+4003 denotes authentication rejection or explicit device revocation. This prevents
+a malformed frame or transient host initialization failure from erasing pairing
+credentials. Legacy clients retain the previous close-code behavior.
+
+Mobile `news` contains `enabled`, `refreshing`, `items` and `saved`. Articles retain only id, source_id, title, summary, url, published_at, read and saved, plus `source_name` for built-in sources; source configuration and ranking internals are omitted. News mutations remain unavailable on mobile.
+
+Mobile `workbench_context` contains `status`, `recap {text, projects[{name, line}]}` and `cards[{id, tab, title, body, why, next, source_count}]`. Mobile `profile_preparation` contains `status` and `draft {about, work[{title, text}]}` or null. Source excerpts, labels and references are omitted; only the number of supporting sources is shared. `context.adopt` and `context.dismiss` are available to mobile clients.

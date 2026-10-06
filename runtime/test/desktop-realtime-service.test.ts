@@ -1808,3 +1808,128 @@ test('composition camera transport is one stable proxy to the final desktop serv
   assert.deepEqual(second.payload, first.payload)
   assert.equal(permission, 'granted')
 })
+
+
+test('shared phone endpoint publishes one host revision and cannot interrupt desktop audio on reconnect', async () => {
+  const core=buildAssembly({settings:settingsSchema.parse({executors:['fast_sim'],model_api_key:'key',tavily_api_key:'key'}),gateway:new NeverGateway(),searchTransport:{search:()=>Promise.reject(Error('unexpected'))}})
+  const stop=new AbortController()
+  let revision=0, voice:string|null=null, disconnects=0, discarded=0, onsets=0
+  let voiceStart:Promise<void>|undefined
+  const discardWaits:Promise<void>[]=[]
+  let voiceFailure=false, conversationAudio=0, discardFailure=false
+  const presentations:{mode:unknown;aggregate:unknown}[]=[]
+  const listeners=new Set<()=>void>()
+  const desktopFrames:string[]=[],phoneFrames:string[]=[]
+  const fakeServer=(frames:string[])=>({sendText:(raw:string)=>{frames.push(raw);return Promise.resolve()},sendBinary:()=>Promise.resolve(),disconnectClient:()=>Promise.resolve(),start:()=>Promise.resolve(readiness()),close:()=>Promise.resolve()})
+  const composition=buildDesktopRealtimeComposition({token:TOKEN,stop,createServer:()=>fakeServer(desktopFrames),buildRealtime:callbacks=>{
+    const realtime=buildRealtimeAssembly({core,provider:new ScriptedProvider([]),...callbacks,onDiagnostic:()=>{ /* diagnostics are not asserted here */ }})
+    Object.defineProperties(realtime.personalAgent,{
+      subscribe:{value:(listener:()=>void)=>{listeners.add(listener);return()=>listeners.delete(listener)}},
+      snapshot:{value:()=>({type:'personal.state',revision})},
+      conversationSnapshot:{value:()=>({voice_id:voice,selected_id:'chat',items:[{id:'chat'}]})},
+      command:{value:async(command:{method:string;request_id:string;params?:{enabled?:boolean;mode?:string}},context?:{presentation_mode?:string})=>{if(command.method==='presentation.set')presentations.push({mode:command.params?.mode,aggregate:context?.presentation_mode});if(command.method==='conversations.voice'){if(voiceFailure)throw Error('voice_start_failed');if(command.params?.enabled)await voiceStart;voice=command.params?.enabled?'chat':null;}revision++;for(const listener of listeners)listener();return {type:'personal.result',request_id:command.request_id,ok:true}}},
+      voiceService:{value:()=>realtime.service},
+      sendConversationAudio:{value:(id:string)=>{assert.equal(id,'chat');conversationAudio++;return Promise.resolve()}},
+    })
+    Object.defineProperties(realtime.service,{
+      playbackDisconnected:{value:()=>{disconnects++;return Promise.resolve(true)}},
+      discardInputAudio:{value:async()=>{discarded++;if(discardFailure)throw Error('discard_failed');await discardWaits.shift()}},
+      localSpeechOnset:{value:()=>{onsets++;return Promise.resolve()}},
+    })
+    return realtime
+  }})
+  try{
+    const phone=composition.createPhone({token:TOKEN,createServer:()=>fakeServer(phoneFrames)})
+    await composition.desktop.serverOptions.onClientAuthenticated?.()
+    await phone.serverOptions.onClientAuthenticated?.()
+    const desktop=composition.desktop.serverOptions, remote=phone.serverOptions
+    await remote.onControl?.({type:'personal.command',request_id:'mutation',method:'conversations.select',params:{id:'chat'}},{client_id:'remote:master',can_takeover:false})
+    await new Promise(resolve=>setImmediate(resolve))
+    for(const frames of [desktopFrames,phoneFrames])assert.ok(frames.some(raw=>{const frame=JSON.parse(raw) as {type:string;revision?:number};return frame.type==='personal.state'&&frame.revision===1}))
+    // Leaving orb must release the implicit owner acquired by unscoped PCM.
+    await desktop.onControl!({type:'input.audio'})
+    discardFailure=true
+    await desktop.onControl!({type:'personal.command',request_id:'release-failed',method:'presentation.set',params:{mode:'workbench'}})
+    await assert.rejects(composition.prepareLegacyPhoneVoice(),/legacy_voice_unavailable/)
+    discardFailure=false
+    discarded=0
+    await remote.onControl!({type:'personal.command',request_id:'phone-visible-early',method:'presentation.set',params:{mode:'workbench'}})
+    await desktop.onControl!({type:'personal.command',request_id:'orb-hidden',method:'presentation.set',params:{mode:'background'}})
+    await assert.rejects(async()=>desktop.onControl!({type:'input.audio'}),/presentation_hidden/)
+    assert.equal(discarded,1);assert.equal(disconnects,1)
+    discarded=0;disconnects=0
+    await desktop.onControl!({type:'personal.command',request_id:'orb-return',method:'presentation.set',params:{mode:'orb'}})
+    assert.equal(await composition.prepareLegacyPhoneVoice(),'chat')
+    await remote.onControl!({type:'input.audio',conversation_id:'chat'})
+    await remote.onAudio!(Buffer.alloc(640))
+    assert.equal(conversationAudio,1)
+    await remote.onControl!({type:'personal.command',request_id:'legacy-off',method:'conversations.voice',params:{id:'chat',enabled:false}})
+    await desktop.onControl!({type:'input.audio'})
+    let finishFirst!:()=>void,finishSecond!:()=>void
+    discardWaits.push(new Promise(resolve=>{finishFirst=resolve}),new Promise(resolve=>{finishSecond=resolve}))
+    const firstRelease=desktop.onControl!({type:'personal.command',request_id:'release-one',method:'presentation.set',params:{mode:'workbench'}})
+    const secondRelease=desktop.onControl!({type:'personal.command',request_id:'release-two',method:'presentation.set',params:{mode:'background'}})
+    await new Promise(resolve=>setImmediate(resolve))
+    finishFirst();await firstRelease
+    await assert.rejects(composition.prepareLegacyPhoneVoice(),/legacy_voice_unavailable/)
+    finishSecond();await secondRelease
+    assert.equal(await composition.prepareLegacyPhoneVoice(),'chat')
+    await remote.onControl!({type:'personal.command',request_id:'concurrent-off',method:'conversations.voice',params:{id:'chat',enabled:false}})
+    await desktop.onControl!({type:'personal.command',request_id:'orb-again',method:'presentation.set',params:{mode:'orb'}})
+    discarded=0;disconnects=0
+    voiceFailure=true
+    await assert.rejects(async()=>remote.onControl!({type:'personal.command',request_id:'voice-failure',method:'conversations.voice',params:{id:'chat',enabled:true}}),/voice_start_failed/)
+    voiceFailure=false
+    await desktop.onControl?.({type:'personal.command',request_id:'voice',method:'conversations.voice',params:{id:'chat',enabled:true}})
+    const before=revision
+    await remote.onControl?.({type:'personal.command',request_id:'steal',method:'conversations.voice',params:{id:'chat',enabled:true}})
+    assert.equal(revision,before)
+    await remote.onControl!({type:'speech.onset',speech_id:'phone'})
+    await assert.rejects(async()=>remote.onControl!({type:'input.audio',conversation_id:'chat'}),/voice_not_owned/)
+    await desktop.onControl?.({type:'speech.onset',speech_id:'desktop'})
+    assert.equal(onsets,1)
+    remote.onClientDisconnect?.();await remote.onClientAuthenticated?.();remote.onClientDisconnect?.()
+    await new Promise(resolve=>setImmediate(resolve))
+    assert.equal(disconnects,0);assert.equal(discarded,0);assert.equal(voice,'chat')
+    await desktop.onControl?.({type:'personal.command',request_id:'off',method:'conversations.voice',params:{id:'chat',enabled:false}})
+    await remote.onClientAuthenticated?.()
+    assert.equal(await composition.prepareLegacyPhoneVoice(),'chat')
+    assert.equal(composition.audioBridge(),phone.bridge)
+    await desktop.onControl!({type:'playback.started',utterance_id:'wrong',generation_epoch:1})
+    await desktop.onControl!({type:'playback.telemetry_rejected'})
+    assert.equal(stop.signal.aborted,false)
+    desktop.onClientDisconnect?.()
+    assert.equal(disconnects,0);assert.equal(discarded,0)
+    remote.onClientDisconnect?.()
+    await new Promise(resolve=>setImmediate(resolve))
+    assert.equal(disconnects,1);assert.equal(discarded,1);assert.equal(voice,null)
+    await remote.onClientAuthenticated?.()
+    let finishVoice!:()=>void
+    voiceStart=new Promise(resolve=>{finishVoice=resolve})
+    const pending=remote.onControl!({type:'personal.command',request_id:'pending',method:'conversations.voice',params:{id:'chat',enabled:true}})
+    remote.onClientDisconnect?.()
+    await desktop.onClientAuthenticated?.()
+    const heldRevision=revision
+    await desktop.onControl?.({type:'personal.command',request_id:'during-close',method:'conversations.voice',params:{id:'chat',enabled:true}})
+    assert.equal(revision,heldRevision)
+    finishVoice();await pending;await new Promise(resolve=>setImmediate(resolve))
+    assert.equal(voice,null)
+    assert.equal(composition.audioBridge(),composition.desktop.bridge)
+    await remote.onClientAuthenticated?.()
+    await desktop.onControl?.({type:'personal.command',request_id:'desktop-visible',method:'presentation.set',params:{mode:'workbench'}})
+    await remote.onControl?.({type:'personal.command',request_id:'phone-visible',method:'presentation.set',params:{mode:'workbench'}})
+    await desktop.onControl?.({type:'personal.command',request_id:'desktop-hidden',method:'presentation.set',params:{mode:'background'}})
+    assert.deepEqual(presentations.at(-1),{mode:'background',aggregate:'workbench'})
+    await remote.onControl!({type:'personal.command',request_id:'last-voice',method:'conversations.voice',params:{id:'chat',enabled:true}})
+    voiceFailure=true;remote.onClientDisconnect?.()
+    await new Promise(resolve=>setImmediate(resolve))
+    voiceFailure=false
+    const failedReleaseRevision=revision
+    await desktop.onControl!({type:'personal.command',request_id:'cannot-steal-failed-release',method:'conversations.voice',params:{id:'chat',enabled:true}})
+    assert.equal(revision,failedReleaseRevision)
+    await remote.onClientAuthenticated?.()
+    await remote.onControl!({type:'personal.command',request_id:'retry-stop',method:'conversations.voice',params:{id:'chat',enabled:false}})
+    assert.equal(voice,null)
+    assert.equal(composition.audioBridge(),composition.desktop.bridge)
+  }finally{stop.abort()}
+})
