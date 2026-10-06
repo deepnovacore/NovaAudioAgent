@@ -52,29 +52,34 @@ test('origin changes clear each stage token and prevent environment fallback, sa
     assert.equal(readSecret(invalid, secret, codec), '')
     assert.ok(invalid.rejectedSecrets.includes(secret))
     const envName = `SELF_HOSTED_${stage.toUpperCase()}_API_KEY`
-    const resolved = resolveSecretConfiguration({[secret]: ''}, {[envName]: 'old-alias', [`NOVA_${envName}`]: 'old-canonical'}, {[envName]: 'old-dotenv'})
-    const env = capabilityEnvironment(next, resolved.secrets, {[envName]: 'old-alias', [`NOVA_${envName}`]: 'old-canonical'})
+    const resolved = resolveSecretConfiguration({[secret]: ''}, {[envName]: 'old-env'}, {[envName]: 'old-dotenv'})
+    const env = capabilityEnvironment(next, resolved.secrets, {[envName]: 'old-env'})
     assert.equal(resolveSecretConfiguration({[secret]: 'new-key'}, {}, {[envName]: 'old-dotenv'}).secrets[secret], 'new-key')
     assert.equal(resolved.secretsPresent[secret], false)
     assert.equal(env[envName], '')
-    assert.equal(env[`NOVA_${envName}`], '')
-    assert.throws(() => applySettingsUpdate(settings, {[endpoint]: 'http://public.example'}, codec), /invalid_self_hosted_url/)
+    // The settings writer maps this code to a visible "invalid" result, not a generic save failure.
+    assert.throws(() => applySettingsUpdate(settings, {[endpoint]: 'http://public.example'}, codec), {message: /invalid_self_hosted_url/, code: 'invalid_settings_commit', problems: ['invalid_self_hosted_url']})
     assert.equal(readSecret(settings, secret, codec), keys[secret])
   }
 })
 
 test('launch uses dedicated endpoints, models and optional stage keys with canonical precedence', () => {
   const settings = applySettingsUpdate(DEFAULT_SETTINGS, parseVoicePreset(JSON.stringify(preset)).patch, codec)
-  const env = backendLaunchSpec({nodeEntry: '/repo/runtime/dist/src/desktop-entry.js', nodeResourcesPath: '/repo/clients/desktop/build', workspace: '/workspace', token: 'a'.repeat(32), readyEndpoint: '127.0.0.1:49152', parentEnv: {NOVA_SELF_HOSTED_LLM_BASE_URL: 'https://old.example', NOVA_SELF_HOSTED_LLM_API_KEY: 'old-token'}, settings, decryptedSecrets: {selfHostedLlmApiKey: 'new-token', selfHostedAsrApiKey: '', selfHostedTtsApiKey: '', deepseekApiKey: 'cloud-token', doubaoBigmodelApiKey: 'cloud-token'}}).env
+  const env = backendLaunchSpec({nodeEntry: '/repo/runtime/dist/src/desktop-entry.js', nodeResourcesPath: '/repo/clients/desktop/build', workspace: '/workspace', token: 'a'.repeat(32), readyEndpoint: '127.0.0.1:49152', parentEnv: {SELF_HOSTED_LLM_BASE_URL: 'https://old.example', SELF_HOSTED_LLM_API_KEY: 'old-token'}, settings, decryptedSecrets: {selfHostedLlmApiKey: 'new-token', selfHostedAsrApiKey: '', selfHostedTtsApiKey: '', deepseekApiKey: 'cloud-token', doubaoBigmodelApiKey: 'cloud-token'}}).env
   assert.equal(env.CASCADE_LLM_MODEL, 'local-model')
   assert.equal(env.SELF_HOSTED_LLM_BASE_URL, preset.llm.baseUrl)
-  assert.equal(env.NOVA_SELF_HOSTED_LLM_BASE_URL, preset.llm.baseUrl)
-  assert.equal(env.NOVA_SELF_HOSTED_LLM_API_KEY, 'new-token')
+  assert.equal(env.SELF_HOSTED_LLM_API_KEY, 'new-token')
+  // The runtime reads only the unprefixed names; a prefixed copy would be an unread second credential path.
+  assert.deepEqual(Object.keys(env).filter(name => name.includes('NOVA_SELF_HOSTED')), [])
   assert.equal(env.SELF_HOSTED_ASR_API_KEY, '')
   assert.equal(env.DOUBAO_BIGMODEL_API_KEY, undefined)
   assert.equal(env.DEEPSEEK_API_KEY, undefined)
 })
 
+
+test('a preset saved with a UTF-8 byte-order mark still imports', () => {
+  assert.deepEqual(parseVoicePreset('\uFEFF' + JSON.stringify(preset)), parseVoicePreset(JSON.stringify(preset)))
+})
 
 test('hybrid preset selects Volcengine ASR and DeepSeek Flash while retaining self-hosted TTS', () => {
   const hybrid = {...preset, name: 'Hybrid', asr: {provider: 'volcengine'}, llm: {provider: 'deepseek', model: 'deepseek-flash'}}

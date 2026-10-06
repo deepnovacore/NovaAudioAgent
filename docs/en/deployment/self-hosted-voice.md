@@ -19,13 +19,17 @@ python3 serving/serve.py --profile serving/machine.local.json stop
 
 You can reuse an installation through `envs: {llm, asr, tts}`, `models: {llm, asr, tts}` and `breeze_source` paths. `gpus`, `ports`, `llm` memory/context settings and optional model repository/revision mappings belong to the machine profile, never to a shared voice preset. This is a reference implementation for the named models, not a launcher for arbitrary model architectures. Review model licenses before using or redistributing their outputs; deployment does not alter those licenses.
 
+The launcher needs Python 3.11 or newer and has no remote control of its own: run `up` and `stop` on the GPU machine, for example inside `tmux`. An SSH session that drops during `up` is not supported.
+
 The services bind to loopback. Forward the chosen ports from your Mac, keeping this SSH connection open:
 
 ```sh
-ssh -N -L 18101:127.0.0.1:18101 -L 18102:127.0.0.1:18102 -L 18103:127.0.0.1:18103 gpu-host
+ssh -N -o ExitOnForwardFailure=yes -L 18101:127.0.0.1:18101 -L 18102:127.0.0.1:18102 -L 18103:127.0.0.1:18103 gpu-host
 ```
 
-Substitute your SSH host alias and profile ports. Use an authenticated TLS reverse proxy when exposing services beyond SSH; the reference loopback services do not provide shared-host user isolation.
+Substitute your SSH host alias and profile ports.
+
+**The reference services do not check tokens or browser origins.** Anything that can reach a port can use your GPU and occupy the single ASR/TTS slot: other users on a shared GPU machine and, on your Mac while the forward is open, any local process or web page. Close the forward when idle, or put an authenticated TLS reverse proxy in front. The optional token fields in Nova are sent as Bearer tokens to such a proxy; the reference services ignore them.
 
 ## Import and export
 
@@ -48,8 +52,7 @@ Unknown fields/versions and files over 64 KiB are rejected as a whole. URLs supp
 
 Support model requests follow the selected conversation provider unless separately overridden. Memory embeddings, search and other enabled services keep their own configuration; selecting self-hosted voice alone does not make the entire application offline.
 
-For headless use select `PIPELINE_MODE=cascaded`, set each `CASCADE_*_PROVIDER=self-hosted`, `CASCADE_LLM_MODEL`, and `SELF_HOSTED_ASR_URL`, `SELF_HOSTED_LLM_BASE_URL`, `SELF_HOSTED_TTS_URL`. Optional `SELF_HOSTED_{ASR,LLM,TTS}_API_KEY` fields supply dedicated bearer tokens. Canonical `NOVA_`-prefixed names are documented in [configuration](../configuration.md).
-
+For headless use select `PIPELINE_MODE=cascaded`, set each `CASCADE_*_PROVIDER=self-hosted`, `CASCADE_LLM_MODEL`, and `SELF_HOSTED_ASR_URL`, `SELF_HOSTED_LLM_BASE_URL`, `SELF_HOSTED_TTS_URL`. Optional `SELF_HOSTED_{ASR,LLM,TTS}_API_KEY` fields supply dedicated bearer tokens.
 ## Wire contracts and checks
 
 - ASR: WebSocket, mono 16 kHz little-endian PCM16 binary input; server ready event `{type:"ready",sampleRate:16000,format:"s16le"}`. Send text `finish` after the utterance. Transcripts are complete replacement hypotheses `{text,final,replace:true}`; exactly one final ends the utterance. Closing cancels it.

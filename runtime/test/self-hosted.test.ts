@@ -3,6 +3,8 @@ import {test} from 'node:test'
 import {OpenAIModelGateway} from '../src/model/model-gateway.js'
 import {VirtualClock} from '../src/core/clock.js'
 import {once} from 'node:events'
+import {createServer, type Server} from 'node:http'
+import type {AddressInfo} from 'node:net'
 import {WebSocketServer} from 'ws'
 import {loadSettings, describeMissingBlockingCredentials} from '../src/config/config.js'
 import {requireSelectedCascadedRealtimeConfig, requireSelectedCascadedLlmConfig} from '../src/config/cascaded-realtime-config.js'
@@ -84,6 +86,28 @@ test('self-hosted LLM shares streaming protocol without cloud auth or provider-s
   await session.close()
 })
 
+
+test('self-hosted ASR, LLM and TTS refuse a redirect and never forward their bearer token', async()=>{
+  const targetHits:string[]=[],originAuth:string[]=[]
+  const listen=async(server:Server)=>{server.listen(0,'127.0.0.1');await once(server,'listening');return (server.address() as AddressInfo).port}
+  const target=createServer((request,response)=>{targetHits.push(`${request.headers.authorization}`);response.writeHead(200).end()})
+  const targetPort=await listen(target)
+  const origin=createServer((request,response)=>{originAuth.push(`${request.headers.authorization}`);response.writeHead(302,{location:`http://127.0.0.1:${targetPort}/elsewhere`}).end()})
+  const originPort=await listen(origin)
+  try{
+    const tts=await new SelfHostedTtsClient({endpoint:`http://127.0.0.1:${originPort}/tts`,apiKey:'tts-secret'}).open()
+    const audio=assert.rejects(collect(tts.events()))
+    await tts.sendText('hi');await assert.rejects(()=>tts.finish());await audio;await tts.close()
+    const llm=createChatCompletionsLlmFactory({provider:'self-hosted',baseUrl:`http://127.0.0.1:${originPort}/v1`,apiKey:'llm-secret',model:'m',instructions:'x'}).open()
+    const events=await collect(llm.stream({inputs:[{kind:'user_text',text:'Hi'}],tools:[],signal:new AbortController().signal})).catch(()=>[])
+    assert(!events.some(event=>event.kind==='text_delta'))
+    await llm.close()
+    await assert.rejects(new SelfHostedAsrClient({endpoint:`ws://127.0.0.1:${originPort}/asr`,apiKey:'asr-secret'}).open())
+    // Each client really reached the origin with its own token, and none of them followed it onward.
+    assert.deepEqual([...new Set(originAuth)].sort(),['Bearer asr-secret','Bearer llm-secret','Bearer tts-secret'])
+    assert.deepEqual(targetHits,[])
+  }finally{origin.close();target.close()}
+})
 
 test('redirect rejection is scoped to self-hosted LLMs, cloud behavior is preserved', async()=>{
   for(const provider of ['qwen','self-hosted'] as const){

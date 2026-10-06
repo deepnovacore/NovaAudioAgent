@@ -30,7 +30,7 @@ function exact(value, keys) {
 export function parseVoicePreset(raw) {
   if (typeof raw !== 'string' || new TextEncoder().encode(raw).length > MAX_PRESET_BYTES) throw new Error('invalid_voice_preset')
   let value
-  try { value = JSON.parse(raw) } catch { throw new Error('invalid_voice_preset') }
+  try { value = JSON.parse(raw.replace(/^\uFEFF/, '')) } catch { throw new Error('invalid_voice_preset') }
   if (!exact(value, ['schema', 'version', 'name', 'asr', 'llm', 'tts']) || value.schema !== 'nova.voice-preset' || value.version !== 1 || !text(value.name, 128)) throw new Error('invalid_voice_preset')
   const patch = {pipelineMode: 'cascaded'}
   let count = 0

@@ -19,13 +19,17 @@ python3 serving/serve.py --profile serving/machine.local.json stop
 
 可通过 `envs: {llm, asr, tts}`、`models: {llm, asr, tts}` 和 `breeze_source` 复用已有路径。GPU、端口、LLM 显存预算/上下文以及可选模型仓库和版本映射属于机器配置，不应放进共享预置。这是指定模型的参考实现，不是任意模型架构的通用启动器。使用或分发模型输出前应阅读各模型许可证，部署不会改变其许可条件。
 
+启动器需要 Python 3.11 或更新版本，自身不提供远程控制：请在 GPU 机器上执行 `up` 和 `stop`，例如放在 `tmux` 里。不支持在 `up` 过程中 SSH 会话断开。
+
 服务只监听回环地址。在 Mac 上转发配置的端口，保持 SSH 连接：
 
 ```sh
-ssh -N -L 18101:127.0.0.1:18101 -L 18102:127.0.0.1:18102 -L 18103:127.0.0.1:18103 gpu-host
+ssh -N -o ExitOnForwardFailure=yes -L 18101:127.0.0.1:18101 -L 18102:127.0.0.1:18102 -L 18103:127.0.0.1:18103 gpu-host
 ```
 
-替换为自己的 SSH 主机别名和配置端口。需要直接远程访问时，应使用带认证的 TLS 反向代理；参考回环服务不提供共享主机上的用户隔离。
+替换为自己的 SSH 主机别名和配置端口。
+
+**参考服务不校验令牌，也不校验浏览器来源。** 任何能连到端口的对象都可以使用你的 GPU，并占满唯一的 ASR/TTS 槽位：共享 GPU 机器上的其他用户，以及转发开启期间 Mac 上的任何本地进程或网页。空闲时关闭转发，或在前面放置带认证的 TLS 反向代理。Nova 里可选的令牌字段会作为 Bearer 发给这类代理；参考服务会忽略它们。
 
 ## 导入与导出
 
@@ -48,8 +52,7 @@ ssh -N -L 18101:127.0.0.1:18101 -L 18102:127.0.0.1:18102 -L 18103:127.0.0.1:1810
 
 没有单独覆盖时，辅助模型跟随所选会话模型。记忆嵌入、搜索及其他服务仍使用自身配置，因此仅选择自托管语音不等于整个应用完全离线。
 
-无界面运行时设置 `PIPELINE_MODE=cascaded`、各阶段 `CASCADE_*_PROVIDER=self-hosted`、`CASCADE_LLM_MODEL`，以及 `SELF_HOSTED_ASR_URL`、`SELF_HOSTED_LLM_BASE_URL`、`SELF_HOSTED_TTS_URL`。可选 `SELF_HOSTED_{ASR,LLM,TTS}_API_KEY` 提供独立 bearer token。带 `NOVA_` 前缀的规范名称见[配置文档](../configuration.md)。
-
+无界面运行时设置 `PIPELINE_MODE=cascaded`、各阶段 `CASCADE_*_PROVIDER=self-hosted`、`CASCADE_LLM_MODEL`，以及 `SELF_HOSTED_ASR_URL`、`SELF_HOSTED_LLM_BASE_URL`、`SELF_HOSTED_TTS_URL`。可选 `SELF_HOSTED_{ASR,LLM,TTS}_API_KEY` 提供独立 bearer token。
 ## 通信协议与验收
 
 - ASR：WebSocket 二进制输入为单声道 16 kHz 小端 PCM16；服务先发送 `{type:"ready",sampleRate:16000,format:"s16le"}`。一句音频结束后发送文本 `finish`。转录 `{text,final,replace:true}` 是完整替换假设，唯一 final 结束该句；关闭连接表示取消。

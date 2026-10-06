@@ -36,8 +36,8 @@ export function resolveSecretConfiguration(saved = {}, environment = {}, develop
   const secrets = {}, secretsPresent = {}, secretSources = {}
   for (const [key, name] of Object.entries(SECRET_ENV_MAP)) {
     if ((key === 'composioApiKey' || key.startsWith('selfHosted')) && saved[key] === '') { secrets[key]=''; secretsPresent[key]=false; secretSources[key]='cleared'; continue }
-    const fromFile = key.startsWith('selfHosted') ? developmentEnv[`NOVA_${name}`] ?? developmentEnv[name] : developmentEnv[name]
-    const fromEnvironment = key.startsWith('selfHosted') ? environment[`NOVA_${name}`] ?? environment[name] : environment[name]
+    const fromFile = developmentEnv[name]
+    const fromEnvironment = environment[name]
     const candidates = key === 'composioApiKey' || key.startsWith('selfHosted')
       ? [['settings', saved[key]], ['dotenv', fromFile], ['environment', fromEnvironment]]
       : [['dotenv', fromFile], ['settings', saved[key]], ['environment', fromEnvironment]]
@@ -290,9 +290,6 @@ export function backendLaunchSpec({
       [`${prefix}_REALTIME_VOICE`]:
         settings?.integratedVoice ?? providerDefaults?.[1] ?? SETTINGS_DEFAULTS.integratedVoice,
     })
-  }
-  for (const name of ['SELF_HOSTED_ASR_URL', 'SELF_HOSTED_LLM_BASE_URL', 'SELF_HOSTED_TTS_URL']) {
-    if (Object.hasOwn(env, name)) env[`NOVA_${name}`] = env[name]
   }
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
   // backend dials back instead, so a stale parent value must never imply one.
@@ -653,17 +650,14 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
     for (const [secretKey, envName] of Object.entries(SECRET_ENV_MAP)) {
       if (!activeSecretKeys.has(secretKey)) continue
       const value = decryptedSecrets[secretKey]
-      if ((secretKey === 'composioApiKey' || secretKey.startsWith('selfHosted')) && value === '') { env[envName]=''; if (secretKey.startsWith('selfHosted')) env[`NOVA_${envName}`] = ''; continue }
+      if ((secretKey === 'composioApiKey' || secretKey.startsWith('selfHosted')) && value === '') { env[envName]=''; continue }
       if (typeof value !== 'string') continue
       if (CONTROL_CHARACTERS.test(value)) continue
       const trimmed = value.trim()
       // A control character in the value would make Node reject the whole
       // spawn, so the key is dropped exactly like an empty one: the launch
       // proceeds, and whatever the parent environment holds keeps winning.
-      if (trimmed) {
-        env[envName] = trimmed
-        if (secretKey.startsWith('selfHosted')) env[`NOVA_${envName}`] = trimmed
-      }
+      if (trimmed) env[envName] = trimmed
     }
   }
   return env

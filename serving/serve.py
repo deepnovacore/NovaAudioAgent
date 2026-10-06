@@ -264,6 +264,8 @@ def setup(config):
 
 
 def main():
+    # whisper_server.py uses asyncio.timeout, and every venv is built from this interpreter.
+    if sys.version_info < (3, 11): raise SystemExit('serve.py requires Python 3.11 or newer')
     def interrupted(*_):
         raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, interrupted)
