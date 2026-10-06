@@ -74,7 +74,9 @@ export async function buildProductionComposition({token, stop, ownership, onDiag
     provider: settings.pipeline_mode === 'cascaded' ? settings.cascade_llm_provider : settings.integrated_provider,
     model: settings.pipeline_mode === 'cascaded'
       ? requireSelectedCascadedLlmConfig(settings).config.model
-      : settings.integrated_provider === 'stepfun' ? settings.stepfun_realtime_model : settings.qwen_realtime_model,
+      : settings.integrated_provider === 'stepfun' ? settings.stepfun_realtime_model
+      : settings.integrated_provider === 'openai' ? settings.openai_realtime_model
+      : settings.integrated_provider === 'gemini' ? settings.gemini_realtime_model : settings.qwen_realtime_model,
     asr: settings.cascade_asr_provider, tts: settings.cascade_tts_provider,
     vision: settings.conversation_vision_enabled,
   })
