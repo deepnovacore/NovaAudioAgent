@@ -406,6 +406,7 @@ test('mentions from before a chat was selected or consent was granted are never 
    await Promise.resolve();assertFeishuCommand(args)
    if(args[0]==='--version')return '1.0.69'
    if(args[1]==='status')return JSON.stringify({appId:'fixture',identities:{user:{openId:'ou_me',status:'authenticated',scopes:FEISHU_SCOPES}}})
+   if(args[1]==='login')return JSON.stringify({verification_url:'https://accounts.feishu.cn/device',device_code:'fixture',expires_in:900})
    if(args[1]==='+chat-list')return JSON.stringify({items:[{chat_id:'oc_a',name:'a'},{chat_id:'oc_b',name:'b'}],has_more:false})
    if(args[1]==='+chat-messages-list'){
     const chat=args[args.indexOf('--chat-id')+1]
