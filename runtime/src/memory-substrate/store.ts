@@ -166,8 +166,8 @@ export function memoryOperation(db:LedgerDatabase,operation:MemoryOperation,inpu
         result=context;break
       }
       case 'daily_evidence':{
-        const q=z.object({source_prefix:z.string().min(1).startsWith('personal:'),provider:id}).strict().parse(input)
-        result=db.prepare('SELECT id FROM memory_evidence WHERE substr(source_id,1,?)=?').all(q.source_prefix.length,q.source_prefix).flatMap(row=>{
+        const q=z.object({source_prefix:z.string().min(1).startsWith('personal:').endsWith(':'),provider:id}).strict().parse(input)
+        result=db.prepare("SELECT id FROM memory_evidence WHERE substr(source_id,1,?)=? AND json_extract(payload_json,'$.source_kind') IN ('calendar','im')").all(q.source_prefix.length,q.source_prefix).flatMap(row=>{
           const ref=effectiveEvidence(db,String(row.id),{purpose:'extraction',provider:q.provider})
           if(!ref||(ref.source_kind!=='calendar'&&(ref.source_kind!=='im'||ref.source_metadata?.mention!=='direct')))return []
           if(ref.source_kind==='im'){

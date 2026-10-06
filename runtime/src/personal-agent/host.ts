@@ -497,6 +497,13 @@ export class PersonalAgentHost {
             const value=parsed.data,refs={evidence_refs:value.prepared.evidence_refs,memory_refs:value.memory_refs};
             if(!refs.evidence_refs.length&&!refs.memory_refs.length||refs.evidence_refs.some(r=>!snapshot.evidence_refs.includes(r))||refs.memory_refs.some(r=>!snapshot.memory.some(m=>m.id===r.entry_id&&m.version===r.version))||!await this.#valid(refs))throw Error('stale_preparation');
             if(strict&&refs.memory_refs.length){const current=await Promise.all(refs.memory_refs.map(ref=>this.options.memory()?.get?.(ref.entry_id)??Promise.resolve(null)));const authorized=await this.authorizedGenerationEntries(current.filter((entry):entry is MemoryEntry=>!!entry));if(refs.memory_refs.some(ref=>!authorized.some(entry=>entry.id===ref.entry_id&&entry.version===ref.version)))throw Error('brief_authorization_changed')}
+            if(strict){
+                // The model saw the whole snapshot, not only what it cited: all of it must still be authorized.
+                const memory=this.options.memory();
+                const seen=(await Promise.all(snapshot.memory.map(item=>memory?.get?.(item.id)??Promise.resolve(null)))).filter((entry):entry is MemoryEntry=>!!entry);
+                if(seen.length!==snapshot.memory.length||(await this.authorizedGenerationEntries(seen)).length!==seen.length)throw Error('brief_authorization_changed');
+                if(memory?.canProcessEvidence&&!(await Promise.all((snapshot.daily?.evidence??[]).map(item=>memory.canProcessEvidence!(item.evidence_id,'extraction')))).every(Boolean))throw Error('brief_authorization_changed');
+            }
             return value;
         }catch(error){if(strict)throw error;return null}finally{signal.removeEventListener('abort',cancel)}
     }
@@ -607,7 +614,8 @@ export class PersonalAgentHost {
         }while(true);
         const eligible=await this.authorizedGenerationEntries(entries.filter(memoryEligibleForDiscovery));
         const due=(entry:MemoryEntry)=>entry.life?.due??(entry.commitment?.due?new Date(entry.commitment.due).toLocaleDateString('en-CA',{timeZone:timezone}):null);
-        const direct=(entry:MemoryEntry)=>entry.sources?.some(source=>source.mentioned_me===true)??false;
+        // Only an unfinished mention-derived Todo keeps resurfacing; older mention memories follow the date rule.
+        const direct=(entry:MemoryEntry)=>entry.life!==undefined&&['open','doing','waiting'].includes(entry.life.status)&&(entry.sources?.some(source=>source.mentioned_me===true)??false);
         const relevant=eligible.filter(entry=>{const date=due(entry);if(date!==null)return date<=local_date;if(direct(entry))return true;return !entry.source_refs.every(ref=>ref.type==='calendar')&&new Date(entry.observed_at).toLocaleDateString('en-CA',{timeZone:timezone})===local_date});
         const unique=[...new Map(relevant.map(entry=>[entry.life?`life:${entry.kind}:${entry.life.id}`:entry.id,entry])).values()].sort((a,b)=>(due(a)??'9999').localeCompare(due(b)??'9999')||Number(direct(b))-Number(direct(a))||a.id.localeCompare(b.id));
         const evidence=await resource?.dailyBriefEvidence?.({localDate:local_date,timezone,signal:this.#abort.signal})??[];
