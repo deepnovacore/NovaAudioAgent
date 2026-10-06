@@ -365,6 +365,7 @@ test('direct mentions use structured identity, fall back to raw GET, and fence h
  const directory=await mkdtemp(join(tmpdir(),'nova-mention-')),messages:FeishuMessage[]=[]
  let now=new Date('2026-10-04T02:00:00Z'),fallbacks=0
  const connector=new FeishuConnector({executable:'fixture',credentialRoot:directory,statePath:join(directory,'state'),now:()=>now,
+ processingGrant:(allowed,revision,scope_revision)=>({revision,scope_revision,extraction_provider:allowed?'provider':null,embedding_provider:null}),
  ingest:m=>{messages.push(m);return Promise.resolve()},deleteSource:()=>Promise.resolve(),onAction:()=>Promise.resolve(),run:async args=>{
   await Promise.resolve()
   assertFeishuCommand(args)
@@ -382,7 +383,7 @@ test('direct mentions use structured identity, fall back to raw GET, and fence h
   ].map(row=>({msg_type:'text',content:'@_user_1 请提交',sender:{open_id:'ou_other'},create_time:now.toISOString(),...row}))})
   return '{}'
  }})
- try{await connector.open();await connector.beginLogin();await connector.completeLogin();await connector.listChats();await connector.configure(['oc_test'],true);now=new Date('2026-10-04T02:01:00Z');await connector.sync()
+ try{await connector.open();await connector.beginLogin();await connector.completeLogin();await connector.listChats();await connector.configure(['oc_test'],true);await connector.command('feishu.consent',{consent:true});now=new Date('2026-10-04T02:01:00Z');await connector.sync()
  const byId=new Map(messages.map(m=>[m.message_id,m]));assert.equal(byId.get('om_direct')?.mention,'direct');assert.equal(byId.get('om_direct')?.auto_capture,true)
  assert.equal(byId.get('om_all')?.mention,'all');assert.equal(byId.get('om_other')?.mention,'none');assert.equal(byId.get('om_old')?.auto_capture,false);assert.equal(byId.get('om_missing')?.mention,'direct');assert.ok(fallbacks>0)
  }finally{await connector.close();await rm(directory,{recursive:true,force:true})}
@@ -393,4 +394,39 @@ test('raw rich-text mention nodes identify users but text and forwarded content 
  assert.equal(structuredMention(raw,'ou_me'),'direct')
  assert.equal(structuredMention({...raw,message_type:'merge_forward'},'ou_me'),'unknown')
  assert.equal(structuredMention({message_type:'text',content:'@ou_me 请处理'},'ou_me'),'unknown')
+})
+
+test('mentions from before a chat was selected or consent was granted are never auto-captured, and self-sent messages never mention you',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'nova-capture-window-')),messages:FeishuMessage[]=[]
+ let now=new Date('2026-10-04T02:00:00Z')
+ const at=(minutes:number)=>new Date(Date.parse('2026-10-04T02:00:00Z')+minutes*60_000).toISOString()
+ const connector=new FeishuConnector({executable:'fixture',credentialRoot:directory,statePath:join(directory,'state'),now:()=>now,
+  processingGrant:(allowed,revision,scope_revision)=>({revision,scope_revision,extraction_provider:allowed?'provider':null,embedding_provider:null}),
+  ingest:m=>{messages.push(m);return Promise.resolve()},deleteSource:()=>Promise.resolve(),onAction:()=>Promise.resolve(),run:async args=>{
+   await Promise.resolve();assertFeishuCommand(args)
+   if(args[0]==='--version')return '1.0.69'
+   if(args[1]==='status')return JSON.stringify({appId:'fixture',identities:{user:{openId:'ou_me',status:'authenticated',scopes:FEISHU_SCOPES}}})
+   if(args[1]==='login')return JSON.stringify({verification_url:'https://accounts.feishu.cn/device',device_code:'fixture',expires_in:900})
+   if(args[1]==='+chat-list')return JSON.stringify({items:[{chat_id:'oc_a',name:'a'},{chat_id:'oc_b',name:'b'}],has_more:false})
+   if(args[1]==='+chat-messages-list'){
+    const chat=args[args.indexOf('--chat-id')+1]
+    return JSON.stringify({has_more:false,items:[{message_id:`${chat}_before`,create_time:at(-30)},{message_id:`${chat}_after`,create_time:at(30)},{message_id:`${chat}_mine`,create_time:at(30),sender:{open_id:'ou_me'}}]
+     .map(row=>({msg_type:'text',content:'@_user_1 请提交',sender:{open_id:'ou_other'},mentions:[{id:'ou_me',id_type:'open_id'}],...row}))})
+   }
+   return '{}'
+  }})
+ const capture=():Record<string,boolean|undefined>=>Object.fromEntries(messages.map(m=>[m.message_id??'',m.auto_capture]))
+ try{
+  await connector.open();await connector.beginLogin();await connector.completeLogin();await connector.listChats()
+  // Consent is granted only after the first sync: everything ingested before it stays history.
+  await connector.configure(['oc_a'],true);now=new Date(at(5));await connector.sync()
+  assert.ok(messages.length>0&&messages.every(m=>m.auto_capture===false),'no live consent yet')
+  await connector.command('feishu.consent',{consent:true});now=new Date(at(60));messages.length=0;await connector.sync()
+  assert.equal(capture().oc_a_after,true);assert.equal(capture().oc_a_before,false)
+  assert.equal(capture().oc_a_mine,false);assert.equal(messages.find(m=>m.message_id==='oc_a_mine')?.mention,'none')
+  // A chat added later starts its own window at selection time, not at login.
+  messages.length=0;now=new Date(at(20));await connector.configure(['oc_a','oc_b'],true);await connector.command('feishu.consent',{consent:true})
+  now=new Date(at(90));await connector.sync()
+  assert.equal(capture().oc_b_before,false);assert.equal(capture().oc_b_after,true)
+ }finally{await connector.close();await rm(directory,{recursive:true,force:true})}
 })

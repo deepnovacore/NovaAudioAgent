@@ -9,8 +9,8 @@ import {LifeService} from '../src/personal-agent/life.js'
 import type {ModelGateway} from '../src/model/model-gateway.js'
 
 test('direct actionable IM becomes one sourced durable Todo without external execution; manual changes win',async()=>{
- const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-auto-im-'));let calls=0
- const gateway={complete:(request:{system:string;prompt:string})=>{calls++;const text=request.system.includes('IM_ACTION')?JSON.stringify({action:{title:'提交材料',note:'请提交材料',due:null,quote:'请提交材料',assigned_to_me:true,requires_action:true,resolved:false}}):request.system.includes('IM_MATCH')?JSON.stringify({decisions:[{candidate_index:0,action:'add',target_id:null}]}):JSON.stringify({entries:[]});return Promise.resolve({text,model:'fixture',usage:{input_tokens:0,output_tokens:0}})}} as unknown as ModelGateway
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'nova-auto-im-'))
+ const gateway={complete:(request:{system:string;prompt:string})=>{const text=request.system.includes('IM_ACTION')?JSON.stringify({action:{title:'提交材料',note:'请提交材料',due:null,quote:'请提交材料',assigned_to_me:true,requires_action:true,resolved:false}}):request.system.includes('IM_MATCH')?JSON.stringify({decisions:[{candidate_index:0,action:'add',target_id:null}]}):JSON.stringify({entries:[]});return Promise.resolve({text,model:'fixture',usage:{input_tokens:0,output_tokens:0}})}} as unknown as ModelGateway
  const memory=new SubstrateMemoryResource({client:new MemoryLedgerClient(join(dir,'ledger.sqlite')),userId:'fixture',gateway,model:'fixture',inputConsent:true,consolidation:{enabled:false}})
  const life=new LifeService(join(dir,'life.json'),()=>{/* test observer */},()=>memory.lifeBackend())
  try{
@@ -22,7 +22,7 @@ test('direct actionable IM becomes one sourced durable Todo without external exe
   const entries=(await memory.list()).entries;assert.equal(entries.find(e=>e.kind==='todo')?.origin,'inferred')
   await life.mutate({op:'update',kind:'todo',id:todo.id,expected_version:todo.version,title:'我改的标题',status:'cancelled'},'user-edit')
   await memory.ingestEvidence(input);await memory.flush();await life.refresh();assert.equal(life.snapshot().todos.length,1);assert.equal(life.snapshot().todos[0]?.status,'cancelled');assert.equal(life.snapshot().todos[0]?.title,'我改的标题')
-  const before=calls;await memory.ingestEvidence({...input,locator:'feishu://message/om_other',im:{...im,message_id:'om_other',mention:'none'}});await memory.flush();assert.equal(life.snapshot().todos.length,1);assert.ok(calls>=before)
+  await memory.ingestEvidence({...input,locator:'feishu://message/om_other',im:{...im,message_id:'om_other',mention:'none'}});await memory.flush();await life.refresh();assert.equal(life.snapshot().todos.length,1,'a message that does not mention you never creates a Todo')
   await memory.setProcessingConsent(input.sourceId,memory.processingGrant(false,2));await life.refresh();todo=life.snapshot().todos[0]!;assert.deepEqual(todo.sources,[])
  }finally{await life.close();await memory.close();await rm(dir,{recursive:true,force:true})}
 })
