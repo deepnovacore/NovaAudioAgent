@@ -58,7 +58,7 @@ test('projection failure retries only the Todo and model failure waits without e
  // Linked Todo is captured at declaration, not reconstructed from the completion text.
  const linked=await f.tasks.delegate('linked',{conversation_id:'c',goal:'linked',acceptance:[],origin_ref:'conversation:1',todo_ref:{id:'todo',version:1}});await f.tasks.recordDelivery(fence(linked),'linked','answer')
  const projection=new TaskLoop(f.tasks,{evaluate:async()=>{evaluated++;return {kind:'complete',evidence_refs:['task-delivery:linked']}},execute:async()=>assert.fail('execution'),syncTodo:async()=>{synced++;if(synced===1)throw Error('lost');return 'synced'}});await projection.wake(linked.id);assert.equal(f.tasks.get(linked.id).todo_sync,'pending');await projection.wake(linked.id);assert.equal(f.tasks.get(linked.id).todo_sync,'synced');assert.equal(evaluated,1);await projection.close();await loop.close()
- const failed=new TaskLoop(f.tasks,{evaluate:async()=>{throw Error('model unavailable')},execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'});await failed.wake(f.task.id);assert.equal(f.tasks.get(f.task.id).waiting_reason,'task_check_unavailable');assert.equal(f.tasks.get(f.task.id).corrections,0);assert.equal(JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text).stage,'evaluate');await failed.close()
+ const failed=new TaskLoop(f.tasks,{evaluate:async()=>{throw Error('model unavailable')},execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'});await failed.wake(f.task.id);assert.equal(f.tasks.get(f.task.id).waiting_reason,'task_check_unavailable');assert.equal(f.tasks.get(f.task.id).corrections,0);assert.equal((JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text) as {stage:string}).stage,'evaluate');await failed.close()
  }finally{await f.close()}
 })
 
@@ -193,13 +193,13 @@ test('verifier and apply failures keep task_check_unavailable and record only st
   assert.deepEqual(JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text),{kind:'wait',reason:'task_check_unavailable',evidence_refs:[],stage:'schema',code:'strict_extra'})
   await schema.close()
   const badRef=new TaskLoop(f.tasks,{evaluate:async()=>({kind:'correct',instruction:'retry',evidence_refs:['nope']}),execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'})
-  await badRef.wake(f.task.id);const applyEvent=JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text)
+  await badRef.wake(f.task.id);const applyEvent=JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text) as {stage:string;code:string;reason?:string}
   assert.equal(applyEvent.stage,'apply');assert.equal(applyEvent.code,'invalid_evidence');assert.doesNotMatch(String(applyEvent.reason??''),/nope/u);await badRef.close()
   const empty=new TaskLoop(f.tasks,{evaluate:async()=>({kind:'complete',evidence_refs:[]}),execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'})
-  await empty.wake(f.task.id);assert.equal(JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text).code,'missing_evidence');await empty.close()
+  await empty.wake(f.task.id);assert.equal((JSON.parse(f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text) as {code:string}).code,'missing_evidence');await empty.close()
   const secret=new TaskLoop(f.tasks,{evaluate:async()=>{throw Error('SECRET_TOKEN_xyz')},execute:async()=>assert.fail('execution'),syncTodo:async()=> 'synced'})
   await secret.wake(f.task.id);const leaked=f.tasks.events(f.task.id,0).items.filter(item=>item.kind==='verification').at(-1)!.text
-  assert.equal(JSON.parse(leaked).stage,'evaluate');assert.doesNotMatch(leaked,/SECRET/u);await secret.close()
+  assert.equal((JSON.parse(leaked) as {stage:string}).stage,'evaluate');assert.doesNotMatch(leaked,/SECRET/u);await secret.close()
  }finally{await f.close()}
 })
 

@@ -110,7 +110,7 @@ test('host restart with an unfinished task restores the live coding_target into 
           })}),
         }}),
       })
-      host2.setConversationRuntime(factory, () => {})
+      host2.setConversationRuntime(factory, () => { /* history is not asserted here */ })
       await host2.open()
       assert.ok(validated.some(item => item && typeof item === 'object' && 'session_id' in item && (item as {session_id: string}).session_id === target.session_id))
       assert.deepEqual(host2.conversationSnapshot().items.find(item => item.id === 'chat:main')?.coding_target, {
@@ -118,7 +118,7 @@ test('host restart with an unfinished task restores the live coding_target into 
       })
     } finally { await host2.close() }
   } finally {
-    await host1.close().catch(() => {})
+    await host1.close().catch(() => { /* already closed by the test body */ })
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})
   }

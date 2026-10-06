@@ -120,5 +120,6 @@ test('executor flood past maxItems keeps conversation origin for historical disp
     assert.equal(admission.accepted, false)
     assert.equal(admission.problem, 'historical_origin')
     assert.notEqual(admission.problem, 'origin_not_found')
+    assert.equal(launches, 0)
   } finally { await store.close(); await rm(directory, {recursive: true, force: true}) }
 })

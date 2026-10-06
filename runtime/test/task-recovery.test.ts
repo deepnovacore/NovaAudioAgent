@@ -41,7 +41,7 @@ test('live-generation recovery restores the persisted coding_target; retired gen
  const root=await mkdtemp(join(await realpath(tmpdir()),'task-recovery-')),path=join(root,'host.json')
  const target={workspace_id:'ws',session_id:'sess',project:'Demo',title:'Demo session',executor:'codex' as const}
  const make=()=>new PersonalAgentHost({path,userScope:'test',pool:new SuggestionPool(),memory:()=>undefined,evidence:()=>null})
- let first=make(),second:PersonalAgentHost|undefined,third:PersonalAgentHost|undefined
+ const first=make();let second:PersonalAgentHost|undefined,third:PersonalAgentHost|undefined
  try{
   await first.open();await first.rememberCodingTarget('chat:main',0,target,()=>true)
   const task=await first.tasks.delegate('first',input);await first.tasks.bindWork(fence(task.id),'work:1');await first.close()
