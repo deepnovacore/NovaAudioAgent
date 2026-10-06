@@ -301,6 +301,9 @@
             </div>
           </div>
         </section>
+        <div class="actions"><button id="voice-preset-import" type="button">导入自托管预设</button><button id="voice-preset-export" type="button">导出自托管预设</button></div>
+        <p class="hint">预设仅包含选中的自托管阶段，不包含密钥。导入后请保存。更换服务来源后请先保存，再重新填写密钥。</p>
+        <p id="voice-preset-status" class="hint" role="status" aria-live="polite"></p>
         <section id="cascaded-pipeline" hidden>
           <p class="hint">相对集成式管线，多轮对话成本预计可节省约 <strong class="cost-saving">70%</strong>。实际取决于模型及语音用量。</p>
           <div class="pipeline-card">
@@ -308,9 +311,19 @@
             <div class="field">
               <label for="cascadedAsrProvider">服务</label>
               <select id="cascadedAsrProvider">
+                <option value="self-hosted">自托管</option>
                 <option value="volcengine">火山引擎 ASR</option>
                 <option value="gemini">Gemini ASR</option>
               </select>
+            </div>
+            <div id="self-hosted-asr-settings" hidden>
+              <div class="field"><label for="selfHostedAsrUrl">自托管 ASR 地址</label><input id="selfHostedAsrUrl" type="url" placeholder="wss://host/asr" maxlength="2048" autocomplete="off" spellcheck="false"></div>
+              <div class="secret" data-key="selfHostedAsrApiKey">
+                <label for="selfHostedAsrApiKey">自托管 ASR 密钥（可选）</label>
+                <span class="badge" id="badge-selfHostedAsrApiKey">未设置</span><span class="key-usage" id="usage-selfHostedAsrApiKey"></span>
+                <input type="password" id="selfHostedAsrApiKey" autocomplete="off" spellcheck="false" placeholder="输入新密钥">
+                <button type="button" class="clear" data-key="selfHostedAsrApiKey">清除</button>
+              </div>
             </div>
             <div id="gemini-asr-settings" hidden><label for="geminiAsrModel">Gemini ASR 模型</label><input id="geminiAsrModel" type="text" maxlength="64" autocomplete="off"><p class="hint">说完一句后返回最终转录，不显示实时中间结果。</p></div>
             <section aria-label="声纹验证">
@@ -336,12 +349,22 @@
             <div class="field">
               <label for="cascadedLlmProvider">服务商</label>
               <select id="cascadedLlmProvider">
+                <option value="self-hosted">自托管</option>
                 <option value="openai">OpenAI</option>
                 <option value="gemini">Google Gemini</option>
                 <option value="qwen">Qwen（通义）</option>
                 <option value="ark">Ark（火山方舟）</option>
                 <option value="deepseek">DeepSeek（官方）</option>
               </select>
+            </div>
+            <div id="self-hosted-llm-settings" hidden>
+              <div class="field"><label for="selfHostedLlmBaseUrl">自托管 LLM 地址</label><input id="selfHostedLlmBaseUrl" type="url" placeholder="https://host/v1" maxlength="2048" autocomplete="off" spellcheck="false"></div>
+              <div class="secret" data-key="selfHostedLlmApiKey">
+                <label for="selfHostedLlmApiKey">自托管 LLM 密钥（可选）</label>
+                <span class="badge" id="badge-selfHostedLlmApiKey">未设置</span><span class="key-usage" id="usage-selfHostedLlmApiKey"></span>
+                <input type="password" id="selfHostedLlmApiKey" autocomplete="off" spellcheck="false" placeholder="输入新密钥">
+                <button type="button" class="clear" data-key="selfHostedLlmApiKey">清除</button>
+              </div>
             </div>
             <div class="field">
               <label for="cascadedLlmModelPreset">当前模型</label>
@@ -354,11 +377,21 @@
             <div class="field">
               <label for="cascadedTtsProvider">服务</label>
               <select id="cascadedTtsProvider">
+                <option value="self-hosted">自托管</option>
                 <option value="volcengine">火山引擎 TTS</option>
                 <option value="gemini">Gemini TTS</option>
               </select>
             </div>
-            <div class="field">
+            <div id="self-hosted-tts-settings" hidden>
+              <div class="field"><label for="selfHostedTtsUrl">自托管 TTS 地址</label><input id="selfHostedTtsUrl" type="url" placeholder="https://host/tts" maxlength="2048" autocomplete="off" spellcheck="false"></div>
+              <div class="secret" data-key="selfHostedTtsApiKey">
+                <label for="selfHostedTtsApiKey">自托管 TTS 密钥（可选）</label>
+                <span class="badge" id="badge-selfHostedTtsApiKey">未设置</span><span class="key-usage" id="usage-selfHostedTtsApiKey"></span>
+                <input type="password" id="selfHostedTtsApiKey" autocomplete="off" spellcheck="false" placeholder="输入新密钥">
+                <button type="button" class="clear" data-key="selfHostedTtsApiKey">清除</button>
+              </div>
+            </div>
+            <div class="field" id="cascaded-tts-voice-settings">
               <div id="gemini-tts-settings" hidden><label for="geminiTtsModel">Gemini TTS 模型</label><input id="geminiTtsModel" type="text" maxlength="64" autocomplete="off"><p class="hint">按回复分段合成并播放，每段需等待一次语音生成。</p></div>
               <label for="cascadedTtsVoicePreset">音色</label>
               <div class="voice-picker">

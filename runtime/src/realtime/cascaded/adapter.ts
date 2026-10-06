@@ -885,6 +885,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
           await this.#emit(owner, {
             kind: 'user_transcript_delta', session_epoch: owner.epoch,
             item_id: active.itemId, text: transcript.text,
+            ...(transcript.replace === true ? {replace:true} : {}),
           })
         }
       }

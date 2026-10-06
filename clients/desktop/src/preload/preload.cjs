@@ -192,6 +192,7 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     },
   }),
   settings: Object.freeze({
+    voicePreset: (action, settings) => ipcRenderer.invoke('nova:settings:voice-preset', action, settings),
     voiceprint: input => ipcRenderer.invoke('nova:settings:voiceprint', input),
     phoneAction: (action, deviceId) => ipcRenderer.invoke('nova:phone:action', action, deviceId),
     get: () => ipcRenderer.invoke('nova:settings:get'),

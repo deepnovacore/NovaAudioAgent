@@ -1,3 +1,4 @@
+import {selfHostedEndpoint} from '../../config/self-hosted.js'
 import {committedConversationPairsSchema,type CommittedConversationPair} from '../history.js'
 import {translateSystemPrompt, type PromptLanguage} from '../prompt-language.js'
 import {cascadedNarrationInstructions} from './llm.js'
@@ -33,7 +34,7 @@ export class ChatCompletionsLlmFailure extends Error {
 }
 
 export interface ChatCompletionsLlmFactoryOptions {
-  readonly provider: 'qwen' | 'deepseek' | 'openai' | 'gemini'
+  readonly provider: 'qwen' | 'deepseek' | 'openai' | 'gemini' | 'self-hosted'
   readonly baseUrl: string; readonly apiKey: string; readonly model: string; readonly instructions: string
   readonly fetchImpl?: typeof globalThis.fetch; readonly idFactory?: () => string; readonly clock?: Clock
   readonly onUsage?: UsageReporter
@@ -55,7 +56,7 @@ function schema(tool: CascadedLlmTool): JsonObject { return {type: 'function', f
 function size(units: readonly (readonly Message[])[]): {items: number; codepoints: number} { const all = units.flat(); return {items: all.length, codepoints: all.reduce((sum, item) => sum + codePointLengthLikePython(JSON.stringify(withoutImage(item))), 0)} }
 
 class Session implements CascadedLlmSession {
-  readonly #provider: 'qwen' | 'deepseek' | 'openai' | 'gemini'
+  readonly #provider: 'qwen' | 'deepseek' | 'openai' | 'gemini' | 'self-hosted'
   readonly #onUsage: UsageReporter | undefined
   readonly #endpoint: string; readonly #apiKey: string; readonly #model: string; readonly #instructions: string; readonly #fetch: typeof fetch
   readonly #idleTimeoutMs: number; readonly #closeTimeoutMs: number; readonly #active = new Set<Active>()
@@ -63,9 +64,9 @@ class Session implements CascadedLlmSession {
   #history: Message[][] = []; #unresolved: Message[] | null = null; #closed = false; #closePromise: Promise<void> | null = null
   constructor(options: ChatCompletionsLlmFactoryOptions,history?:readonly CommittedConversationPair[]) {
     this.#provider = options.provider
-    this.#onUsage = options.onUsage
-    if (!options.apiKey || !options.model || !options.instructions) throw fail('configuration')
-    this.#endpoint = endpoint(options.baseUrl); this.#apiKey = options.apiKey; this.#model = options.model; this.#instructions = options.instructions; this.#fetch = options.fetchImpl ?? globalThis.fetch
+    this.#onUsage = options.provider === 'self-hosted' ? undefined : options.onUsage
+    if ((!options.apiKey && options.provider !== 'self-hosted') || !options.model || !options.instructions) throw fail('configuration')
+    this.#endpoint = endpoint(options.provider === 'self-hosted' ? selfHostedEndpoint(options.baseUrl, 'http', 'SELF_HOSTED_LLM_BASE_URL') : options.baseUrl); this.#apiKey = options.apiKey; this.#model = options.model; this.#instructions = options.instructions; this.#fetch = options.fetchImpl ?? globalThis.fetch
     this.#idleTimeoutMs = options.idleTimeoutMs ?? 30_000; this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000
     if(history!==undefined)this.#seed(history)
     if (!Number.isFinite(this.#idleTimeoutMs) || this.#idleTimeoutMs <= 0 || !Number.isFinite(this.#closeTimeoutMs) || this.#closeTimeoutMs <= 0) throw fail('configuration')
@@ -88,7 +89,10 @@ class Session implements CascadedLlmSession {
       ? [...(unresolved?.slice(-1) ?? []),
         ...input.inputs.filter(item => item.kind === 'host_activation' || item.kind === 'tool_result').map(message)]
       : [...this.#history.flat(), ...(unresolved ?? []), ...current]
-    const messages = [{role: 'system' as const, content: systemContent}, ...context]
+    // Self-hosted Qwen chat templates accept system messages only at the beginning.
+    const messages = this.#provider === 'self-hosted'
+      ? [{role:'system' as const,content:[systemContent,...context.filter(item=>item.role==='system').map(item=>typeof item.content === 'string' ? item.content : '')].join('\n\n')},...context.filter(item=>item.role!=='system')]
+      : [{role: 'system' as const, content: systemContent}, ...context]
     const body: Record<string, JsonValue> = {model: this.#model, messages: messages as unknown as JsonValue, stream: true, stream_options: {include_usage: true}}
     if (this.#provider === 'deepseek') body.thinking = {type: 'disabled'}
     else if (this.#provider === 'qwen') body.enable_thinking = false
@@ -106,7 +110,7 @@ class Session implements CascadedLlmSession {
     }
     try {
       let response: Response
-      try { response = await this.#timed(this.#fetch(this.#endpoint, {method: 'POST', headers: {authorization: `Bearer ${this.#apiKey}`, 'content-type': 'application/json', accept: 'text/event-stream'}, body: JSON.stringify(body), signal: active.controller.signal}), active) }
+      try { response = await this.#timed(this.#fetch(this.#endpoint, {method: 'POST', redirect: 'error', headers: {...(this.#apiKey ? {authorization: `Bearer ${this.#apiKey}`} : {}), 'content-type': 'application/json', accept: 'text/event-stream'}, body: JSON.stringify(body), signal: active.controller.signal}), active) }
       catch (error) { if (error instanceof ChatCompletionsLlmFailure) throw error; throw fail(input.signal.aborted ? 'aborted' : this.#closed ? 'closed' : 'network') }
       if (!response.ok) { await this.#cancel(response.body?.getReader() ?? null); throw fail('http', response.status) }
       if (response.body === null || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')) { await this.#cancel(response.body?.getReader() ?? null); throw fail('protocol') }

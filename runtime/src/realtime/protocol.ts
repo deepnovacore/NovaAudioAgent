@@ -328,7 +328,7 @@ export const userSpeechEndedSchema = sessionEvent(z.literal('user_speech_ended')
 })
 export const userTranscriptDeltaSchema = sessionEvent(
   z.literal('user_transcript_delta'),
-  itemTextShape,
+  {...itemTextShape, replace: z.boolean().optional()},
 )
 export const userTranscriptFailedSchema = sessionEvent(z.literal('user_transcript_failed'), {
   item_id: realtimeIdentifierSchema,

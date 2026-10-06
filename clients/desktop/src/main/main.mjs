@@ -1,3 +1,4 @@
+import {parseVoicePreset, exportVoicePreset, MAX_PRESET_BYTES} from '../renderer/voice-preset.mjs'
 import {deleteVoiceprint, registerVoiceprint, voiceprintHealth} from './voiceprint.mjs'
 import {probeAcceptanceGate,acceptanceRuntimeHash,appendAcceptanceCounts, allowAcceptanceLoopback, installAcceptanceGate, assertOriginalProfilePaths, assertAcceptanceUrl} from '@nova-audio-agent/runtime/desktop'
 import {captureNativeWorkbench,waitForNativeWorkbench,installAcceptanceWindowGate,installAcceptanceSessionGate,acceptanceWakeSettings,acceptanceBackendSettings,waitForAcceptanceRuntimeGate} from './workbench-native-acceptance.mjs'
@@ -41,7 +42,7 @@ import {
   ManagedWorkspaceMaintenanceService,
 } from '@nova-audio-agent/runtime/desktop'
 import { randomBytes } from 'node:crypto'
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, rename, unlink, writeFile, open } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -343,8 +344,8 @@ function settingsView() {
   const {secretsPresent: effectivePresence, secretSources} = resolveSecretConfiguration(
     {}, process.env, developmentEnv)
   for (const [key, present] of Object.entries(secretsPresent(currentSettings))) {
-    if (key === 'composioApiKey' && currentSettings.secrets?.[key]?.enc === 'cleared') { effectivePresence[key]=false; secretSources[key]='cleared'; continue }
-    if (present && (key === 'composioApiKey' || secretSources[key] !== 'dotenv')) {
+    if ((key === 'composioApiKey' || key.startsWith('selfHosted')) && currentSettings.secrets?.[key]?.enc === 'cleared') { effectivePresence[key]=false; secretSources[key]='cleared'; continue }
+    if (present && (key === 'composioApiKey' || key.startsWith('selfHosted') || secretSources[key] !== 'dotenv')) {
       effectivePresence[key] = true
       secretSources[key] = 'settings'
     }
@@ -912,7 +913,7 @@ function decryptSecretsForSpawn(settings, codec) {
   const present = secretsPresent(settings)
   const decrypted = {}
   for (const key of SECRET_KEYS) {
-    if (key === 'composioApiKey' && settings.secrets?.[key]?.enc === 'cleared') { decrypted[key]=''; continue }
+    if ((key === 'composioApiKey' || key.startsWith('selfHosted')) && settings.secrets?.[key]?.enc === 'cleared') { decrypted[key]=''; continue }
     if (!present[key]) continue
     const plaintext = readSecret(settings, key, codec)
     if (typeof plaintext !== 'string' || !plaintext) {
@@ -1870,6 +1871,29 @@ async function startSelectedCamera(camera, smokeChannel) {
     if (event.sender !== settingsWindow?.webContents) throw new Error('wake word retry rejected')
     if(!acceptance&&presentationMode!=='background')wakeWord?.start()
     return settingsView()
+  })
+  ipcMain.handle('nova:settings:voice-preset', async (event, action, settings) => {
+    if (event.sender !== settingsWindow?.webContents) throw new Error('voice preset rejected')
+    try {
+      const filters = [{name: 'JSON', extensions: ['json']}]
+      if (action === 'import') {
+        const choice = await dialog.showOpenDialog(settingsWindow, {properties: ['openFile'], filters})
+        if (choice.canceled || !choice.filePaths[0]) return {canceled: true}
+        const file = await open(choice.filePaths[0], 'r')
+        try {
+          const bytes = Buffer.alloc(MAX_PRESET_BYTES + 1)
+          const {bytesRead} = await file.read(bytes, 0, bytes.length, 0)
+          if (bytesRead > MAX_PRESET_BYTES) throw new Error('invalid_voice_preset')
+          return parseVoicePreset(bytes.subarray(0, bytesRead).toString('utf8'))
+        } finally { await file.close() }
+      }
+      if (action !== 'export') throw new Error('invalid_voice_preset')
+      const raw = exportVoicePreset(settings)
+      const choice = await dialog.showSaveDialog(settingsWindow, {defaultPath: 'nova-voice-preset.json', filters})
+      if (choice.canceled || !choice.filePath) return {canceled: true}
+      await writeFile(choice.filePath, raw, {mode: 0o600})
+      return {ok: true}
+    } catch { return {error: 'invalid_voice_preset'} }
   })
   ipcMain.handle('nova:settings:set', async (event, payload, restart = false) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {

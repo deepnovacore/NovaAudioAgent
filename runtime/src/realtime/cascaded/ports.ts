@@ -17,6 +17,7 @@ export type EndpointingFactory = (input: {
 }) => Promise<EndpointingPort>
 
 export interface AsrTranscript {
+  readonly replace?: boolean
   readonly text: string
   readonly final: boolean
 }

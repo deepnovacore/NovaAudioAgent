@@ -13,6 +13,9 @@ const NEWLINE = 0x0a
 // `.env` (or parent environment) keeps winning. Names match the Settings
 // aliases accepted by the Node runtime configuration contract exactly.
 export const SECRET_ENV_MAP = Object.freeze({
+  selfHostedAsrApiKey: 'SELF_HOSTED_ASR_API_KEY',
+  selfHostedLlmApiKey: 'SELF_HOSTED_LLM_API_KEY',
+  selfHostedTtsApiKey: 'SELF_HOSTED_TTS_API_KEY',
   composioApiKey: 'COMPOSIO_API_KEY',
   dashscopeApiKey: 'DASHSCOPE_API_KEY',
   stepfunApiKey: 'STEPFUN_API_KEY',
@@ -32,8 +35,12 @@ export const SECRET_ENV_MAP = Object.freeze({
 export function resolveSecretConfiguration(saved = {}, environment = {}, developmentEnv = {}) {
   const secrets = {}, secretsPresent = {}, secretSources = {}
   for (const [key, name] of Object.entries(SECRET_ENV_MAP)) {
-    if (key === 'composioApiKey' && saved[key] === '') { secrets[key]=''; secretsPresent[key]=false; secretSources[key]='cleared'; continue }
-    const candidates = key === 'composioApiKey' ? [['settings',saved[key]],['dotenv',developmentEnv[name]],['environment',environment[name]]] : [['dotenv', developmentEnv[name]], ['settings', saved[key]], ['environment', environment[name]]]
+    if ((key === 'composioApiKey' || key.startsWith('selfHosted')) && saved[key] === '') { secrets[key]=''; secretsPresent[key]=false; secretSources[key]='cleared'; continue }
+    const fromFile = key.startsWith('selfHosted') ? developmentEnv[`NOVA_${name}`] ?? developmentEnv[name] : developmentEnv[name]
+    const fromEnvironment = key.startsWith('selfHosted') ? environment[`NOVA_${name}`] ?? environment[name] : environment[name]
+    const candidates = key === 'composioApiKey' || key.startsWith('selfHosted')
+      ? [['settings', saved[key]], ['dotenv', fromFile], ['environment', fromEnvironment]]
+      : [['dotenv', fromFile], ['settings', saved[key]], ['environment', fromEnvironment]]
     const selected = candidates.find(([, value]) => typeof value === 'string' && value.trim() && !CONTROL_CHARACTERS.test(value))
     secretsPresent[key] = Boolean(selected)
     if (selected) {
@@ -256,6 +263,9 @@ export function backendLaunchSpec({
       DOUBAO_ASR_VOICEPRINT_NAME: settings?.voiceprintName ?? '',
       CASCADE_ENDPOINTING_PROVIDER: settings?.cascadedEndpointingProvider
         ?? SETTINGS_DEFAULTS.cascadedEndpointingProvider,
+      SELF_HOSTED_ASR_URL: settings?.selfHostedAsrUrl ?? '',
+      SELF_HOSTED_LLM_BASE_URL: settings?.selfHostedLlmBaseUrl ?? '',
+      SELF_HOSTED_TTS_URL: settings?.selfHostedTtsUrl ?? '',
       GEMINI_ASR_MODEL: settings?.geminiAsrModel ?? SETTINGS_DEFAULTS.geminiAsrModel,
       GEMINI_TTS_MODEL: settings?.geminiTtsModel ?? SETTINGS_DEFAULTS.geminiTtsModel,
       GEMINI_TTS_VOICE: settings?.geminiTtsVoice ?? SETTINGS_DEFAULTS.geminiTtsVoice,
@@ -280,6 +290,9 @@ export function backendLaunchSpec({
       [`${prefix}_REALTIME_VOICE`]:
         settings?.integratedVoice ?? providerDefaults?.[1] ?? SETTINGS_DEFAULTS.integratedVoice,
     })
+  }
+  for (const name of ['SELF_HOSTED_ASR_URL', 'SELF_HOSTED_LLM_BASE_URL', 'SELF_HOSTED_TTS_URL']) {
+    if (Object.hasOwn(env, name)) env[`NOVA_${name}`] = env[name]
   }
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
   // backend dials back instead, so a stale parent value must never imply one.
@@ -612,11 +625,11 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
     if (pipelineMode === 'cascaded') {
       const llmProvider = settings?.cascadedLlmProvider
         ?? SETTINGS_DEFAULTS.cascadedLlmProvider
-      activeSecretKeys.add(llmProvider === 'qwen' ? 'dashscopeApiKey' : `${llmProvider}ApiKey`)
-      activeSecretKeys.add((settings?.cascadedTtsProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoBigmodelApiKey')
+      activeSecretKeys.add(llmProvider === 'self-hosted' ? 'selfHostedLlmApiKey' : llmProvider === 'qwen' ? 'dashscopeApiKey' : `${llmProvider}ApiKey`)
+      activeSecretKeys.add(settings?.cascadedTtsProvider === 'self-hosted' ? 'selfHostedTtsApiKey' : (settings?.cascadedTtsProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoBigmodelApiKey')
       // Optional override only. When absent, the runtime falls back to the
       // big-model key; Main does not synthesize a duplicate secret value.
-      activeSecretKeys.add((settings?.cascadedAsrProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoAsrApiKey')
+      activeSecretKeys.add(settings?.cascadedAsrProvider === 'self-hosted' ? 'selfHostedAsrApiKey' : (settings?.cascadedAsrProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoAsrApiKey')
       if ((settings?.cascadedAsrProvider ?? 'volcengine') === 'volcengine') activeSecretKeys.add('doubaoBigmodelApiKey')
     } else {
       const integrated = settings?.integratedProvider ?? 'qwen'
@@ -640,14 +653,17 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
     for (const [secretKey, envName] of Object.entries(SECRET_ENV_MAP)) {
       if (!activeSecretKeys.has(secretKey)) continue
       const value = decryptedSecrets[secretKey]
-      if (secretKey === 'composioApiKey' && value === '') { env[envName]=''; continue }
+      if ((secretKey === 'composioApiKey' || secretKey.startsWith('selfHosted')) && value === '') { env[envName]=''; if (secretKey.startsWith('selfHosted')) env[`NOVA_${envName}`] = ''; continue }
       if (typeof value !== 'string') continue
       if (CONTROL_CHARACTERS.test(value)) continue
       const trimmed = value.trim()
       // A control character in the value would make Node reject the whole
       // spawn, so the key is dropped exactly like an empty one: the launch
       // proceeds, and whatever the parent environment holds keeps winning.
-      if (trimmed) env[envName] = trimmed
+      if (trimmed) {
+        env[envName] = trimmed
+        if (secretKey.startsWith('selfHosted')) env[`NOVA_${envName}`] = trimmed
+      }
     }
   }
   return env

@@ -25,6 +25,13 @@ type Row = readonly [
 ]
 
 const rows: readonly Row[] = [
+  ['SELF_HOSTED_ASR_URL', 'core', false, true, 'never', null, 'Self-hosted asr url; dedicated credential only.', '自托管 ASR_URL，仅使用专用凭据。'],
+  ['SELF_HOSTED_LLM_BASE_URL', 'core', false, true, 'never', null, 'Self-hosted llm base url; dedicated credential only.', '自托管 LLM_BASE_URL，仅使用专用凭据。'],
+  ['SELF_HOSTED_TTS_URL', 'core', false, true, 'never', null, 'Self-hosted tts url; dedicated credential only.', '自托管 TTS_URL，仅使用专用凭据。'],
+  ['SELF_HOSTED_ASR_API_KEY', 'core', true, true, 'never', null, 'Self-hosted asr api key; dedicated credential only.', '自托管 ASR_API_KEY，仅使用专用凭据。'],
+  ['SELF_HOSTED_LLM_API_KEY', 'core', true, true, 'never', null, 'Self-hosted llm api key; dedicated credential only.', '自托管 LLM_API_KEY，仅使用专用凭据。'],
+  ['SELF_HOSTED_TTS_API_KEY', 'core', true, true, 'never', null, 'Self-hosted tts api key; dedicated credential only.', '自托管 TTS_API_KEY，仅使用专用凭据。'],
+
   ['NOVA_WORKBENCH_ACCEPTANCE_REPORT', 'host_private', false, false, 'never', null, 'Workbench acceptance report path.', 'Workbench acceptance report path.'],
   ['NOVA_WORKBENCH_ACCEPTANCE_MANIFEST', 'host_private', false, false, 'never', null, 'Workbench acceptance manifest path.', 'Workbench acceptance manifest path.'],
   ['XDG_CONFIG_HOME', 'host_private', false, false, 'never', null, 'Host configuration directory.', 'Host configuration directory.'],

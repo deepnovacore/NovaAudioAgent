@@ -1,4 +1,18 @@
 export const ENGLISH_MESSAGES = Object.freeze({
+  "自托管": "Self-hosted",
+  "导入自托管预设": "Import self-hosted preset",
+  "导出自托管预设": "Export self-hosted preset",
+  "预设仅包含选中的自托管阶段，不包含密钥。导入后请保存。更换服务来源后请先保存，再重新填写密钥。": "Presets include only selected self-hosted stages and no secrets. Save after importing. After changing the service origin, save first, then re-enter its key.",
+  "预设已导入，请保存。": "Preset imported. Save to apply.",
+  "自托管预设已导出（不含密钥）。": "Self-hosted preset exported without secrets.",
+  "预设操作失败：请检查 JSON 版本、地址和模型；至少选择一个完整的自托管阶段。": "Preset operation failed. Check JSON version, endpoints and model; select at least one complete self-hosted stage.",
+  "自托管 ASR 地址": "Self-hosted ASR endpoint",
+  "自托管 ASR 密钥（可选）": "Self-hosted ASR key (optional)",
+  "自托管 LLM 地址": "Self-hosted LLM endpoint",
+  "自托管 LLM 密钥（可选）": "Self-hosted LLM key (optional)",
+  "自托管 TTS 地址": "Self-hosted TTS endpoint",
+  "自托管 TTS 密钥（可选）": "Self-hosted TTS key (optional)",
+
   "Gemini ASR 模型": "Gemini ASR model",
   "Gemini TTS 模型": "Gemini TTS model",
   "说完一句后返回最终转录，不显示实时中间结果。": "Returns the final transcript after an utterance ends, without live partial transcripts.",

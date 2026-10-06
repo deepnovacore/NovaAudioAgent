@@ -14,7 +14,7 @@ test('production text factory only validates and constructs selected LLM with no
  const forbidden=()=>{throw new Error('audio initialized')}
  const provider=buildCascadedTextProvider({settings,clock:new VirtualClock(),idFactory:()=>`text-${++sequence}`,onUsage:()=>{metered++},prerecall:query=>{assert.equal(query,'question');recalled++;return Promise.resolve(()=>{consumed++;return Promise.resolve('verified memory context')})}},{
   ...cascadedProviderRegistries,
-  endpointing:{auto:forbidden},asr:{gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:forbidden},tts:{gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:forbidden},
+  endpointing:{auto:forbidden},asr:{'self-hosted':()=>{throw Error('unexpected self-hosted ASR')},gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:forbidden},tts:{'self-hosted':()=>{throw Error('unexpected self-hosted TTS')},gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:forbidden},
   llm:{...cascadedProviderRegistries.llm,qwen:factoryInput=>({open:()=>{opened++;return {
     async *stream(input){assert.equal(input.language,'en');adaptation=input.responseAdaptation;factoryInput.onUsage?.({id:'usage',service:'llm',provider:'qwen',model:'test',status:'complete',inputTokens:3,outputTokens:2});received.push([...input.inputs]);await Promise.resolve();yield {kind:'response_started',response_id:'r'};yield {kind:'text_delta',text:'reply'};yield {kind:'response_completed',response_id:'r'}},
     abandonPendingResponse:()=>Promise.resolve(),close:()=>Promise.resolve(),
@@ -38,8 +38,8 @@ test('voice provider factory constructs only lazy provider resources and restore
  const provider=buildCascadedVoiceProvider({settings,clock:new VirtualClock(),idFactory:()=>crypto.randomUUID(),history},{
   ...cascadedProviderRegistries,
   endpointing:{auto:()=>()=>{audioOpens++;return Promise.resolve({reset:()=>undefined,feed:()=>Promise.resolve([]),close:()=>Promise.resolve()})}},
-  asr:{gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:()=>({openClient:()=>{audioOpens++;return {open:()=>Promise.reject(new Error('unused'))}}})},
-  tts:{gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:()=>({openClient:()=>{audioOpens++;return {open:()=>Promise.reject(new Error('unused'))}}})},
+  asr:{'self-hosted':()=>{throw Error('unexpected self-hosted ASR')},gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:()=>({openClient:()=>{audioOpens++;return {open:()=>Promise.reject(new Error('unused'))}}})},
+  tts:{'self-hosted':()=>{throw Error('unexpected self-hosted TTS')},gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine:()=>({openClient:()=>{audioOpens++;return {open:()=>Promise.reject(new Error('unused'))}}})},
   llm:{...cascadedProviderRegistries.llm,qwen:()=>({open:input=>{seeded=input?.history;return {async *stream(){await Promise.resolve()},abandonPendingResponse:()=>Promise.resolve(),close:()=>Promise.resolve()}}})},
  })
  try {assert.equal(audioOpens,0);await provider.connect({tools:[],signal:new AbortController().signal});assert.equal(audioOpens,3);assert.deepEqual(seeded,history)}finally{await provider.close()}

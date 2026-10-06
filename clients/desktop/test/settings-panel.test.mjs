@@ -1,3 +1,4 @@
+import * as voicePreset from '../src/renderer/voice-preset.mjs'
 import {onButton} from '../src/renderer/button-action.mjs'
 import {createStartupNotice, startupMessage} from '../src/renderer/startup-notice.mjs'
 import {t, localizeDocument, currentLanguage} from '../src/renderer/locale.mjs'
@@ -74,7 +75,7 @@ async function mountSettingsPanel(initialView, apiOverrides = {}) {
   }
   let push
   runInNewContext(script.replace(/^import[\s\S]*?from '[^']+'\n/gm, ''), {
-    onButton, t, currentLanguage, createStartupNotice, startupMessage, localizeDocument, createPhonePanel, ...settingsController, ...settingsCategories, ...voiceChoice, createSecretRevisions, frontendUsageText, renderFrontendUsage,
+    onButton, t, currentLanguage, createStartupNotice, startupMessage, localizeDocument, createPhonePanel, ...voicePreset, ...settingsController, ...settingsCategories, ...voiceChoice, createSecretRevisions, frontendUsageText, renderFrontendUsage,
     createCapabilitiesEditor: () => ({render() {}}),
     createImPanel: () => ({load: () => Promise.resolve()}),
     createConnectionsPanel: () => ({load: () => Promise.resolve()}),
@@ -536,7 +537,7 @@ test('settings allows only inline QR images while keeping network and scripts lo
   const meta = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/)
   assert.ok(meta, 'the settings page declares a CSP')
   for (const directive of board) assert.ok(meta[1].includes(directive), `CSP keeps ${directive}`)
-  assert.doesNotMatch(html.replace(/<a class="key-link"[^>]+>获取密钥 ↗<\/a>/g, ''), /https?:\/\//)
+  assert.doesNotMatch(html.replace(/<a class="key-link"[^>]+>获取密钥 ↗<\/a>/g, '').replace(/placeholder="https:\/\/host\/(?:v1|tts)"/g, ''), /https?:\/\//)
   assert.match(html, /<html lang="zh-CN">/)
 })
 
@@ -613,7 +614,7 @@ test('every API key is a password field with a badge, hint, and clear button', (
   assert.match(html, /Codex/)
   assert.match(html, /Ark/)
   assert.match(html, /火山语音/)
-  assert.equal((html.match(/type="password"/g) || []).length, 10)
+  assert.equal((html.match(/type="password"/g) || []).length, 13)
 })
 
 test('API keys live in a collapsed semantic disclosure with a readable summary', () => {
@@ -777,8 +778,8 @@ test('workspace actions use refresh wording and omit managed terminology from UI
   assert.match(html, />清空全部工作区<\/button>/u)
   assert.match(script, /正在刷新 Codex/u)
   assert.match(script, /Codex 刷新完成/u)
-  assert.doesNotMatch(html, /重新扫描|托管/u)
-  assert.doesNotMatch(script, /重新扫描|托管/u)
+  assert.doesNotMatch(html, /重新扫描|(?<!自)托管/u)
+  assert.doesNotMatch(script, /重新扫描|(?<!自)托管/u)
 })
 
 
@@ -1455,4 +1456,26 @@ test('secret category tabs preserve unsaved keys and support keyboard navigation
   assert.equal(panel.node('#secret-tab-models').focused, 1)
   assert.equal(panel.node('#secret-tab-connections').tabIndex, -1)
   assert.equal(panel.node('#dashscopeApiKey').value, 'unsaved-fixture')
+})
+
+test('self-hosted preset import stages included endpoints until Save and clears stale token drafts', async () => {
+  const {patch} = voicePreset.parseVoicePreset(JSON.stringify({schema: 'nova.voice-preset', version: 1, name: 'Local', llm: {provider: 'self-hosted', baseUrl: 'http://127.0.0.1:8000/v1', model: 'local-model'}}))
+  const calls = []
+  const panel = await mountSettingsPanel(publicView({selfHostedLlmBaseUrl: 'https://old.example/v1'}), {
+    voicePreset: async () => ({name: 'Local', patch}),
+    set: async commit => {calls.push(commit); return publicView({...commit.settingsPatch, secretsPresent: {selfHostedLlmApiKey: false}})},
+  })
+  panel.node('#selfHostedLlmApiKey').value = 'old-token-draft'
+  panel.node('#selfHostedLlmApiKey').listeners.input()
+  await panel.click('#voice-preset-import')
+  assert.equal(calls.length, 0)
+  assert.equal(panel.node('#selfHostedLlmBaseUrl').value, patch.selfHostedLlmBaseUrl)
+  assert.equal(panel.node('#selfHostedLlmApiKey').value, '')
+  assert.equal(panel.node('#self-hosted-llm-settings').hidden, false)
+  await panel.click('#settings-save')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].settingsPatch.pipelineMode, 'cascaded')
+  assert.equal(calls[0].settingsPatch.cascadedLlmModels['self-hosted'], 'local-model')
+  assert.equal(calls[0].settingsPatch.secrets.selfHostedLlmApiKey, '')
+  assert.equal(Object.hasOwn(calls[0].settingsPatch, 'cascadedAsrProvider'), false)
 })

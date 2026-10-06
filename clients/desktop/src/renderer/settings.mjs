@@ -1,3 +1,4 @@
+import {SELF_HOSTED_STAGES, endpointOrigin} from './voice-preset.mjs'
 import {onButton} from './button-action.mjs'
 import {createVoiceprintPanel} from './voiceprint-panel.mjs'
 import {createStartupNotice, startupMessage} from './startup-notice.mjs'
@@ -37,11 +38,17 @@ const imPanel = createImPanel({document, api})
 const connectionsPanel = createConnectionsPanel({document, api})
 const voiceprintPanel = createVoiceprintPanel({document, api, stage: patch => controller.stage(patch)})
 const SECRET_KEYS = [
+  'selfHostedAsrApiKey',
+  'selfHostedLlmApiKey',
+  'selfHostedTtsApiKey',
   'composioApiKey',
   'dashscopeApiKey', 'stepfunApiKey', 'tavilyApiKey', 'openrouterApiKey',
   'arkApiKey', 'deepseekApiKey', 'openaiApiKey', 'geminiApiKey', 'doubaoBigmodelApiKey',
 ]
 const SECRET_LABELS = {
+  selfHostedAsrApiKey: 'Self-hosted ASR',
+  selfHostedLlmApiKey: 'Self-hosted LLM',
+  selfHostedTtsApiKey: 'Self-hosted TTS',
   composioApiKey: 'Composio',
   dashscopeApiKey: 'DashScope',
   stepfunApiKey: 'StepFun',
@@ -465,6 +472,11 @@ function render(view, drafts, state) {
   populatePresetOptions(integratedVoicePreset, voices)
   renderPreset(integratedVoicePreset, integratedVoiceCustom, view.integratedVoice, voices)
   voiceprintPanel.render(view, drafts)
+  for (const {stage, provider, endpoint} of SELF_HOSTED_STAGES) {
+    document.querySelector(`#self-hosted-${stage}-settings`).hidden = view[provider] !== 'self-hosted'
+    const input = document.querySelector(`#${endpoint}`)
+    if (document.activeElement !== input) input.value = view[endpoint] ?? ''
+  }
   cascadedAsrProvider.value = view.cascadedAsrProvider
   geminiAsrModel.value = view.geminiAsrModel
   geminiTtsModel.value = view.geminiTtsModel
@@ -485,6 +497,7 @@ function render(view, drafts, state) {
   }[view.cascadedLlmProvider] ?? [])
   populatePresetOptions(cascadedLlmModelPreset, modelPresets, t("自定义模型 ID…"))
   renderPreset(cascadedLlmModelPreset, cascadedLlmModel, view.cascadedLlmModels?.[view.cascadedLlmProvider], modelPresets)
+  document.querySelector('#cascaded-tts-voice-settings').hidden = view.cascadedTtsProvider === 'self-hosted'
   cascadedTtsProvider.value = view.cascadedTtsProvider
   const ttsVoices = view.cascadedTtsProvider === 'gemini' ? GEMINI_TTS_VOICES : VOLCENGINE_TTS_VOICES
   populatePresetOptions(cascadedTtsVoicePreset, ttsVoices)
@@ -605,6 +618,32 @@ bindStage(integratedModel, 'change', () => ({
 }))
 bindStage(geminiAsrModel, 'input', () => ({geminiAsrModel: geminiAsrModel.value}))
 bindStage(geminiTtsModel, 'input', () => ({geminiTtsModel: geminiTtsModel.value}))
+function stageSelfHostedPatch(patch) {
+  for (const {endpoint, secret} of SELF_HOSTED_STAGES) {
+    if (Object.hasOwn(patch, endpoint) && endpointOrigin(currentView?.[endpoint]) !== endpointOrigin(patch[endpoint])) {
+      secretInput(secret).value = ''
+      dirtySecretKeys.add(secret)
+      secretRevisions.noteInput(secret)
+    }
+  }
+  controller.stage(patch)
+}
+for (const {endpoint} of SELF_HOSTED_STAGES) {
+  const input = document.querySelector(`#${endpoint}`)
+  input.addEventListener('change', () => stageSelfHostedPatch({[endpoint]: input.value}))
+}
+for (const action of ['import', 'export']) {
+  document.querySelector(`#voice-preset-${action}`).addEventListener('click', async () => {
+    const status = document.querySelector('#voice-preset-status')
+    try {
+      const result = await api.voicePreset(action, action === 'export' ? controller.snapshot().view : undefined)
+      if (result.canceled) return
+      if (result.error) throw new Error(result.error)
+      if (result.patch) stageSelfHostedPatch(result.patch)
+      status.textContent = t(action === 'import' ? '预设已导入，请保存。' : '自托管预设已导出（不含密钥）。')
+    } catch { status.textContent = t('预设操作失败：请检查 JSON 版本、地址和模型；至少选择一个完整的自托管阶段。') }
+  })
+}
 bindStage(cascadedAsrProvider, 'change', () => ({cascadedAsrProvider: cascadedAsrProvider.value}))
 bindStage(cascadedLlmProvider, 'change', () => ({cascadedLlmProvider: cascadedLlmProvider.value}))
 cascadedLlmModelPreset.addEventListener('change', () => {

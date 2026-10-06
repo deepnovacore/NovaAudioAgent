@@ -32,7 +32,7 @@ test('production cascade forwards usage independently from semantic events with 
   const settings = loadSettings({MEMORY_CONNECTION: 'disabled', PIPELINE_MODE: 'cascaded', DASHSCOPE_API_KEY: 'test', DOUBAO_ASR_API_KEY: 'test', DOUBAO_BIGMODEL_API_KEY: 'test', TAVILY_API_KEY: 'test'})
   buildCascadedRealtimeAssembly({settings, onUsage: value => reports.push(value)}, {
     ...cascadedProviderRegistries,
-    asr: {gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine: input => {
+    asr: {'self-hosted':()=>{throw Error('unexpected self-hosted ASR')},gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine: input => {
       input.onUsage?.({id: 'asr', service: 'asr', provider: 'volcengine', model: input.config.resourceId, status: 'complete', audioDurationMs: 1200})
       return cascadedProviderRegistries.asr.volcengine(input)
     }},
@@ -40,7 +40,7 @@ test('production cascade forwards usage independently from semantic events with 
       input.onUsage?.({id: 'llm', service: 'llm', provider: 'qwen', model: input.config.model, status: 'complete', inputTokens: 100, outputTokens: 20})
       return cascadedProviderRegistries.llm.qwen(input)
     }},
-    tts: {gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine: input => {
+    tts: {'self-hosted':()=>{throw Error('unexpected self-hosted TTS')},gemini:()=>{throw new Error('unexpected Gemini speech factory')},volcengine: input => {
       input.onUsage?.({id: 'tts', service: 'tts', provider: 'volcengine', model: input.config.resourceId, status: 'complete', characters: 20})
       return cascadedProviderRegistries.tts.volcengine(input)
     }},

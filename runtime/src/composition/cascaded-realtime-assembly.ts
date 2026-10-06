@@ -1,3 +1,6 @@
+import {SelfHostedAsrClient} from '../realtime/cascaded/self-hosted-asr.js'
+import {SelfHostedTtsClient} from '../realtime/cascaded/self-hosted-tts.js'
+import type {SelfHostedSpeechConfig} from '../config/cascaded-realtime-config.js'
 import {createGeminiAsrFactory,createGeminiTtsFactory} from '../realtime/cascaded/gemini-speech.js'
 import type {GeminiSpeechConfig} from '../config/cascaded-realtime-config.js'
 import {createOpenAIWireProfile} from '../realtime/openai-wire-profile.js'
@@ -176,12 +179,12 @@ export interface CascadedProviderRegistries {
     CascadedEndpointingProviderName,
     (input: AutoEndpointingFactoryInput) => EndpointingFactory
   >>
-  readonly asr: Readonly<{volcengine:(input:VolcengineAsrFactoryInput)=>AsrFactory; gemini:(input:GeminiSpeechFactoryInput)=>AsrFactory}>
+  readonly asr: Readonly<{volcengine:(input:VolcengineAsrFactoryInput)=>AsrFactory; gemini:(input:GeminiSpeechFactoryInput)=>AsrFactory; 'self-hosted':(input:{config:SelfHostedSpeechConfig})=>AsrFactory}>
   readonly llm: Readonly<{
     readonly qwen: (input: QwenLlmFactoryInput) => CascadedLlmFactory
     readonly ark: (input: ArkLlmFactoryInput) => CascadedLlmFactory
   }>
-  readonly tts: Readonly<{volcengine:(input:VolcengineTtsFactoryInput)=>TtsFactory; gemini:(input:GeminiSpeechFactoryInput)=>TtsFactory}>
+  readonly tts: Readonly<{volcengine:(input:VolcengineTtsFactoryInput)=>TtsFactory; gemini:(input:GeminiSpeechFactoryInput)=>TtsFactory; 'self-hosted':(input:{config:SelfHostedSpeechConfig})=>TtsFactory}>
 }
 
 export const cascadedProviderRegistries: CascadedProviderRegistries = Object.freeze({
@@ -202,6 +205,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     },
   }),
   asr: Object.freeze({
+    'self-hosted':(input:{config:SelfHostedSpeechConfig})=>({openClient:()=>new SelfHostedAsrClient(input.config)}),
     gemini:(input:GeminiSpeechFactoryInput)=>createGeminiAsrFactory({...input.config,...(input.onUsage?{onUsage:input.onUsage}:{})}),
     volcengine: (input: VolcengineAsrFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultAsrClient)({
@@ -230,6 +234,7 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
     }),
   }),
   tts: Object.freeze({
+    'self-hosted':(input:{config:SelfHostedSpeechConfig})=>({openClient:()=>new SelfHostedTtsClient(input.config)}),
     gemini:(input:GeminiSpeechFactoryInput)=>createGeminiTtsFactory({...input.config,...(input.onUsage?{onUsage:input.onUsage}:{})}),
     volcengine: (input: VolcengineTtsFactoryInput) => ({
       openClient: () => (input.clientFactory ?? defaultTtsClient)({
@@ -400,6 +405,7 @@ function supportComposition(
   const gateway = new OpenAIModelGateway({
     baseUrl: connection.baseUrl,
     apiKey: connection.apiKey,
+    allowAnonymous: provider === 'self-hosted' && connection.source === 'selected_provider',
     ...(connection.source !== 'generic' && (provider === 'deepseek'||provider === 'openai') ? {thinkingControl: provider} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
@@ -709,9 +715,9 @@ function productionCodingComposition(
 }
 
 interface GeminiSpeechFactoryInput {readonly config:GeminiSpeechConfig;readonly onUsage?:UsageReporter}
-export function selectedAsrFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineAsrFactoryInput,'config'>&{config:VolcengineAsrConfig|GeminiSpeechConfig}):AsrFactory {
-  return input.config.provider==='gemini'?registry.asr.gemini({...input,config:input.config}):registry.asr.volcengine({...input,config:input.config})
+export function selectedAsrFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineAsrFactoryInput,'config'>&{config:VolcengineAsrConfig|GeminiSpeechConfig|SelfHostedSpeechConfig}):AsrFactory {
+  return input.config.provider==='self-hosted'?registry.asr['self-hosted']({config:input.config}):input.config.provider==='gemini'?registry.asr.gemini({...input,config:input.config}):registry.asr.volcengine({...input,config:input.config})
 }
-export function selectedTtsFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineTtsFactoryInput,'config'>&{config:VolcengineTtsConfig|GeminiSpeechConfig}):TtsFactory {
-  return input.config.provider==='gemini'?registry.tts.gemini({...input,config:input.config}):registry.tts.volcengine({...input,config:input.config})
+export function selectedTtsFactory(registry:CascadedProviderRegistries,input:Omit<VolcengineTtsFactoryInput,'config'>&{config:VolcengineTtsConfig|GeminiSpeechConfig|SelfHostedSpeechConfig}):TtsFactory {
+  return input.config.provider==='self-hosted'?registry.tts['self-hosted']({config:input.config}):input.config.provider==='gemini'?registry.tts.gemini({...input,config:input.config}):registry.tts.volcengine({...input,config:input.config})
 }

@@ -1166,3 +1166,13 @@ test('a rejected tool continuation explicitly cancels its reserved provider batc
  await session.accept({kind:'response_terminal',session_epoch:1,response_id:'r',status:'cancelled',reason:'cancelled'})
  assert.equal(session.providerIdle,true)
 })
+
+
+test('revisable ASR hypotheses replace captions while ordinary deltas append', async () => {
+  const {session} = makeSession()
+  await session.connect({tools: []})
+  const event = {kind:'user_transcript_delta' as const,session_epoch:1,item_id:'asr'}
+  assert.equal(session.captionFor({...event,text:'a draft',replace:true})?.text,'a draft')
+  assert.equal(session.captionFor({...event,text:'a correction',replace:true})?.text,'a correction')
+  assert.equal(session.captionFor({...event,text:' appended'})?.text,'a correction appended')
+})
