@@ -42,7 +42,19 @@ const observationSensitivity = new SensitiveContentPolicy()
 const observationPathSensitivity = new SensitivePathPolicy()
 interface ToolObservation {
   title: string; input: string; output: string; truncated: boolean; completed: boolean
-  kind?: string; command?: string; exitCode?: number; terminalId?: string; outputSeen?: boolean; background?: boolean
+  kind?: string; command?: string; rawCommand?: string; exitCode?: number; status?: DeepseekStatus; terminalId?: string; outputSeen?: boolean; background?: boolean
+}
+/** Read from the original text: redaction can remove a footer and the display bound cuts it off. */
+interface DeepseekStatus {banner: boolean; unsafe: boolean; exit: number | undefined; stray: boolean}
+function deepseekStatus(text: string): DeepseekStatus {
+  const original = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/u, '')
+  const exit = /\n\[exit code: (\d+)\]$/u.exec(original)
+  return {
+    banner: /\[output truncated;|\[some output was dropped/u.test(original),
+    unsafe: /\[timed out |\[killed by signal:|\[sandbox:/u.test(original),
+    exit: exit === null ? undefined : Number(exit[1]),
+    stray: /\[exit code:|\nExit Code:|\nSignal:/u.test(original),
+  }
 }
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -338,7 +350,7 @@ export class AcpTransport implements CodexAppServerTransport {
           if (update.title != null) tool.title = field(update.title)
           if (update.kind != null) tool.kind = update.kind
           const input = record(update.rawInput)
-          if (typeof input?.command === 'string') tool.command = field(input.command)
+          if (typeof input?.command === 'string') { tool.command = field(input.command); tool.rawCommand = this.#safeText(input.command) }
           if (input?.run_in_background === true) tool.background = true
           // OpenCode reports the real process exit code in rawOutput.metadata.
           const rawOutput = record(update.rawOutput), metadata = record(rawOutput?.metadata)
@@ -361,20 +373,22 @@ export class AcpTransport implements CodexAppServerTransport {
           }
           if (update.rawInput !== undefined) tool.input = field(update.rawInput)
           if (update.rawOutput !== undefined) {
+            if (this.#options.backendId === 'deepseek') tool.status = deepseekStatus(this.#safeText(typeof update.rawOutput === 'string' ? update.rawOutput : JSON.stringify(update.rawOutput)))
             tool.output = field(this.#options.backendId === 'opencode' && tool.kind === 'execute' && typeof rawOutput?.output === 'string' ? rawOutput.output : update.rawOutput)
             tool.outputSeen = true
           }
           else if (update.content?.some(part => part.type === 'content' && part.content.type === 'text')) {
+            if (this.#options.backendId === 'deepseek') tool.status = deepseekStatus(this.#safeText(update.content.map(part => part.type === 'content' && part.content.type === 'text' ? part.content.text : '').join('\n')))
             tool.output = field(update.content.filter(part => part.type === 'content' && part.content.type === 'text').map(part => part.type === 'content' && part.content.type === 'text' ? part.content.text : '').join('\n'))
             tool.outputSeen = true
           }
           if (update.status === 'completed' && tool.command && tool.outputSeen) {
             if (this.#options.backendId === 'codebuddy' && tool.kind === 'execute' && rawOutput?.type === 'text' && typeof rawOutput.text === 'string') {
               // CodeBuddy's command result wrapper always ends with the process status.
-              const result = field(rawOutput.text), exit = /\nExit Code: (-?\d+)\nSignal: \(none\)\s*$/u.exec(result)
-              // A result cut at the field bound has lost its real trailer; a forged one at the cut must not count.
-              if (result.startsWith(`Command: ${tool.command}\n`) && exit && result.length < 6000) {
-                tool.exitCode = Number(exit[1]); tool.output = result
+              // Parse the status from the original text: redaction may remove it, and display truncation cuts it off.
+              const original = this.#safeText(rawOutput.text), exit = /\nExit Code: (-?\d+)\nSignal: \(none\)\s*$/u.exec(original)
+              if (tool.rawCommand !== undefined && original.startsWith(`Command: ${tool.rawCommand}\n`) && exit) {
+                tool.exitCode = Number(exit[1]); tool.output = field(rawOutput.text)
               }
             }
             if (this.#options.backendId === 'deepseek' && tool.title === 'bash' && !tool.background) {
@@ -382,16 +396,16 @@ export class AcpTransport implements CodexAppServerTransport {
               // a foreground completed result omits the exit marker only for exit 0.
               // Failure, signal, timeout, sandbox denial and background acknowledgements
               // must never become a successful check merely because ACP says completed.
+              // Markers come from the original text read when the output arrived (see deepseekStatus), because redaction
+              // or the display bound can remove the footer, and a missing footer must not read as exit 0.
+              const status = tool.status
               const output = tool.output.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/u, '')
-              tool.truncated ||= /\[output truncated;|\[some output was dropped/u.test(output)
-              // Output cut at our field bound has lost its footer: absence of a marker is then not exit 0.
-              const cutHere = tool.output.length >= 6000
-              if (!cutHere && !/\[timed out |\[killed by signal:|\[sandbox:/u.test(output)) {
-                const exit = /\n\[exit code: (\d+)\]$/u.exec(output)
-                // Only the final exact marker counts; a forged earlier 0 with a later failure must not win.
-                if (exit) { tool.kind = 'execute'; tool.exitCode = Number(exit[1]); tool.output = output }
-                else if (!/\[exit code:|\nExit Code:|\nSignal:/u.test(output)) {
-                  tool.kind = 'execute'; tool.exitCode = 0; tool.output = output
+              if (status !== undefined) {
+                tool.truncated ||= status.banner
+                if (!status.unsafe) {
+                  // Only the final exact marker counts; a forged earlier 0 with a later failure must not win.
+                  if (status.exit !== undefined) { tool.kind = 'execute'; tool.exitCode = status.exit; tool.output = output }
+                  else if (!status.stray) { tool.kind = 'execute'; tool.exitCode = 0; tool.output = output }
                 }
               }
             }
