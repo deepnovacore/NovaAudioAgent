@@ -1,0 +1,8 @@
+{
+  "name": "Local 4090 voice",
+  "root": "./local-serving",
+  "gpus": {"llm": 0, "asr": 1, "tts": 0},
+  "ports": {"llm": 18101, "asr": 18102, "tts": 18103},
+  "llm": {"model": "Qwen/Qwen3.5-4B", "memory": 0.5, "context": 8192, "max_sequences": 1},
+  "timeout": 600
+}

@@ -15,3 +15,5 @@
 | 了解任务如何执行 | [工作原理](architecture.md) |
 
 开发参考：[架构](archs/00-overview.md) · [客户端协议](protocols/client-v1.md) · [远程部署](deployment/remote-server.md)
+
+[自托管语音与预置配置](deployment/self-hosted-voice.md)

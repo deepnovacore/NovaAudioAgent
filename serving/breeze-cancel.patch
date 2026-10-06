@@ -1,0 +1,72 @@
+--- a/breeze_infer/api.py
++++ b/breeze_infer/api.py
+@@ -13,6 +13,8 @@
+ from dataclasses import dataclass, replace
+ from pathlib import Path
+ 
++import anyio
++from starlette.concurrency import run_in_threadpool
+ import numpy as np
+ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+ from fastapi.responses import JSONResponse, StreamingResponse
+@@ -53,6 +55,26 @@
+ 
+ _settings: ApiSettings | None = None
+ _request_lock = threading.Lock()
++
++
++class ClosingStreamingResponse(StreamingResponse):
++    """Own generator cleanup even when the client disconnects before iteration."""
++    def __init__(self, content, *, cleanup, **kwargs):
++        super().__init__(content, **kwargs)
++        self._source = content
++        self._cleanup = cleanup
++
++    async def __call__(self, scope, receive, send):
++        try:
++            await super().__call__(scope, receive, send)
++        finally:
++            # Shield cleanup from the disconnect's cancellation scope. Starlette has
++            # joined its non-abandoning iterator thread before returning here.
++            with anyio.CancelScope(shield=True):
++                try:
++                    await run_in_threadpool(self._source.close)
++                finally:
++                    self._cleanup()
+ 
+ 
+ def _pcm16(audio: np.ndarray) -> bytes:
+@@ -238,6 +260,16 @@
+         _request_lock.release()
+         raise
+ 
++    released = False
++    def cleanup() -> None:
++        nonlocal released
++        if released:
++            return
++        released = True
++        if reference_path is not None:
++            reference_path.unlink(missing_ok=True)
++        _request_lock.release()
++
+     def body() -> Iterator[bytes]:
+         try:
+             for chunk in _iter_seeded_audio_chunks(
+@@ -250,12 +282,11 @@
+                 if pcm:
+                     yield pcm
+         finally:
+-            if reference_path is not None:
+-                reference_path.unlink(missing_ok=True)
+-            _request_lock.release()
+-
+-    return StreamingResponse(
++            cleanup()
++
++    return ClosingStreamingResponse(
+         body(),
++        cleanup=cleanup,
+         media_type="audio/pcm",
+         headers={
+             "X-Sample-Rate": str(app.state.runtime.sample_rate),

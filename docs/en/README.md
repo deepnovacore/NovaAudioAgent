@@ -15,3 +15,5 @@
 | Understand task execution | [How it works](architecture.md) |
 
 Developer reference: [Architecture](archs/00-overview.md) · [Client protocol](protocols/client-v1.md) · [Remote deployment](deployment/remote-server.md)
+
+[Self-hosted voice and presets](deployment/self-hosted-voice.md)
