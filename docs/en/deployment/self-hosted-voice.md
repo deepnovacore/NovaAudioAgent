@@ -42,7 +42,7 @@ Open Settings → Voice pipeline, import the exported JSON, review the displayed
 }
 ```
 
-Unknown fields/versions and files over 64 KiB are rejected as a whole. URLs support remote HTTPS/WSS or plaintext literal loopback addresses. URL credentials, query strings and fragments are rejected. Tokens use separate optional ASR/LLM/TTS secret fields and are never exported. Changing an endpoint's origin clears its old token; save the new endpoint before entering its token. Existing cloud keys are never reused for self-hosted stages.
+Unknown fields/versions and files over 64 KiB are rejected as a whole. URLs support remote HTTPS/WSS or plaintext literal loopback addresses. URL credentials, query strings and fragments are rejected. Tokens use separate optional ASR/LLM/TTS secret fields and are never exported. Changing an endpoint's origin clears its old token; an explicitly entered new token can be saved together with the new endpoint. Existing cloud keys are never reused for self-hosted stages.
 
 Support model requests follow the selected conversation provider unless separately overridden. Memory embeddings, search and other enabled services keep their own configuration; selecting self-hosted voice alone does not make the entire application offline.
 
@@ -61,3 +61,26 @@ node serving/smoke.mjs voice-preset.json prerecorded-16khz-mono.s16le
 ```
 
 This checks final ASR, an LLM tool round-trip, TTS cancellation and the next synthesis request, then feeds the prerecorded audio through the production conversation voice pipeline to obtain a completed audio response. It does not record a microphone or establish acoustic echo cancellation, speaker playback or conversational latency quality.
+
+## Mac simulation and local ASR
+
+The CUDA launcher remains Linux-only. To rehearse Mac input without opening a physical microphone, generate a fixed audio file using an installed macOS voice and convert it to mono 16 kHz PCM:
+
+```sh
+mkdir -p output
+say -v Tingting -o output/mock-mic.aiff '你好，这是本地语音测试。请用一句话回答。'
+ffmpeg -nostdin -y -i output/mock-mic.aiff -ar 16000 -ac 1 -f s16le output/mock-mic.s16le
+node serving/mock-smoke.mjs output/mock-mic.s16le
+```
+
+This starts temporary loopback ASR/LLM/TTS doubles and feeds the file in microphone-sized frames through the production pipeline. It checks tool round-trips, replacement transcripts, odd PCM network boundaries, cancellation and subsequent synthesis. Its ASR text, LLM replies and TTS tone are mocks, not model quality measurements. It never records or plays physical audio.
+
+To additionally run **real local CPU transcription**, use an existing Python environment with `openai-whisper` and existing `.pt` weights:
+
+```sh
+python serving/mac-asr-smoke.py --model /path/to/base.pt --audio output/mock-mic.aiff --expect 本地
+```
+
+This command does not download models. A pass proves local ASR for this synthetic fixture; it does not prove Mac LLM/TTS serving, microphone permissions, echo cancellation or speaker playback. The earlier 4090 smoke uses real remote models, independently of these mock services.
+
+The reference setup pins Breeze source and Whisper weights. LLM/TTS model revisions default to `main`; specify exact commits in the machine profile's `model_revisions` (`llm` and `tts`) when a reproducible fresh deployment is required.

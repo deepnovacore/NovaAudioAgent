@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
+import {OpenAIModelGateway} from '../src/model/model-gateway.js'
+import {VirtualClock} from '../src/core/clock.js'
 import {once} from 'node:events'
 import {WebSocketServer} from 'ws'
 import {loadSettings, describeMissingBlockingCredentials} from '../src/config/config.js'
@@ -80,4 +82,21 @@ test('self-hosted LLM shares streaming protocol without cloud auth or provider-s
   const events=await collect(session.stream({inputs:[{kind:'user_text',text:'Hi'},{kind:'host_context',content:'host note'}],tools:[],signal:new AbortController().signal}))
   assert(events.some(event=>event.kind==='text_delta'))
   await session.close()
+})
+
+
+test('redirect rejection is scoped to self-hosted LLMs, cloud behavior is preserved', async()=>{
+  for(const provider of ['qwen','self-hosted'] as const){
+    const redirect=provider==='self-hosted'?'error':'follow'
+    const session=createChatCompletionsLlmFactory({provider,baseUrl:'https://example.com/v1',apiKey:'test',model:'m',instructions:'Be helpful',fetchImpl:(_url,init)=>{
+      assert.equal(init?.redirect,redirect)
+      return Promise.resolve(new Response('data: '+JSON.stringify({id:'r',choices:[{delta:{content:'ok'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'r',choices:[{delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}))
+    }}).open()
+    try{await collect(session.stream({inputs:[{kind:'user_text',text:'Hi'}],tools:[],signal:new AbortController().signal}))}finally{await session.close()}
+    const gateway=new OpenAIModelGateway({baseUrl:'https://example.com/v1',apiKey:'test',clock:new VirtualClock(),...(provider==='self-hosted'?{redirect:'error' as const}:{}),fetch:(_url,init)=>{
+      assert.equal(init?.redirect,redirect)
+      return Promise.resolve(new Response(JSON.stringify({choices:[{message:{content:'ok'},finish_reason:'stop'}]}),{headers:{'content-type':'application/json'}}))
+    }})
+    assert.equal((await gateway.complete({model:'m',system:'test',prompt:'hello'})).text,'ok')
+  }
 })

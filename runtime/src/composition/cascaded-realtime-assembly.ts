@@ -406,6 +406,7 @@ function supportComposition(
     baseUrl: connection.baseUrl,
     apiKey: connection.apiKey,
     allowAnonymous: provider === 'self-hosted' && connection.source === 'selected_provider',
+    redirect: provider === 'self-hosted' && connection.source === 'selected_provider' ? 'error' : 'follow',
     ...(connection.source !== 'generic' && (provider === 'deepseek'||provider === 'openai') ? {thinkingControl: provider} : {}),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),

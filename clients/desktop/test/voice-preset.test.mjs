@@ -44,8 +44,13 @@ test('origin changes clear each stage token and prevent environment fallback, sa
   for (const {stage, endpoint, secret} of SELF_HOSTED_STAGES) {
     const same = applySettingsUpdate(settings, {[endpoint]: settings[endpoint] + '/new'}, codec)
     assert.equal(readSecret(same, secret, codec), keys[secret])
-    const next = applySettingsUpdate(settings, {[endpoint]: `${stage === 'asr' ? 'wss' : 'https'}://new.example/service`, secrets: {[secret]: 'stale-draft'}}, codec)
+    const next = applySettingsUpdate(settings, {[endpoint]: `${stage === 'asr' ? 'wss' : 'https'}://new.example/service`}, codec)
     assert.equal(readSecret(next, secret, codec), '')
+    const explicit = applySettingsUpdate(settings, {[endpoint]: `${stage === 'asr' ? 'wss' : 'https'}://new.example/service`, secrets: {[secret]: 'new-origin-key'}}, codec)
+    assert.equal(readSecret(explicit, secret, codec), 'new-origin-key')
+    const invalid = applySettingsUpdate(settings, {[endpoint]: `${stage === 'asr' ? 'wss' : 'https'}://new.example/service`, secrets: {[secret]: 'invalid\nkey'}}, codec)
+    assert.equal(readSecret(invalid, secret, codec), '')
+    assert.ok(invalid.rejectedSecrets.includes(secret))
     const envName = `SELF_HOSTED_${stage.toUpperCase()}_API_KEY`
     const resolved = resolveSecretConfiguration({[secret]: ''}, {[envName]: 'old-alias', [`NOVA_${envName}`]: 'old-canonical'}, {[envName]: 'old-dotenv'})
     const env = capabilityEnvironment(next, resolved.secrets, {[envName]: 'old-alias', [`NOVA_${envName}`]: 'old-canonical'})

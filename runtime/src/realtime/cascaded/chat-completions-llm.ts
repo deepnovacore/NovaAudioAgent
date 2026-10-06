@@ -110,7 +110,7 @@ class Session implements CascadedLlmSession {
     }
     try {
       let response: Response
-      try { response = await this.#timed(this.#fetch(this.#endpoint, {method: 'POST', redirect: 'error', headers: {...(this.#apiKey ? {authorization: `Bearer ${this.#apiKey}`} : {}), 'content-type': 'application/json', accept: 'text/event-stream'}, body: JSON.stringify(body), signal: active.controller.signal}), active) }
+      try { response = await this.#timed(this.#fetch(this.#endpoint, {method: 'POST', redirect: this.#provider === 'self-hosted' ? 'error' : 'follow', headers: {...(this.#apiKey ? {authorization: `Bearer ${this.#apiKey}`} : {}), 'content-type': 'application/json', accept: 'text/event-stream'}, body: JSON.stringify(body), signal: active.controller.signal}), active) }
       catch (error) { if (error instanceof ChatCompletionsLlmFailure) throw error; throw fail(input.signal.aborted ? 'aborted' : this.#closed ? 'closed' : 'network') }
       if (!response.ok) { await this.#cancel(response.body?.getReader() ?? null); throw fail('http', response.status) }
       if (response.body === null || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')) { await this.#cancel(response.body?.getReader() ?? null); throw fail('protocol') }

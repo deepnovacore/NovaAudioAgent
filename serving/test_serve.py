@@ -17,6 +17,32 @@ spec.loader.exec_module(serve)
 
 
 class ServingTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux TCP TIME_WAIT restart regression')
+    def test_port_probe_allows_recently_closed_connection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            profile = root / 'machine.json'
+            with socket.socket() as listener, socket.socket() as client, socket.socket() as asr, socket.socket() as tts:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                listener.bind(('127.0.0.1', 0))
+                listener.listen()
+                port = listener.getsockname()[1]
+                client.connect(('127.0.0.1', port))
+                connection, _ = listener.accept()
+                connection.close()  # Server closes first, retaining its port in TIME_WAIT.
+                self.assertEqual(client.recv(1), b'')
+                client.close()
+                listener.close()
+                asr.bind(('127.0.0.1', 0))
+                tts.bind(('127.0.0.1', 0))
+                ports = {'llm': port, 'asr': asr.getsockname()[1], 'tts': tts.getsockname()[1]}
+                asr.close()
+                tts.close()
+                profile.write_text(json.dumps({'root': directory, 'ports': ports}))
+                with patch.object(serve, 'commands', side_effect=RuntimeError('probe passed')):
+                    with self.assertRaisesRegex(RuntimeError, 'probe passed'):
+                        serve.start(serve.load_profile(profile), root, root / 'workers.json', [])
+
     def test_preset_contains_only_client_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             profile = pathlib.Path(directory) / 'machine.json'

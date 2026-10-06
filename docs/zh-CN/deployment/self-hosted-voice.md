@@ -42,7 +42,7 @@ ssh -N -L 18101:127.0.0.1:18101 -L 18102:127.0.0.1:18102 -L 18103:127.0.0.1:1810
 }
 ```
 
-未知字段/版本、超过 64 KiB 的文件会整体拒绝。支持远程 HTTPS/WSS，明文只允许字面量回环 IP；禁止 URL 内凭据、查询串和片段。ASR/LLM/TTS 使用各自独立的可选密钥，导出不包含密钥。修改端点 origin 会清除旧密钥，应先保存新地址，再填写新密钥；不会复用已有云服务密钥。
+未知字段/版本、超过 64 KiB 的文件会整体拒绝。支持远程 HTTPS/WSS，明文只允许字面量回环 IP；禁止 URL 内凭据、查询串和片段。ASR/LLM/TTS 使用各自独立的可选密钥，导出不包含密钥。修改端点 origin 会清除旧密钥，可以同时填写新地址及对应的新密钥并保存；不会复用已有云服务密钥。
 
 没有单独覆盖时，辅助模型跟随所选会话模型。记忆嵌入、搜索及其他服务仍使用自身配置，因此仅选择自托管语音不等于整个应用完全离线。
 
@@ -61,3 +61,26 @@ node serving/smoke.mjs voice-preset.json prerecorded-16khz-mono.s16le
 ```
 
 此检查覆盖 ASR 最终转录、LLM 工具调用往返、TTS 取消及后续合成，再将预录音频送入生产会话语音管线，确认返回完整的音频回复。不采集麦克风，也不证明回声消除、扬声器播放和真实会话延迟体验已验收。
+
+## Mac 模拟输入与本地 ASR
+
+CUDA 启动器仍仅支持 Linux。Mac 上可以用已安装的系统语音生成固定输入，不开启真实麦克风，再转换为单声道 16 kHz PCM：
+
+```sh
+mkdir -p output
+say -v Tingting -o output/mock-mic.aiff '你好，这是本地语音测试。请用一句话回答。'
+ffmpeg -nostdin -y -i output/mock-mic.aiff -ar 16000 -ac 1 -f s16le output/mock-mic.s16le
+node serving/mock-smoke.mjs output/mock-mic.s16le
+```
+
+脚本临时启动回环 ASR/LLM/TTS 假服务，以麦克风大小的音频帧驱动生产管线，检查工具往返、修订字幕、PCM 奇数字节分块、取消及后续合成。转录文本、模型回复和 TTS 音调都是 mock，不是模型效果指标。不会录制或播放物理音频。
+
+还可以用已有的 `openai-whisper` Python 环境和本地 `.pt` 权重，执行**真实本机 CPU 转录**：
+
+```sh
+python serving/mac-asr-smoke.py --model /path/to/base.pt --audio output/mock-mic.aiff --expect 本地
+```
+
+此命令不会下载模型。通过只代表本机 ASR 对该合成样本有效，不代表 Mac LLM/TTS serving、麦克风权限、回声消除或扬声器播放已验收。此前 4090 的 smoke 使用真实远端模型，与这里的假服务独立。
+
+参考安装固定了 Breeze 源码与 Whisper 权重版本。LLM/TTS 模型版本默认 `main`；若需要新部署可复现，应在机器配置的 `model_revisions` 中为 `llm` 和 `tts` 指定确切 commit。

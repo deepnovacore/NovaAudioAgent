@@ -196,6 +196,7 @@ def start(config, state, records_path, records):
     # Reject foreign listeners before starting any worker; never stop them.
     for port in config['ports'].values():
         with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind(('127.0.0.1', port))
     launches = commands(config)
     active, children = [], []

@@ -528,15 +528,13 @@ export function applySettingsUpdate(current, patch, codec) {
   const stored = normalizeSettings(current)
   const source = isRecord(patch) ? patch : {}
   const next = normalizeSettings({...source, version: stored.version}, stored)
-  const { secrets, rejected } = updatedSecrets(
-    stored.secrets,
-    source.secrets,
-    codec,
-  )
+  const previousSecrets = {...stored.secrets}
   for (const {endpoint, secret, stage} of SELF_HOSTED_STAGES) {
     if (Object.hasOwn(source, endpoint) && validSelfHostedUrl(source[endpoint], stage) === null) throw new Error('invalid_self_hosted_url')
-    if (endpointOrigin(stored[endpoint]) !== endpointOrigin(next[endpoint])) secrets[secret] = {enc: 'cleared', data: ''}
+    if (endpointOrigin(stored[endpoint]) !== endpointOrigin(next[endpoint])) previousSecrets[secret] = {enc: 'cleared', data: ''}
   }
+  // Bind explicit new credentials to the new origin; never retain the old token.
+  const {secrets, rejected} = updatedSecrets(previousSecrets, source.secrets, codec)
   next.secrets = resealPlaintext(secrets, codec)
   next.rejectedSecrets = rejected
   return next
