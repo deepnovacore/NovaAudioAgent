@@ -34,7 +34,7 @@ test('smoke diagnostics retain the error but remove tokens, keys and private pat
 test('signing growth refreshes unpacked ASAR metadata without replacing sealed bytes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-signed-asar-'))
   const source = join(root, 'source'), archive = join(root, 'resources/app.asar')
-  const nativePath = 'node_modules/fixture/native.node'
+  const nativePath = join('node_modules', 'fixture', 'native.node')
   try {
     await file(source, 'src/main/main.mjs', 'entry')
     await file(source, nativePath, 'native')
@@ -45,7 +45,7 @@ test('signing growth refreshes unpacked ASAR metadata without replacing sealed b
     await refreshSignedAsar(archive)
     assert.equal(statFile(archive, nativePath).size, 16)
     assert.equal(extractFile(archive, nativePath).toString(), 'native-signature')
-    assert.equal(extractFile(archive, 'src/main/main.mjs').toString(), 'entry')
+    assert.equal(extractFile(archive, join('src', 'main', 'main.mjs')).toString(), 'entry')
     const plistPath = join(root, 'Info.plist')
     await writeFile(plistPath, plist.build({CFBundleIdentifier: 'fixture', ElectronAsarIntegrity: {'Resources/other.asar': {hash: 'preserved'}}}))
     await assert.rejects(inspectMacAsarIntegrity(dirname(archive)), /macOS ASAR integrity mismatch/)
