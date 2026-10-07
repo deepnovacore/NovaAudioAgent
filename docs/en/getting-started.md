@@ -103,6 +103,7 @@ Desktop launches into one of three views, controlled by the `startupView` settin
 
 | Problem | What to check |
 |---|---|
+| macOS says the app is "damaged" | The app is unsigned and a browser download carries a quarantine flag. Move it to Applications, run `xattr -dr com.apple.quarantine "/Applications/Nova Audio Agent Desktop.app"`, then open it again |
 | Voice cannot connect | Credentials, service access and connectivity for the selected mode |
 | Codex cannot run | Codex sign-in and access to the project directory |
 | Saved settings have no effect | Look for the pending-restart notice and restart the backend |

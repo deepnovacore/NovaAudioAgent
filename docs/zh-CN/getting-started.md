@@ -105,6 +105,7 @@ Ark 可显式选择为级联 LLM，使用 `ARK_API_KEY`。条件式设置面板�
 
 | 问题 | 检查方式 |
 |---|---|
+| macOS 提示应用「已损坏」 | 应用未签名，浏览器下载的文件带有隔离标记。拖到「应用程序」后运行 `xattr -dr com.apple.quarantine "/Applications/Nova Audio Agent Desktop.app"`，再重新打开 |
 | 语音连接失败 | 检查所选模式的密钥、服务权限和网络连接 |
 | Codex 无法执行 | 确认 Codex 已登录，项目目录可访问 |
 | 保存后没有变化 | 查看是否提示「待重启」，点击重启后台 |
