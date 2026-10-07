@@ -12,7 +12,7 @@ const packageRoot = resolve(__dirname, '..')
 const inheritEntitlements = resolve(packageRoot, 'resources/entitlements.mac.inherit.plist')
 
 /**
- * Electron-builder calls this only after it has selected a real signing identity. Native resources
+ * Electron-builder calls this after selecting a signing identity (including explicit ad-hoc '-'). Native resources
  * are sealed first, the manifest hashes those sealed bytes, then osx-sign seals every remaining
  * nested component and the outer app while explicitly preserving the already-sealed resources.
  */

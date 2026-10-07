@@ -7,7 +7,7 @@ import test from 'node:test'
 import {spawnSync} from 'node:child_process'
 import {fileURLToPath} from 'node:url'
 import {createPackageWithOptions, uncache} from '@electron/asar'
-import {inspectApplication, readReadiness, prepareSmokeHome} from '../scripts/verify-release.mjs'
+import {inspectApplication, readReadiness, prepareSmokeHome, redactSmokeOutput} from '../scripts/verify-release.mjs'
 import {loadSettings} from '../src/main/settings-store.mjs'
 import {backendLaunchSpec} from '../src/main/backend.mjs'
 import {describeMissingBlockingEnvironment} from '@nova-audio-agent/runtime/desktop'
@@ -18,6 +18,15 @@ async function file(root, name, body = 'fixture') {
   await mkdir(dirname(join(root, name)), {recursive: true})
   await writeFile(join(root, name), body)
 }
+
+test('smoke diagnostics retain the error but remove tokens, keys and private paths', () => {
+  const text = redactSmokeOutput('Electron sandbox failed at /private/profile; key=private-key-123 token=0123456789abcdef0123456789abcdef',
+    ['private-key-123'], ['/private/profile'])
+  assert.match(text, /Electron sandbox failed/)
+  assert.ok(!text.includes('private-key-123'))
+  assert.ok(!text.includes('0123456789abcdef0123456789abcdef'))
+  assert.ok(!text.includes('/private/profile'))
+})
 
 test('installed smoke selects the controlled provider without requiring unrelated credentials', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-smoke-settings-')), home = join(root, 'home')

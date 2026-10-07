@@ -2,11 +2,11 @@
 export const SETUP_LLM_KEYS = Object.freeze({qwen: 'dashscopeApiKey', deepseek: 'deepseekApiKey', ark: 'arkApiKey'})
 export const SETUP_KEYS = Object.freeze(['dashscopeApiKey', 'deepseekApiKey', 'arkApiKey', 'doubaoBigmodelApiKey'])
 
-export function setupCommit(choice) {
+export function setupCommit(choice, currentTextLlmProvider = 'qwen') {
   if (!choice || typeof choice !== 'object') throw new Error('invalid setup choice')
   const pipelineMode = choice.pipelineMode
   if (pipelineMode !== 'integrated' && pipelineMode !== 'cascaded') throw new Error('invalid setup choice')
-  const llmProvider = pipelineMode === 'cascaded' ? choice.cascadedLlmProvider : null
+  const llmProvider = pipelineMode === 'cascaded' ? choice.cascadedLlmProvider : currentTextLlmProvider
   if (pipelineMode === 'cascaded' && !Object.hasOwn(SETUP_LLM_KEYS, llmProvider)) throw new Error('invalid setup choice')
   const allowed = pipelineMode === 'integrated' ? ['dashscopeApiKey'] : [SETUP_LLM_KEYS[llmProvider], 'doubaoBigmodelApiKey']
   const source = choice.secrets && typeof choice.secrets === 'object' ? choice.secrets : {}

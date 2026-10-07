@@ -5,6 +5,7 @@ import {mountPersonalView} from '../src/renderer/personal-view.mjs'
 import {createImPanel} from '../src/renderer/im-panel.mjs'
 import {renderFeishu} from '../src/renderer/feishu-view.mjs'
 import {feishuVerificationUrl} from '../src/main/security.mjs'
+import {setLanguage} from '../src/renderer/locale.mjs'
 
 class Node {
  constructor(tag,text){this.tag=tag;this.text=text;this.children=[];this.listeners={};this.dataset={};this.classList={add:()=>{}}}
@@ -25,6 +26,17 @@ function view(state,overrides={}){
  renderFeishu({state,local,card:()=>el('article'),el,button,command:async(method,params)=>{commands.push({method,params})},refresh:()=>{},api:{personal:{}}})
  return {nodes,commands,button:label=>nodes.find(node=>node.tag==='button'&&node.text===label)}
 }
+test('English Feishu controls preserve user and external text', t => {
+ setLanguage('en');t.after(()=>setLanguage('zh-CN'))
+ const setup=view({available:true,configured:false})
+ assert.ok(setup.button('Create Feishu app'))
+ const chats=view({available:true,configured:true,state:'ready',chats:[{id:'chat',name:'用户会话'}],error:'外部错误原文'})
+ assert.ok(chats.button('Select chats'))
+ assert.ok(chats.nodes.some(node=>node.text==='用户会话'))
+ assert.ok(chats.nodes.some(node=>node.text==='外部错误原文'))
+ const expired=view({available:true,configured:true,state:'unauthorized',auth_issue:'expired'})
+ assert.ok(expired.nodes.some(node=>node.text?.includes('authorization has expired')))
+})
 test('Feishu does not authorize reading or bot delivery by rendering and keeps deletion separate',async()=>{
  const v=view({available:true,configured:true,state:'ready',chats:[{id:'chat-1',name:'测试会话'}]})
  assert.deepEqual(v.commands,[])

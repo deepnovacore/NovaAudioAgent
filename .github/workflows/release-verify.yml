@@ -33,6 +33,7 @@ jobs:
     timeout-minutes: 30
     env:
       RELEASE_VERSION: ${{ inputs.release_version }}
+      NOVA_SMOKE_DIAGNOSTICS: ${{ github.workspace }}/smoke-diagnostics
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,6 +64,13 @@ jobs:
         run: ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }} node scripts/verify-npm-desktop.mjs npm-smoke/node_modules/nova-audio-agent
       - name: Verify the published headless package
         if: runner.os == 'Linux'
+        shell: bash
         run: |
-          npm install --prefix server-smoke nova-audio-agent-server@${{ inputs.release_version }}
+          bash scripts/install-published-package.sh "nova-audio-agent-server@$RELEASE_VERSION" server-smoke
           node scripts/verify-server-package.mjs server-smoke/node_modules/.bin/novaaudio-server
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: published-diagnostics-${{ runner.os }}-${{ github.run_attempt }}
+          path: smoke-diagnostics/*
+          if-no-files-found: warn

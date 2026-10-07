@@ -9,7 +9,7 @@ import {test} from 'node:test'
 
 import {ensureDesktop, inspectDoctor, launchDesktop, parseChecksum} from '../src/runtime.mjs'
 
-const ARTIFACT = 'nova-audio-agent-0.3.0-windows-x64-portable.zip'
+const ARTIFACT = 'nova-audio-agent-0.3.1-windows-x64-portable.zip'
 const TARGET_OPTIONS = Object.freeze({platform: 'win32', arch: 'x64'})
 
 async function extractFixture({artifact, payload, target}) {
@@ -86,13 +86,13 @@ test('checksum failure leaves no runnable installation', async () => {
     ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture}),
     /checksum mismatch/u,
   )
-  const root = join(home, '.nova-audio-agent/cli/releases/0.3.0/win32-x64')
+  const root = join(home, '.nova-audio-agent/cli/releases/0.3.1/win32-x64')
   await assert.rejects(readFile(join(root, 'Nova Audio Agent Desktop.exe')))
 })
 
 test('a failed replacement preserves an existing cache directory', async () => {
   const home = await mkdtemp(join(tmpdir(), 'novaaudio-cli-'))
-  const root = join(home, '.nova-audio-agent/cli/releases/0.3.0/win32-x64')
+  const root = join(home, '.nova-audio-agent/cli/releases/0.3.1/win32-x64')
   await mkdir(root, {recursive: true})
   await writeFile(join(root, 'previous-cache'), 'keep')
   const fetchImpl = async url => String(url).endsWith('.sha256')
@@ -141,7 +141,7 @@ test('an interrupted download leaves no partial executable', async () => {
     ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture}),
     /connection lost/u,
   )
-  const executable = join(home, '.nova-audio-agent/cli/releases/0.3.0/win32-x64/Nova Audio Agent Desktop.exe')
+  const executable = join(home, '.nova-audio-agent/cli/releases/0.3.1/win32-x64/Nova Audio Agent Desktop.exe')
   await assert.rejects(readFile(executable))
 })
 
@@ -292,7 +292,7 @@ for (const failure of ['checksum', 'artifact', 'persistent']) {
     if (failure === 'persistent') {
       await assert.rejects(install, error => /download.*failed.*3 attempts/i.test(error.message) && /retry/i.test(error.message) && error.cause?.message === 'terminated')
       assert.equal(interruptions, 3)
-      await assert.rejects(readFile(join(home, '.nova-audio-agent/cli/releases/0.3.0/win32-x64/novaaudio-install.json')))
+      await assert.rejects(readFile(join(home, '.nova-audio-agent/cli/releases/0.3.1/win32-x64/novaaudio-install.json')))
     } else {
       const installed = await install
       assert.deepEqual(await readFile(installed.executable), bytes)

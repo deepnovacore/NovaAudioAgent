@@ -435,14 +435,13 @@ test('integrated launch injects all active public settings and only its platform
   assert.equal(spec.env.QWEN_REALTIME_MODEL, 'qwen-integrated-custom')
   assert.equal(spec.env.QWEN_REALTIME_VOICE, 'longxiaochun')
   assert.equal(spec.env.DASHSCOPE_API_KEY, 'dash-key')
+  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'ark')
+  assert.equal(spec.env.ARK_API_KEY, 'ark-key')
   for (const name of [
     'CASCADE_ENDPOINTING_PROVIDER',
     'CASCADE_ASR_PROVIDER',
-    'CASCADE_LLM_PROVIDER',
-    'CASCADE_LLM_MODEL',
     'CASCADE_TTS_PROVIDER',
     'DOUBAO_TTS_VOICE',
-    'ARK_API_KEY',
     'DOUBAO_BIGMODEL_API_KEY',
     'DOUBAO_ASR_API_KEY',
   ]) {
@@ -586,6 +585,15 @@ test('launch spec falls back per-field for a partially-populated settings object
   assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'deepseek')
   assert.equal(spec.env.CASCADE_LLM_MODEL, 'deepseek-flash')
   assert.equal(spec.env.DOUBAO_TTS_VOICE, 'zh_female_vv_uranus_bigtts')
+})
+
+test('integrated quick start supplies Qwen text settings without unused speech keys', () => {
+  const spec = nodeLaunchSpec({workspace: '/workspace', token: TOKEN, readyEndpoint: '127.0.0.1:49152', parentEnv: {},
+    settings: {pipelineMode: 'integrated', cascadedLlmProvider: 'deepseek'}, decryptedSecrets: {dashscopeApiKey: 'dash-key'}})
+  assert.equal(spec.env.CASCADE_LLM_PROVIDER, 'qwen')
+  assert.equal(spec.env.CASCADE_LLM_MODEL, 'qwen-plus')
+  assert.equal(spec.env.DASHSCOPE_API_KEY, 'dash-key')
+  assert.equal('DOUBAO_BIGMODEL_API_KEY' in spec.env, false)
 })
 
 test('launch spec injects decrypted secrets as env overrides when present', () => {

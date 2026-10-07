@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import {mkdtemp, readFile, rm} from 'node:fs/promises'
+import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {basename, dirname, join, resolve} from 'node:path'
 import {pathToFileURL} from 'node:url'
-import {verifyRelease} from '../clients/desktop/scripts/verify-release.mjs'
+import {verifyRelease, redactSmokeOutput} from '../clients/desktop/scripts/verify-release.mjs'
 
 // Install from the real public release through the published CLI, then reuse application acceptance.
 const packageRoot = resolve(process.argv[2])
@@ -20,4 +20,12 @@ try {
   await verifyRelease({unsigned: true, ...(process.platform === 'linux'
     ? {artifact: executable}
     : {app: process.platform === 'darwin' ? resolve(dirname(executable), '../..') : dirname(executable)})})
+} catch (error) {
+  if (process.env.NOVA_SMOKE_DIAGNOSTICS) {
+    await mkdir(process.env.NOVA_SMOKE_DIAGNOSTICS, {recursive: true})
+    await writeFile(join(process.env.NOVA_SMOKE_DIAGNOSTICS, 'cli-verification.json'), JSON.stringify({
+      error: redactSmokeOutput(error.stack ?? String(error), [], [home, process.cwd(), process.env.HOME, process.env.USERPROFILE]),
+    }, null, 2), {mode: 0o600})
+  }
+  throw error
 } finally {await rm(home, {recursive: true, force: true, maxRetries: 10, retryDelay: 100})}

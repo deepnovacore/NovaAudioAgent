@@ -109,6 +109,9 @@ nsis:
   perMachine: false
 
 linux:
+  desktop:
+    entry:
+      Name: Nova Audio Agent Desktop
   target:
     - AppImage
     - deb
