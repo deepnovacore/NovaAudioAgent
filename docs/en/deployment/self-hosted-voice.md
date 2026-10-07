@@ -88,4 +88,4 @@ python serving/mac-asr-smoke.py --model /path/to/base.pt --audio output/mock-mic
 
 This command does not download models. A pass proves local ASR for this synthetic fixture; it does not prove Mac LLM/TTS serving, microphone permissions, echo cancellation or speaker playback. The earlier 4090 smoke uses real remote models, independently of these mock services.
 
-The reference setup pins Breeze source and Whisper weights. LLM/TTS model revisions default to `main`; specify exact commits in the machine profile's `model_revisions` (`llm` and `tts`) when a reproducible fresh deployment is required.
+The reference setup pins the Breeze source and the LLM, Whisper and TTS weights to exact commits, so a fresh deployment is reproducible. To try newer weights, set `model_revisions` (`llm`, `asr`, `tts`) in the machine profile; re-run the acceptance checks afterwards.

@@ -35,7 +35,7 @@ def load_profile(path):
     for key, defaults in [('envs', {s: root + '/env-' + s for s in ('llm', 'asr', 'tts')}),
                           ('models', {'llm': root + '/models/llm', 'asr': root + '/models/whisper', 'tts': root + '/models/breeze'}),
                           ('model_repos', {'llm': 'Qwen/Qwen3.5-4B', 'asr': 'mobiuslabsgmbh/faster-whisper-large-v3-turbo', 'tts': 'BreezeBlue/Breeze-TTS-2'}),
-                          ('model_revisions', {'llm': 'main', 'asr': '0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf', 'tts': 'main'}),
+                          ('model_revisions', {'llm': '851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a', 'asr': '0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf', 'tts': '3e28c5151381a722f1d8661b4118c298caa77aa4'}),
                           ('gpus', {'llm': 0, 'asr': 1, 'tts': 0}),
                           ('ports', {'llm': 18101, 'asr': 18102, 'tts': 18103}),
                           ('llm', {'model': 'Qwen/Qwen3.5-4B', 'memory': .5, 'context': 8192, 'max_sequences': 1})]:

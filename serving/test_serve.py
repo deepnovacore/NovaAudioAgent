@@ -17,6 +17,15 @@ spec.loader.exec_module(serve)
 
 
 class ServingTest(unittest.TestCase):
+    def test_default_model_revisions_are_exact_commits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = pathlib.Path(directory) / 'machine.json'
+            profile.write_text('{}')
+            revisions = serve.load_profile(profile)['model_revisions']
+        self.assertEqual(set(revisions), {'llm', 'asr', 'tts'})
+        for revision in revisions.values():
+            self.assertRegex(revision, r'^[0-9a-f]{40}$')
+
     @unittest.skipUnless(sys.platform == 'linux', 'Linux TCP TIME_WAIT restart regression')
     def test_port_probe_allows_recently_closed_connection(self):
         with tempfile.TemporaryDirectory() as directory:

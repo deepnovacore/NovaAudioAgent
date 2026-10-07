@@ -88,4 +88,4 @@ python serving/mac-asr-smoke.py --model /path/to/base.pt --audio output/mock-mic
 
 此命令不会下载模型。通过只代表本机 ASR 对该合成样本有效，不代表 Mac LLM/TTS serving、麦克风权限、回声消除或扬声器播放已验收。此前 4090 的 smoke 使用真实远端模型，与这里的假服务独立。
 
-参考安装固定了 Breeze 源码与 Whisper 权重版本。LLM/TTS 模型版本默认 `main`；若需要新部署可复现，应在机器配置的 `model_revisions` 中为 `llm` 和 `tts` 指定确切 commit。
+参考安装把 Breeze 源码以及 LLM、Whisper、TTS 权重都固定到确切 commit，新部署可复现。若要试用更新的权重，在机器配置的 `model_revisions`（`llm`、`asr`、`tts`）中指定，并在之后重新跑验收。
