@@ -59,6 +59,24 @@ test('ASR negotiates 16 kHz, replaces partial hypotheses and final, bounds PCM, 
   }finally{for(const socket of server.clients)socket.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()))}
 })
 
+test('ASR waits out a busy server for longer than one second, then gives up',async()=>{
+  let connections=0,busyFor=12
+  const server=new WebSocketServer({host:'127.0.0.1',port:0});await once(server,'listening')
+  const address=server.address();assert.notEqual(typeof address,'string');assert(address)
+  const endpoint=`ws://127.0.0.1:${(address as {port:number}).port}/asr`
+  server.on('connection',socket=>{
+    if(connections++<busyFor){socket.close(1013,'ASR busy');return}
+    socket.send(JSON.stringify({type:'ready',sampleRate:16000,format:'s16le'}))
+  })
+  try{
+    const session=await new SelfHostedAsrClient({endpoint,apiKey:''}).open()
+    assert.equal(connections,busyFor+1);await session.close()
+    connections=0;busyFor=Infinity
+    const controller=new AbortController(),waiting=new SelfHostedAsrClient({endpoint,apiKey:''}).open(controller.signal)
+    setTimeout(()=>controller.abort(),300);await assert.rejects(waiting)
+  }finally{for(const socket of server.clients)socket.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()))}
+})
+
 test('TTS keeps Nova chunk boundaries, dedicated auth, redirects disabled, aligned bounded PCM',async()=>{
   const texts:string[]=[]
   const client=new SelfHostedTtsClient({endpoint:'http://127.0.0.1:19103/tts',apiKey:'dedicated',fetch:(_url,init)=>{

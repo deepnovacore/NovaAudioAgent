@@ -4,14 +4,17 @@ import type {AsrClient,AsrSession,AsrTranscript} from './ports.js'
 import {Output} from './self-hosted-tts.js'
 import {selfHostedEndpoint} from '../../config/self-hosted.js'
 
+const BUSY_RETRIES=40,BUSY_RETRY_MS=125 // about 5 s
+
 /** One socket per utterance; ordered PCM frames, replaceable hypotheses, one final. */
 export class SelfHostedAsrClient implements AsrClient {
   constructor(readonly options:{endpoint:string;apiKey:string}) {selfHostedEndpoint(options.endpoint, 'ws', 'SELF_HOSTED_ASR_URL')}
   async open(signal?:AbortSignal):Promise<AsrSession>{
+    // The server keeps its single slot until an in-flight decode returns, which a cancelled utterance cannot interrupt.
     for(let attempt=0;;attempt++){
       try{return await this.connect(signal)}catch(error){
-        if(!(error instanceof Error)||error.message!=='ASR busy'||attempt>=10)throw error
-        await delay(100,undefined,signal?{signal}:undefined)
+        if(!(error instanceof Error)||error.message!=='ASR busy'||attempt>=BUSY_RETRIES)throw error
+        await delay(BUSY_RETRY_MS,undefined,signal?{signal}:undefined)
       }
     }
   }
