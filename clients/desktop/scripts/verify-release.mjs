@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import {spawn, spawnSync} from 'node:child_process'
 import {once} from 'node:events'
+import {createHash} from 'node:crypto'
 import {createServer} from 'node:https'
 import {cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises'
 import {basename, normalize, resolve} from 'node:path'
 import {parseArgs} from 'node:util'
-import {listPackage, statFile} from '@electron/asar'
+import {getRawHeader, listPackage, statFile} from '@electron/asar'
+import plist from 'plist'
 import {WebSocket, WebSocketServer} from 'ws'
 import {generateSmokeCertificate} from './smoke-tls.mjs'
 import {expectedNativeResources} from './native-resource-contract.mjs'
@@ -62,6 +64,14 @@ export async function inspectApplication(resourcesRoot, targetId) {
   }
   const manifest = JSON.parse(await readFile(resolve(resourcesRoot, 'native-resources-v1.json'), 'utf8'))
   assert.equal(manifest.target, targetId, 'native manifest target mismatch')
+}
+
+export async function inspectMacAsarIntegrity(resourcesRoot) {
+  const info = plist.parse(await readFile(resolve(resourcesRoot, '../Info.plist'), 'utf8'))
+  assert.deepEqual(info.ElectronAsarIntegrity?.['Resources/app.asar'], {
+    algorithm: 'SHA256',
+    hash: createHash('sha256').update(getRawHeader(resolve(resourcesRoot, 'app.asar')).headerString).digest('hex'),
+  }, 'macOS ASAR integrity mismatch')
 }
 
 async function provider(scratch) {
@@ -273,6 +283,7 @@ export async function verifyRelease({app, artifact, distRoot, unsigned = false, 
     const executable = resolve(app, process.platform === 'darwin' ? `Contents/MacOS/${product}` : process.platform === 'win32' ? `${product}.exe` : 'nova-audio-agent-desktop')
     const targetId = `${process.platform}-${process.arch}${process.platform === 'linux' ? '-gnu' : ''}`
     await inspectApplication(resources, targetId)
+    if (process.platform === 'darwin') await inspectMacAsarIntegrity(resources)
     if (unsigned && process.platform === 'darwin') {
       run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app])
       process.stdout.write('macOS seal verified; Developer ID/Gatekeeper verification skipped (--unsigned)\n')
