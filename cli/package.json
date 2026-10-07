@@ -21,7 +21,6 @@
   },
   "publishConfig": {
     "access": "public",
-    "tag": "preview",
     "registry": "https://registry.npmjs.org/"
   },
   "repository": {
