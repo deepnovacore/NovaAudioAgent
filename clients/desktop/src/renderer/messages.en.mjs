@@ -259,6 +259,7 @@ export const ENGLISH_MESSAGES = Object.freeze({
   "后台": "Background",
   "隐藏": "Hide",
   "IM 渠道": "IM channels",
+  "连接你使用的聊天工具，选择同步范围与提醒方式。": "Connect your chat tools and choose what to sync and how to receive reminders.",
   "连接与权限": "Connections & permissions",
   "工作区": "Workspace",
   "选择工作区": "Choose workspace",

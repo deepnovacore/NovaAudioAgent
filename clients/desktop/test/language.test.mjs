@@ -44,3 +44,13 @@ test('UI translations retain placeholders and never reinterpret substituted user
   setLanguage('zh-CN')
   assert.equal(t('设置'), '设置')
 })
+
+test('English IM section translates its developer-owned HTML heading and instructions', async context => {
+  const html = await readFile(new URL('../src/renderer/settings.html', import.meta.url), 'utf8')
+  const section = html.match(/<section[^>]*id="im-section"[^>]*>(.*?)<\/section>/s)?.[1]
+  assert.ok(section)
+  const text = [...section.matchAll(/<(?:h2|p)\b[^>]*>([^<]+)<\/(?:h2|p)>/g)].map(match => match[1])
+  assert.ok(text.length >= 2)
+  setLanguage('en'); context.after(() => setLanguage('zh-CN'))
+  for (const source of text) assert.doesNotMatch(t(source), /\p{Script=Han}/u, source)
+})
