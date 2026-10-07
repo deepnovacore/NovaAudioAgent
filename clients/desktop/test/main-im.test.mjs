@@ -30,7 +30,9 @@ test('settings connections bridge only forwards sources, connectors and discover
  await assert.rejects(receive({sender},{method:'sources.add',params:{path:'x'.repeat(17000),consent:true}}),/rejected/)
  assert.deepEqual(await receive({sender},{method:'state',params:{}}),{sources:[]})
  await receive({sender},{method:'discovery.configure',params:{enabled:false}})
- assert.deepEqual(calls,[{method:'state',params:{}},{method:'discovery.configure',params:{enabled:false}}])
+ for(const method of ['sources.priority.add','sources.priority.remove'])await receive({sender},{method,params:{path:'/Users/me/Documents'}})
+ assert.deepEqual(calls,[{method:'state',params:{}},{method:'discovery.configure',params:{enabled:false}},
+  {method:'sources.priority.add',params:{path:'/Users/me/Documents'}},{method:'sources.priority.remove',params:{path:'/Users/me/Documents'}}])
  new Function('ipcMain','settingsWindow','backendControl','settingsGeneration',block)({handle:(_,fn)=>{receive=fn}},{webContents:sender},null,1)
  await assert.rejects(receive({sender},{method:'state',params:{}}),/unavailable/)
 })
