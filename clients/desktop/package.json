@@ -1,6 +1,6 @@
 {
   "name": "@nova-audio-agent/desktop",
-  "version": "0.3.0-preview.1",
+  "version": "0.3.0",
   "description": "Local-first ambient voice agent desktop client",
   "homepage": "https://github.com/deepnovacore/NovaAudioAgent",
   "author": {
@@ -33,7 +33,7 @@
     "verify:release": "node scripts/verify-release.mjs"
   },
   "dependencies": {
-    "@nova-audio-agent/runtime": "0.3.0-preview.1",
+    "@nova-audio-agent/runtime": "0.3.0",
     "sherpa-onnx": "1.13.4",
     "tar-stream": "3.1.7",
     "unbzip2-stream": "1.4.3"

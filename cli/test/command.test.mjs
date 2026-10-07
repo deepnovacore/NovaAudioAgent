@@ -11,7 +11,7 @@ function output() {
 test('help, version, and invalid commands do not install the desktop', async () => {
   for (const [argv, code, expected] of [
     [['--help'], 0, HELP_TEXT],
-    [['--version'], 0, '0.3.0-preview.1'],
+    [['--version'], 0, '0.3.0'],
     [['unknown'], 2, HELP_TEXT],
     [['start', 'extra'], 2, HELP_TEXT],
   ]) {

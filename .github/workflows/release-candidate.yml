@@ -6,7 +6,7 @@ on:
       release_version:
         description: Application version to validate
         required: true
-        default: 0.3.0-preview.1
+        default: 0.3.0
         type: string
       candidate_scope:
         description: Full release evidence or a Windows-only repair run

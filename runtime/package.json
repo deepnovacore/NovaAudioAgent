@@ -1,6 +1,6 @@
 {
   "name": "@nova-audio-agent/runtime",
-  "version": "0.3.0-preview.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
