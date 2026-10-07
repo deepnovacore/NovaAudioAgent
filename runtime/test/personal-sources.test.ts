@@ -1322,7 +1322,9 @@ test('streamed directory scan reports exact cap as complete and excess as partia
   const partial=await scanDirectory(f.folder,new AbortController().signal,()=>undefined,{hardSafetyCap:3})
   assert.equal(partial.complete,false);assert.equal(partial.seen,3)
   let changed=false
-  const mutation=await scanDirectory(f.folder,new AbortController().signal,async()=>{if(!changed){changed=true;await writeFile(join(f.folder,'during-scan.md'),'Mutation during scan')}},{hardSafetyCap:10})
+  // Make the metadata change observable even with coarse filesystem timestamp resolution.
+  const mutationTime=new Date((await stat(f.folder)).mtimeMs+1000)
+  const mutation=await scanDirectory(f.folder,new AbortController().signal,async()=>{if(!changed){changed=true;await writeFile(join(f.folder,'during-scan.md'),'Mutation during scan');await utimes(f.folder,mutationTime,mutationTime)}},{hardSafetyCap:10})
   assert.equal(mutation.complete,false);assert.equal(mutation.capped,false)
  }finally{await f.close()}
 })
