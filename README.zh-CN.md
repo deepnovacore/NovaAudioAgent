@@ -18,13 +18,13 @@ https://github.com/user-attachments/assets/061697f3-fff6-47d6-924b-8a29eef4ab45
 
 ## News
 
-- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — 小诺从语音助手长成了个人 Agent。2026-10-02 发布的 [v0.3.0 Preview](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0-preview.1) 由本版本取代。
-  - **Workbench 主窗口**：左侧是待办、想法、目标、资讯、Agent 执行和「关于我」，右侧是与小诺的对话；悬浮球作为收起后的形态保留。
+- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — 小诺从语音助手长成了个人 Agent。
+  - **一个 Workbench 装下一天的事**：待办、想法、目标、资讯、Agent 执行和「关于我」与小诺的对话并排；悬浮球作为收起后的形态保留，后台模式下窗口隐藏、任务照常运行。
   - **任务可验收**：交出去的活带着验收标准，小诺核对证据后才说完成；随时可以接手，再交还给它。
-  - **记忆有据可查**：从你授权的目录、邮件、日历和飞书里整理候选，留不留由你决定；每一条都能溯源、纠正或删除。
-  - **资讯与项目回顾**：按兴趣排序的资讯流，以及根据项目文件生成、附带出处的回顾卡片。
-  - **更多语音选择**：新增 OpenAI 与 Gemini 实时语音、Gemini ASR / TTS、可把云端服务与自托管模型混搭的级联管线、StepAudio 3 集成模型（预览）、Qwen Audio 3.1，以及火山声纹验证。
-  - **飞书 @ 提及与每日简报**：经你同意后，你所选会话里直接 @ 你的消息会记为待办；可选的每日简报涵盖待办、日历与 @ 提及。
+  - **来自你自己的上下文**：你授权的目录（或整台电脑）、Apple 邮件与日历、Google 邮件与日历，以及飞书；全部只读，且经你同意后才会使用。
+  - **记忆可审计**：每一条都标明出处，可以溯源、纠正或删除。
+  - **建议、资讯与每日简报**：待办、想法和目标的候选等你确认；按兴趣排序的资讯流和项目回顾卡片都附带出处；可选的早间与晚间简报涵盖待办、日历与 @ 提及，经你同意后，飞书里直接 @ 你的消息会记为待办。
+  - **更多对话方式**：Qwen（Audio 3.1）、OpenAI 与 Gemini 的实时语音，StepAudio 3（预览），可搭配火山、Gemini 或自托管模型的级联管线，以及火山声纹验证。
 - **2026-09-24 · [v0.2.3](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — 首次启动引导：一个 DashScope API Key 即可开始对话。
 - **2026-09-21 · [v0.2.2](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.2)** — 支持 Ubuntu 22.04+ x64 桌面端，新增可扫码配对的无头服务包 `nova-audio-agent-server`。
 - **2026-09-21 · [v0.2.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.0)** — 可配置 ASR / LLM / TTS 管线、个人记忆、自定义 MCP、唤醒词、中英双语桌面端（macOS / Windows），以及经 Tailscale 连接的 iPhone 客户端。
@@ -173,7 +173,7 @@ novaaudio doctor
 
 ### 升级
 
-先退出 Nova，再运行 `npm install --global nova-audio-agent@latest`。这同时会取代 v0.3 预览版（npm 标签 `preview`，版本 `0.3.0-preview.1`，不再更新）。如需固定版本，使用 `nova-audio-agent@0.3.0`。升级会保留本地设置与数据；改回旧版本不会回滚数据变化，请先备份 Nova 数据。
+先退出 Nova，再运行 `npm install --global nova-audio-agent@latest`。如需固定版本，使用 `nova-audio-agent@0.3.0`。升级会保留本地设置与数据；改回旧版本不会回滚数据变化，请先备份 Nova 数据。
 
 Ubuntu 22.04+ x64 无头服务使用 `npm install --global nova-audio-agent-server@latest`。
 
@@ -237,8 +237,6 @@ Windows、Linux 源码运行及 macOS 回退路径使用 Chromium `getUserMedia`
 | [Node runtime 迁移归档](https://github.com/deepnovacore/NovaAudioAgent/tree/20a0812c0acb83b53cbad4b415d637dafff3c7f6/docs/archs/node-runtime-migration) | `v0.1.0` tag 历史中的迁移期计划 |
 
 ## 5. 路线图
-
-`main` 是已发布基线；v0.3.0 已发布。
 
 - [x] **v0.3.0：** 文字与语音整合进同一个主窗口，含待办、想法、目标、资讯、Agent 执行和「关于我」；任务带验收标准、核验完成并可随时接手；基于记忆提出建议；个人记忆可追溯、可纠正、可删除；接入用户授权的目录、邮件、日历和飞书会话。
 - [ ] **v0.4.0：** 扩展 Kimi Code、pi agent 等 coding 后端；以 AutoGLM 为首个示例接入 GUI 执行器，支持专长 Agent 之间的协作。

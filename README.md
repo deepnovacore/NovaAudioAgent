@@ -16,13 +16,13 @@
 
 ## News
 
-- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — Nova grows from a voice assistant into a personal agent. The [v0.3.0 Preview](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0-preview.1) of 2026-10-02 is superseded by this release.
-  - **Workbench main window**: Todos, Ideas, Goals, Feeds, Tasks and Profile on the left, the conversation with Nova on the right; the orb stays as the collapsed form.
+- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — Nova grows from a voice assistant into a personal agent.
+  - **One Workbench for your day**: Todos, Ideas, Goals, Feeds, Tasks and Profile sit beside the conversation with Nova; the orb stays as the collapsed form, and background mode keeps tasks running with the window hidden.
   - **Tasks you can check**: delegated work carries acceptance criteria, and Nova verifies the evidence before calling it done; you can take over a task and hand it back at any time.
-  - **Memory grounded in your sources**: Nova proposes candidates from authorized folders, email, calendars and Feishu, and you decide what to keep; every entry can be traced, corrected or forgotten.
-  - **News and project recaps**: an interest-ranked feed and recap cards built from your project files, each with its sources.
-  - **More voice options**: OpenAI and Gemini realtime voice, Gemini ASR / TTS, cascaded pipelines that mix cloud services with models you serve yourself, StepAudio 3 integrated provider (preview), Qwen Audio 3.1, and Volcengine voiceprint verification.
-  - **Feishu mentions and a daily brief**: with your consent, direct @mentions in the chats you select become Todos, and an optional daily brief covers Todos, calendar and mentions.
+  - **Context from your own sources**: authorized folders (or the whole computer), Apple Mail and Calendar, Google Mail and Calendar, and Feishu, all read-only and only after you consent.
+  - **Memory you can audit**: every entry shows where it came from and can be traced, corrected or forgotten.
+  - **Suggestions, news and daily briefs**: candidates for Todos, Ideas and Goals wait for your confirmation; an interest-ranked news feed and project recap cards cite their sources; optional morning and evening briefs cover Todos, calendar and mentions, and with your consent direct Feishu @mentions become Todos.
+  - **More ways to talk**: realtime voice from Qwen (Audio 3.1), OpenAI and Gemini, StepAudio 3 (preview), cascaded pipelines with Volcengine, Gemini or models you serve yourself, and Volcengine voiceprint verification.
 - **2026-09-24 · [v0.2.3](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — Guided first run: one DashScope API Key is enough to start talking.
 - **2026-09-21 · [v0.2.2](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.2)** — Ubuntu 22.04+ x64 desktop, plus the headless `nova-audio-agent-server` with QR pairing.
 - **2026-09-21 · [v0.2.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.0)** — Configurable ASR / LLM / TTS pipelines, personal memory, custom MCP, wake words, bilingual desktop on macOS and Windows, and an iPhone client over Tailscale.
@@ -172,7 +172,7 @@ Headless Ubuntu 22.04+: install `nova-audio-agent-server` with npm, configure it
 
 ### Upgrading
 
-Quit Nova, then run `npm install --global nova-audio-agent@latest`. This also replaces the v0.3 preview (npm tag `preview`, version `0.3.0-preview.1`, which is no longer updated). To pin a version, use `nova-audio-agent@0.3.0`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
+Quit Nova, then run `npm install --global nova-audio-agent@latest`. To pin a version, use `nova-audio-agent@0.3.0`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
 
 For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@latest`.
 
@@ -237,8 +237,6 @@ Models, credentials and per-provider limits: [support matrix](docs/en/support-ma
 | [Node runtime migration archive](https://github.com/deepnovacore/NovaAudioAgent/tree/20a0812c0acb83b53cbad4b415d637dafff3c7f6/docs/archs/node-runtime-migration) | Migration-era plans in the history of tag `v0.1.0` |
 
 ## 5. Roadmap
-
-`main` is the released baseline; v0.3.0 is released.
 
 - [x] **v0.3.0:** one main window for text and voice with Todos, Ideas, Goals, Feeds, Tasks and Profile; tasks with acceptance criteria, verified completion and takeover; memory-grounded suggestions; traceable, correctable and removable personal memory; user-authorized folders, email, calendars and Feishu conversations.
 - [ ] **v0.4.0:** expand coding backends with Kimi Code and pi agent; add a GUI executor with AutoGLM as the first example, enabling collaboration across specialist agents.
