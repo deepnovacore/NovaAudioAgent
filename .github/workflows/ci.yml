@@ -46,6 +46,9 @@ jobs:
       - run: npm run test:live:contract --workspace @nova-audio-agent/runtime
       - run: npm run test:server-cli
       - run: npm run test:cli
+      # The self-hosted serving launcher's tests need no models or GPU; its process checks are Linux-only.
+      - run: python3 -m unittest discover -s serving
+        if: runner.os == 'Linux'
       # npm may restore the Electron package without its platform binary from
       # cache. The pinned install script is idempotent and closes that gap.
       - run: node clients/desktop/node_modules/electron/install.js
