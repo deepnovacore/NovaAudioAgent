@@ -34,7 +34,7 @@ Creating or switching projects requires confirmation. Recognition failure is not
 
 ## Voice, vision and phone
 
-Qwen realtime speech is the default. Cascaded mode lets you configure recognition, a language model and speech synthesis separately.
+Qwen realtime speech is the default; OpenAI and Gemini realtime voice are also available. Cascaded mode lets you configure recognition, a language model and speech synthesis separately, from cloud services or from models you run yourself (see [support matrix](support-matrix.md)).
 
 Conversation vision is off by default and requires a supported cascaded model. Independent monitoring watches a selected camera for your requested condition. Both need camera permission and an available device.
 

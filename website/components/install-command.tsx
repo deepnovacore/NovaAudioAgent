@@ -13,7 +13,7 @@ export function InstallCommand({ en = false }: { en?: boolean }) {
   async function copy() {
     try {
       await navigator.clipboard.writeText(
-        'npm install --global nova-audio-agent@0.2.3',
+        'npm install --global nova-audio-agent@latest',
       );
       setState('copied');
       if (timer.current) clearTimeout(timer.current);
@@ -26,7 +26,7 @@ export function InstallCommand({ en = false }: { en?: boolean }) {
     <>
       <div className="install-command">
         <span aria-hidden="true">$</span>
-        <code>npm install --global nova-audio-agent@0.2.3</code>
+        <code>npm install --global nova-audio-agent@latest</code>
         <button
           onClick={copy}
           aria-label={en ? 'Copy installation command' : '复制安装命令'}

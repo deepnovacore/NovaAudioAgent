@@ -4,6 +4,8 @@
 |---|---|
 | Install and start | [Getting started](getting-started.md) |
 | Choose a pipeline and model | [Support matrix](support-matrix.md) |
+| Use OpenAI or Gemini voice | [OpenAI and Gemini providers](global-providers.md) |
+| Run speech models on your own GPU | [Self-hosted voice and presets](deployment/self-hosted-voice.md) |
 | Explore capabilities | [Features](features.md) |
 | Use the Workbench main window | [Workbench](workbench.md) |
 | Delegate and track tasks | [Tasks](tasks.md) |
@@ -15,5 +17,3 @@
 | Understand task execution | [How it works](architecture.md) |
 
 Developer reference: [Architecture](archs/00-overview.md) · [Client protocol](protocols/client-v1.md) · [Remote deployment](deployment/remote-server.md)
-
-[Self-hosted voice and presets](deployment/self-hosted-voice.md)

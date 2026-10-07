@@ -16,23 +16,16 @@ Desktop targets macOS arm64, Windows x64, and Ubuntu 22.04+ x64.
 
 ## 2. Install and start
 
-### Preview channel
-
-The preview uses npm's `preview` tag; `latest` stays on the stable release.
+### Install or upgrade
 
 ```bash
-# Install or update the preview
-npm install --global nova-audio-agent@preview
-novaaudio
-# Pin this preview exactly
-npm install --global nova-audio-agent@0.3.0-preview.1
-# Switch back to the stable CLI
 npm install --global nova-audio-agent@latest
+novaaudio
 ```
 
-Quit Nova before switching channels. Both channels use the same local settings and data; switching the CLI does not roll back data changes. Back up your Nova data before trying a preview.
+To upgrade, quit Nova and run the same command. It also replaces the v0.3 preview (npm tag `preview`, version `0.3.0-preview.1`, no longer updated). Pin a version with `nova-audio-agent@0.3.0`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
 
-For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@preview` (or `@latest` for stable).
+For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@latest`.
 
 For development from source:
 

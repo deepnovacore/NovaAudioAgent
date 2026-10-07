@@ -4,6 +4,8 @@
 |---|---|
 | 开始使用 | [上手指南](getting-started.md) |
 | 选择管线与模型 | [支持矩阵](support-matrix.md) |
+| 使用 OpenAI 或 Gemini 语音 | [OpenAI 与 Gemini 服务商](global-providers.md) |
+| 在自己的 GPU 上运行语音模型 | [自托管语音与预置配置](deployment/self-hosted-voice.md) |
 | 了解主要能力 | [功能概览](features.md) |
 | 使用 Workbench 主窗口 | [Workbench](workbench.md) |
 | 委派并跟踪任务 | [Tasks](tasks.md) |
@@ -15,5 +17,3 @@
 | 了解任务如何执行 | [工作原理](architecture.md) |
 
 开发参考：[架构](archs/00-overview.md) · [客户端协议](protocols/client-v1.md) · [远程部署](deployment/remote-server.md)
-
-[自托管语音与预置配置](deployment/self-hosted-voice.md)

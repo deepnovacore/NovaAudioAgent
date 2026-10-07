@@ -16,12 +16,13 @@
 
 ## News
 
-- **2026-10-02 · [v0.3.0 Preview](https://github.com/deepnovacore/NovaAudioAgent/tree/v0.3.0preview)** — Nova grows from a voice assistant into a personal agent.
+- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — Nova grows from a voice assistant into a personal agent. The [v0.3.0 Preview](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0-preview.1) of 2026-10-02 is superseded by this release.
   - **Workbench main window**: Todos, Ideas, Goals, Feeds, Tasks and Profile on the left, the conversation with Nova on the right; the orb stays as the collapsed form.
   - **Tasks you can check**: delegated work carries acceptance criteria, and Nova verifies the evidence before calling it done; you can take over a task and hand it back at any time.
   - **Memory grounded in your sources**: Nova proposes candidates from authorized folders, email, calendars and Feishu, and you decide what to keep; every entry can be traced, corrected or forgotten.
   - **News and project recaps**: an interest-ranked feed and recap cards built from your project files, each with its sources.
-  - **More voice options**: StepAudio 3 integrated provider (preview), Qwen Audio 3.1, and Volcengine voiceprint verification.
+  - **More voice options**: OpenAI and Gemini realtime voice, Gemini ASR / TTS, cascaded pipelines that mix cloud services with models you serve yourself, StepAudio 3 integrated provider (preview), Qwen Audio 3.1, and Volcengine voiceprint verification.
+  - **Feishu mentions and a daily brief**: with your consent, direct @mentions in the chats you select become Todos, and an optional daily brief covers Todos, calendar and mentions.
 - **2026-09-24 · [v0.2.3](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — Guided first run: one DashScope API Key is enough to start talking.
 - **2026-09-21 · [v0.2.2](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.2)** — Ubuntu 22.04+ x64 desktop, plus the headless `nova-audio-agent-server` with QR pairing.
 - **2026-09-21 · [v0.2.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.0)** — Configurable ASR / LLM / TTS pipelines, personal memory, custom MCP, wake words, bilingual desktop on macOS and Windows, and an iPhone client over Tailscale.
@@ -155,10 +156,10 @@ For more details about the architecture, check [Architecture](docs/en/architectu
 Requirements: Node.js 22+, npm, Git, a logged-in `codex` executable (app-server is the only
 Codex transport).
 
-Install the stable release with npm, or choose the preview channel below.
+Install the release with npm.
 
 ```bash
-npm install --global nova-audio-agent@0.2.3
+npm install --global nova-audio-agent@latest
 # open the shipped app; the first launch asks for one DashScope API key
 novaaudio
 # open the settings panel in the app
@@ -169,23 +170,11 @@ novaaudio doctor
 
 Headless Ubuntu 22.04+: install `nova-audio-agent-server` with npm, configure it and initialize credentials; run `novaaudio-server start` and, in a second terminal, `novaaudio-server pair wss://your-host.ts.net` for a one-use QR. See the [configuration guide](docs/en/deployment/remote-server.md).
 
-### Preview channel
+### Upgrading
 
-The v0.3 preview uses npm's `preview` tag; `latest` stays on the stable release.
+Quit Nova, then run `npm install --global nova-audio-agent@latest`. This also replaces the v0.3 preview (npm tag `preview`, version `0.3.0-preview.1`, which is no longer updated). To pin a version, use `nova-audio-agent@0.3.0`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
 
-```bash
-# Install or update the preview
-npm install --global nova-audio-agent@preview
-novaaudio
-# Pin this preview exactly
-npm install --global nova-audio-agent@0.3.0-preview.1
-# Switch back to the stable CLI
-npm install --global nova-audio-agent@latest
-```
-
-Quit Nova before switching channels. Both channels use the same local settings and data; switching the CLI does not roll back data changes. Back up your Nova data before trying a preview.
-
-For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@preview` (or `@latest` for stable).
+For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@latest`.
 
 For development from source:
 
@@ -227,9 +216,9 @@ wake-word Worker; explicit mute stops wake detection. See
 
 | Layer | Providers | Default |
 |---|---|---|
-| Integrated voice | Qwen realtime, StepFun (preview) | Qwen `qwen-audio-3.0-realtime-plus` |
-| Cascaded ASR / TTS | Volcengine Speech | `volc.seedasr.sauc.duration` / `seed-tts-2.0` |
-| Cascaded LLM | DeepSeek, Qwen / DashScope, Volcengine Ark | DeepSeek `deepseek-flash` |
+| Integrated voice | Qwen realtime, OpenAI realtime, Gemini Live, StepFun (preview) | Qwen `qwen-audio-3.0-realtime-plus` |
+| Cascaded ASR / TTS | Volcengine Speech, Gemini, self-hosted (reference: Whisper / Breeze) | `volc.seedasr.sauc.duration` / `seed-tts-2.0` |
+| Cascaded LLM | DeepSeek, Qwen / DashScope, Volcengine Ark, OpenAI, Gemini, self-hosted | DeepSeek `deepseek-flash` |
 | Vision | Qwen-VL family, Doubao Seed | Off in conversation; Loop Camera uses its own model |
 | Coding executor | Codex | Codex |
 | Sources | Local folders, Google via Composio, Apple Mail and Calendar (macOS), Feishu | None until you authorize them |
@@ -249,7 +238,7 @@ Models, credentials and per-provider limits: [support matrix](docs/en/support-ma
 
 ## 5. Roadmap
 
-Ongoing development uses `v0.3.0dev`; `main` remains the released baseline.
+`main` is the released baseline; v0.3.0 is released.
 
 - [x] **v0.3.0:** one main window for text and voice with Todos, Ideas, Goals, Feeds, Tasks and Profile; tasks with acceptance criteria, verified completion and takeover; memory-grounded suggestions; traceable, correctable and removable personal memory; user-authorized folders, email, calendars and Feishu conversations.
 - [ ] **v0.4.0:** expand coding backends with Kimi Code and pi agent; add a GUI executor with AutoGLM as the first example, enabling collaboration across specialist agents.

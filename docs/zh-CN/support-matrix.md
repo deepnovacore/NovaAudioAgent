@@ -16,7 +16,7 @@
 
 选择集成管线时配置较少；需要更换语言模型或开启对话视觉时，使用级联管线。两者都需要相应模型服务的凭据。
 
-集成模式也可选择 StepFun（`INTEGRATED_PROVIDER=stepfun`，预览特性），需配置 `STEPFUN_API_KEY`；或将 Qwen 模型切换为 `qwen-audio-3.1-realtime-plus`（通过 `QWEN_REALTIME_MODEL`）。
+集成模式也可选择 OpenAI（`INTEGRATED_PROVIDER=openai`，默认 `gpt-realtime-2.1-mini`，需 `OPENAI_API_KEY`）或 Gemini Live（`INTEGRATED_PROVIDER=gemini`，默认 `gemini-3.8-live`，需 `GEMINI_API_KEY`），详见 [OpenAI 与 Gemini 服务商](global-providers.md)。StepFun（`INTEGRATED_PROVIDER=stepfun`，预览特性）需配置 `STEPFUN_API_KEY`；Qwen 模型可切换为 `qwen-audio-3.1-realtime-plus`（通过 `QWEN_REALTIME_MODEL`）。
 
 ## 级联语言模型
 
@@ -25,6 +25,9 @@
 | DeepSeek | `deepseek-flash` | 当前 Nova 适配器不开放 | `DEEPSEEK_API_KEY` |
 | Qwen / 百炼 | `qwen-plus` | 默认模型不支持；可换用下列 Qwen 视觉模型 | `DASHSCOPE_API_KEY` |
 | 火山方舟 Ark | `doubao-seed-2-0-pro-260215` | 支持 | `ARK_API_KEY` |
+| OpenAI | `gpt-6-luna` | 当前 Nova 适配器不开放 | `OPENAI_API_KEY` |
+| Gemini | `gemini-3.5-flash-lite` | 当前 Nova 适配器不开放 | `GEMINI_API_KEY` |
+| 自托管（OpenAI 兼容端点） | 无默认值；需设置 `CASCADE_LLM_MODEL` | 当前 Nova 适配器不开放 | 可选 `SELF_HOSTED_LLM_API_KEY` |
 
 可覆盖模型名称，但填写一个自定义名称不会自动获得图像能力。模型本身能否看图，与 Nova 是否已为它接通图像输入，是两件事。工具调用也需所选模型兼容当前适配器的结构化工具协议。
 
@@ -41,11 +44,13 @@
 
 | 阶段 | 当前适配器 | 默认资源 / 音色 |
 |---|---|---|
-| 识别 ASR | 火山语音 | `volc.seedasr.sauc.duration` |
-| 合成 TTS | 火山语音 | `seed-tts-2.0` / `zh_female_vv_uranus_bigtts` |
+| 识别 ASR | 火山语音（默认）；Gemini（`CASCADE_ASR_PROVIDER=gemini`）；自托管流式 ASR（`self-hosted`） | `volc.seedasr.sauc.duration`；Gemini `gemini-3.5-flash` |
+| 合成 TTS | 火山语音（默认）；Gemini（`CASCADE_TTS_PROVIDER=gemini`）；自托管 TTS（`self-hosted`） | `seed-tts-2.0` / `zh_female_vv_uranus_bigtts`；Gemini `gemini-3.8-flash-tts` / `Kore` |
 | 集成语音音色 | Qwen 实时语音 | `longanqian` |
 
-火山 ASR 优先使用 `DOUBAO_ASR_API_KEY`，未配置时使用 `DOUBAO_BIGMODEL_API_KEY`；TTS 使用后者。辅助模型与个人记忆可能仍需要百炼凭据，详见[核心配置](configuration.md)。
+自托管阶段连接你自己运行的端点（`SELF_HOSTED_ASR_URL`、`SELF_HOSTED_LLM_BASE_URL`、`SELF_HOSTED_TTS_URL`），只使用各自专用的可选凭据；仓库提供了流式 Whisper ASR、vLLM LLM 和 Breeze TTS 的参考启动器。云端与自托管阶段可在同一条管线中混用。详见[自托管语音与预设](deployment/self-hosted-voice.md)。
+
+使用火山语音时，ASR 优先使用 `DOUBAO_ASR_API_KEY`，未配置时使用 `DOUBAO_BIGMODEL_API_KEY`；TTS 使用后者。辅助模型与个人记忆可能仍需要百炼凭据，详见[核心配置](configuration.md)。
 
 ## 声纹校验
 

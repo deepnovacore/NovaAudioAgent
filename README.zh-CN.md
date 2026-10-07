@@ -18,12 +18,13 @@ https://github.com/user-attachments/assets/061697f3-fff6-47d6-924b-8a29eef4ab45
 
 ## News
 
-- **2026-10-02 · [v0.3.0 Preview](https://github.com/deepnovacore/NovaAudioAgent/tree/v0.3.0preview)** — 小诺从语音助手长成了个人 Agent。
+- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — 小诺从语音助手长成了个人 Agent。2026-10-02 发布的 [v0.3.0 Preview](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0-preview.1) 由本版本取代。
   - **Workbench 主窗口**：左侧是待办、想法、目标、资讯、Agent 执行和「关于我」，右侧是与小诺的对话；悬浮球作为收起后的形态保留。
   - **任务可验收**：交出去的活带着验收标准，小诺核对证据后才说完成；随时可以接手，再交还给它。
   - **记忆有据可查**：从你授权的目录、邮件、日历和飞书里整理候选，留不留由你决定；每一条都能溯源、纠正或删除。
   - **资讯与项目回顾**：按兴趣排序的资讯流，以及根据项目文件生成、附带出处的回顾卡片。
-  - **更多语音选择**：新增 StepAudio 3 集成模型（预览）、Qwen Audio 3.1，以及火山声纹验证。
+  - **更多语音选择**：新增 OpenAI 与 Gemini 实时语音、Gemini ASR / TTS、可把云端服务与自托管模型混搭的级联管线、StepAudio 3 集成模型（预览）、Qwen Audio 3.1，以及火山声纹验证。
+  - **飞书 @ 提及与每日简报**：经你同意后，你所选会话里直接 @ 你的消息会记为待办；可选的每日简报涵盖待办、日历与 @ 提及。
 - **2026-09-24 · [v0.2.3](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — 首次启动引导：一个 DashScope API Key 即可开始对话。
 - **2026-09-21 · [v0.2.2](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.2)** — 支持 Ubuntu 22.04+ x64 桌面端，新增可扫码配对的无头服务包 `nova-audio-agent-server`。
 - **2026-09-21 · [v0.2.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.0)** — 可配置 ASR / LLM / TTS 管线、个人记忆、自定义 MCP、唤醒词、中英双语桌面端（macOS / Windows），以及经 Tailscale 连接的 iPhone 客户端。
@@ -155,11 +156,11 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 
 环境要求：Node.js 22+、npm、Git、已登录的 `codex` 可执行文件（Codex 只走 app-server）
 
-可直接用 npm 安装稳定版；预览版安装方式见下方 Preview 通道。
+可直接用 npm 安装。
 
 ```bash
 # 全局安装
-npm install --global nova-audio-agent@0.2.3
+npm install --global nova-audio-agent@latest
 # 启动客户端；首次启动会弹出设置窗口，填一个 DashScope 密钥即可
 novaaudio
 # 打开设置面板
@@ -170,23 +171,11 @@ novaaudio doctor
 
 无头 Ubuntu 22.04+：通过 npm 安装 `nova-audio-agent-server`，完成配置与凭据初始化后运行 `novaaudio-server start`；另开终端运行 `novaaudio-server pair wss://your-host.ts.net` 显示一次性配对二维码。配置见[远程服务指南](docs/zh-CN/deployment/remote-server.md)。
 
-### Preview 预览通道
+### 升级
 
-v0.3 预览版使用 npm 的 `preview` 标签；`latest` 保持为稳定版。
+先退出 Nova，再运行 `npm install --global nova-audio-agent@latest`。这同时会取代 v0.3 预览版（npm 标签 `preview`，版本 `0.3.0-preview.1`，不再更新）。如需固定版本，使用 `nova-audio-agent@0.3.0`。升级会保留本地设置与数据；改回旧版本不会回滚数据变化，请先备份 Nova 数据。
 
-```bash
-# 安装或更新预览版
-npm install --global nova-audio-agent@preview
-novaaudio
-# 固定安装本次预览版
-npm install --global nova-audio-agent@0.3.0-preview.1
-# 将 CLI 切回稳定版
-npm install --global nova-audio-agent@latest
-```
-
-切换通道前请退出 Nova。两个通道共用本地设置与数据；切换 CLI 不会回滚数据变化，试用前请备份 Nova 数据。
-
-Ubuntu 22.04+ x64 无头服务使用 `npm install --global nova-audio-agent-server@preview`；稳定版使用 `@latest`。
+Ubuntu 22.04+ x64 无头服务使用 `npm install --global nova-audio-agent-server@latest`。
 
 从源码开发时：
 
@@ -227,9 +216,9 @@ Windows、Linux 源码运行及 macOS 回退路径使用 Chromium `getUserMedia`
 
 | 层 | 可选服务 | 默认 |
 |---|---|---|
-| 集成语音 | Qwen realtime、StepFun（预览） | Qwen `qwen-audio-3.0-realtime-plus` |
-| 级联 ASR / TTS | 火山语音 | `volc.seedasr.sauc.duration` / `seed-tts-2.0` |
-| 级联 LLM | DeepSeek、Qwen / DashScope、火山方舟 | DeepSeek `deepseek-flash` |
+| 集成语音 | Qwen realtime、OpenAI realtime、Gemini Live、StepFun（预览） | Qwen `qwen-audio-3.0-realtime-plus` |
+| 级联 ASR / TTS | 火山语音、Gemini、自托管（参考实现：Whisper / Breeze） | `volc.seedasr.sauc.duration` / `seed-tts-2.0` |
+| 级联 LLM | DeepSeek、Qwen / DashScope、火山方舟、OpenAI、Gemini、自托管 | DeepSeek `deepseek-flash` |
 | 视觉 | Qwen-VL 系列、Doubao Seed | 对话中默认关闭；Loop Camera 使用独立模型 |
 | 编码 executor | Codex | Codex |
 | 数据源 | 本地文件夹、Google（经 Composio）、Apple 邮件与日历（macOS）、飞书 | 经你授权后才接入 |
@@ -249,7 +238,7 @@ Windows、Linux 源码运行及 macOS 回退路径使用 Chromium `getUserMedia`
 
 ## 5. 路线图
 
-后续开发以 `v0.3.0dev` 为主；`main` 保持已发布基线。
+`main` 是已发布基线；v0.3.0 已发布。
 
 - [x] **v0.3.0：** 文字与语音整合进同一个主窗口，含待办、想法、目标、资讯、Agent 执行和「关于我」；任务带验收标准、核验完成并可随时接手；基于记忆提出建议；个人记忆可追溯、可纠正、可删除；接入用户授权的目录、邮件、日历和飞书会话。
 - [ ] **v0.4.0：** 扩展 Kimi Code、pi agent 等 coding 后端；以 AutoGLM 为首个示例接入 GUI 执行器，支持专长 Agent 之间的协作。

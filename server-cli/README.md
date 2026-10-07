@@ -22,6 +22,6 @@ novaaudio-server --env-file "$HOME/.nova-remote/server.env" pair wss://your-host
 
 Scan the one-use QR with Nova on iPhone. SSH needs a TTY (`ssh -t`); Ctrl+C cancels the invitation without stopping the service. No desktop session or local microphone is required for remote phone audio.
 
-## Preview channel
+## Upgrading
 
-Install or update with `npm install --global nova-audio-agent-server@preview`, or pin `nova-audio-agent-server@0.3.0-preview.1`. The `latest` tag remains stable. Stop the service and back up its data before switching channels; installing `@latest` again changes the executable, not the persisted data.
+Install or update with `npm install --global nova-audio-agent-server@latest`, or pin `nova-audio-agent-server@0.3.0`. This also replaces the v0.3 preview (npm tag `preview`, version `0.3.0-preview.1`, no longer updated). Stop the service and back up its data before upgrading; installing a different version changes the executable, not the persisted data.
