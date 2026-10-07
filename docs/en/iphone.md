@@ -24,12 +24,14 @@ Switching to text pauses live audio. Switching back cancels ongoing dictation bu
 
 ## Tasks and permissions
 
-Tasks execute on the computer. Approval controls apply to the specific pending operation.
+Tasks execute on the computer. When approval is needed, the phone shows the operation and the available decisions. “Allow” applies only to that request; “Allow for this session”, when offered, keeps the grant for the rest of the session, so choose it deliberately.
 
 Ending a call does not cancel a task; request cancellation explicitly. After reconnecting, use the returned task state to check progress instead of repeating an approved operation.
 
 ## Limits
 
 The message list may not survive an app restart. Phone cameras, screen sharing and background wake words are not supported. Network conditions, computer sleep and audio permissions affect calls. Reconnection clears stale audio and approval controls; approvals are not replayed automatically.
+
+The supported iPhone app is the native client in `clients/ios/Nova`. The Flutter client in `clients/flutter` (a five-tab workbench for Todos, Ideas, Goals, Feeds and Profile) is an in-progress port; it is not part of the 0.3.0 release, and Android, physical-device sync and live audio are not yet accepted.
 
 For client integration, see the [protocol reference](protocols/client-v1.md).

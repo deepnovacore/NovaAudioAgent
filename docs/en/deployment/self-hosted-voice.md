@@ -1,6 +1,6 @@
 # Self-hosted voice and portable presets
 
-Nova keeps microphone capture, endpointing, conversation state, tool authorization, playback and interruption on the client host. ASR, LLM and TTS run behind replaceable network endpoints. Model packages and GPU processes live in `serving/`; they are not dependencies of the Nova runtime.
+Nova keeps microphone capture, endpointing, conversation state, tool authorization, playback and interruption on the client host. ASR, LLM and TTS run behind replaceable network endpoints. Model packages and GPU processes live in `serving/`; they are not dependencies of the Nova runtime. `serving/` is a reference stack for source checkouts: the desktop installers and the npm packages do not include it, and you can equally point Nova at any compatible endpoints you already run.
 
 ## Start the reference implementation
 

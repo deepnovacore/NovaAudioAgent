@@ -39,6 +39,12 @@ Feishu access goes through your own Feishu app via `lark-cli` — there is no bu
 
 Required scopes cover reading your chat list, reading messages, reading message reactions, plus offline access for the OAuth token. The first sync covers the most recent 7 days, then resumes from where it left off. Text and rich-text messages are stored; attachments are not downloaded, and show a plain notice instead. Only messages from real people are recorded — the bot's own messages are never re-ingested. Message content is kept for 30 days.
 
+Two consents are kept apart. Choosing chats asks you to allow Nova to read them and keep the messages on this computer. A second switch, which lets the model service in Settings process Feishu content, decides whether those messages may be sent to your configured model to build memory. It is off until you turn it on, belongs to the signed-in account, and is cleared when you switch account, when the sign-in expires or when the model service changes. Without it, Nova does not use the messages for memory.
+
+With both in place, a message in a chat you selected that @mentions you directly is recorded as a Todo, showing where it came from. Only mentions from the later of the moment you selected the chat and the moment you gave processing consent are captured, so older history does not become Todos. A Todo can be undone while it is unchanged.
+
+If your Feishu sign-in expires, Nova pauses sync and bot reminders and offers a re-authorize button on the Feishu card. Your app binding, chat selection and local history are kept; you do not need to bind the app again.
+
 Bot reminders are opt-in and delivered only to your own private chat with the bot, never a group. A reminder card can be opened, snoozed or ignored; opening it only navigates to Nova, it does not authorize anything. Credentials are stored in their own directory, isolated from any other app's login.
 
 Disconnecting clears the login but keeps app configuration and history; deleting history clears the collected messages and the memory built from them, and reconnecting later starts a fresh collection.

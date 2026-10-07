@@ -153,7 +153,7 @@ For more details about the architecture, check [Architecture](docs/en/architectu
 
 ## 3. Quickstart
 
-Requirements: Node.js 22+, npm, Git, a logged-in `codex` executable (app-server is the only
+Requirements: Node.js 22.13+, npm, Git, a logged-in `codex` executable (app-server is the only
 Codex transport).
 
 Install the release with npm.

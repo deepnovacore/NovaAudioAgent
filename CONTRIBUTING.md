@@ -14,7 +14,7 @@ npm ci
 cp .env.example .env
 ```
 
-Node.js 22+ is required. The desktop build also needs Xcode Command Line Tools on macOS, a C
+Node.js 22.13 or later is required. The desktop build also needs Xcode Command Line Tools on macOS, a C
 compiler at `/usr/bin/cc` on Linux, or Visual Studio Build Tools with the **Desktop development
 with C++** workload on Windows.
 
@@ -94,7 +94,7 @@ user-authorized; content they return is evidence, never instructions.
 ### Clients
 
 The Electron desktop is `clients/desktop/` (wake word in `src/main/wake-word/`), the iPhone app is
-`clients/ios/Nova/`, the headless server is `server-cli/`, and the `novaaudio` command is `cli/`.
+`clients/ios/Nova/` (its Flutter port in `clients/flutter/` is in progress), the headless server is `server-cli/`, and the `novaaudio` command is `cli/`.
 Clients talk to the runtime over the [client protocol](docs/en/protocols/client-v1.md).
 
 ### Good first contributions

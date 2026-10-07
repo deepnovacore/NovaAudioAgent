@@ -27,6 +27,12 @@ Suggestion cards, drawn from the sources you've connected, offer to adopt someth
 
 Goal progress counts the Todos linked to it and excludes any that were cancelled; whether a Goal is actually done is always your call, never inferred automatically.
 
+Direct @mentions of you in the Feishu chats you selected can be recorded as Todos once you have given both Feishu consents; see [Sources and connectors](sources-and-connectors.md#feishu).
+
+## Daily briefs
+
+Optional morning and evening briefs summarize your Todos, calendar events and direct Feishu mentions as proactive reminders. Both are off by default. Turn them on in Settings → Connections & permissions → Daily briefs, where you can also set the times (08:30 and 18:30 by default), the repeat days (weekdays by default), the time zone and quiet hours (22:00 to 08:00 by default); no reminders are sent during quiet hours.
+
 ## Feeds
 
 Articles ranked to your interests, split into "For you" and "Saved". Until Nova has learned enough about what you read, it falls back to chronological order and asks you to confirm before switching to interest ranking. Each article shows why it was recommended. From an article you can read the original, save it, or convert it into a Todo, Idea or Goal — none of that authorizes Nova to act on it, it only records it. You can also tell Nova to show more or less of a given interest.

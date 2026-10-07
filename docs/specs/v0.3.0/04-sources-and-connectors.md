@@ -18,7 +18,7 @@ M8-IM（飞书连接器，§2.5）为规划，2026-09-12 决定留在 v0.3.0，�
 - 执行器边界：v0.2.0 spec 07。核心只认角色（coding），Codex 是插件；
   执行器 manifest 有 `readonly`、`confirm`、`deadline_budget`、`sensitive_params`。
 - Home Assistant、AutoGLM 在源码中不存在。`thirdparty/Open-AutoGLM` 仅为参考副本。
-- 组织专属能力（周报问答、员工工作台、飞书部署配置）在 internal；公共边界由
+- 组织专属能力不在公共树内；公共边界由
   `runtime/test/public-client-boundary.test.ts` 强制。公共 iOS 客户端只保留通用飞书登录模块。
 
 ## 2. 本卷新增

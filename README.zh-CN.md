@@ -154,7 +154,7 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 
 ## 3. 快速开始
 
-环境要求：Node.js 22+、npm、Git、已登录的 `codex` 可执行文件（Codex 只走 app-server）
+环境要求：Node.js 22.13+、npm、Git、已登录的 `codex` 可执行文件（Codex 只走 app-server）
 
 可直接用 npm 安装。
 
