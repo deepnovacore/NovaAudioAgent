@@ -125,5 +125,6 @@ linux:
       to: native/codex-sandbox-probe
 
 deb:
+  packageName: nova-audio-agent-desktop
   recommends:
     - fonts-noto-cjk
