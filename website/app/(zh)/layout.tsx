@@ -5,7 +5,7 @@ import '../globals.css';
 export const metadata: Metadata = {
   title: 'Nova Audio Agent — 随时交流，专心做事。',
   description:
-    '实时语音、放待办与可验收任务的 Workbench、有据可查的个人记忆、视觉监控和知识库，让小诺在值得你关注时主动开口。',
+    '理解你的上下文，通过语音和文字推进工作，结果可验收，主动有分寸的个人 Agent。',
   icons: { icon: sitePath('/favicon.svg') },
   alternates: { languages: { en: sitePath('/'), 'zh-CN': sitePath('/zh'), 'x-default': sitePath('/') } },
 };
