@@ -7,124 +7,57 @@
 [![CI](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
-[![Architecture](https://img.shields.io/badge/Arch-ControlPlane-7B2CBF.svg)](#2-architecture)
+[![Architecture](https://img.shields.io/badge/Arch-ControlPlane-7B2CBF.svg)](#4-architecture)
 [![Blog](https://img.shields.io/badge/Blog-Design-0B7285.svg)](docs/en/blog/2026-08-proactive-voice-agent-design-space.md)
 
 
-> **An always-on voice agent with restrained proactivity and the capability of workspace management.**
+> **A personal agent that understands your context, keeps work moving through conversation, checks results, and speaks when it matters.**
 
 
 ## News
 
-- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — Nova grows from a voice assistant into a personal agent.
-  - **One Workbench for your day**: Todos, Ideas, Goals, Feeds, Tasks and Profile sit beside the conversation with Nova; the orb stays as the collapsed form, and background mode keeps tasks running with the window hidden.
-  - **Tasks you can check**: delegated work carries acceptance criteria, and Nova verifies the evidence before calling it done; you can take over a task and hand it back at any time.
-  - **Context from your own sources**: authorized folders (or the whole computer), Apple Mail and Calendar, Google Mail and Calendar, and Feishu, all read-only and only after you consent.
-  - **Memory you can audit**: every entry shows where it came from and can be traced, corrected or forgotten.
-  - **Suggestions, news and daily briefs**: candidates for Todos, Ideas and Goals wait for your confirmation; an interest-ranked news feed and project recap cards cite their sources; optional morning and evening briefs cover Todos, calendar and mentions, and with your consent direct Feishu @mentions become Todos.
-  - **More ways to talk**: realtime voice from Qwen (Audio 3.1), OpenAI and Gemini, StepAudio 3 (preview), cascaded pipelines with Volcengine, Gemini or models you serve yourself, and Volcengine voiceprint verification.
+- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — A personal Workbench, source-backed memory and tasks with acceptance criteria. Realtime and cascaded voice support Qwen, OpenAI, Gemini, Volcengine and self-hosted services; availability depends on the selected pipeline.
+
+<details>
+<summary>Earlier releases</summary>
+
 - **2026-09-24 · [v0.2.3](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — Guided first run: one DashScope API Key is enough to start talking.
 - **2026-09-21 · [v0.2.2](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.2)** — Ubuntu 22.04+ x64 desktop, plus the headless `nova-audio-agent-server` with QR pairing.
 - **2026-09-21 · [v0.2.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.0)** — Configurable ASR / LLM / TTS pipelines, personal memory, custom MCP, wake words, bilingual desktop on macOS and Windows, and an iPhone client over Tailscale.
 - **2026-08-31 · v0.1.0** — Always-on voice, background Codex tasks, live steering, workspace/session management, and selective progress updates.
 
+</details>
+
 ## 1. Highlights
 
-Nova Audio Agent is a **harness for an always-on, general-purpose voice agent**: Nova (小诺)
-keeps responsive while doing long-running tasks in the background, reporting
-**proper** progress at **proper** time.
+Nova brings conversation, your authorized context and background execution into one personal agent. Talk through a goal, organize your todos, ideas and goals on the Workbench, and follow the work through to an evidence-backed result.
 
-A concurrent work [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) answers
-*how to keep an agent talking while it works*, while we ask a step further — **when is talking
-worth it at all** (see the [design article](docs/en/blog/2026-08-proactive-voice-agent-design-space.md) for more details).
+- **Voice and text, together.** Keep talking while work runs; clarify a request or change direction without starting over.
+- **Conversation beside your tasks.** Todos, Ideas, Goals, Feeds, Tasks and Profile sit beside the conversation. Switch to the orb or let tasks run in background mode with the microphone off.
+- **Context from your own sources.** Connect folders, mail, calendars and Feishu. Source access and permission for the configured model to process content are separate choices.
+- **Memory with sources.** See what Nova has learned, trace it to its evidence, correct it, forget it or purge it. Imported document knowledge remains a separate searchable corpus.
+- **Tasks you can check.** Clarify goals, confirm workspaces and sessions, then delegate to Codex. Refine the work as it runs; Nova checks evidence against acceptance criteria, and you can take over and return control.
+- **Thoughtfully proactive.** Meaningful progress, camera events and optional daily briefs get your attention at an appropriate moment. Routine updates stay quiet; reminders respect your speaking turn.
 
+Learn more about [source permissions](docs/en/sources-and-connectors.md), [task controls](docs/en/tasks.md) and [when a voice agent should speak](docs/en/blog/2026-08-proactive-voice-agent-design-space.md).
 
-- **Restrained proactivity.** Important progress gets reported; routine updates stay quiet, and reminders never interrupt you while you speak.
-- **Voice-run workspaces.** Create and switch workspaces and sessions by voice, with your confirmation.
-- **Clarify before acting.** Nova asks about unclear requirements before handing work to the background executor.
-- **Steer while it runs.** Add requirements and constraints by voice while a task is in progress.
-- **One window for your day.** Todos, goals, news and delegated tasks sit beside the conversation in the Workbench, grounded in the sources you authorize.
-- **Done means verified.** Each task carries acceptance criteria; Nova checks the evidence before it reports completion, and you can take over at any point.
+## 2. Work with Nova
 
-## 2. Architecture
-
-[![Nova Audio Agent runtime architecture on a chalkboard](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)
-
-*One event loop, two model ports reading one ContextView, Memory as the shared blackboard,
-Floor guarding the single speech path.*
-
-Essential roles and ideas:
-
-* **FrontBrain model**: the realtime model that interacts with users, using the minimal host/native surface to dispatch work, cancel it, confirm host proposals, recall memory, and search. Revision-bound intake slots remain host-owned.
-* **Proactive**: discovers grounded suggestions and selects which optional updates are worth sharing. Floor controls the speaking opportunity; the front brain handles the final expression.
-* **Memory and ContextView**: short-term events from different capabilities are stored in different channels. Only bounded evidence and intake facts are compiled into ContextView for FrontBrain.
-* **Executors and controllers**: role-based manifests run asynchronous work; an AgentController registry owns model-facing controllers and hidden Vision watch/guard channels. Camera frames go directly to the selected VLM; monitoring owns its complete loop.
-
-For more details about the architecture, check [Architecture](docs/en/architecture.md).
-
-
-
-## Use Cases
+### Your workbench and context
 
 <table>
   <tr>
     <td width="50%" valign="top">
       <h3>Your personal workbench</h3>
-      <p>Todos, Ideas, Goals, Feeds and your Profile sit on the left, the conversation with Nova on the right. Start a task from any todo; Nova checks the result against its acceptance criteria, and you can take over or hand it back at any time.</p>
+      <p>Todos, Ideas, Goals, Feeds, Tasks and Profile sit beside your conversation with Nova. Switch to the voice orb, or hide the window and turn off the microphone while tasks keep running.</p>
       <img src="assets/features/workbench-window.png" alt="Workbench window with todos on the left and the conversation with Nova on the right" width="100%">
     </td>
     <td width="50%" valign="top">
-      <h3>Camera monitoring and timely alerts</h3>
-      <p>Ask Nova to watch for a condition and tell you when it occurs.</p>
-      <img src="assets/features/vision-camera.png" alt="Camera observation and spoken alert" width="100%">
+      <h3>Profile and personal memory</h3>
+      <p>See what Nova knows about you, each entry marked as something you said or something from your sources. Continue, correct, forget or purge any of it.</p>
+      <img src="assets/features/profile-memory.en.png" alt="Profile overview and personal memory controls" width="100%">
     </td>
   </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Voice Vibe Coding</h3>
-      <p>Describe a feature and refine it by voice while Codex writes and tests the code. Nova reports key milestones and keeps routine progress quiet.</p>
-      <img src="assets/features/coding.en.svg" alt="Voice requests flow to Codex for coding and testing" width="100%">
-    </td>
-    <td width="50%" valign="top">
-      <h3>Take Nova with you</h3>
-      <p>Connect your iPhone over Tailscale to talk and approve tasks on your PC.</p>
-      <img src="assets/features/iphone.en.png" alt="iPhone home and connection settings" width="100%">
-    </td>
-  </tr>
-</table>
-
-## Main Features
-
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Understands what you mean</h3>
-      <p>Describe your goal naturally. Nova asks for the missing details before turning it into a task.</p>
-      <img src="assets/features/conversation.en.png" alt="Nova clarifies the requested application before starting" width="100%">
-    </td>
-    <td width="50%" valign="top">
-      <h3>You control permissions</h3>
-      <p>Review requests to run commands or access the network, then allow or deny them.</p>
-      <img src="assets/features/permission.en.png" alt="Network permission request with allow and deny controls" width="100%">
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Voice-run workspaces</h3>
-      <p>Create and switch workspaces and sessions by voice. A new workspace waits for your confirmation.</p>
-      <img src="assets/features/workspace.en.png" alt="Nova waits for approval to create a workspace" width="100%">
-    </td>
-    <td width="50%" valign="top">
-      <h3>Bring your tools and knowledge</h3>
-      <p>Configure ASR / LLM / TTS and MCP; ask questions across your documents.</p>
-      <img src="assets/features/knowledge.en.png" alt="Knowledge-base answer using the CN-27 demo documents" width="100%">
-    </td>
-  </tr>
-</table>
-
-### New in v0.3
-
-<table>
   <tr>
     <td width="50%" valign="top">
       <h3>Todos and project recaps</h3>
@@ -133,7 +66,7 @@ For more details about the architecture, check [Architecture](docs/en/architectu
     </td>
     <td width="50%" valign="top">
       <h3>Ideas and goals</h3>
-      <p>Jot down ideas and set goals. Nova suggests more from your sources, and nothing is added without you.</p>
+      <p>Jot down ideas and set goals. Review source-grounded suggestions before adopting them.</p>
       <img src="assets/features/ideas-goals.png" alt="Ideas and Goals pages with suggestions from Nova" width="100%">
     </td>
   </tr>
@@ -144,9 +77,55 @@ For more details about the architecture, check [Architecture](docs/en/architectu
       <img src="assets/features/feeds.png" alt="Interest-ranked news feed" width="100%">
     </td>
     <td width="50%" valign="top">
-      <h3>Profile and personal memory</h3>
-      <p>See what Nova knows about you, each entry marked as something you said or something from your sources. Continue, correct, forget or purge any of it.</p>
-      <img src="assets/features/profile-memory.en.png" alt="Profile overview and personal memory controls" width="100%">
+      <h3>Bring your tools and knowledge</h3>
+      <p>Configure ASR / LLM / TTS and MCP; ask questions across your documents.</p>
+      <img src="assets/features/knowledge.en.png" alt="Knowledge-base answer using the CN-27 demo documents" width="100%">
+    </td>
+  </tr>
+</table>
+
+### Delegate and steer work
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Understands what you mean</h3>
+      <p>Describe your goal naturally. Nova asks for the missing details before turning it into a task.</p>
+      <img src="assets/features/conversation.en.png" alt="Nova clarifies the requested application before starting" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <h3>Voice Vibe Coding</h3>
+      <p>Clarify a goal, let Codex work in the background, and refine it by voice or text. Nova checks task evidence against acceptance criteria; take over and hand it back at any time.</p>
+      <img src="assets/features/coding.en.svg" alt="Voice requests flow to Codex for coding and testing" width="100%">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Voice-run workspaces</h3>
+      <p>Create and switch workspaces and sessions by voice. A new workspace waits for your confirmation.</p>
+      <img src="assets/features/workspace.en.png" alt="Nova waits for approval to create a workspace" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <h3>You control permissions</h3>
+      <p>Review requests to run commands or access the network, then allow or deny them.</p>
+      <img src="assets/features/permission.en.png" alt="Network permission request with allow and deny controls" width="100%">
+    </td>
+  </tr>
+</table>
+
+### Observe and stay connected
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Camera monitoring and timely alerts</h3>
+      <p>Ask Nova to watch for a condition and tell you when it occurs.</p>
+      <img src="assets/features/vision-camera.png" alt="Camera observation and spoken alert" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <h3>Take Nova with you</h3>
+      <p>Connect your iPhone over Tailscale to Nova on macOS or an Ubuntu headless server, then talk and approve tasks from your phone.</p>
+      <img src="assets/features/iphone.en.png" alt="iPhone home and connection settings" width="100%">
     </td>
   </tr>
 </table>
@@ -225,7 +204,22 @@ wake-word Worker; explicit mute stops wake detection. See
 
 Models, credentials and per-provider limits: [support matrix](docs/en/support-matrix.md).
 
-## 4. Documentation
+## 4. Architecture
+
+[![Nova personal agent architecture: interaction, context, coordination, execution and expression](assets/architecture/nova-personal-agent.en.png)](assets/architecture/nova-personal-agent.en.png)
+
+*Conversation stays responsive, authorized context informs the work, and task results return as evidence. Speaking is a separate decision.*
+
+- **Interaction:** Workbench, voice orb and phone clients share conversation and task controls. Background mode turns off the desktop microphone while work continues.
+- **Context:** authorized sources feed the personal memory ledger and source-grounded suggestions. Document knowledge is separate; neither store owns live task state or grants permissions.
+- **Coordination:** the conversation clarifies goals; the host owns confirmations, permissions and task state. The Task loop executes, checks evidence, then completes, corrects or waits. You can take over and return control.
+- **Execution and expression:** Codex performs background work; camera monitoring and selected tools have their own lifecycles. Runtime events feed Proactive's selection of optional updates, Floor coordinates the speaking opportunity, and the conversation model expresses the update.
+
+The **runtime blackboard** holds causal conversation and execution state; **personal memory** retains source-backed facts; **document knowledge** searches imported files. They have different roles and authority.
+
+See [How Nova works](docs/en/architecture.md) for the product flow and the [architecture reference](docs/en/archs/00-overview.md) for runtime internals.
+
+## 5. Documentation
 
 | Read this | For |
 |---|---|
@@ -236,14 +230,14 @@ Models, credentials and per-provider limits: [support matrix](docs/en/support-ma
 | [When should a voice agent speak?](docs/en/blog/2026-08-proactive-voice-agent-design-space.md) | Voice interaction design |
 | [Node runtime migration archive](https://github.com/deepnovacore/NovaAudioAgent/tree/20a0812c0acb83b53cbad4b415d637dafff3c7f6/docs/archs/node-runtime-migration) | Migration-era plans in the history of tag `v0.1.0` |
 
-## 5. Roadmap
+## 6. Roadmap
 
 - [x] **v0.3.0:** one main window for text and voice with Todos, Ideas, Goals, Feeds, Tasks and Profile; tasks with acceptance criteria, verified completion and takeover; memory-grounded suggestions; traceable, correctable and removable personal memory; user-authorized folders, email, calendars and Feishu conversations.
-- [ ] **v0.4.0:** expand coding backends with Kimi Code and pi agent; add a GUI executor with AutoGLM as the first example, enabling collaboration across specialist agents.
+- [ ] **v0.4.0 (in development):** expand coding backends with Kimi Code and pi agent; add a GUI executor with AutoGLM as the first example, enabling collaboration across specialist agents.
 
 Releases require feature and supported-platform acceptance. Ubuntu 22.04+ x64 desktop and headless npm packages are included in the candidate release checks.
 
-## 6. Contribution
+## 7. Contribution
 
 ```bash
 npm ci && npm run check && npm run build && npm test
@@ -253,6 +247,6 @@ Live integrations are credential- and hardware-dependent and never substitute fo
 deterministic tests. Security reports: [SECURITY.md](SECURITY.md); contribution rules and
 invariants: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## 7. License
+## 8. License
 
 Copyright 2026 DeepNovaCore, [Apache License 2.0](LICENSE).

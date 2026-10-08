@@ -5,7 +5,7 @@ import '../globals.css';
 export const metadata: Metadata = {
   title: 'Nova Audio Agent — Stay in conversation. Keep work moving.',
   description:
-    'Real-time voice, a Workbench for todos and verifiable tasks, personal memory grounded in your sources, camera monitoring, and document knowledge. Nova speaks up when it matters.',
+    'A personal agent that understands your context, keeps work moving through voice and text, checks task results, and speaks when it matters.',
   icons: { icon: sitePath('/favicon.svg') },
   alternates: { languages: { en: sitePath('/'), 'zh-CN': sitePath('/zh'), 'x-default': sitePath('/') } },
 };

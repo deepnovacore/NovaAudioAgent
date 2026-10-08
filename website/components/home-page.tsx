@@ -9,24 +9,28 @@ import { HeroHeaderScope } from './hero-header-scope';
 export function HomePage({ en = false }: { en?: boolean }) {
   const doc = sitePath(en ? '/en/docs' : '/docs');
   const highlights = en ? [
-    ['Real-time conversation', 'Keep talking while tasks run. Clarify a request or change direction whenever you need.'],
-    ['Thoughtfully proactive', 'Nova reports meaningful progress and camera events, while routine updates stay quiet.'],
-    ['Context that stays with you', 'Recall personal memories and your documents. Keep control through explicit approvals.'],
+    ['Voice and text, together', 'Keep talking while work runs. Clarify a request, add constraints or change direction.'],
+    ['Conversation beside your tasks', 'Todos, Ideas, Goals, Feeds, Tasks and Profile sit beside the conversation. Switch to the orb, or run in background with the microphone off.'],
+    ['Context from your sources', 'Connect folders, mail, calendars and Feishu. Source access and permission for model processing are separate choices.'],
+    ['Memory with sources', 'Trace what Nova learns to its evidence. Correct, forget or purge it; imported document knowledge stays separate.'],
+    ['Tasks you can check', 'Clarify goals, confirm the execution place and delegate to Codex. Nova checks evidence against acceptance criteria; take over and return control at any time.'],
+    ['Thoughtfully proactive', 'Meaningful progress, camera events and optional daily briefs get your attention at an appropriate moment. Routine updates stay quiet.'],
   ] : [
-    ['边聊边做', '后台任务继续，前台对话照常。随时澄清需求、补充要求，或调整方向。'],
-    ['主动有分寸', '重要进展、关注的画面变化，及时提醒；琐碎过程保持安静，不抢你说话。'],
-    ['理解你的上下文', '结合个人记忆与知识库回答问题，需要授权时先确认，决定权始终在你。'],
+    ['语音与文字一起用', '后台任务继续，前台对话照常。随时澄清需求、补充约束或调整方向。'],
+    ['对话与任务并排', '待办、想法、目标、资讯、任务和「关于我」与对话并排。切成悬浮球，或关闭麦克风在后台继续执行。'],
+    ['上下文来自你的资料', '接入文件夹、邮件、日历和飞书；读取来源与允许模型处理内容，是两项独立的授权。'],
+    ['个人记忆带着出处', '追溯小诺学到的信息，纠正、忘记或彻底删除；主动导入的文档知识库保持独立。'],
+    ['任务可执行、可验收', '问清目标，确认执行位置，再交给 Codex；小诺按验收标准核对证据，你可以随时接管和交还。'],
+    ['主动有分寸', '重要进展、关注的画面变化和可选每日简报，在合适时机提醒；琐碎更新保持安静。'],
   ];
-  const preview = en ? [
-    ['Context, joined up', 'Beyond your workspaces, Nova keeps the folders you authorize in sync and connects email, calendars and Feishu.'],
-    ['Memory with sources', 'What Nova learns becomes structured memory in one ledger, each entry marked as something you said or something from your sources. Correct, forget or purge any of it.'],
-    ['Align first, then act', 'Nova clarifies the request with your long-term context before handing it to Codex, then checks the result against its acceptance criteria. Take over or hand it back at any time.'],
-    ['Three modes', 'Switch between the Workbench, the orb and background. In background the window hides and the microphone turns off; tasks keep running and the tray shows new reminders.'],
+  const featureGroups = en ? [
+    ['workbench', 'Your workbench and context'],
+    ['tasks', 'Delegate and steer work'],
+    ['connections', 'Observe and stay connected'],
   ] : [
-    ['拉通 Context', '除了 PC 上的各个工作区，小诺能持续同步你授权的本地目录，也能接入邮件、日历和飞书。'],
-    ['沉淀 Memory', '把信息抽取成结构化记忆，写进统一的记忆账本；每条都标明是你说过的还是来自资料，可以纠正、忘记，也可以彻底删除。'],
-    ['先对齐，再执行', '结合长期 Context 先把需求问清，再交给 Codex；结果对照验收标准核对，中途随时可以接管或交还。'],
-    ['三种模式', '工作台、悬浮球、后台随时切换。后台时窗口隐藏、麦克风关闭，任务照常跑，新提醒由托盘告诉你。'],
+    ['workbench', '工作台与个人上下文'],
+    ['tasks', '交办任务，随时调整'],
+    ['connections', '观察画面，随身连接'],
   ];
   const cards = featureCards.filter(card => card.lang === (en ? 'en' : 'zh-CN'));
   const tile = (card: (typeof featureCards)[number]) => (
@@ -45,7 +49,7 @@ export function HomePage({ en = false }: { en?: boolean }) {
           <StarField en={en} />
           <div className="hero-content">
             <p className="hero-kicker">
-              {en ? 'A voice agent by DeepNovaCore' : '深穹星核 · 开源语音助手'}
+              {en ? 'A personal agent by DeepNovaCore' : '深穹星核 · 开源个人 Agent'}
             </p>
             <h1>
               NovaAudioAgent
@@ -63,8 +67,8 @@ export function HomePage({ en = false }: { en?: boolean }) {
             </h2>
             <p className="hero-description">
               {en
-                ? 'A voice agent that listens, remembers, and acts. Talk naturally, explore your documents, or ask Nova to watch for changes—and hear back when it matters.'
-                : '能对话、会记忆、也能行动的常驻语音助手。自然交流、查询资料、观察画面，让小诺在值得你关注时主动开口。'}
+                ? 'A personal agent that understands your context, keeps work moving through conversation, checks results, and speaks when it matters.'
+                : '理解你的上下文，通过对话推进工作，结果可验收，主动有分寸。'}
             </p>
             <div className="hero-actions">
               <a className="button primary" href={doc}>
@@ -106,26 +110,20 @@ export function HomePage({ en = false }: { en?: boolean }) {
           </h2>
           <p className="lead">
             {en
-              ? 'Human-centric AI understands you before it helps. Nova sits between you and executors like Codex, connecting real-time voice with a Workbench for your todos, goals and delegated tasks, plus camera monitoring, personal memory, and document knowledge. Stay in conversation on your desktop or from your iPhone.'
-              : '以人为中心的 AI，先了解你、理解你，再帮到你。小诺站在你和 Codex 这样的执行器之间，把实时语音、Workbench 里的待办与任务、视觉监控、个人记忆和知识库连在一起，也能通过 iPhone 随身连接。'}
+              ? 'Talk through a goal, organize your todos, ideas and goals on the Workbench, and follow delegated work through to an evidence-backed result. Nova draws on the sources you authorize, keeps memory traceable, and lets you take over whenever you need.'
+              : '一起问清目标，在 Workbench 中整理待办、想法与目标，再跟进任务直到得到有证据的结果。小诺结合你授权的资料，保留记忆出处；需要时，你随时可以接管。'}
           </p>
         </section>
         <div className="demo-media wrap"><YouTubeCard en={en} /></div>
-        <section className="home-highlights wrap" aria-label={en ? 'Highlights' : '核心特性'}>
+        <section className="home-highlights wrap" id="whats-new" aria-label={en ? 'Highlights' : '核心特性'}>
           {highlights.map(([title, body], i) => <article key={title}><span className="section-label">0{i + 1}</span><h2>{title}</h2><p>{body}</p></article>)}
         </section>
-        <section className="main-features wrap" id="whats-new">
-          <div className="main-features-heading"><p className="section-label">{en ? 'Personal agent · v0.3.0' : '个人 Agent · v0.3.0'}</p><h2>{en ? 'Understands what you mean. Helps with what you need.' : '懂你所想，帮你所需。'}</h2></div>
-          <p>{en ? 'Install or upgrade: ' : '安装或升级：'}<code>npm install --global nova-audio-agent@latest</code>{en ? '.' : '。'}</p>
-          <div className="home-highlights preview-grid">{preview.map(([title, body]) => <article key={title}><h3>{title}</h3><p>{body}</p></article>)}</div>
-        </section>
         <section className="main-features wrap" id="features">
-          <div className="main-features-heading"><p className="section-label">{en ? 'Use cases' : '使用场景'}</p><h2>{en ? 'More ways to work with Nova.' : '从一句话，到更多可能。'}</h2></div>
-          <div className="feature-gallery">{cards.filter(card => card.group === 'use-case').map(tile)}</div>
-          <div className="main-features-heading feature-group-heading"><p className="section-label">{en ? 'Main features' : '核心功能'}</p><h2>{en ? 'You stay in control.' : '每一步，都由你做主。'}</h2></div>
-          <div className="feature-gallery">{cards.filter(card => card.group === 'feature').map(tile)}</div>
-          <div className="main-features-heading feature-group-heading"><p className="section-label">{en ? 'New in v0.3' : 'v0.3 新功能'}</p><h2>{en ? 'Your day, on one Workbench.' : '一天的事，都在工作台上。'}</h2></div>
-          <div className="feature-gallery">{cards.filter(card => card.group === 'new').map(tile)}</div>
+          <div className="main-features-heading"><p className="section-label">{en ? 'Work with Nova' : '和小诺一起做事'}</p><h2>{en ? 'From context to an outcome.' : '从理解上下文，到把事情做好。'}</h2></div>
+          {featureGroups.map(([group, title]) => <div key={group}>
+            <div className="main-features-heading feature-group-heading"><h2>{title}</h2></div>
+            <div className="feature-gallery">{cards.filter(card => card.group === group).map(tile)}</div>
+          </div>)}
         </section>
         <section className="philosophy" id="design">
           <div className="reading">
@@ -156,7 +154,7 @@ export function HomePage({ en = false }: { en?: boolean }) {
               <div>
                 <small>01</small>
                 <strong>{en ? 'Work progresses' : '任务有了进展'}</strong>
-                <span>Executor / Memory</span>
+                <span>Executor / Runtime blackboard</span>
               </div>
               <span className="flow-arrow">→</span>
               <div>
@@ -170,11 +168,11 @@ export function HomePage({ en = false }: { en?: boolean }) {
               <div>
                 <small>03</small>
                 <strong>{en ? 'Find the moment' : '等待合适的时机'}</strong>
-                <span>Floor / Voice</span>
+                <span>Floor / Conversation</span>
               </div>
             </div>
             <a className="text-link" href={doc + '/architecture/'}>
-              {en ? 'Explore the architecture' : '了解运行时架构'}{' '}
+              {en ? 'Explore the personal agent architecture' : '了解个人 Agent 架构'}{' '}
               <ArrowRight size={14} />
             </a>
           </div>
