@@ -151,7 +151,7 @@ Headless Ubuntu 22.04+: install `nova-audio-agent-server` with npm, configure it
 
 ### Upgrading
 
-Quit Nova, then run `npm install --global nova-audio-agent@latest`. To pin a version, use `nova-audio-agent@0.3.0`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
+Quit Nova, then run `npm install --global nova-audio-agent@latest`. To pin a version, use `nova-audio-agent@0.3.1`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
 
 For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@latest`.
 

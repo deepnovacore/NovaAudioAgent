@@ -24,4 +24,4 @@ Scan the one-use QR with Nova on iPhone. SSH needs a TTY (`ssh -t`); Ctrl+C canc
 
 ## Upgrading
 
-Install or update with `npm install --global nova-audio-agent-server@latest`, or pin `nova-audio-agent-server@0.3.0`. Stop the service and back up its data before upgrading; installing a different version changes the executable, not the persisted data.
+Install or update with `npm install --global nova-audio-agent-server@latest`, or pin `nova-audio-agent-server@0.3.1`. Stop the service and back up its data before upgrading; installing a different version changes the executable, not the persisted data.
