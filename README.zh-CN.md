@@ -16,11 +16,12 @@
 
 ## News
 
-- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — 个人工作台、带出处的记忆，以及有验收标准的任务。实时与级联语音可选 Qwen、OpenAI、Gemini、火山和自托管服务，具体能力取决于所选管线。
+- **2026-10-09 · [v0.3.1](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.1)** — 首次启动与升级更顺畅：快速开始的同一个密钥即可直接用于文字对话，Ubuntu 安装包支持从 0.3.0 原地升级，macOS 应用包校验通过，飞书连接界面补全英文。
 
 <details>
 <summary>早期版本</summary>
 
+- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — 个人工作台、带出处的记忆，以及有验收标准的任务。实时与级联语音可选 Qwen、OpenAI、Gemini、火山和自托管服务，具体能力取决于所选管线。
 - **2026-09-24 · [v0.2.3](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — 首次启动引导：一个 DashScope API Key 即可开始对话。
 - **2026-09-21 · [v0.2.2](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.2)** — 支持 Ubuntu 22.04+ x64 桌面端，新增可扫码配对的无头服务包 `nova-audio-agent-server`。
 - **2026-09-21 · [v0.2.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.0)** — 可配置 ASR / LLM / TTS 管线、个人记忆、自定义 MCP、唤醒词、中英双语桌面端（macOS / Windows），以及经 Tailscale 连接的 iPhone 客户端。

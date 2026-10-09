@@ -16,11 +16,12 @@
 
 ## News
 
-- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — A personal Workbench, source-backed memory and tasks with acceptance criteria. Realtime and cascaded voice support Qwen, OpenAI, Gemini, Volcengine and self-hosted services; availability depends on the selected pipeline.
+- **2026-10-09 · [v0.3.1](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.1)** — Smoother first run and upgrades: the quick start now powers typed chat out of the box, the Ubuntu package upgrades in place from 0.3.0, the macOS app bundle verifies cleanly, and the Feishu setup is fully available in English.
 
 <details>
 <summary>Earlier releases</summary>
 
+- **2026-10-07 · [v0.3.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.3.0)** — A personal Workbench, source-backed memory and tasks with acceptance criteria. Realtime and cascaded voice support Qwen, OpenAI, Gemini, Volcengine and self-hosted services; availability depends on the selected pipeline.
 - **2026-09-24 · [v0.2.3](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.3)** — Guided first run: one DashScope API Key is enough to start talking.
 - **2026-09-21 · [v0.2.2](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.2)** — Ubuntu 22.04+ x64 desktop, plus the headless `nova-audio-agent-server` with QR pairing.
 - **2026-09-21 · [v0.2.0](https://github.com/deepnovacore/NovaAudioAgent/releases/tag/v0.2.0)** — Configurable ASR / LLM / TTS pipelines, personal memory, custom MCP, wake words, bilingual desktop on macOS and Windows, and an iPhone client over Tailscale.
