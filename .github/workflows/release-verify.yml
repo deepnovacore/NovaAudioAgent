@@ -55,6 +55,8 @@ jobs:
           test "$EXPECTED_COMMIT" = "$(git rev-parse "refs/tags/v$RELEASE_VERSION^{commit}")"
       - run: npm install --global npm@11.6.0
       - run: npm ci --ignore-scripts
+      # The verification scripts import the built runtime (output redaction).
+      - run: npm run build --workspace @nova-audio-agent/runtime
       - name: Install Linux display dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb libasound2 libgtk-3-0 libnss3 libgbm1 libsecret-1-0
