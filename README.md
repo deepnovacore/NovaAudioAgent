@@ -81,14 +81,26 @@ The front brain handles conversation; the back brain does the work. Task events 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>A front brain that stays with you</h3>
-      <p>Talk naturally while the back brain works. Clarify the goal, add a constraint or change direction without starting over.</p>
+      <h3>Understands what you mean</h3>
+      <p>Describe your goal naturally. Nova asks for missing details before starting a task; keep talking and refining it while the back brain works.</p>
       <a href="assets/features/conversation.en.png"><img src="assets/features/conversation.en.png" alt="Nova voice orb asking a clarifying question before starting a task" width="100%"></a>
     </td>
     <td width="50%" valign="top">
       <h3>You set the boundaries</h3>
       <p>Nova coordinates tasks and checks results against your criteria. Review permissions, take over when needed, and hear updates when they matter.</p>
       <a href="assets/features/permission.en.png"><img src="assets/features/permission.en.png" alt="Nova asking for permission to access the network for a task" width="100%"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Voice-run workspaces</h3>
+      <p>Create and switch workspaces and sessions by voice. A new workspace waits for your confirmation.</p>
+      <a href="assets/features/workspace.en.png"><img src="assets/features/workspace.en.png" alt="Nova waits for approval to create a workspace" width="100%"></a>
+    </td>
+    <td width="50%" valign="top">
+      <h3>Bring your tools and knowledge</h3>
+      <p>Configure ASR / LLM / TTS and MCP; ask questions across your documents.</p>
+      <a href="assets/features/knowledge.en.png"><img src="assets/features/knowledge.en.png" alt="Knowledge-base answer using the CN-27 demo documents" width="100%"></a>
     </td>
   </tr>
 </table>
@@ -142,15 +154,15 @@ novaaudio config
 novaaudio doctor
 ```
 
-Headless Ubuntu 22.04+: install `nova-audio-agent-server` with npm, configure it and initialize credentials; run `novaaudio-server start` and, in a second terminal, `novaaudio-server pair wss://your-host.ts.net` for a one-use QR. See the [configuration guide](docs/en/deployment/remote-server.md).
+Quit Nova before upgrading, then rerun the install command above. To pin a version, use `nova-audio-agent@0.3.1`. Upgrades keep your settings and data; back up your Nova data before downgrading.
 
-### 3.2 Upgrading
+Headless Ubuntu 22.04+ x64:
 
-Quit Nova, then run `npm install --global nova-audio-agent@latest`. To pin a version, use `nova-audio-agent@0.3.1`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
+1. Install or upgrade with `npm install --global nova-audio-agent-server@latest`, then configure the service and initialize credentials using the [configuration guide](docs/en/deployment/remote-server.md).
+2. Start the service with `novaaudio-server start`.
+3. In a second terminal, run `novaaudio-server pair wss://your-host.ts.net` to display a one-use pairing QR code.
 
-For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@latest`.
-
-### 3.3 Develop from source
+### 3.2 Develop from source
 
 For development from source:
 
@@ -166,23 +178,15 @@ Get an API key from [DashScope](https://platform.qianwenai.com) and set `DASHSCO
 npm run start:client
 # Open Workbench for this launch, overriding the saved startup preference
 npm run start:workbench
-```
-The client includes microphone, camera, sound, settings, and external MCP controls. Try hovering over the desktop orb to get surprised :) Also you
-may try build or run demo locally:
-
-```bash
+# Build, diagnose or run the local demos
 npm run build --workspace @nova-audio-agent/runtime
 node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 ```
 
-Native echo-cancelled capture (VoiceProcessingIO) is macOS-only. Wake detection uses that
-capture when available; Windows, Linux source runs, and macOS fallback use Chromium
-`getUserMedia` + AudioWorklet. While sleeping, microphone frames go only to the local
-wake-word Worker; explicit mute stops wake detection. See
-[wake-word setup](docs/en/getting-started.md#enable-a-wake-word).
+The client includes microphone, camera, sound, settings and external MCP controls. Try hovering over the desktop orb for a surprise :)
 
-### 3.4 Support matrix
+### 3.3 Support matrix
 
 | Platform | Desktop app | Headless server | Connect iPhone |
 |---|---|---|---|

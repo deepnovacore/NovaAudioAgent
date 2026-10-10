@@ -81,14 +81,26 @@
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>前脑陪你交流，后脑继续做事</h3>
-      <p>后台执行时，前台对话照常。随时问清目标、补充约束或调整方向，不必从头开始。</p>
+      <h3>理解意图，问清再做</h3>
+      <p>自然描述目标，Nova 问清缺失信息后再开始任务。后台继续执行，前台随时补充约束或调整方向。</p>
       <a href="assets/features/conversation.png"><img src="assets/features/conversation.png" alt="Nova 语音悬浮球在执行前澄清需求" width="100%"></a>
     </td>
     <td width="50%" valign="top">
       <h3>任务有边界，主动有分寸</h3>
       <p>Nova 协调任务，按你的标准核对结果。权限由你确认，执行可以接管；值得提醒的进展才在合适时机开口。</p>
       <a href="assets/features/permission.png"><img src="assets/features/permission.png" alt="Nova 请求任务所需的网络访问权限" width="100%"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>语音管理工作区</h3>
+      <p>用语音创建、切换工作区和会话；新建工作区前，先等你确认。</p>
+      <a href="assets/features/workspace.png"><img src="assets/features/workspace.png" alt="Nova 等待你确认创建工作区" width="100%"></a>
+    </td>
+    <td width="50%" valign="top">
+      <h3>接入工具与知识</h3>
+      <p>自由配置 ASR / LLM / TTS 和 MCP，基于自己的资料问答。</p>
+      <a href="assets/features/knowledge.png"><img src="assets/features/knowledge.png" alt="基于 CN-27 演示资料的知识库回答" width="100%"></a>
     </td>
   </tr>
 </table>
@@ -142,15 +154,15 @@ novaaudio config
 novaaudio doctor
 ```
 
-无头 Ubuntu 22.04+：通过 npm 安装 `nova-audio-agent-server`，完成配置与凭据初始化后运行 `novaaudio-server start`；另开终端运行 `novaaudio-server pair wss://your-host.ts.net` 显示一次性配对二维码。配置见[远程服务指南](docs/zh-CN/deployment/remote-server.md)。
+升级前先退出 Nova，再运行上面的安装命令。如需固定版本，使用 `nova-audio-agent@0.3.1`。升级保留设置与数据；降级前请备份 Nova 数据。
 
-### 3.2 升级
+Ubuntu 22.04+ x64 无头服务：
 
-先退出 Nova，再运行 `npm install --global nova-audio-agent@latest`。如需固定版本，使用 `nova-audio-agent@0.3.1`。升级会保留本地设置与数据；改回旧版本不会回滚数据变化，请先备份 Nova 数据。
+1. 运行 `npm install --global nova-audio-agent-server@latest` 安装或升级，按[远程服务指南](docs/zh-CN/deployment/remote-server.md)完成配置与凭据初始化。
+2. 运行 `novaaudio-server start` 启动服务。
+3. 另开终端运行 `novaaudio-server pair wss://your-host.ts.net`，显示一次性配对二维码。
 
-Ubuntu 22.04+ x64 无头服务使用 `npm install --global nova-audio-agent-server@latest`。
-
-### 3.3 从源码开发
+### 3.2 从源码开发
 
 从源码开发时：
 
@@ -168,20 +180,15 @@ npm ci && cp .env.example .env
 npm run start:client
 # 本次直接打开 Workbench，覆盖已保存的启动偏好
 npm run start:workbench
-```
-客户端包含麦克风、摄像头、声音开关等按钮，以及设置面板和外部 MCP 设置。你也可以试试把鼠标悬在桌面 orb 上，会有惊喜）
-
-```bash
+# 构建、诊断或运行本地演示
 npm run build --workspace @nova-audio-agent/runtime
 node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 ```
 
-原生回声消除采集（VoiceProcessingIO）仅 macOS 可用，唤醒检测在可用时复用该采集路径；
-Windows、Linux 源码运行及 macOS 回退路径使用 Chromium `getUserMedia` + AudioWorklet。
-休眠时麦克风帧仅送入本地唤醒 Worker，闭麦会停止唤醒检测。详见[本地唤醒设置](docs/zh-CN/getting-started.md#本地唤醒词)。
+客户端提供麦克风、摄像头、声音、设置和外部 MCP 控件。试试把鼠标悬在桌面 orb 上，会有惊喜）
 
-### 3.4 支持矩阵
+### 3.3 支持矩阵
 
 | 平台 | 桌面应用 | 无头服务 | 连接 iPhone |
 |---|---|---|---|

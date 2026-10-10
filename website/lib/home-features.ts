@@ -93,8 +93,8 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
   {
     "lang": "en",
     "group": "tasks",
-    "title": "A front brain that stays with you",
-    "description": "Talk naturally while the back brain works. Clarify the goal, add a constraint or change direction without starting over.",
+    "title": "Understands what you mean",
+    "description": "Describe your goal naturally. Nova asks for missing details before starting a task; keep talking and refining it while the back brain works.",
     "alt": "Nova voice orb asking a clarifying question before starting a task",
     "image": "/doc-assets/assets/features/conversation.en.png",
     "width": 1277,
@@ -104,8 +104,8 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
   {
     "lang": "zh-CN",
     "group": "tasks",
-    "title": "前脑陪你交流，后脑继续做事",
-    "description": "后台执行时，前台对话照常。随时问清目标、补充约束或调整方向，不必从头开始。",
+    "title": "理解意图，问清再做",
+    "description": "自然描述目标，Nova 问清缺失信息后再开始任务。后台继续执行，前台随时补充约束或调整方向。",
     "alt": "Nova 语音悬浮球在执行前澄清需求",
     "image": "/doc-assets/assets/features/conversation.png",
     "width": 1276,
@@ -132,6 +132,50 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "image": "/doc-assets/assets/features/permission.png",
     "width": 887,
     "height": 887,
+    "caption": ""
+  },
+  {
+    "lang": "en",
+    "group": "tasks",
+    "title": "Voice-run workspaces",
+    "description": "Create and switch workspaces and sessions by voice. A new workspace waits for your confirmation.",
+    "alt": "Nova waits for approval to create a workspace",
+    "image": "/doc-assets/assets/features/workspace.en.png",
+    "width": 887,
+    "height": 887,
+    "caption": ""
+  },
+  {
+    "lang": "zh-CN",
+    "group": "tasks",
+    "title": "语音管理工作区",
+    "description": "用语音创建、切换工作区和会话；新建工作区前，先等你确认。",
+    "alt": "Nova 等待你确认创建工作区",
+    "image": "/doc-assets/assets/features/workspace.png",
+    "width": 887,
+    "height": 887,
+    "caption": ""
+  },
+  {
+    "lang": "en",
+    "group": "tasks",
+    "title": "Bring your tools and knowledge",
+    "description": "Configure ASR / LLM / TTS and MCP; ask questions across your documents.",
+    "alt": "Knowledge-base answer using the CN-27 demo documents",
+    "image": "/doc-assets/assets/features/knowledge.en.png",
+    "width": 720,
+    "height": 696,
+    "caption": ""
+  },
+  {
+    "lang": "zh-CN",
+    "group": "tasks",
+    "title": "接入工具与知识",
+    "description": "自由配置 ASR / LLM / TTS 和 MCP，基于自己的资料问答。",
+    "alt": "基于 CN-27 演示资料的知识库回答",
+    "image": "/doc-assets/assets/features/knowledge.png",
+    "width": 720,
+    "height": 696,
     "caption": ""
   },
   {
