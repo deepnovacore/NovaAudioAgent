@@ -23,7 +23,7 @@ npm install --global nova-audio-agent@latest
 novaaudio
 ```
 
-To upgrade, quit Nova and run the same command. Pin a version with `nova-audio-agent@0.3.0`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
+To upgrade, quit Nova and run the same command. Pin a version with `nova-audio-agent@0.3.1`. Upgrades keep your local settings and data; moving back to an older version does not roll back data changes, so back up your Nova data first.
 
 For headless Ubuntu 22.04+ x64, use `npm install --global nova-audio-agent-server@latest`.
 

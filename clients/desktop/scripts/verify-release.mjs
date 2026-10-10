@@ -1,20 +1,33 @@
 import assert from 'node:assert/strict'
 import {spawn, spawnSync} from 'node:child_process'
 import {once} from 'node:events'
+import {createHash} from 'node:crypto'
 import {createServer} from 'node:https'
 import {cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises'
 import {basename, normalize, resolve} from 'node:path'
 import {parseArgs} from 'node:util'
-import {listPackage, statFile} from '@electron/asar'
+import {getRawHeader, listPackage, statFile} from '@electron/asar'
+import plist from 'plist'
 import {WebSocket, WebSocketServer} from 'ws'
 import {generateSmokeCertificate} from './smoke-tls.mjs'
 import {expectedNativeResources} from './native-resource-contract.mjs'
 import {candidateScratchParent, prepareWindowsSmokeHomeOwnership} from './windows-smoke-home.mjs'
 import {normalizeSettings, saveSettings} from '../src/main/settings-store.mjs'
+import {SensitiveContentPolicy} from '@nova-audio-agent/runtime/desktop'
 
 const product = 'Nova Audio Agent Desktop'
 const native = /\.(node|dylib|dll|so(?:\.\d+)*)$/u
 const timeoutMs = 30_000
+
+export function redactSmokeOutput(output, secrets = [], privatePaths = []) {
+  let text = String(output)
+  for (const value of [...secrets, ...privatePaths].filter(value => typeof value === 'string' && value.length > 3).sort((a,b) => b.length-a.length)) {
+    text = text.replaceAll(value, '[redacted]')
+  }
+  text = text.replace(/[a-f0-9]{32}/giu, '[redacted]')
+  const scrubbed = new SensitiveContentPolicy().scrub('metadata', text)
+  return (scrubbed.kind === 'clean' ? text : scrubbed.kind === 'redacted' ? scrubbed.value : '[redacted]').slice(-8192)
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {encoding: 'utf8', timeout: 120_000, ...options})
@@ -51,6 +64,14 @@ export async function inspectApplication(resourcesRoot, targetId) {
   }
   const manifest = JSON.parse(await readFile(resolve(resourcesRoot, 'native-resources-v1.json'), 'utf8'))
   assert.equal(manifest.target, targetId, 'native manifest target mismatch')
+}
+
+export async function inspectMacAsarIntegrity(resourcesRoot) {
+  const info = plist.parse(await readFile(resolve(resourcesRoot, '../Info.plist'), 'utf8'))
+  assert.deepEqual(info.ElectronAsarIntegrity?.['Resources/app.asar'], {
+    algorithm: 'SHA256',
+    hash: createHash('sha256').update(getRawHeader(resolve(resourcesRoot, 'app.asar')).headerString).digest('hex'),
+  }, 'macOS ASAR integrity mismatch')
 }
 
 async function provider(scratch) {
@@ -130,7 +151,7 @@ export async function prepareSmokeHome(home) {
   await saveSettings(resolve(home, 'ambient-orb-settings.json'), normalizeSettings({pipelineMode: 'integrated', cascadedLlmProvider: 'qwen'}))
 }
 
-async function smoke(executable, scratch) {
+async function smoke(executable, scratch, diagnosticsDir) {
   const home = resolve(scratch, 'home')
   await prepareSmokeHome(home)
   // Installed-backend acceptance uses only the loopback provider, never a host Codex or external tools.
@@ -173,10 +194,12 @@ async function smoke(executable, scratch) {
   // Register rejection immediately, including failed spawn before readiness arrives.
   exited.catch(() => {})
   let timer
+  let stage = 'readiness-and-settings'
   try {
     await Promise.race([
       (async () => {
         await Promise.all([authenticate(await readReadiness(child.stdio[3])), settingsLoaded])
+        stage = 'shutdown'
         child.stdio[4].end('quit\n')
         const [code, signal] = await exited
         assert.equal(code, 0, `application exit: ${signal}`)
@@ -184,6 +207,13 @@ async function smoke(executable, scratch) {
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('application smoke timeout')), 60_000) }),
     ])
   } catch (error) {
+    if (diagnosticsDir) {
+      const secrets = Object.entries(env).filter(([name]) => /KEY|TOKEN|SECRET|PASSWORD/iu.test(name)).map(([,value]) => value)
+      await mkdir(diagnosticsDir, {recursive: true})
+      await writeFile(resolve(diagnosticsDir, 'application-smoke.json'), JSON.stringify({stage, exit: child.exitCode, signal: child.signalCode,
+        output: redactSmokeOutput(output, secrets, [scratch, process.cwd(), process.env.HOME, process.env.USERPROFILE]),
+      }, null, 2), {mode: 0o600})
+    }
     // Emit bounded product diagnostics, never readiness tokens or user paths.
     const diagnostic = output.match(/\[(?:desktop|backend|runtime)-diagnostic\] [a-z_]+/gu)?.join(', ') ?? 'unavailable'
     throw new Error(`${error.message}; exit=${child.exitCode} signal=${child.signalCode}; diagnostic=${diagnostic}`)
@@ -213,7 +243,7 @@ async function findApp(directory, depth = 0) {
   return null
 }
 
-export async function verifyRelease({app, artifact, distRoot, unsigned = false}) {
+export async function verifyRelease({app, artifact, distRoot, unsigned = false, diagnosticsDir = process.env.NOVA_SMOKE_DIAGNOSTICS}) {
   const scratch = await realpath(await mkdtemp(resolve(candidateScratchParent(), 'nova-release-')))
   const install = resolve(scratch, 'install')
   const mount = resolve(scratch, 'dmg')
@@ -253,14 +283,18 @@ export async function verifyRelease({app, artifact, distRoot, unsigned = false})
     const executable = resolve(app, process.platform === 'darwin' ? `Contents/MacOS/${product}` : process.platform === 'win32' ? `${product}.exe` : 'nova-audio-agent-desktop')
     const targetId = `${process.platform}-${process.arch}${process.platform === 'linux' ? '-gnu' : ''}`
     await inspectApplication(resources, targetId)
-    if (unsigned) process.stdout.write('signing verification skipped (--unsigned)\n')
+    if (process.platform === 'darwin') await inspectMacAsarIntegrity(resources)
+    if (unsigned && process.platform === 'darwin') {
+      run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app])
+      process.stdout.write('macOS seal verified; Developer ID/Gatekeeper verification skipped (--unsigned)\n')
+    } else if (unsigned) process.stdout.write('signing verification skipped (--unsigned)\n')
     else if (process.platform === 'darwin') {
       run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app])
       run('/usr/sbin/spctl', ['--assess', '--type', 'execute', app])
     } else if (process.platform === 'win32') {
       run('powershell.exe', ['-NoProfile', '-Command', 'if ((Get-AuthenticodeSignature -LiteralPath $env:NOVA_VERIFY_APPLICATION).Status -ne "Valid") { exit 1 }'], {env: {...process.env, NOVA_VERIFY_APPLICATION: executable}})
     } else throw new Error('signed verification unavailable for Linux; use --unsigned')
-    await smoke(executable, scratch)
+    await smoke(executable, scratch, diagnosticsDir)
     process.stdout.write('release verification passed: ASAR/native placement and installed backend handshake\n')
   } finally {
     try { if (uninstall) uninstall() } finally {

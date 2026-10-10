@@ -134,6 +134,7 @@ import {
 } from './security.mjs'
 import {probeApiKey} from './key-probe.mjs'
 import {SETUP_KEYS, setupCommit} from './setup-choice.mjs'
+import {selectedTextLlmProvider} from './settings-defaults.mjs'
 import { validReleaseCameraResult } from '../renderer/release-camera-contract.mjs'
 import { isValidCategory } from '../renderer/settings-categories.mjs'
 
@@ -1498,7 +1499,7 @@ async function startSelectedCamera(camera, smokeChannel) {
   })
   ipcMain.handle('nova:setup:save', async (event, choice) => {
     if (!setupWindow || event.sender !== setupWindow.webContents) throw new Error('setup request rejected')
-    const result = await applyDesktopSettings(setupCommit(choice), true)
+    const result = await applyDesktopSettings(setupCommit(choice, selectedTextLlmProvider({...currentSettings, pipelineMode: choice?.pipelineMode}, settingsView().secretsPresent)), true)
     return Object.freeze({
       saved: result?.saved !== false,
       rejectedSecrets: Array.isArray(result?.rejectedSecrets) ? result.rejectedSecrets.filter(key => SETUP_KEYS.includes(key)) : [],

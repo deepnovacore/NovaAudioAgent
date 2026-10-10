@@ -18,7 +18,7 @@ export function DocsIndex({ en = false }: { en?: boolean }) {
         <ArrowUpRight className="guide-arrow" size={18} strokeWidth={1.5} />
       </a>;
     })}</div>
-    {architecture.imageUrl && <section className="overview-diagram overview-blackboard"><div className="overview-diagram-heading"><h2>{architecture.title}</h2><a href={sitePath(architecture.url)}>{en ? 'Read more' : '了解详情'} <ArrowUpRight size={14} /></a></div><a className="blackboard-image" href={architecture.imageUrl} target="_blank" rel="noreferrer" aria-label={en ? 'Open architecture diagram at full size' : '查看完整架构图'}><img src={architecture.imageUrl} alt={en ? 'Nova runtime blackboard architecture' : 'Nova 运行时黑板架构'} width={1664} height={946} /></a></section>}
+    {architecture.imageUrl && <section className="overview-diagram overview-blackboard"><div className="overview-diagram-heading"><h2>{architecture.title}</h2><a href={sitePath(architecture.url)}>{en ? 'Read more' : '了解详情'} <ArrowUpRight size={14} /></a></div><a className="blackboard-image" href={architecture.imageUrl} target="_blank" rel="noreferrer" aria-label={en ? 'Open architecture diagram at full size' : '查看完整架构图'}><img src={architecture.imageUrl} alt={en ? 'Nova personal agent architecture' : 'Nova 个人 Agent 架构'} width={1672} height={941} /></a></section>}
 
   </div>;
 }

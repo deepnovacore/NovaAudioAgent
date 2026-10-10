@@ -1,7 +1,7 @@
 import { createServer } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
-import { CONTROL_CHARACTERS, RUNTIME_DEFAULTS as SETTINGS_DEFAULTS } from './settings-defaults.mjs'
+import { CONTROL_CHARACTERS, RUNTIME_DEFAULTS as SETTINGS_DEFAULTS, selectedTextLlmProvider } from './settings-defaults.mjs'
 
 const MAX_READINESS_BYTES = 4096
 const TOKEN_PATTERN = /^[a-f0-9]{32}$/
@@ -249,13 +249,15 @@ export function backendLaunchSpec({
       env.MODEL_BASE_URL = resolvedConfig.modelBaseUrl
     }
   }
-  if (pipelineMode === 'cascaded') {
-    const llmProvider = settings?.cascadedLlmProvider
-      ?? SETTINGS_DEFAULTS.cascadedLlmProvider
-    const rememberedModels = settings?.cascadedLlmModels
-    const activeModel = rememberedModels?.[llmProvider]
+  const llmProvider = selectedTextLlmProvider(settings, resolveSecretConfiguration(decryptedSecrets, parentEnv).secretsPresent)
+  Object.assign(env, {
+    CASCADE_LLM_PROVIDER: llmProvider,
+    CASCADE_LLM_MODEL: settings?.cascadedLlmModels?.[llmProvider]
       ?? SETTINGS_DEFAULTS.cascadedLlmModels[llmProvider]
-      ?? SETTINGS_DEFAULTS.cascadedLlmModels.qwen
+      ?? SETTINGS_DEFAULTS.cascadedLlmModels.qwen,
+    SELF_HOSTED_LLM_BASE_URL: settings?.selfHostedLlmBaseUrl ?? '',
+  })
+  if (pipelineMode === 'cascaded') {
     Object.assign(env, {
       DOUBAO_ASR_VOICEPRINT_ENABLED: String(settings?.voiceprintEnabled === true && Boolean(settings?.voiceprintUploadUrl)),
       DOUBAO_ASR_VOICEPRINT_HEALTH_URL: settings?.voiceprintUploadUrl ? `${settings.voiceprintUploadUrl}/healthz` : '',
@@ -264,15 +266,12 @@ export function backendLaunchSpec({
       CASCADE_ENDPOINTING_PROVIDER: settings?.cascadedEndpointingProvider
         ?? SETTINGS_DEFAULTS.cascadedEndpointingProvider,
       SELF_HOSTED_ASR_URL: settings?.selfHostedAsrUrl ?? '',
-      SELF_HOSTED_LLM_BASE_URL: settings?.selfHostedLlmBaseUrl ?? '',
       SELF_HOSTED_TTS_URL: settings?.selfHostedTtsUrl ?? '',
       GEMINI_ASR_MODEL: settings?.geminiAsrModel ?? SETTINGS_DEFAULTS.geminiAsrModel,
       GEMINI_TTS_MODEL: settings?.geminiTtsModel ?? SETTINGS_DEFAULTS.geminiTtsModel,
       GEMINI_TTS_VOICE: settings?.geminiTtsVoice ?? SETTINGS_DEFAULTS.geminiTtsVoice,
       CASCADE_ASR_PROVIDER: settings?.cascadedAsrProvider
         ?? SETTINGS_DEFAULTS.cascadedAsrProvider,
-      CASCADE_LLM_PROVIDER: llmProvider,
-      CASCADE_LLM_MODEL: activeModel,
       CASCADE_TTS_PROVIDER: settings?.cascadedTtsProvider
         ?? SETTINGS_DEFAULTS.cascadedTtsProvider,
       DOUBAO_TTS_VOICE: settings?.cascadedTtsVoice
@@ -619,10 +618,9 @@ export function capabilityEnvironment(settings, decryptedSecrets, parentEnv = {}
   const pipelineMode = settings?.pipelineMode ?? SETTINGS_DEFAULTS.pipelineMode
   if (decryptedSecrets && typeof decryptedSecrets === 'object') {
     const activeSecretKeys = new Set(ALWAYS_ACTIVE_SECRET_KEYS)
+    const llmProvider = selectedTextLlmProvider(settings, resolveSecretConfiguration(decryptedSecrets, parentEnv).secretsPresent)
+    activeSecretKeys.add(llmProvider === 'self-hosted' ? 'selfHostedLlmApiKey' : llmProvider === 'qwen' ? 'dashscopeApiKey' : `${llmProvider}ApiKey`)
     if (pipelineMode === 'cascaded') {
-      const llmProvider = settings?.cascadedLlmProvider
-        ?? SETTINGS_DEFAULTS.cascadedLlmProvider
-      activeSecretKeys.add(llmProvider === 'self-hosted' ? 'selfHostedLlmApiKey' : llmProvider === 'qwen' ? 'dashscopeApiKey' : `${llmProvider}ApiKey`)
       activeSecretKeys.add(settings?.cascadedTtsProvider === 'self-hosted' ? 'selfHostedTtsApiKey' : (settings?.cascadedTtsProvider ?? 'volcengine') === 'gemini' ? 'geminiApiKey' : 'doubaoBigmodelApiKey')
       // Optional override only. When absent, the runtime falls back to the
       // big-model key; Main does not synthesize a duplicate secret value.

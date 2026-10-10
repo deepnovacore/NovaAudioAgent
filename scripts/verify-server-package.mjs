@@ -42,6 +42,7 @@ try {
   const keepalive = setInterval(() => {}, 1000)
   try {
     const endpointing = await capability.probeEndpointingCapability({
+      resourcesPath: nativeOptions.resourcesPath,
       signal: new AbortController().signal, cache: capability.createEndpointingCapabilityCache(),
     })
     assert.deepEqual(endpointing.vad, {available: true, reason: 'ready'}, 'installed VAD native unavailable')

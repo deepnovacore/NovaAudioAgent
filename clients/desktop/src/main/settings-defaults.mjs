@@ -45,3 +45,11 @@ export const RUNTIME_DEFAULTS = Object.freeze({
 // rather than take the launch — and with it the app — down before the panel can
 // clear it.
 export const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
+
+// Old quick-start profiles stored the cascaded default without its credential.
+export function selectedTextLlmProvider(settings, secretsPresent = {}) {
+  const provider = settings?.cascadedLlmProvider ?? RUNTIME_DEFAULTS.cascadedLlmProvider
+  const configured = provider === 'self-hosted' ? Boolean(settings?.selfHostedLlmBaseUrl)
+    : secretsPresent[provider === 'qwen' ? 'dashscopeApiKey' : `${provider}ApiKey`] === true
+  return settings?.pipelineMode === 'integrated' && !configured ? 'qwen' : provider
+}

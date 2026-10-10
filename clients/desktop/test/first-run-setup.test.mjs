@@ -30,9 +30,10 @@ test('key probe does not call out for empty, deferred or unknown keys', async ()
 
 test('setup accepts only the chosen pipeline and its own keys', () => {
   assert.deepEqual(setupCommit({pipelineMode: 'integrated', secrets: {dashscopeApiKey: ' sk-1 '}}),
-    {settingsPatch: {pipelineMode: 'integrated', secrets: {dashscopeApiKey: 'sk-1'}}})
+    {settingsPatch: {pipelineMode: 'integrated', cascadedLlmProvider: 'qwen', secrets: {dashscopeApiKey: 'sk-1'}}})
   // Keeping a saved key: an empty field sends no secret.
-  assert.deepEqual(setupCommit({pipelineMode: 'integrated', secrets: {dashscopeApiKey: ''}}), {settingsPatch: {pipelineMode: 'integrated'}})
+  assert.deepEqual(setupCommit({pipelineMode: 'integrated', secrets: {dashscopeApiKey: ''}}), {settingsPatch: {pipelineMode: 'integrated', cascadedLlmProvider: 'qwen'}})
+  assert.deepEqual(setupCommit({pipelineMode: 'integrated'}, 'ark'), {settingsPatch: {pipelineMode: 'integrated', cascadedLlmProvider: 'ark'}})
   assert.deepEqual(setupCommit({pipelineMode: 'cascaded', cascadedLlmProvider: 'deepseek', secrets: {deepseekApiKey: 'd', doubaoBigmodelApiKey: 'v'}}),
     {settingsPatch: {pipelineMode: 'cascaded', cascadedLlmProvider: 'deepseek', secrets: {deepseekApiKey: 'd', doubaoBigmodelApiKey: 'v'}}})
   for (const choice of [
@@ -65,22 +66,41 @@ async function loadSetupPage(t, api) {
   const row = element({dataset: {key: 'dashscopeApiKey'}})
   const parts = {input, '.test': element(), '.key-result': element(), label: element({textContent: 'DashScope API Key'})}
   row.querySelector = selector => parts[selector] ?? null
-  const radio = element({value: 'integrated', checked: true})
+  const radios = ['integrated', 'cascaded'].map(value => element({value, checked: false}))
   const nodes = {'#status': element(), '#start': element(), '#llm-provider': element({value: 'deepseek'}),
-    '#integrated-fields': element(), '#cascaded-fields': element(), 'input[name="pipeline"]:checked': radio}
-  const lists = {'.key-row input': [input], 'input[name="pipeline"]': [radio], '.key-row': [row], '#integrated-fields .key-row': [row]}
+    '#integrated-fields': element(), '#cascaded-fields': element()}
+  const lists = {'.key-row input': [input], 'input[name="pipeline"]': radios, '.key-row': [row], '#integrated-fields .key-row': [row]}
   let closed = 0
   const previous = {document: globalThis.document, window: globalThis.window}
   globalThis.document = {documentElement: {}, createTreeWalker: () => ({nextNode: () => null}),
-    querySelector: selector => nodes[selector] ?? (selector.startsWith('input[name="pipeline"][value=') ? radio : null),
+    querySelector: selector => nodes[selector] ?? (selector === 'input[name="pipeline"]:checked' ? radios.find(radio => radio.checked)
+      : radios.find(radio => selector === `input[name="pipeline"][value="${radio.value}"]`) ?? null),
     querySelectorAll: selector => lists[selector] ?? []}
   globalThis.window = {close: () => { closed++ }, novaAudioAgentDesktop: {setup: api}}
   t.after(() => {
     for (const [name, value] of Object.entries(previous)) if (value === undefined) delete globalThis[name]; else globalThis[name] = value
   })
   await import(`../src/renderer/setup.mjs?case=${Math.random()}`)
-  return {start: () => nodes['#start'].listeners.click(), status: () => nodes['#status'].textContent, closed: () => closed}
+  return {start: () => nodes['#start'].listeners.click(), status: () => nodes['#status'].textContent, closed: () => closed,
+    pipeline: () => radios.find(radio => radio.checked)?.value, integratedHidden: () => nodes['#integrated-fields'].hidden}
 }
+
+test('an empty profile starts with quick setup despite the cascaded runtime default', async t => {
+  const page = await loadSetupPage(t, {status: async () => ({pipelineMode: 'cascaded', secretsPresent: {}}), onChanged() {}})
+  assert.equal(page.pipeline(), 'integrated')
+  assert.equal(page.integratedHidden(), false)
+})
+
+test('setup preserves the saved cascaded selection', async t => {
+  const page = await loadSetupPage(t, {status: async () => ({pipelineMode: 'cascaded', secretsPresent: {deepseekApiKey: true}}), onChanged() {}})
+  assert.equal(page.pipeline(), 'cascaded')
+  assert.equal(page.integratedHidden(), true)
+})
+
+test('a DashScope key alone does not select the advanced guide', async t => {
+  const page = await loadSetupPage(t, {status: async () => ({pipelineMode: 'cascaded', secretsPresent: {dashscopeApiKey: true}}), onChanged() {}})
+  assert.equal(page.pipeline(), 'integrated')
+})
 
 test('setup closes only after the restart it caused has connected', async t => {
   t.mock.timers.enable({apis: ['setTimeout']})

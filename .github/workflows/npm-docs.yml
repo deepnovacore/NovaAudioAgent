@@ -5,7 +5,7 @@ on:
       package_version:
         description: New npm-only documentation patch version
         required: true
-        default: "0.2.4"
+        default: "0.3.2"
         type: string
 permissions:
   contents: read

@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
-import {mkdtemp, mkdir, writeFile, rm} from 'node:fs/promises'
+import {mkdtemp, mkdir, writeFile, appendFile, readFile, rm} from 'node:fs/promises'
+import {createHash} from 'node:crypto'
+import plist from 'plist'
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
 import {PassThrough} from 'node:stream'
 import test from 'node:test'
 import {spawnSync} from 'node:child_process'
 import {fileURLToPath} from 'node:url'
-import {createPackageWithOptions, uncache} from '@electron/asar'
-import {inspectApplication, readReadiness, prepareSmokeHome} from '../scripts/verify-release.mjs'
+import {createPackageWithOptions, extractFile, getRawHeader, statFile, uncache} from '@electron/asar'
+import {replacePackagedAsar, refreshSignedAsar, refreshMacAsarIntegrity} from '../scripts/build-owned-asar.mjs'
+import {inspectApplication, inspectMacAsarIntegrity, readReadiness, prepareSmokeHome, redactSmokeOutput} from '../scripts/verify-release.mjs'
 import {loadSettings} from '../src/main/settings-store.mjs'
 import {backendLaunchSpec} from '../src/main/backend.mjs'
 import {describeMissingBlockingEnvironment} from '@nova-audio-agent/runtime/desktop'
@@ -18,6 +21,44 @@ async function file(root, name, body = 'fixture') {
   await mkdir(dirname(join(root, name)), {recursive: true})
   await writeFile(join(root, name), body)
 }
+
+test('smoke diagnostics retain the error but remove tokens, keys and private paths', () => {
+  const text = redactSmokeOutput('Electron sandbox failed at /private/profile; key=private-key-123 token=0123456789abcdef0123456789abcdef',
+    ['private-key-123'], ['/private/profile'])
+  assert.match(text, /Electron sandbox failed/)
+  assert.ok(!text.includes('private-key-123'))
+  assert.ok(!text.includes('0123456789abcdef0123456789abcdef'))
+  assert.ok(!text.includes('/private/profile'))
+})
+
+test('signing growth refreshes unpacked ASAR metadata without replacing sealed bytes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-signed-asar-'))
+  const source = join(root, 'source'), archive = join(root, 'resources/app.asar')
+  const nativePath = join('node_modules', 'fixture', 'native.node')
+  try {
+    await file(source, 'src/main/main.mjs', 'entry')
+    await file(source, nativePath, 'native')
+    await mkdir(dirname(archive), {recursive: true})
+    await replacePackagedAsar({sourceRoot: source, archivePath: archive})
+    assert.equal(statFile(archive, nativePath).size, 6)
+    await appendFile(join(`${archive}.unpacked`, nativePath), '-signature')
+    await refreshSignedAsar(archive)
+    assert.equal(statFile(archive, nativePath).size, 16)
+    assert.equal(extractFile(archive, nativePath).toString(), 'native-signature')
+    assert.equal(extractFile(archive, join('src', 'main', 'main.mjs')).toString(), 'entry')
+    const plistPath = join(root, 'Info.plist')
+    await writeFile(plistPath, plist.build({CFBundleIdentifier: 'fixture', ElectronAsarIntegrity: {'Resources/other.asar': {hash: 'preserved'}}}))
+    await assert.rejects(inspectMacAsarIntegrity(dirname(archive)), /macOS ASAR integrity mismatch/)
+    await refreshMacAsarIntegrity(archive, plistPath)
+    await inspectMacAsarIntegrity(dirname(archive))
+    const info = plist.parse(await readFile(plistPath, 'utf8'))
+    assert.equal(info.CFBundleIdentifier, 'fixture')
+    assert.equal(info.ElectronAsarIntegrity['Resources/other.asar'].hash, 'preserved')
+    assert.deepEqual(info.ElectronAsarIntegrity['Resources/app.asar'], {
+      algorithm: 'SHA256', hash: createHash('sha256').update(getRawHeader(archive).headerString).digest('hex'),
+    })
+  } finally {uncache(archive); await rm(root, {recursive: true, force: true})}
+})
 
 test('installed smoke selects the controlled provider without requiring unrelated credentials', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-smoke-settings-')), home = join(root, 'home')

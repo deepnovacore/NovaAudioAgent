@@ -135,6 +135,7 @@ api.onChanged(update)
 
 const initial = await api.status()
 view = initial
-document.querySelector(`input[name="pipeline"][value="${initial.pipelineMode === 'cascaded' ? 'cascaded' : 'integrated'}"]`).checked = true
+const initialPipeline = initial.pipelineMode === 'cascaded' && ['deepseekApiKey', 'arkApiKey', 'doubaoBigmodelApiKey'].some(key => initial.secretsPresent?.[key]) ? 'cascaded' : 'integrated'
+document.querySelector(`input[name="pipeline"][value="${initialPipeline}"]`).checked = true
 if (Object.hasOwn(LLM_KEYS, initial.cascadedLlmProvider)) llmSelect.value = initial.cascadedLlmProvider
 render()

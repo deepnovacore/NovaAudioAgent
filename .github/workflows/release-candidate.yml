@@ -6,7 +6,7 @@ on:
       release_version:
         description: Application version to validate
         required: true
-        default: 0.3.0
+        default: 0.3.1
         type: string
       candidate_scope:
         description: Full release evidence or a Windows-only repair run
@@ -22,6 +22,8 @@ permissions:
 
 jobs:
   platform-candidate:
+    env:
+      NOVA_SMOKE_DIAGNOSTICS: ${{ github.workspace }}/smoke-diagnostics
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -146,6 +148,12 @@ jobs:
           npm pack ./cli --pack-destination candidate-cli
           npm install --prefix cli-smoke --ignore-scripts ./candidate-cli/nova-audio-agent-${{ inputs.release_version }}.tgz
           ${{ matrix.platform == 'linux' && 'xvfb-run -a' || '' }} node scripts/verify-npm-desktop.mjs cli-smoke/node_modules/nova-audio-agent candidate
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: diagnostics-${{ matrix.target_id }}-${{ github.run_attempt }}
+          path: smoke-diagnostics/*
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         with:
