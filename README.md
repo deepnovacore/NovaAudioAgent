@@ -83,24 +83,24 @@ The front brain handles conversation; the back brain does the work. Task events 
     <td width="50%" valign="top">
       <h3>Understands what you mean</h3>
       <p>Describe your goal naturally. Nova asks for missing details before starting a task; keep talking and refining it while the back brain works.</p>
-      <a href="assets/features/conversation.en.png"><img src="assets/features/conversation.en.png" alt="Nova voice orb asking a clarifying question before starting a task" width="100%"></a>
+      <a href="assets/features/conversation-polished.en.png"><img src="assets/features/conversation-polished.en.png" alt="Nova voice orb asking a clarifying question before starting a task" width="100%"></a>
     </td>
     <td width="50%" valign="top">
       <h3>You set the boundaries</h3>
       <p>Nova coordinates tasks and checks results against your criteria. Review permissions, take over when needed, and hear updates when they matter.</p>
-      <a href="assets/features/permission.en.png"><img src="assets/features/permission.en.png" alt="Nova asking for permission to access the network for a task" width="100%"></a>
+      <a href="assets/features/permission-polished.en.png"><img src="assets/features/permission-polished.en.png" alt="Nova asking for permission to access the network for a task" width="100%"></a>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <h3>Voice-run workspaces</h3>
       <p>Create and switch workspaces and sessions by voice. A new workspace waits for your confirmation.</p>
-      <a href="assets/features/workspace.en.png"><img src="assets/features/workspace.en.png" alt="Nova waits for approval to create a workspace" width="100%"></a>
+      <a href="assets/features/workspace-polished.en.png"><img src="assets/features/workspace-polished.en.png" alt="Nova waits for approval to create a workspace" width="100%"></a>
     </td>
     <td width="50%" valign="top">
       <h3>Bring your tools and knowledge</h3>
       <p>Configure ASR / LLM / TTS and MCP; ask questions across your documents.</p>
-      <a href="assets/features/knowledge.en.png"><img src="assets/features/knowledge.en.png" alt="Knowledge-base answer using the CN-27 demo documents" width="100%"></a>
+      <a href="assets/features/knowledge-polished.en.png"><img src="assets/features/knowledge-polished.en.png" alt="Knowledge-base answer using the CN-27 demo documents" width="100%"></a>
     </td>
   </tr>
 </table>

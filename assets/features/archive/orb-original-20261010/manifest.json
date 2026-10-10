@@ -1,0 +1,45 @@
+{
+  "description": "Original orb screenshots retained before visual polish; original bytes verified by SHA-256.",
+  "files": [
+    {
+      "original": "conversation.en.png",
+      "sha256": "02396f6f1031637f67c2faeea23bd5c5d0f1c7e5f753304226a2a99c7825e50b",
+      "replacement": "../../conversation-polished.en.png"
+    },
+    {
+      "original": "conversation.png",
+      "sha256": "6d9454fc40b2a57443d1161f9101e33efe850e70fec3544979ef3237806adf7c",
+      "replacement": "../../conversation-polished.png"
+    },
+    {
+      "original": "permission.en.png",
+      "sha256": "da02e994b4763373e7494dd7539d66cfd2fc4f839c9a4785c3fdd303d9a4b3a8",
+      "replacement": "../../permission-polished.en.png"
+    },
+    {
+      "original": "permission.png",
+      "sha256": "d674512e1eff52b3b56d4feffc79a15e4ab1753d036f896f69a0a4746914c01f",
+      "replacement": "../../permission-polished.png"
+    },
+    {
+      "original": "workspace.en.png",
+      "sha256": "a0158fa82da7aa2df5ed566dbce2416ed9a628eb53609397ea299a84cfe1a234",
+      "replacement": "../../workspace-polished.en.png"
+    },
+    {
+      "original": "workspace.png",
+      "sha256": "9e2e03fba2df882db6472409a1654a0e57ba9a3a03d8c0fcd59dbfc28af2573f",
+      "replacement": "../../workspace-polished.png"
+    },
+    {
+      "original": "knowledge.en.png",
+      "sha256": "bf0c25e2ca82655feb5e1660271c6601908d9592e9f7f1b757606792e9d37182",
+      "replacement": "../../knowledge-polished.en.png"
+    },
+    {
+      "original": "knowledge.png",
+      "sha256": "122dd3147f60cfe2fa7f69a57826c612125dc1bb8d9f38d2c2f1c56fbdbdb81f",
+      "replacement": "../../knowledge-polished.png"
+    }
+  ]
+}

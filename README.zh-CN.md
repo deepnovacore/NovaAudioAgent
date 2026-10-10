@@ -83,24 +83,24 @@
     <td width="50%" valign="top">
       <h3>理解意图，问清再做</h3>
       <p>自然描述目标，Nova 问清缺失信息后再开始任务。后台继续执行，前台随时补充约束或调整方向。</p>
-      <a href="assets/features/conversation.png"><img src="assets/features/conversation.png" alt="Nova 语音悬浮球在执行前澄清需求" width="100%"></a>
+      <a href="assets/features/conversation-polished.png"><img src="assets/features/conversation-polished.png" alt="Nova 语音悬浮球在执行前澄清需求" width="100%"></a>
     </td>
     <td width="50%" valign="top">
       <h3>任务有边界，主动有分寸</h3>
       <p>Nova 协调任务，按你的标准核对结果。权限由你确认，执行可以接管；值得提醒的进展才在合适时机开口。</p>
-      <a href="assets/features/permission.png"><img src="assets/features/permission.png" alt="Nova 请求任务所需的网络访问权限" width="100%"></a>
+      <a href="assets/features/permission-polished.png"><img src="assets/features/permission-polished.png" alt="Nova 请求任务所需的网络访问权限" width="100%"></a>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <h3>语音管理工作区</h3>
       <p>用语音创建、切换工作区和会话；新建工作区前，先等你确认。</p>
-      <a href="assets/features/workspace.png"><img src="assets/features/workspace.png" alt="Nova 等待你确认创建工作区" width="100%"></a>
+      <a href="assets/features/workspace-polished.png"><img src="assets/features/workspace-polished.png" alt="Nova 等待你确认创建工作区" width="100%"></a>
     </td>
     <td width="50%" valign="top">
       <h3>接入工具与知识</h3>
       <p>自由配置 ASR / LLM / TTS 和 MCP，基于自己的资料问答。</p>
-      <a href="assets/features/knowledge.png"><img src="assets/features/knowledge.png" alt="基于 CN-27 演示资料的知识库回答" width="100%"></a>
+      <a href="assets/features/knowledge-polished.png"><img src="assets/features/knowledge-polished.png" alt="基于 CN-27 演示资料的知识库回答" width="100%"></a>
     </td>
   </tr>
 </table>

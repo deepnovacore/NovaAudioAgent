@@ -96,9 +96,9 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "title": "Understands what you mean",
     "description": "Describe your goal naturally. Nova asks for missing details before starting a task; keep talking and refining it while the back brain works.",
     "alt": "Nova voice orb asking a clarifying question before starting a task",
-    "image": "/doc-assets/assets/features/conversation.en.png",
-    "width": 1277,
-    "height": 1232,
+    "image": "/doc-assets/assets/features/conversation-polished.en.png",
+    "width": 1254,
+    "height": 1254,
     "caption": ""
   },
   {
@@ -107,9 +107,9 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "title": "理解意图，问清再做",
     "description": "自然描述目标，Nova 问清缺失信息后再开始任务。后台继续执行，前台随时补充约束或调整方向。",
     "alt": "Nova 语音悬浮球在执行前澄清需求",
-    "image": "/doc-assets/assets/features/conversation.png",
-    "width": 1276,
-    "height": 1233,
+    "image": "/doc-assets/assets/features/conversation-polished.png",
+    "width": 1254,
+    "height": 1254,
     "caption": ""
   },
   {
@@ -118,9 +118,9 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "title": "You set the boundaries",
     "description": "Nova coordinates tasks and checks results against your criteria. Review permissions, take over when needed, and hear updates when they matter.",
     "alt": "Nova asking for permission to access the network for a task",
-    "image": "/doc-assets/assets/features/permission.en.png",
-    "width": 887,
-    "height": 887,
+    "image": "/doc-assets/assets/features/permission-polished.en.png",
+    "width": 1254,
+    "height": 1254,
     "caption": ""
   },
   {
@@ -129,9 +129,9 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "title": "任务有边界，主动有分寸",
     "description": "Nova 协调任务，按你的标准核对结果。权限由你确认，执行可以接管；值得提醒的进展才在合适时机开口。",
     "alt": "Nova 请求任务所需的网络访问权限",
-    "image": "/doc-assets/assets/features/permission.png",
-    "width": 887,
-    "height": 887,
+    "image": "/doc-assets/assets/features/permission-polished.png",
+    "width": 1254,
+    "height": 1254,
     "caption": ""
   },
   {
@@ -140,9 +140,9 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "title": "Voice-run workspaces",
     "description": "Create and switch workspaces and sessions by voice. A new workspace waits for your confirmation.",
     "alt": "Nova waits for approval to create a workspace",
-    "image": "/doc-assets/assets/features/workspace.en.png",
-    "width": 887,
-    "height": 887,
+    "image": "/doc-assets/assets/features/workspace-polished.en.png",
+    "width": 1254,
+    "height": 1254,
     "caption": ""
   },
   {
@@ -151,9 +151,9 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "title": "语音管理工作区",
     "description": "用语音创建、切换工作区和会话；新建工作区前，先等你确认。",
     "alt": "Nova 等待你确认创建工作区",
-    "image": "/doc-assets/assets/features/workspace.png",
-    "width": 887,
-    "height": 887,
+    "image": "/doc-assets/assets/features/workspace-polished.png",
+    "width": 1254,
+    "height": 1254,
     "caption": ""
   },
   {
@@ -162,9 +162,9 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "title": "Bring your tools and knowledge",
     "description": "Configure ASR / LLM / TTS and MCP; ask questions across your documents.",
     "alt": "Knowledge-base answer using the CN-27 demo documents",
-    "image": "/doc-assets/assets/features/knowledge.en.png",
-    "width": 720,
-    "height": 696,
+    "image": "/doc-assets/assets/features/knowledge-polished.en.png",
+    "width": 1254,
+    "height": 1254,
     "caption": ""
   },
   {
@@ -173,9 +173,9 @@ export const featureCards: { lang: "en" | "zh-CN"; group: FeatureGroup; title: s
     "title": "接入工具与知识",
     "description": "自由配置 ASR / LLM / TTS 和 MCP，基于自己的资料问答。",
     "alt": "基于 CN-27 演示资料的知识库回答",
-    "image": "/doc-assets/assets/features/knowledge.png",
-    "width": 720,
-    "height": 696,
+    "image": "/doc-assets/assets/features/knowledge-polished.png",
+    "width": 1254,
+    "height": 1254,
     "caption": ""
   },
   {
