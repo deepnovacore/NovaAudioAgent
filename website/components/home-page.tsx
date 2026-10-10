@@ -26,11 +26,11 @@ export function HomePage({ en = false }: { en?: boolean }) {
   const featureGroups = en ? [
     ['workbench', 'Your personal agent'],
     ['tasks', 'Your voice assistant'],
-    ['connections', 'Bring your tools'],
+    ['connections', 'Use cases'],
   ] : [
     ['workbench', '你的个人 Agent'],
     ['tasks', '你的语音助手'],
-    ['connections', '接入你的工具'],
+    ['connections', '使用案例'],
   ];
   const cards = featureCards.filter(card => card.lang === (en ? 'en' : 'zh-CN'));
   const tile = (card: (typeof featureCards)[number]) => (
@@ -65,18 +65,18 @@ export function HomePage({ en = false }: { en?: boolean }) {
             <h2>
               {en ? (
                 <>
-                  Stay in conversation.
+                  Knows your context.
                   <br />
-                  Keep work moving.
+                  Gets things done.
                 </>
               ) : (
-                <>随时交流，专心做事。</>
+                <>懂你的上下文，把事做成。</>
               )}
             </h2>
             <p className="hero-description">
               {en
-                ? 'A personal agent that understands your context, keeps work moving through conversation, checks results, and speaks when it matters.'
-                : '理解你的上下文，通过对话推进工作，结果可验收，主动有分寸。'}
+                ? 'Todos, ideas and goals on one workbench, memory you can trace, and tasks checked against evidence.'
+                : '待办、想法与目标集中在一个工作台，记忆可追溯，任务按证据验收。'}
             </p>
             <div className="hero-actions">
               <a className="button primary" href={doc}>
@@ -88,12 +88,11 @@ export function HomePage({ en = false }: { en?: boolean }) {
               </a>
             </div>
           </div>
+          <figure className="hero-shot">
+            <Image src={sitePath(en ? '/doc-assets/assets/features/workbench-original.en.png' : '/doc-assets/assets/features/workbench-original.png')} alt={en ? 'Nova workbench with project recaps, suggested todos and conversation' : 'Nova 工作台：项目回顾、建议待办与对话'} priority width={en ? 1502 : 2240} height={en ? 1047 : 1560} />
+          </figure>
           <div className="hero-bottom">
-            <span>
-              {en
-                ? 'Always present. Thoughtfully proactive.'
-                : '干活不停，言语有度。'}
-            </span>
+            <span aria-hidden="true" />
             <a href="#demo" aria-label={en ? 'Explore Nova' : '了解 Nova'}>
               ↓
             </a>
@@ -103,18 +102,7 @@ export function HomePage({ en = false }: { en?: boolean }) {
         <section className="intro-section reading" id="demo">
           <p className="section-label">{en ? 'Meet Nova' : '认识 Nova'}</p>
           <h2>
-            {en ? (
-              <>
-                A little less switching.
-                <br />A little more doing.
-              </>
-            ) : (
-              <>
-                少一点来回切换，
-                <br />
-                多一点专心做事。
-              </>
-            )}
+            {en ? <>Remembers what matters.</> : <>记住重要的事。</>}
           </h2>
           <p className="lead">
             {en
@@ -122,9 +110,6 @@ export function HomePage({ en = false }: { en?: boolean }) {
               : '一起问清目标，在 Workbench 中整理待办、想法与目标，再跟进任务直到得到有证据的结果。Nova 结合你授权的资料，保留记忆出处；需要时，你随时可以接管。'}
           </p>
         </section>
-        <figure className="product-shot wrap">
-          <Image src={sitePath(en ? '/doc-assets/assets/features/workbench-original.en.png' : '/doc-assets/assets/features/workbench-original.png')} alt={en ? 'Nova workbench with project recaps, suggested todos and conversation' : 'Nova 工作台：项目回顾、建议待办与对话'} loading="lazy" width={en ? 1502 : 2240} height={en ? 1047 : 1560} />
-        </figure>
         <div className="demo-media wrap"><YouTubeCard en={en} /></div>
         <section className="home-highlights wrap" id="whats-new" aria-label={en ? 'Highlights' : '核心特性'}>
           {highlights.map(([title, body], i) => <article key={title}><span className="section-label">0{i + 1}</span><h2>{title}</h2><p>{body}</p></article>)}
@@ -142,24 +127,12 @@ export function HomePage({ en = false }: { en?: boolean }) {
               {en ? 'The thinking behind Nova' : '我们的思考'}
             </p>
             <h2>
-              {en ? (
-                <>
-                  Knowing what to say.
-                  <br />
-                  And when to say it.
-                </>
-              ) : (
-                <>
-                  知道怎么回答，
-                  <br />
-                  也知道何时开口。
-                </>
-              )}
+              {en ? <>Helpful, not wordy.</> : <>有用，但不啰嗦。</>}
             </h2>
             <p className="lead">
               {en
-                ? 'An update is only useful if it deserves your attention. Nova treats doing the work and deciding when to speak as separate responsibilities.'
-                : '并非每一条进度，都值得打断你。Nova 将“把事做好”和“何时告知”分开考虑，让任务持续推进，也让你的注意力得到尊重。'}
+                ? 'Nova works from the sources you authorize, shows the evidence behind its results, and speaks up only when it matters. You can take over at any time.'
+                : 'Nova 只基于你授权的资料工作，给出结果背后的证据，只在值得的时候开口。需要时，你随时可以接管。'}
             </p>
             <div className="architecture-strip">
               <div>

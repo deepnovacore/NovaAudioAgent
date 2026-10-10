@@ -483,8 +483,6 @@ video:focus-visible {
 .start-section {
   padding: 95px 0 112px;
 }
-.product-shot { margin: 72px auto 56px; max-width: 980px; padding: 0 24px; }
-.product-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--border-default); border-radius: 14px; background: var(--surface-raised); box-shadow: 0 30px 60px -30px #000c; }
 .start-section h2 {
   font-size: 35px;
 }
@@ -1111,6 +1109,39 @@ img.nova-mark { display: block; width: 44px; height: auto; flex-shrink: 0; }
 .feature-group-heading { margin-top: 88px; padding-top: 28px; border-top: 1px solid var(--border-default); display: flex; align-items: baseline; gap: 16px; }
 .feature-group-heading h3 { font-size: 26px; font-weight: 400; letter-spacing: -.03em; margin: 0; color: var(--text-primary); }
 .feature-group-heading::before { content: attr(data-index); font: 12px/1 monospace; color: var(--accent-text); letter-spacing: .08em; }
+/* Split hero: copy on the left, the Workbench on the right. `section.` raises
+   specificity above the scattered base/1500/1000/720 hero rules, which each
+   set their own h1 size and height. */
+section.cosmos-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  align-items: center;
+  column-gap: clamp(32px, 4vw, 64px);
+  height: auto;
+  min-height: min(820px, 100svh);
+  max-height: none;
+  padding: 132px max(24px, calc((100% - 1240px) / 2)) 96px;
+  text-align: left;
+}
+section.cosmos-hero .hero-content { max-width: none; padding: 0; }
+section.cosmos-hero .hero-kicker { margin-bottom: 22px; }
+section.cosmos-hero .hero-content h1 { font-size: clamp(34px, 4.6vw, 72px); letter-spacing: -.05em; margin-bottom: 0; }
+section.cosmos-hero .hero-content h2 { font-size: clamp(24px, 2.6vw, 38px); line-height: 1.25; letter-spacing: -.03em; margin-top: 28px; }
+section.cosmos-hero .hero-description { max-width: 470px; margin: 18px 0 0; font-size: 15px; line-height: 1.85; }
+section.cosmos-hero .hero-actions { justify-content: flex-start; margin-top: 32px; gap: 22px; }
+section.cosmos-hero .hero-actions .text-link { font-size: 13px; color: var(--text-secondary); }
+.hero-shot { position: relative; margin: 0; }
+.hero-shot::before { content: ''; position: absolute; inset: -12% -8%; z-index: -1; background: radial-gradient(ellipse at 50% 50%, var(--stage-glow), transparent 68%); }
+.hero-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--border-default); border-radius: 14px; background: var(--surface-raised); box-shadow: 0 50px 90px -40px #000, 0 0 0 1px #ffffff0d; transform: perspective(1800px) rotateY(-7deg) rotateX(2deg); transform-origin: 60% 50%; }
+section.cosmos-hero .hero-bottom { grid-column: 1 / -1; position: relative; inset: auto; margin-top: 40px; }
+section.cosmos-hero .hero-bottom a { top: 50%; transform: translate(-50%, -50%); }
+@media (max-width: 1000px) {
+  section.cosmos-hero { grid-template-columns: 1fr; row-gap: 48px; padding: 112px 24px 72px; text-align: center; }
+  section.cosmos-hero .hero-description { margin-inline: auto; }
+  section.cosmos-hero .hero-actions { justify-content: center; }
+  section.cosmos-hero .hero-content h1 { font-size: clamp(30px, 8.5vw, 52px); }
+  .hero-shot img { transform: none; }
+}
 @media(max-width:720px) { .hero-content h1 { font-size: clamp(28px, 7.5vw, 48px); margin-bottom: 32px; } .home-highlights { grid-template-columns: 1fr; gap: 28px; padding-block: 52px; } .home-highlights.preview-grid { grid-template-columns: 1fr; padding-block: 24px 0; } .feature-gallery { grid-template-columns: 1fr; } .feature-group-heading { margin-top: 64px; } .feature-tile-copy { padding: 24px 22px 10px; } .feature-image-stage { padding: 16px; } }
 
 /* Keep both audience links and search reachable on narrow phones. */

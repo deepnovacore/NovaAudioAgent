@@ -4,7 +4,7 @@ import { ThemeScript } from '../../components/theme-script';
 import '../globals.css';
 export const metadata: Metadata = {
   title: 'NovaAudioAgent — Your Personal Agent and Voice Assistant',
-  description: 'Your personal agent and always-on voice assistant: wide context, dual brains, and restrained proactivity.',
+  description: 'Your personal agent and voice assistant: todos, ideas and goals on one workbench, memory you can trace, and tasks checked against evidence.',
   icons: { icon: sitePath('/favicon.svg') },
   alternates: { languages: { en: sitePath('/'), 'zh-CN': sitePath('/zh'), 'x-default': sitePath('/') } },
 };

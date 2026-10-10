@@ -4,7 +4,7 @@ import { ThemeScript } from '../../components/theme-script';
 import '../globals.css';
 export const metadata: Metadata = {
   title: 'NovaAudioAgent — 你的个人 Agent 与语音助手',
-  description: '你的个人 Agent 与常驻语音助手：理解上下文，前后双脑协作，主动有分寸。',
+  description: '你的个人 Agent 与语音助手：待办、想法与目标集中在一个工作台，记忆可追溯，任务按证据验收。',
   icons: { icon: sitePath('/favicon.svg') },
   alternates: { languages: { en: sitePath('/'), 'zh-CN': sitePath('/zh'), 'x-default': sitePath('/') } },
 };
