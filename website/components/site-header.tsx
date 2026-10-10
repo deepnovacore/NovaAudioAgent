@@ -4,10 +4,7 @@ import { DocsSearch } from './docs-search';
 import { LanguageSwitch } from './language-switch';
 import { ThemeToggle } from './theme-toggle';
 function NovaMark() {
-  return <svg className="nova-mark" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
-    <path d="M16 1.5 19.2 12.8 30.5 16 19.2 19.2 16 30.5 12.8 19.2 1.5 16 12.8 12.8Z" />
-    <path d="m5.4 5.4 8.2 4.7-3.5 3.5Zm21.2 0-4.7 8.2-3.5-3.5Zm0 21.2-8.2-4.7 3.5-3.5Zm-21.2 0 4.7-8.2 3.5 3.5Z" opacity=".65" />
-  </svg>;
+  return <img className="nova-mark" src={sitePath('/brand/deepnovacore-mark.png')} alt="" aria-hidden="true" width={256} height={127} />;
 }
 export const repo = 'https://github.com/deepnovacore/NovaAudioAgent';
 export function Header({

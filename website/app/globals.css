@@ -482,9 +482,9 @@ video:focus-visible {
 }
 .start-section {
   padding: 95px 0 112px;
-  border-top: 1px solid var(--border-subtle);
-  background: linear-gradient(180deg, var(--accent-surface) 0%, var(--surface-canvas) 60%);
 }
+.product-shot { margin: 72px auto 56px; max-width: 980px; padding: 0 24px; }
+.product-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--border-default); border-radius: 14px; background: var(--surface-raised); box-shadow: 0 30px 60px -30px #000c; }
 .start-section h2 {
   font-size: 35px;
 }
@@ -1076,10 +1076,10 @@ html[lang='en'] .section-label {
 .header-leading { display: flex; align-items: center; gap: 28px; min-width: 0; }
 .header-leading .brand { flex-shrink: 0; white-space: nowrap; }
 .header nav { margin-left: auto; flex-shrink: 0; }
-svg.nova-mark { display: block; width: 31px; height: 31px; flex-shrink: 0; }
-.footer svg.nova-mark { width: 25px; height: 25px; }
+img.nova-mark { display: block; width: 44px; height: auto; flex-shrink: 0; }
+.footer img.nova-mark { width: 34px; }
 @media(max-width:1000px) { .header, .header-leading { gap: 20px; } }
-@media(max-width:600px) { .header, .header-leading { gap: 12px; } .header svg.nova-mark { width: 26px; height: 26px; } }
+@media(max-width:600px) { .header, .header-leading { gap: 12px; } .header img.nova-mark { width: 34px; } }
 @media(max-width:370px) { .header { padding-inline: 12px; } .header, .header-leading, .header nav { gap: 9px; } }
 
 /* The product name stays on one line at desktop and phone widths. */
@@ -1091,7 +1091,7 @@ svg.nova-mark { display: block; width: 31px; height: 31px; flex-shrink: 0; }
 .home-highlights.preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-block: 32px 0; }
 .home-highlights h3 { font-size: 20px; margin: 0 0 10px; letter-spacing: -.02em; }
 .home-highlights p, .feature-tile-copy p { color: var(--text-secondary); line-height: 1.85; font-size: 15px; }
-.main-features { padding-block: 24px 100px; background: var(--surface-sunken); border-block: 1px solid var(--border-subtle); }
+.main-features { padding-block: 24px 100px; }
 .main-features-heading { margin-bottom: 32px; }
 .main-features-heading h2 { font-size: clamp(28px, 4vw, 42px); letter-spacing: -.035em; }
 .feature-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
@@ -1108,7 +1108,9 @@ svg.nova-mark { display: block; width: 31px; height: 31px; flex-shrink: 0; }
   .home-highlights:not(.preview-grid) > article:nth-child(n+4) { grid-column: span 3; }
 }
 /* 使用场景、核心功能、v0.3 新功能三组都用两列的 .feature-gallery */
-.feature-group-heading { margin-top: 88px; }
+.feature-group-heading { margin-top: 88px; padding-top: 28px; border-top: 1px solid var(--border-default); display: flex; align-items: baseline; gap: 16px; }
+.feature-group-heading h3 { font-size: 26px; font-weight: 400; letter-spacing: -.03em; margin: 0; color: var(--text-primary); }
+.feature-group-heading::before { content: attr(data-index); font: 12px/1 monospace; color: var(--accent-text); letter-spacing: .08em; }
 @media(max-width:720px) { .hero-content h1 { font-size: clamp(28px, 7.5vw, 48px); margin-bottom: 32px; } .home-highlights { grid-template-columns: 1fr; gap: 28px; padding-block: 52px; } .home-highlights.preview-grid { grid-template-columns: 1fr; padding-block: 24px 0; } .feature-gallery { grid-template-columns: 1fr; } .feature-group-heading { margin-top: 64px; } .feature-tile-copy { padding: 24px 22px 10px; } .feature-image-stage { padding: 16px; } }
 
 /* Keep both audience links and search reachable on narrow phones. */
