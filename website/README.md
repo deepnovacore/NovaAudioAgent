@@ -27,6 +27,8 @@ Open `http://127.0.0.1:3108/` or `/en/docs/`. Changes to Markdown regenerate the
 NEXT_PUBLIC_BASE_PATH=/NovaAudioAgent npm run build
 NEXT_PUBLIC_BASE_PATH=/NovaAudioAgent npm run check:links
 NEXT_PUBLIC_BASE_PATH=/NovaAudioAgent npm start
+# verify byte ranges used by video players
+node --test scripts/serve.test.mjs
 ```
 
 Open `http://127.0.0.1:3108/NovaAudioAgent/`. The server binds only to loopback. Set `PORT` to choose another port. Rebuild after editing source when using this static preview.
@@ -39,7 +41,7 @@ The workflow defaults to `/NovaAudioAgent`. For a custom domain hosted at its ro
 
 The website build is independent of the application's npm workspaces and does not build or modify the application runtime.
 
-The support matrix lives in `docs/{en,zh-CN}/support-matrix.md`; executor guides live in `docs/{en,zh-CN}/executors/`. Update both language versions when capability support changes. The homepage embeds the project YouTube demo and reads the blackboard illustration from the architecture Markdown.
+The support matrix lives in `docs/{en,zh-CN}/support-matrix.md`; executor guides live in `docs/{en,zh-CN}/executors/`. Update both language versions when capability support changes. The homepage embeds the project YouTube demo and uses the bilingual blackboard illustration from `assets/architecture/`.
 
 Search uses a local, build-generated title and full-text index. It loads only when search opens, filters to the current page language, supports Chinese substrings and multi-term queries, and opens with Command/Ctrl+K. No external search account or backend is needed.
 

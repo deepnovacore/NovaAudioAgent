@@ -83,19 +83,19 @@ export function generateDocs() {
   const userSlugs = ['', 'getting-started', 'features', 'support-matrix', 'knowledge-base', 'personal-memory', 'iphone', 'configuration', 'architecture'];
   const index = pages.map(p => ({ title: p.title, url: p.url, lang: p.lang, section: userSlugs.includes(p.slug) ? 'users' : 'developers', headings: p.toc.map(h => h.title).join(' '), text: plain(p.html) }));
   fs.writeFileSync(path.join(site, 'generated/search.json'), JSON.stringify(index));
-  for (const name of ['vision-camera.png', 'workbench-window.png', 'ideas-goals.png', 'feeds.png']) {
-    const relative = `assets/features/${name}`;
-    assets.set(relative, path.join(repoRoot, relative));
+  // Copy the media actually referenced by the bilingual homepage cards.
+  const featureSource = fs.readFileSync(path.join(site, 'lib/home-features.ts'), 'utf8');
+  const media = [...featureSource.matchAll(/"(?:image|video)":\s*"\/doc-assets\/([^"\n]+)"/g)];
+  if (!media.length) throw new Error('No homepage media found in home-features.ts');
+  for (const match of media) {
+    const relative = match[1];
+    const source = path.join(repoRoot, relative);
+    if (!fs.existsSync(source)) throw new Error(`Missing homepage media: ${relative}`);
+    assets.set(relative, source);
   }
-  for (const suffix of ['', '.en']) {
-    const relative = `assets/features/coding${suffix}.svg`;
+  for (const lang of ['en', 'zh-CN']) {
+    const relative = `assets/architecture/nova-personal-agent.${lang}.png`;
     assets.set(relative, path.join(repoRoot, relative));
-  }
-  for (const name of ['conversation', 'permission', 'workspace', 'knowledge', 'iphone', 'workbench', 'profile-memory']) {
-    for (const suffix of ['', '.en']) {
-      const relative = `assets/features/${name}${suffix}.png`;
-      assets.set(relative, path.join(repoRoot, relative));
-    }
   }
   const assetRoot = path.join(site, 'public/doc-assets');
   fs.rmSync(assetRoot, { recursive: true, force: true });
