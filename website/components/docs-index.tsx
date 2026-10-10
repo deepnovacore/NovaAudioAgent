@@ -1,15 +1,13 @@
-import { ArrowUpRight, BookOpen, Brain, Layers, Rocket, Settings2, Smartphone, Workflow, Table2, Play } from 'lucide-react';
+import { ArrowUpRight, BookOpen, Brain, Layers, Rocket, Settings2, Smartphone, Workflow, Table2 } from 'lucide-react';
 import pages from '../generated/docs.json';
 import { sitePath } from '../lib/site-path';
-import { YouTubeCard } from './youtube-card';
 const icons = { 'getting-started': Rocket, features: Layers, 'knowledge-base': BookOpen, 'personal-memory': Brain, iphone: Smartphone, configuration: Settings2, architecture: Workflow, 'support-matrix': Table2 };
 export function DocsIndex({ en = false }: { en?: boolean }) {
   const lang = en ? 'en' : 'zh-CN';
   const index = pages.find(p => p.lang === lang && p.slug === '')!;
   const architecture = pages.find(p => p.lang === lang && p.slug === 'architecture')!;
   return <div className="docs-index">
-    <div className="docs-index-heading"><span className="eyebrow">{en ? 'DOCUMENTATION' : '使用指南'}</span><h1>{index.title}</h1><p>{architecture.intro}</p><a className="youtube-link" href="#demo"><Play size={19} />{en ? 'Watch the demo' : '观看演示'}<ArrowUpRight size={14} /></a></div>
-    <section className="docs-demo" id="demo"><YouTubeCard en={en} /></section>
+    <div className="docs-index-heading"><span className="eyebrow">{en ? 'DOCUMENTATION' : '使用指南'}</span><h1>{index.title}</h1><p>{architecture.intro}</p></div>
     <div className="guide-grid">{index.entries.filter(entry => entry.slug !== 'architecture').map((entry, i) => {
       const Icon = icons[entry.slug as keyof typeof icons] || BookOpen;
       return <a href={sitePath(entry.url)} className={`guide-card${i === 0 ? ' guide-featured' : ''}`} key={entry.url}>

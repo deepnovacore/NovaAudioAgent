@@ -7,4 +7,3 @@ export const developerGroups = [
   { en: 'Integration', zh: '接入与部署', slugs: ['protocols/client-v1', 'deployment/remote-server', 'archs/06-verification'] },
   { en: 'Design', zh: '设计思考', slugs: ['blog/2026-08-proactive-voice-agent-design-space'] },
 ];
-export const youtubeUrl = 'https://youtu.be/t1c-2O-QsxE';

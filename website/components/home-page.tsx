@@ -1,9 +1,8 @@
 /* oxlint-disable jsx-a11y/media-has-caption -- Keep the supplied original demo without added subtitles. */
 import Image from 'next/image';
 import { featureCards } from '../lib/home-features';
-import { YouTubeCard } from './youtube-card';
 import { sitePath } from '../lib/site-path';
-import { ArrowRight, ArrowUpRight, Play } from 'lucide-react';
+import { ArrowRight, ArrowUpRight } from 'lucide-react';
 import { Header, Footer, repo } from './site-header';
 import { InstallCommand } from './install-command';
 import { StarField } from './star-field';
@@ -82,15 +81,8 @@ export function HomePage({ en = false }: { en?: boolean }) {
               <a className="button primary" href={doc}>
                 {en ? 'Get started' : '开始使用'} <ArrowUpRight size={15} />
               </a>
-              <a className="text-link" href="#demo">
-                <Play size={12} />
-                {en ? 'Watch on YouTube' : 'YouTube 演示'}
-              </a>
             </div>
           </div>
-          <figure className="hero-shot">
-            <Image src={sitePath(en ? '/doc-assets/assets/features/workbench-original.en.png' : '/doc-assets/assets/features/workbench-original.png')} alt={en ? 'Nova workbench with project recaps, suggested todos and conversation' : 'Nova 工作台：项目回顾、建议待办与对话'} priority width={en ? 1502 : 2240} height={en ? 1047 : 1560} />
-          </figure>
           <div className="hero-bottom">
             <span aria-hidden="true" />
             <a href="#demo" aria-label={en ? 'Explore Nova' : '了解 Nova'}>
@@ -110,7 +102,12 @@ export function HomePage({ en = false }: { en?: boolean }) {
               : '一起问清目标，在 Workbench 中整理待办、想法与目标，再跟进任务直到得到有证据的结果。Nova 结合你授权的资料，保留记忆出处；需要时，你随时可以接管。'}
           </p>
         </section>
-        <div className="demo-media wrap"><YouTubeCard en={en} /></div>
+        <figure className="architecture-overview wrap">
+          <a href={sitePath(`/doc-assets/assets/architecture/nova-personal-agent.${en ? 'en' : 'zh-CN'}.png`)} aria-label={en ? 'View Nova architecture' : '查看 Nova 架构图'}>
+            <Image src={sitePath(`/doc-assets/assets/architecture/nova-personal-agent.${en ? 'en' : 'zh-CN'}.png`)} alt={en ? 'Nova personal agent: app context, conversation, task coordination and specialist execution' : 'Nova 个人 Agent：应用上下文、对话、任务协调与专长执行'} loading="lazy" width={1586} height={992} />
+          </a>
+          <figcaption>{en ? 'Your context informs the conversation. Nova coordinates work, checks results, and speaks when it matters.' : '上下文帮助理解，对话协调执行；结果按证据核对，提醒在合适时机开口。'}</figcaption>
+        </figure>
         <section className="home-highlights wrap" id="whats-new" aria-label={en ? 'Highlights' : '核心特性'}>
           {highlights.map(([title, body], i) => <article key={title}><span className="section-label">0{i + 1}</span><h2>{title}</h2><p>{body}</p></article>)}
         </section>
@@ -160,12 +157,6 @@ export function HomePage({ en = false }: { en?: boolean }) {
               <ArrowRight size={14} />
             </a>
           </div>
-          <figure className="architecture-overview wrap">
-            <a href={sitePath(`/doc-assets/assets/architecture/nova-personal-agent.${en ? 'en' : 'zh-CN'}.png`)} aria-label={en ? 'View Nova architecture' : '查看 Nova 架构图'}>
-              <Image src={sitePath(`/doc-assets/assets/architecture/nova-personal-agent.${en ? 'en' : 'zh-CN'}.png`)} alt={en ? 'Nova personal agent: app context, conversation, task coordination and specialist execution' : 'Nova 个人 Agent：应用上下文、对话、任务协调与专长执行'} loading="lazy" width={1586} height={992} />
-            </a>
-            <figcaption>{en ? 'Your context informs the conversation. Nova coordinates work, checks results, and speaks when it matters.' : '上下文帮助理解，对话协调执行；结果按证据核对，提醒在合适时机开口。'}</figcaption>
-          </figure>
         </section>
         <section className="start-section reading" id="quickstart">
           <p className="section-label">{en ? 'Get started' : '从这里开始'}</p>
