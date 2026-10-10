@@ -60,7 +60,7 @@ export function HomePage({ en = false }: { en?: boolean }) {
               {en ? 'Your Personal Agent and Voice Assistant' : '你的个人 Agent 与语音助手'}
             </p>
             <h1>
-              NAA
+              NovaAudioAgent
             </h1>
             <h2>
               {en ? (
