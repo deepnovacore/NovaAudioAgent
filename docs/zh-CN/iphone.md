@@ -12,6 +12,8 @@
 
 ## 配对
 
+[![Nova iPhone 客户端与连接设置](../../assets/features/iphone.png)](../../assets/features/iphone.png)
+
 在 macOS 桌面右键悬浮球，选择「连接 iPhone…」：
 
 1. 启用手机连接。

@@ -954,9 +954,10 @@ html[lang='en'] .section-label {
 .markdown-body ol { list-style: decimal; }
 .markdown-body a { color: var(--text-link); text-decoration: underline; text-underline-offset: 3px; }
 .markdown-body table { display: block; overflow-x: auto; border-collapse: collapse; width: 100%; margin: 24px 0; font-size: 15px; }
-.markdown-body th, .markdown-body td { text-align: left; padding: 12px 16px; border: 1px solid var(--border-default); line-height: 1.7; }
+.markdown-body th, .markdown-body td { overflow-wrap: normal; word-break: normal; text-align: left; padding: 12px 16px; border: 1px solid var(--border-default); line-height: 1.7; }
+.markdown-body th:first-child, .markdown-body td:first-child { min-width: 10rem; }
 .markdown-body th { background: var(--surface-inset); }
-.markdown-body img { max-width: 100%; height: auto; border-radius: 6px; }
+.markdown-body img { display: block; max-width: 100%; max-height: 560px; width: auto; height: auto; margin: 24px auto; object-fit: contain; border-radius: 6px; }
 .markdown-body pre { font-size: 14px; margin: 20px 0; }
 .markdown-body :not(pre) > code { background: var(--surface-inset); padding: 2px 5px; border-radius: 3px; font-size: .88em; }
 .markdown-body .mermaid { background: var(--surface-inset); text-align: center; }
@@ -1095,7 +1096,7 @@ img.nova-mark { display: block; width: 44px; height: auto; flex-shrink: 0; }
   .docs-search-trigger { flex-shrink: 0; }
 }
 
-.architecture-overview { margin-block: 64px 0; }
+.architecture-overview { width: min(960px, calc(100% - 48px)); margin-block: 48px 0; }
 .architecture-overview img { display: block; width: 100%; height: auto; border-radius: 16px; }
 .architecture-overview figcaption { margin-top: 16px; color: var(--text-secondary); text-align: center; line-height: 1.7; }
 .feature-video-stage video { width: 100%; height: 100%; min-height: 0; object-fit: contain; }

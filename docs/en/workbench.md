@@ -4,6 +4,8 @@ The Workbench is Nova's main window: Todos, Ideas, Goals, Feeds, Tasks and Profi
 
 ## Layout
 
+[![Nova Workbench and suggested next steps](../../assets/features/workbench-original.en.png)](../../assets/features/workbench-original.en.png)
+
 | Rail item | Holds |
 |---|---|
 | Todos | Things to do, each open, doing, waiting, done or cancelled |
@@ -38,6 +40,8 @@ Optional morning and evening briefs summarize your Todos, calendar events and di
 Articles ranked to your interests, split into "For you" and "Saved". Until Nova has learned enough about what you read, it falls back to chronological order and asks you to confirm before switching to interest ranking. Each article shows why it was recommended. From an article you can read the original, save it, or convert it into a Todo, Idea or Goal — none of that authorizes Nova to act on it, it only records it. You can also tell Nova to show more or less of a given interest.
 
 ## Profile
+
+[![Nova Profile overview and recent projects](../../assets/features/profile-original.en.png)](../../assets/features/profile-original.en.png)
 
 A short free-text description of you, edited directly or filled in gradually as Nova proposes additions from conversation.
 

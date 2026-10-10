@@ -52,6 +52,8 @@ When running from source, the project `.env` takes precedence over matching shel
 
 ## 3. Give Nova a task
 
+[![Nova clarifies a request before starting a task](../../assets/features/conversation-polished.en.png)](../../assets/features/conversation-polished.en.png)
+
 Try: “Create a webpage to showcase my work.” Nova asks for any missing information, requests confirmation when creating or switching projects, and sends the task to Codex.
 
 You can add requirements, ask about progress, or request a stop. The task banner shows work status; bubbles provide brief updates. Operations that need permission have a separate approval prompt.

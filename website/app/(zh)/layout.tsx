@@ -5,7 +5,7 @@ import '../globals.css';
 export const metadata: Metadata = {
   title: 'NovaAudioAgent — 你的个人 Agent 与语音助手',
   description: '你的个人 Agent 与语音助手：待办、想法与目标集中在一个工作台，记忆可追溯，任务按证据验收。',
-  icons: { icon: sitePath('/favicon.svg') },
+  icons: { icon: { url: sitePath('/brand/deepnovacore-mark.png'), type: 'image/png' }, apple: sitePath('/brand/deepnovacore-mark.png') },
   alternates: { languages: { en: sitePath('/'), 'zh-CN': sitePath('/zh'), 'x-default': sitePath('/') } },
 };
 export default function Layout({ children }: { children: React.ReactNode }) {

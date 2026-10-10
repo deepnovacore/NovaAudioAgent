@@ -12,6 +12,8 @@ Each item on the Tasks page also carries a short next-step summary: needing you,
 
 ## Taking over
 
+[![Nova requests permission for a task](../../assets/features/permission-polished.en.png)](../../assets/features/permission-polished.en.png)
+
 | Action | What happens |
 |---|---|
 | Take over task | You now message the executor directly; Nova pauses automatic correction |

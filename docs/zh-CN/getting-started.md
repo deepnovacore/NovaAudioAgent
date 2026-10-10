@@ -52,6 +52,8 @@ npm run start:client
 
 ## 3. 交办第一个任务
 
+[![Nova 在执行任务前澄清需求](../../assets/features/conversation-polished.png)](../../assets/features/conversation-polished.png)
+
 直接说：“帮我创建一个展示个人作品的网页。”Nova 会询问必要的信息，并在需要新建或切换项目时请求确认，然后交给 Codex 执行。
 
 任务开始后，可以补充要求、询问进度或要求停止。任务横幅显示工作状态，进度气泡用于提醒；需要授权的操作会单独请求确认。

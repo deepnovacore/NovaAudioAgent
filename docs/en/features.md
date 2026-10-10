@@ -4,6 +4,8 @@ Nova is a desktop voice assistant. Ask it to work on code, report progress, find
 
 ## Conversation and tasks
 
+[![Conversation with the Nova voice orb](../../assets/features/conversation-polished.en.png)](../../assets/features/conversation-polished.en.png)
+
 | Capability | What you can do |
 |---|---|
 | Realtime voice | Speak naturally and interrupt Nova's reply |
@@ -15,6 +17,8 @@ Nova is a desktop voice assistant. Ask it to work on code, report progress, find
 Creating or switching projects requires confirmation. Recognition failure is not approval, rejection or cancellation. Disconnecting your phone does not cancel a coding task.
 
 ## Workbench
+
+[![Nova Workbench with suggested todos and project context](../../assets/features/workbench-original.en.png)](../../assets/features/workbench-original.en.png)
 
 - **Workbench** is the desktop main window: an icon rail for Todos, Ideas, Goals, Feeds, Tasks and Profile beside a collapsible chat pane. See [Workbench](workbench.md).
 - **Tasks** delegate work with acceptance criteria you set; watch progress, take over to steer it directly, and hand it back to Nova. See [Tasks](tasks.md).

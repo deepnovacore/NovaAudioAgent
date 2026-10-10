@@ -28,6 +28,8 @@ Passages are stored locally at `~/.nova-audio-agent/knowledge.sqlite` (override 
 
 ## How Nova uses it
 
+[![Nova answers a question using the CN-27 demo documents](../../assets/features/knowledge-polished.en.png)](../../assets/features/knowledge-polished.en.png)
+
 Nova searches the corpus only when the answer calls for it; nothing is injected into every conversation automatically. Results are combined from meaning-based and keyword matching, and Nova treats them as **evidence, not instructions** — a document cannot direct Nova to act.
 
 When Nova hands coding work to Codex, it may attach short passages as references. Citations are pinned to the exact passage content, so if you edit or remove a source, an old citation reports itself as outdated or missing rather than quietly returning the wrong text.

@@ -8,6 +8,8 @@ Have Nova working on the computer, connect both devices to the same Tailscale ne
 
 ## Pair
 
+[![Nova iPhone client and connection settings](../../assets/features/iphone.en.png)](../../assets/features/iphone.en.png)
+
 On macOS, right-click the orb and choose “连接 iPhone…”:
 
 1. Enable the phone connection.

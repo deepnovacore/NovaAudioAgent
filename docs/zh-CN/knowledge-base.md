@@ -28,6 +28,8 @@
 
 ## Nova 如何使用
 
+[![Nova 基于 CN-27 演示资料回答问题](../../assets/features/knowledge-polished.png)](../../assets/features/knowledge-polished.png)
+
 只有在需要时 Nova 才会检索知识库，不会自动把内容注入每一轮对话。检索结合语义匹配与关键词匹配，结果被当作**证据而非指令**，文档无法指挥 Nova 执行操作。
 
 当 Nova 把编码任务交给 Codex 时，可能附上简短的片段作为参考。引用锚定在片段的具体内容上，因此你修改或移除来源后，旧引用会明确报告已过期或已失效，而不会悄悄返回错误内容。

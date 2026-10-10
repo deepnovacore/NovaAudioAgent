@@ -12,6 +12,8 @@
 
 ## 接手与交还
 
+[![Nova 请求任务权限](../../assets/features/permission-polished.png)](../../assets/features/permission-polished.png)
+
 | 操作 | 效果 |
 |---|---|
 | 接管任务 | 你直接给 executor 发消息，小诺暂停自动纠正 |
